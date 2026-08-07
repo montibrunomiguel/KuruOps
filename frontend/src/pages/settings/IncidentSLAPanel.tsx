@@ -1,0 +1,157 @@
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "../../auth/AuthContext";
+import { api } from "../../api/client";
+import { mutationErrorMessage } from "../../api/hooks";
+import type { IncidentSLAPolicy, IncidentPriority } from "../../types/incidents";
+import type { Severity } from "../../types/alerts";
+import { PRIORITY_ORDER } from "../../lib/chartColors";
+
+const MATRIX_SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informational"];
+
+function cellKey(severity: Severity, priority: IncidentPriority) {
+  return `${severity}-${priority}`;
+}
+
+// Settings -> Incident SLAs: a severity x priority grid, same shape as the
+// incident detail page's NIST matrix but editable -- each cell is a "due
+// within N minutes" value, blank meaning unconfigured (opt-in per pair, not
+// zero minutes). Dirty-tracking is per cell, but there's a single "Save
+// changes" button rather than UsersPanel.tsx's per-row button, since a row
+// here spans 4 independently-configurable cells rather than one form.
+export function IncidentSLAPanel() {
+  const { t } = useTranslation();
+  const { token } = useAuth();
+  const [policies, setPolicies] = useState<IncidentSLAPolicy[]>([]);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function load() {
+    setLoading(true);
+    api
+      .get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", token)
+      .then((list) => {
+        setPolicies(list);
+        const next: Record<string, string> = {};
+        for (const p of list) {
+          next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
+        }
+        setValues(next);
+      })
+      .catch((err: unknown) => setError(mutationErrorMessage(err)))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(load, [token]);
+
+  function original(key: string): string {
+    const p = policies.find((p) => cellKey(p.severity, p.priority) === key);
+    return p ? String(p.dueWithinMinutes) : "";
+  }
+
+  function isDirty(key: string): boolean {
+    return (values[key] ?? "") !== original(key);
+  }
+
+  const allKeys = MATRIX_SEVERITIES.flatMap((sev) => PRIORITY_ORDER.map((p) => cellKey(sev, p)));
+  const dirtyKeys = allKeys.filter(isDirty);
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      for (const key of dirtyKeys) {
+        const [severity, priority] = key.split("-") as [Severity, IncidentPriority];
+        const value = values[key] ?? "";
+        const existing = policies.find((p) => cellKey(p.severity, p.priority) === key);
+        if (value === "") {
+          if (existing) {
+            await api.del(`/api/v1/settings/incident-sla/${existing.id}`, token);
+          }
+          continue;
+        }
+        await api.put("/api/v1/settings/incident-sla", { severity, priority, dueWithinMinutes: Number(value) }, token);
+      }
+      setSaved(true);
+      load();
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
+
+  return (
+    <div className="panel">
+      <h2 className="panel-title" style={{ marginBottom: 4 }}>
+        {t("settings.incidentSla.title")}
+      </h2>
+      <p className="helper-text" style={{ marginBottom: 14 }}>
+        {t("settings.incidentSla.helper")}
+      </p>
+
+      {error && <div className="error-banner">{error}</div>}
+      {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.incidentSla.saved")}</div>}
+
+      <div className="nist-matrix">
+        <span />
+        {PRIORITY_ORDER.map((p) => (
+          <span className="nist-matrix-header-cell" key={p}>
+            {p.toUpperCase()}
+          </span>
+        ))}
+        {MATRIX_SEVERITIES.map((sev) => (
+          <>
+            <span className="nist-matrix-row-label" key={`label-${sev}`}>
+              {t(`common.severity.${sev}`)}
+            </span>
+            {PRIORITY_ORDER.map((p) => {
+              const key = cellKey(sev, p);
+              return (
+                <div key={key} style={{ position: "relative" }}>
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    style={{ width: "100%", textAlign: "center", paddingRight: values[key] ? 28 : undefined }}
+                    placeholder={t("settings.incidentSla.unconfigured") ?? undefined}
+                    aria-label={`${t(`common.severity.${sev}`)} / ${p.toUpperCase()}`}
+                    value={values[key] ?? ""}
+                    onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                  />
+                  {values[key] && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        right: 8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {t("settings.incidentSla.unit")}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        ))}
+      </div>
+
+      <div className="row-actions" style={{ marginTop: 14 }}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving || dirtyKeys.length === 0}>
+          {saving ? t("common.saving") : t("common.save")}
+        </button>
+      </div>
+    </div>
+  );
+}

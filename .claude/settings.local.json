@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"/c/Users/monti/AppData/Local/Temp/claude/C--Users-monti-OneDrive-Documentos-Projetos-ArgusOps/0e734e09-e6c8-4e7d-8076-aaf13a1bceff/scratchpad/argusops\")",
+      "Read(//c/Users/monti/AppData/Local/Temp/claude/C--Users-monti-OneDrive-Documentos-Projetos-ArgusOps/0e734e09-e6c8-4e7d-8076-aaf13a1bceff/scratchpad/**)",
+      "Bash(unzip -o \"/c/Users/monti/Downloads/Cybersecurity SOCSIEM Interface.zip\" -d .)",
+      "Bash(go version *)",
+      "Bash(go mod *)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(gofmt -l .)",
+      "Bash(gofmt -w .)",
+      "Bash(docker version *)",
+      "Bash(go list *)",
+      "Bash(go get *)",
+      "Bash(go env *)",
+      "Bash(grep -n \"func DialWithDialer\\\\|func DialWithTLSConfig\\\\|func DialURL\\\\|type DialOpt\" \"$\\(go env GOPATH\\)/pkg/mod/github.com/go-ldap/ldap/v3@v3.4.14/conn.go\")",
+      "Bash(grep -n '^func \\(sp \\\\*ServiceProvider\\)\\\\|^type ServiceProvider struct' __CMDSUB_OUTPUT__/pkg/mod/github.com/crewjam/saml@v0.5.1/service_provider.go)",
+      "Bash(grep -n 'type Assertion struct' -A 20 __CMDSUB_OUTPUT__/pkg/mod/github.com/crewjam/saml@v0.5.1/schema.go)",
+      "Bash(grep -n 'type AttributeValue struct' -A 10 __CMDSUB_OUTPUT__/pkg/mod/github.com/crewjam/saml@v0.5.1/schema.go)",
+      "Bash(grep -n 'type AuthnRequest struct' -A 15 __CMDSUB_OUTPUT__/pkg/mod/github.com/crewjam/saml@v0.5.1/schema.go)",
+      "Bash(npm install *)",
+      "Bash(npm audit *)",
+      "Bash(npm view *)",
+      "Bash(npm ls *)"
+    ]
+  }
+}

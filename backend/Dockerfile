@@ -1,0 +1,36 @@
+# Multi-stage build producing one minimal image per binary (api/ingest/worker
+# — see cmd/*/main.go for why they're separate processes). Build a specific
+# one with `docker build --target api .` (docker-compose.yml does this).
+#
+# Build context is the REPO ROOT (not backend/) -- see docker-compose.yml --
+# because the api image also needs db/migrations and db/init baked in for
+# the external-database-migration Settings feature (internal/dbmigrate runs
+# golang-migrate as a library plus hand-ported role/RLS setup against a
+# customer-supplied target at runtime, so it needs the actual migration SQL
+# on disk in its own container, not just reachable from the host).
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ .
+COPY db/ ./db/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/ingest ./cmd/ingest
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
+
+FROM alpine:3.20 AS base
+RUN apk add --no-cache ca-certificates && adduser -D -H argusops
+USER argusops
+
+FROM base AS api
+COPY --from=build /out/api /usr/local/bin/api
+COPY --from=build --chown=argusops /src/db/migrations /app/db/migrations
+ENTRYPOINT ["/usr/local/bin/api"]
+
+FROM base AS ingest
+COPY --from=build /out/ingest /usr/local/bin/ingest
+ENTRYPOINT ["/usr/local/bin/ingest"]
+
+FROM base AS worker
+COPY --from=build /out/worker /usr/local/bin/worker
+ENTRYPOINT ["/usr/local/bin/worker"]

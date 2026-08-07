@@ -1,0 +1,449 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/argusops/argusops/internal/domain"
+)
+
+// IncidentRepository is the only place that writes SQL for incidents and
+// their related tables. Same rule as AlertRepository: every method takes a
+// pgx.Tx obtained from db.Pool.WithTenant, never a bare pool, so a query
+// can't accidentally run without app.tenant_id set and RLS scoping it.
+type IncidentRepository struct{}
+
+func NewIncidentRepository() *IncidentRepository {
+	return &IncidentRepository{}
+}
+
+const incidentColumns = `
+	id, tenant_id, title, description, severity, priority, phase,
+	tags, sla_due_at, sla_breached, opened_at, closed_at, created_at, updated_at`
+
+func (r *IncidentRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.Incident, error) {
+	row := tx.QueryRow(ctx, `select `+incidentColumns+` from incidents where id = $1`, id)
+	inc, err := scanIncident(row)
+	if err != nil || inc == nil {
+		return inc, err
+	}
+	assignees, err := r.AssigneesForIncidents(ctx, tx, []uuid.UUID{inc.ID})
+	if err != nil {
+		return nil, err
+	}
+	// assignees[inc.ID] is nil (not []domain.UserSummary{}) for a missing map
+	// key -- normalize so the JSON response is always [], never null (see
+	// domain.Incident.Assignees's json tag, which has no omitempty).
+	inc.Assignees = orEmptyUserSummarySlice(assignees[inc.ID])
+	return inc, nil
+}
+
+type ListIncidentsFilter struct {
+	Severity    *domain.Severity
+	Priority    *domain.IncidentPriority
+	Phase       *domain.IncidentPhase
+	SLABreached *bool
+	Tag         *string
+	// AllowedTags scopes results to the caller's tag-based access -- see
+	// the identical field on ListAlertsFilter for the full explanation.
+	AllowedTags []string
+	Limit       int
+	Offset      int
+}
+
+func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncidentsFilter) ([]domain.Incident, error) {
+	query := `select ` + incidentColumns + ` from incidents where 1 = 1`
+	args := []any{}
+
+	if f.Severity != nil {
+		args = append(args, *f.Severity)
+		query += fmt.Sprintf(" and severity = $%d", len(args))
+	}
+	if f.Priority != nil {
+		args = append(args, *f.Priority)
+		query += fmt.Sprintf(" and priority = $%d", len(args))
+	}
+	if f.Phase != nil {
+		args = append(args, *f.Phase)
+		query += fmt.Sprintf(" and phase = $%d", len(args))
+	}
+	if f.SLABreached != nil {
+		args = append(args, *f.SLABreached)
+		query += fmt.Sprintf(" and sla_breached = $%d", len(args))
+	}
+	if f.Tag != nil {
+		args = append(args, *f.Tag)
+		query += fmt.Sprintf(" and $%d = any(tags)", len(args))
+	}
+	if len(f.AllowedTags) > 0 {
+		args = append(args, f.AllowedTags)
+		query += fmt.Sprintf(" and tags && $%d", len(args))
+	}
+
+	limit := f.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" order by opened_at desc limit $%d", len(args))
+	args = append(args, f.Offset)
+	query += fmt.Sprintf(" offset $%d", len(args))
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query incidents: %w", err)
+	}
+	defer rows.Close()
+
+	incidents := []domain.Incident{}
+	for rows.Next() {
+		inc, err := scanIncident(rows)
+		if err != nil {
+			return nil, err
+		}
+		incidents = append(incidents, *inc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]uuid.UUID, len(incidents))
+	for i, inc := range incidents {
+		ids[i] = inc.ID
+	}
+	assignees, err := r.AssigneesForIncidents(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range incidents {
+		incidents[i].Assignees = orEmptyUserSummarySlice(assignees[incidents[i].ID])
+	}
+	return incidents, nil
+}
+
+// orEmptyUserSummarySlice turns a nil slice into an empty one -- a missing
+// key in the AssigneesForIncidents map (an incident with no assignees)
+// yields nil, which would otherwise serialize as JSON null instead of []
+// (see domain.Incident.Assignees's json tag, which has no omitempty).
+func orEmptyUserSummarySlice(s []domain.UserSummary) []domain.UserSummary {
+	if s == nil {
+		return []domain.UserSummary{}
+	}
+	return s
+}
+
+func (r *IncidentRepository) Insert(ctx context.Context, tx pgx.Tx, inc *domain.Incident) error {
+	row := tx.QueryRow(ctx, `
+		insert into incidents (
+			tenant_id, title, description, severity, priority, phase, tags, sla_due_at
+		) values ($1,$2,$3,$4,$5,$6,$7,$8)
+		returning id, phase, opened_at, created_at, updated_at`,
+		inc.TenantID, inc.Title, inc.Description, inc.Severity, inc.Priority, inc.Phase, inc.Tags, inc.SLADueAt,
+	)
+	return row.Scan(&inc.ID, &inc.Phase, &inc.OpenedAt, &inc.CreatedAt, &inc.UpdatedAt)
+}
+
+// SetAssignees replaces an incident's full assignee set (delete-then-bulk-
+// insert, same "replace a set" shape as UpdateTags) -- empty userIDs just
+// clears every assignee, never an error.
+func (r *IncidentRepository) SetAssignees(ctx context.Context, tx pgx.Tx, incidentID, tenantID uuid.UUID, userIDs []uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `delete from incident_assignees where incident_id = $1`, incidentID); err != nil {
+		return fmt.Errorf("clear assignees: %w", err)
+	}
+	for _, userID := range userIDs {
+		if _, err := tx.Exec(ctx, `
+			insert into incident_assignees (incident_id, user_id, tenant_id) values ($1,$2,$3)`,
+			incidentID, userID, tenantID,
+		); err != nil {
+			return fmt.Errorf("insert assignee: %w", err)
+		}
+	}
+	return nil
+}
+
+// AssigneesForIncidents batch-loads assignees for every incident in
+// incidentIDs in one query (avoiding N+1 selects from Get/List), grouped by
+// incident id. An incident with no assignees simply has no key in the
+// returned map -- callers should treat a missing key the same as an empty
+// slice.
+func (r *IncidentRepository) AssigneesForIncidents(ctx context.Context, tx pgx.Tx, incidentIDs []uuid.UUID) (map[uuid.UUID][]domain.UserSummary, error) {
+	result := map[uuid.UUID][]domain.UserSummary{}
+	if len(incidentIDs) == 0 {
+		return result, nil
+	}
+
+	rows, err := tx.Query(ctx, `
+		select a.incident_id, u.id, u.name
+		from incident_assignees a
+		join users u on u.id = a.user_id
+		where a.incident_id = any($1)
+		order by a.incident_id, u.name`,
+		incidentIDs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query incident assignees: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var incidentID uuid.UUID
+		var u domain.UserSummary
+		if err := rows.Scan(&incidentID, &u.ID, &u.Name); err != nil {
+			return nil, fmt.Errorf("scan incident assignee: %w", err)
+		}
+		result[incidentID] = append(result[incidentID], u)
+	}
+	return result, rows.Err()
+}
+
+// UpdatePhase moves the incident to phase. It never stamps closed_at itself
+// (see MarkClosed for the one place that does) -- only clears it the moment
+// the incident moves away from post_incident (reopening), so an incident
+// whose phase no longer reads post_incident never keeps reporting a stale
+// close time in MTTR/"closed" queries. Reaching post_incident via the phase
+// tracker alone does NOT close the incident: closing is IncidentService.Close,
+// a distinct explicit action (see its doc comment for why these used to be
+// conflated and what broke because of it).
+func (r *IncidentRepository) UpdatePhase(ctx context.Context, tx pgx.Tx, id uuid.UUID, phase domain.IncidentPhase) error {
+	closedAtExpr := "closed_at"
+	if phase != domain.PhasePostIncident {
+		closedAtExpr = "null"
+	}
+	_, err := tx.Exec(ctx, fmt.Sprintf(`
+		update incidents
+		set phase = $2, closed_at = %s, updated_at = now()
+		where id = $1`, closedAtExpr),
+		id, phase,
+	)
+	return err
+}
+
+// MarkClosed stamps closed_at (idempotent -- a second call is a no-op) --
+// the only place closed_at is ever set. Called exclusively by
+// IncidentService.Close, never by a plain phase change.
+func (r *IncidentRepository) MarkClosed(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		update incidents set closed_at = coalesce(closed_at, now()), updated_at = now() where id = $1`,
+		id,
+	)
+	return err
+}
+
+// SetSeverityAndPriority also recomputes sla_due_at for the new
+// (severity, priority) pair in the same statement -- a priority change
+// should recompute the due date, and clearing it (slaDueAt == nil) when the
+// new pair has no configured policy is correct, not a bug: a stale date
+// from the old pair would otherwise linger.
+func (r *IncidentRepository) SetSeverityAndPriority(ctx context.Context, tx pgx.Tx, id uuid.UUID, severity domain.Severity, priority domain.IncidentPriority, slaDueAt *time.Time) error {
+	_, err := tx.Exec(ctx, `
+		update incidents set severity = $2, priority = $3, sla_due_at = $4, updated_at = now() where id = $1`,
+		id, severity, priority, slaDueAt,
+	)
+	return err
+}
+
+func (r *IncidentRepository) UpdateDescription(ctx context.Context, tx pgx.Tx, id uuid.UUID, description string) error {
+	_, err := tx.Exec(ctx, `
+		update incidents set description = $2, updated_at = now() where id = $1`,
+		id, description,
+	)
+	return err
+}
+
+func (r *IncidentRepository) UpdateTags(ctx context.Context, tx pgx.Tx, id uuid.UUID, tags []string) error {
+	_, err := tx.Exec(ctx, `update incidents set tags = $2, updated_at = now() where id = $1`, id, tags)
+	return err
+}
+
+// RecordPhaseEntered inserts the first-entry row for a phase. A unique
+// index on (incident_id, phase) makes this a no-op on revisit, matching
+// "not re-added if revisited" from the design handoff. Returns whether a
+// row was actually inserted (false = phase already had an entry).
+func (r *IncidentRepository) RecordPhaseEntered(ctx context.Context, tx pgx.Tx, incidentID, tenantID uuid.UUID, phase domain.IncidentPhase) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		insert into incident_status_history (incident_id, tenant_id, phase)
+		values ($1, $2, $3)
+		on conflict (incident_id, phase) do nothing`,
+		incidentID, tenantID, phase,
+	)
+	if err != nil {
+		return false, fmt.Errorf("record phase entered: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (r *IncidentRepository) ListStatusHistory(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentStatusHistoryEntry, error) {
+	rows, err := tx.Query(ctx, `
+		select id, incident_id, tenant_id, phase, entered_at, corrected_entered_at,
+		       corrected_at, corrected_by, correction_reason, created_at
+		from incident_status_history
+		where incident_id = $1
+		order by entered_at asc`,
+		incidentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query status history: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []domain.IncidentStatusHistoryEntry{}
+	for rows.Next() {
+		var e domain.IncidentStatusHistoryEntry
+		if err := rows.Scan(
+			&e.ID, &e.IncidentID, &e.TenantID, &e.Phase, &e.EnteredAt, &e.CorrectedEnteredAt,
+			&e.CorrectedAt, &e.CorrectedBy, &e.CorrectionReason, &e.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan status history: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// CorrectPhaseTimestamp is the only way to change what a phase's entered_at
+// "reads as" after the fact — it never overwrites entered_at itself, so the
+// original recorded value is always recoverable. Requires a reason, enforced
+// both here and by the DB check constraint.
+func (r *IncidentRepository) CorrectPhaseTimestamp(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID, phase domain.IncidentPhase, correctedEnteredAt time.Time, correctedBy uuid.UUID, reason string) error {
+	_, err := tx.Exec(ctx, `
+		update incident_status_history
+		set corrected_entered_at = $3, corrected_at = now(), corrected_by = $4, correction_reason = $5
+		where incident_id = $1 and phase = $2`,
+		incidentID, phase, correctedEnteredAt, correctedBy, reason,
+	)
+	return err
+}
+
+func (r *IncidentRepository) InsertEvent(ctx context.Context, tx pgx.Tx, e *domain.IncidentEvent) error {
+	row := tx.QueryRow(ctx, `
+		insert into incident_events (incident_id, tenant_id, event_type, actor_type, actor_id, data)
+		values ($1,$2,$3,$4,$5,$6)
+		returning id, created_at`,
+		e.IncidentID, e.TenantID, e.EventType, e.ActorType, e.ActorID, e.Data,
+	)
+	return row.Scan(&e.ID, &e.CreatedAt)
+}
+
+func (r *IncidentRepository) ListEvents(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentEvent, error) {
+	rows, err := tx.Query(ctx, `
+		select id, incident_id, tenant_id, event_type, actor_type, actor_id, data, created_at
+		from incident_events
+		where incident_id = $1
+		order by created_at asc`,
+		incidentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query incident events: %w", err)
+	}
+	defer rows.Close()
+
+	events := []domain.IncidentEvent{}
+	for rows.Next() {
+		var e domain.IncidentEvent
+		if err := rows.Scan(&e.ID, &e.IncidentID, &e.TenantID, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan incident event: %w", err)
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+func (r *IncidentRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *domain.IncidentComment) error {
+	row := tx.QueryRow(ctx, `
+		insert into incident_comments (incident_id, tenant_id, author_id, author_name, body, image_url)
+		values ($1,$2,$3,$4,$5,$6)
+		returning id, created_at`,
+		c.IncidentID, c.TenantID, c.AuthorID, c.AuthorName, c.Body, c.ImageURL,
+	)
+	return row.Scan(&c.ID, &c.CreatedAt)
+}
+
+func (r *IncidentRepository) ListComments(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentComment, error) {
+	rows, err := tx.Query(ctx, `
+		select id, incident_id, tenant_id, author_id, author_name, body, image_url, created_at
+		from incident_comments
+		where incident_id = $1
+		order by created_at asc`,
+		incidentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query incident comments: %w", err)
+	}
+	defer rows.Close()
+
+	comments := []domain.IncidentComment{}
+	for rows.Next() {
+		var c domain.IncidentComment
+		if err := rows.Scan(&c.ID, &c.IncidentID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.ImageURL, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan incident comment: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	return comments, rows.Err()
+}
+
+func (r *IncidentRepository) LinkAlert(ctx context.Context, tx pgx.Tx, incidentID, alertID, tenantID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		insert into incident_alert_links (incident_id, alert_id, tenant_id)
+		values ($1,$2,$3)
+		on conflict (incident_id, alert_id) do nothing`,
+		incidentID, alertID, tenantID,
+	)
+	return err
+}
+
+func (r *IncidentRepository) UnlinkAlert(ctx context.Context, tx pgx.Tx, incidentID, alertID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		delete from incident_alert_links where incident_id = $1 and alert_id = $2`,
+		incidentID, alertID,
+	)
+	return err
+}
+
+func (r *IncidentRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.Alert, error) {
+	rows, err := tx.Query(ctx, `
+		select `+alertColumnsWithAssignee+`
+		from alerts a
+		join incident_alert_links l on l.alert_id = a.id
+		left join users u on u.id = a.assigned_analyst_id
+		where l.incident_id = $1
+		order by a.received_at desc`,
+		incidentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query linked alerts: %w", err)
+	}
+	defer rows.Close()
+
+	alerts := []domain.Alert{}
+	for rows.Next() {
+		a, err := scanAlert(rows)
+		if err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, *a)
+	}
+	return alerts, rows.Err()
+}
+
+func scanIncident(row pgx.Row) (*domain.Incident, error) {
+	var inc domain.Incident
+	err := row.Scan(
+		&inc.ID, &inc.TenantID, &inc.Title, &inc.Description, &inc.Severity, &inc.Priority,
+		&inc.Phase, &inc.Tags, &inc.SLADueAt, &inc.SLABreached, &inc.OpenedAt,
+		&inc.ClosedAt, &inc.CreatedAt, &inc.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan incident: %w", err)
+	}
+	inc.Assignees = []domain.UserSummary{}
+	return &inc, nil
+}

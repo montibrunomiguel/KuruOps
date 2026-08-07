@@ -1,0 +1,150 @@
+package httpserver
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/httpserver/handlers"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
+)
+
+type Options struct {
+	AlertHandlers             *handlers.AlertHandlers
+	IncidentHandlers          *handlers.IncidentHandlers
+	PlaybookHandlers          *handlers.PlaybookHandlers
+	DashboardHandlers         *handlers.DashboardHandlers
+	WebhookHandlers           *handlers.WebhookHandlers
+	LLMProviderHandlers       *handlers.LLMProviderHandlers
+	MCPServerHandlers         *handlers.MCPServerHandlers
+	UserHandlers              *handlers.UserHandlers
+	AuthHandlers              *handlers.AuthHandlers
+	AccountHandlers           *handlers.AccountHandlers
+	IdentityConfigHandlers    *handlers.IdentityConfigHandlers
+	TagHandlers               *handlers.TagHandlers
+	UploadHandlers            *handlers.UploadHandlers
+	StorageConfigHandlers     *handlers.StorageConfigHandlers
+	SMTPConfigHandlers        *handlers.SMTPConfigHandlers
+	OnCallShiftHandlers       *handlers.OnCallShiftHandlers
+	IncidentSLAHandlers       *handlers.IncidentSLAHandlers
+	EscalationPolicyHandlers  *handlers.EscalationPolicyHandlers
+	AuditExportHandlers       *handlers.AuditExportHandlers
+	DatabaseMigrationHandlers *handlers.DatabaseMigrationHandlers
+	EventsHandlers            *handlers.EventsHandlers
+	// AuthMiddleware guards /api/v1/**. cmd/api builds this as
+	// middleware.JWTAuth(verifier) for AUTH_MODE=jwt/dev (real tokens, real
+	// login works), or middleware.DevHeaderAuth for AUTH_MODE=dev-headers
+	// (bypasses tokens, local development only) -- see cmd/api/main.go.
+	AuthMiddleware func(http.Handler) http.Handler
+}
+
+func NewRouter(opts Options) http.Handler {
+	r := chi.NewRouter()
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(middleware.SecurityHeaders)
+	r.Use(MetricsMiddleware)
+
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	r.Get("/metrics", MetricsHandler)
+
+	// Login endpoints are unauthenticated by definition -- rate limited to prevent brute force attacks
+	loginLimiter := middleware.NewRateLimiter(20, time.Minute)
+	r.Route("/auth", func(auth chi.Router) {
+		auth.Use(loginLimiter)
+		opts.AuthHandlers.Routes(auth)
+	})
+
+	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(opts.AuthMiddleware)
+		// Applies to everything below, including /account itself --
+		// RequirePasswordChanged always lets handlers.ChangePasswordPath
+		// through by comparing the exact request path, so a caller stuck in
+		// the must-change-password state can still reach it.
+		api.Use(middleware.RequirePasswordChanged(handlers.ChangePasswordPath))
+
+		api.Route("/account", opts.AccountHandlers.Routes)
+
+		// Playbooks aren't gated by resourceAccess -- they're shared
+		// reference material for both alerts and incidents, not a scoped
+		// resource type themselves.
+		api.Route("/playbooks", opts.PlaybookHandlers.Routes)
+
+		// Read-only tag catalog, same reasoning as playbooks -- any
+		// authenticated user needs to see it to pick from it when tagging an
+		// alert/incident. Managing the catalog (create/delete) is
+		// admin-only, under /settings/tags below.
+		api.Route("/tags", opts.TagHandlers.Routes)
+
+		// Any authenticated user can upload/fetch an attached image (comment
+		// or alert-close attachments) -- there's only one tenant, so no
+		// per-tenant scoping is needed beyond "must be logged in".
+		api.Route("/uploads/images", opts.UploadHandlers.Routes)
+
+		// Minimal {id, name} directory, not the full admin user list -- see
+		// UserHandlers.Directory's doc comment for why this needs its own
+		// ungated route instead of living under /settings/users.
+		api.Get("/users/directory", opts.UserHandlers.Directory)
+
+		// Same reasoning as playbooks: the dashboard blends alert and
+		// incident KPIs into one summary, so it isn't gated by
+		// resourceAccess either -- a viewer scoped to just one resource type
+		// still gets a coherent (if partially zero) KPI card set.
+		api.Route("/dashboard", opts.DashboardHandlers.Routes)
+
+		// Live alert/incident event stream (see events.Broadcaster) --
+		// ungated by resourceAccess for the same reason /dashboard is: a
+		// viewer scoped to just one resource type still gets a coherent
+		// stream, they just won't act on event types their pages don't show.
+		api.Get("/events/stream", opts.EventsHandlers.Stream)
+
+		// Unlike /dashboard/stats, Follow-up is a real capability of its own
+		// -- a SOC analyst can be granted "followup" without "incidents", so
+		// this needs its own gate rather than living under the ungated
+		// /dashboard group above.
+		api.Group(func(followup chi.Router) {
+			followup.Use(middleware.RequireResourceAccess(domain.ResourceCapabilityFollowup))
+			followup.Route("/dashboard/followup", opts.DashboardHandlers.FollowupRoutes)
+		})
+
+		api.Group(func(alerts chi.Router) {
+			alerts.Use(middleware.RequireResourceAccess("alerts"))
+			alerts.Route("/alerts", opts.AlertHandlers.Routes)
+		})
+
+		api.Group(func(incidents chi.Router) {
+			incidents.Use(middleware.RequireResourceAccess("incidents"))
+			incidents.Route("/incidents", opts.IncidentHandlers.Routes)
+		})
+
+		// Everything under /settings changes shared, tenant-wide
+		// configuration (webhooks, LLM/MCP integrations, user roles,
+		// identity providers) -- admin-only, regardless of resourceAccess.
+		api.Group(func(admin chi.Router) {
+			admin.Use(middleware.RequireRole("admin"))
+			admin.Route("/settings/webhooks", opts.WebhookHandlers.Routes)
+			admin.Route("/settings/llm-providers", opts.LLMProviderHandlers.Routes)
+			admin.Route("/settings/mcp-servers", opts.MCPServerHandlers.Routes)
+			admin.Route("/settings/users", opts.UserHandlers.Routes)
+			admin.Route("/settings/identity-providers", opts.IdentityConfigHandlers.Routes)
+			admin.Route("/settings/tags", opts.TagHandlers.SettingsRoutes)
+			admin.Route("/settings/storage", opts.StorageConfigHandlers.Routes)
+			admin.Route("/settings/smtp", opts.SMTPConfigHandlers.Routes)
+			admin.Route("/settings/on-call-shifts", opts.OnCallShiftHandlers.Routes)
+			admin.Route("/settings/incident-sla", opts.IncidentSLAHandlers.Routes)
+			admin.Route("/settings/escalation-policies", opts.EscalationPolicyHandlers.Routes)
+			admin.Route("/settings/audit-export", opts.AuditExportHandlers.Routes)
+			admin.Route("/settings/database-migration", opts.DatabaseMigrationHandlers.Routes)
+		})
+	})
+
+	return r
+}

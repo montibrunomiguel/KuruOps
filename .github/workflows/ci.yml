@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  backend-ci:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Check Formatting (gofmt)
+        run: |
+          cd backend
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Go Vet
+        run: |
+          cd backend
+          go vet ./...
+
+      - name: Build Binaries
+        run: |
+          cd backend
+          go build -v ./cmd/api
+          go build -v ./cmd/ingest
+          go build -v ./cmd/worker
+
+      - name: Run Backend Unit Tests
+        run: |
+          cd backend
+          go test -v ./...
+
+  frontend-ci:
+    name: Frontend (React / Vite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: TypeScript Typecheck
+        run: |
+          cd frontend
+          npx tsc --noEmit
+
+      - name: Run Frontend Tests (Vitest)
+        run: |
+          cd frontend
+          npm test -- --run
+
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm run build

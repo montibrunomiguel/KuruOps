@@ -1,0 +1,71 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/argusops/argusops/internal/audit"
+	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/repository"
+)
+
+// AuditExportService is Settings -> Audit Export: a pull-based CEF export
+// of the tenant's full alert/incident event history, for feeding into a
+// SIEM (Splunk, ArcSight, QRadar...). See internal/audit for the CEF
+// formatting and AuditRepository.ExportEvents for the underlying keyset
+// pagination.
+type AuditExportService struct {
+	pool *db.Pool
+	repo *repository.AuditRepository
+}
+
+func NewAuditExportService(pool *db.Pool, repo *repository.AuditRepository) *AuditExportService {
+	return &AuditExportService{pool: pool, repo: repo}
+}
+
+// ExportCursor identifies where to resume a paginated export -- opaque to
+// callers beyond round-tripping it through the next request's query params
+// (see AuditExportHandlers).
+type ExportCursor struct {
+	CreatedAt time.Time
+	EventID   string
+}
+
+// ExportCEF returns up to limit events (oldest first) strictly after
+// cursor, formatted as CEF lines, plus the cursor to pass for the next
+// page -- nil once there's nothing left to export (a page shorter than
+// limit is the signal that this was the last one).
+func (s *AuditExportService) ExportCEF(ctx context.Context, tenantID uuid.UUID, cursor *ExportCursor, limit int) ([]string, *ExportCursor, error) {
+	var events []domain.AuditEvent
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		var after *time.Time
+		eventID := ""
+		if cursor != nil {
+			after = &cursor.CreatedAt
+			eventID = cursor.EventID
+		}
+		v, err := s.repo.ExportEvents(ctx, tx, after, eventID, limit)
+		events = v
+		return err
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("export audit events: %w", err)
+	}
+
+	lines := make([]string, len(events))
+	for i, e := range events {
+		lines[i] = audit.FormatCEF(e)
+	}
+
+	var next *ExportCursor
+	if len(events) == limit {
+		last := events[len(events)-1]
+		next = &ExportCursor{CreatedAt: last.CreatedAt, EventID: last.EventID}
+	}
+	return lines, next, nil
+}

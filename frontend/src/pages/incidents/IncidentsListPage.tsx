@@ -1,0 +1,327 @@
+import { useMemo, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "../../auth/AuthContext";
+import { api } from "../../api/client";
+import { usePaginatedList, mutationErrorMessage } from "../../api/hooks";
+import { useEventStream } from "../../api/eventStream";
+import type { Severity } from "../../types/alerts";
+import type { Incident, IncidentPhase, IncidentPriority } from "../../types/incidents";
+import { NIST_PHASE_ORDER } from "../../types/incidents";
+import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges";
+import { TagPicker } from "../../components/TagPicker";
+import { AssigneePicker } from "../../components/AssigneePicker";
+import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { formatRelative, shortId } from "../../lib/format";
+
+type SlaFilter = "" | "breached" | "ok";
+
+export function IncidentsListPage() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [severity, setSeverity] = useState<Severity | "">("");
+  const [priority, setPriority] = useState<IncidentPriority | "">("");
+  const [phase, setPhase] = useState<IncidentPhase | "">("");
+  const [sla, setSla] = useState<SlaFilter>("");
+  const [showCreate, setShowCreate] = useState(false);
+
+  const {
+    items: rawIncidents,
+    loading,
+    loadingMore,
+    error,
+    hasMore,
+    loadMore,
+    reload,
+  } = usePaginatedList<Incident>(
+    (tk, limit, offset) => {
+      const params = new URLSearchParams();
+      if (severity) params.set("severity", severity);
+      if (priority) params.set("priority", priority);
+      if (phase) params.set("phase", phase);
+      params.set("limit", String(limit));
+      params.set("offset", String(offset));
+      return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
+    },
+    [severity, priority, phase],
+  );
+
+  // Live updates: another analyst (or the same one, in another tab)
+  // creating/changing an incident re-fetches the first page from scratch --
+  // same simplification AlertsListPage makes, see its comment.
+  useEventStream((event) => {
+    if (event.type === "incident") reload();
+  });
+
+  // SLA isn't a backend list filter yet -- narrowed client-side on the
+  // already-fetched page, same tradeoff as any other client-side filter on
+  // a paginated set (only applies to what's currently loaded).
+  const incidents = useMemo(() => {
+    if (sla === "breached") return rawIncidents.filter((i) => i.slaBreached);
+    if (sla === "ok") return rawIncidents.filter((i) => !i.slaBreached);
+    return rawIncidents;
+  }, [rawIncidents, sla]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="toolbar-title">
+          <h1 className="page-title">{t("incidents.title")}</h1>
+          <p className="page-sub" style={{ marginBottom: 0 }}>
+            {t("incidents.subtitle")}
+          </p>
+        </div>
+        <WebhookStatusIndicator />
+      </div>
+
+      {showCreate && (
+        <CreateIncidentForm
+          onCancel={() => setShowCreate(false)}
+          onCreated={(id) => {
+            setShowCreate(false);
+            reload();
+            navigate(`/incidents/${id}`);
+          }}
+        />
+      )}
+
+      <div className="filter-bar" style={{ justifyContent: "space-between" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <select className="select" value={severity} onChange={(e) => setSeverity(e.target.value as Severity | "")}>
+            <option value="">{t("dashboard.filters.allSeverities")}</option>
+            <option value="critical">{t("common.severity.critical")}</option>
+            <option value="high">{t("common.severity.high")}</option>
+            <option value="medium">{t("common.severity.medium")}</option>
+            <option value="low">{t("common.severity.low")}</option>
+            <option value="informational">{t("common.severity.informational")}</option>
+          </select>
+          <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as IncidentPriority | "")}>
+            <option value="">{t("dashboard.filters.allPriorities")}</option>
+            <option value="p1">P1</option>
+            <option value="p2">P2</option>
+            <option value="p3">P3</option>
+            <option value="p4">P4</option>
+          </select>
+          <select className="select" value={phase} onChange={(e) => setPhase(e.target.value as IncidentPhase | "")}>
+            <option value="">{t("dashboard.filters.allStatuses")}</option>
+            {NIST_PHASE_ORDER.map((p) => (
+              <option key={p} value={p}>
+                {t(`common.phase.${p}`)}
+              </option>
+            ))}
+          </select>
+          <select className="select" value={sla} onChange={(e) => setSla(e.target.value as SlaFilter)}>
+            <option value="">{t("dashboard.filters.slaAny")}</option>
+            <option value="breached">{t("incidents.table.slaBreached")}</option>
+            <option value="ok">{t("incidents.table.slaOk")}</option>
+          </select>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {!loading && <span className="chart-card-sub">{t("incidents.count", { count: incidents.length })}</span>}
+          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
+            + {t("incidents.newIncident")}
+          </button>
+        </div>
+      </div>
+
+      <div className="panel">
+        {error && <div className="error-banner">{error}</div>}
+        {loading && <div className="empty-state">{t("common.loading")}</div>}
+        {!loading && incidents.length === 0 && <div className="empty-state">{t("incidents.empty")}</div>}
+        {!loading && incidents.length > 0 && (
+          <>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("incidents.table.id")}</th>
+                    <th>{t("incidents.table.title")}</th>
+                    <th>{t("incidents.table.severity")}</th>
+                    <th>{t("incidents.table.priority")}</th>
+                    <th>{t("incidents.table.status")}</th>
+                    <th>{t("incidents.table.assignees")}</th>
+                    <th>{t("incidents.table.sla")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incidents.map((i) => (
+                    <tr key={i.id}>
+                      <td className="mono">
+                        <Link to={`/incidents/${i.id}`} className="row-link-stretch" aria-label={i.title}>
+                          {shortId(i.id)}
+                        </Link>
+                      </td>
+                      <td className="table-title-cell">
+                        {i.title}
+                        {i.tags.length > 0 && (
+                          <div className="tag-chip-list" style={{ marginTop: 4 }}>
+                            {i.tags.map((tag) => (
+                              <span className="tag-chip" key={tag}>
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <SeverityBadge severity={i.severity} />
+                      </td>
+                      <td>
+                        <PriorityBadge priority={i.priority} />
+                      </td>
+                      <td>
+                        <PhasePill phase={i.phase} />
+                      </td>
+                      <td className="table-sub-cell">
+                        {i.assignees.length > 0 ? i.assignees.map((a) => a.name).join(", ") : "—"}
+                      </td>
+                      <td>
+                        <SlaCell incident={i} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {hasMore && (
+              <div style={{ textAlign: "center", marginTop: 14 }}>
+                <button className="btn btn-sm" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? t("common.loading") : t("incidents.loadMore")}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SlaCell({ incident }: { incident: Incident }) {
+  const { t } = useTranslation();
+  if (incident.closedAt) return <span className="table-sub-cell">{t("incidents.table.slaClosed")}</span>;
+  if (incident.slaBreached) {
+    const ago = incident.slaDueAt ? formatRelative(incident.slaDueAt) : "";
+    return <span className="age-text tone-critical">{t("incidents.table.slaBreachedAgo", { time: ago })}</span>;
+  }
+  if (incident.slaDueAt) {
+    return <span className="table-sub-cell">{t("incidents.table.slaRemaining", { time: formatRelative(incident.slaDueAt) })}</span>;
+  }
+  return <span className="badge badge-muted">{t("incidents.table.slaOk")}</span>;
+}
+
+function CreateIncidentForm({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const { token } = useAuth();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [severity, setSeverity] = useState<Severity>("medium");
+  const [priority, setPriority] = useState<IncidentPriority>("p3");
+  const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await api.post<Incident>(
+        "/api/v1/incidents",
+        { title, description, severity, priority, tags, assigneeIds },
+        token,
+      );
+      onCreated(res.id);
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <form onSubmit={handleSubmit} className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-header">
+          <h2 className="modal-title" style={{ marginBottom: 0 }}>
+            {t("incidents.createForm.title")}
+          </h2>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} aria-label={t("common.close")}>
+            ×
+          </button>
+        </div>
+        {error && <div className="error-banner">{error}</div>}
+        <div className="field">
+          <label htmlFor="inc-title">{t("incidents.createForm.titleLabel")}</label>
+          <input
+            id="inc-title"
+            className="input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={t("incidents.createForm.titlePlaceholder")}
+            required
+          />
+        </div>
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="inc-severity">{t("incidents.createForm.severity")}</label>
+            <select
+              id="inc-severity"
+              className="select"
+              value={severity}
+              onChange={(e) => setSeverity(e.target.value as Severity)}
+            >
+              <option value="critical">{t("common.severity.critical")}</option>
+              <option value="high">{t("common.severity.high")}</option>
+              <option value="medium">{t("common.severity.medium")}</option>
+              <option value="low">{t("common.severity.low")}</option>
+              <option value="informational">{t("common.severity.informational")}</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="inc-priority">{t("incidents.createForm.priority")}</label>
+            <select
+              id="inc-priority"
+              className="select"
+              value={priority}
+              onChange={(e) => setPriority(e.target.value as IncidentPriority)}
+            >
+              <option value="p1">P1</option>
+              <option value="p2">P2</option>
+              <option value="p3">P3</option>
+              <option value="p4">P4</option>
+            </select>
+          </div>
+        </div>
+        <div className="field">
+          <label>{t("incidents.createForm.assignees")}</label>
+          <AssigneePicker value={assigneeIds} onChange={setAssigneeIds} />
+        </div>
+        <div className="field">
+          <label htmlFor="inc-desc">{t("incidents.createForm.description")}</label>
+          <textarea
+            id="inc-desc"
+            className="textarea"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={t("incidents.createForm.descriptionPlaceholder")}
+          />
+        </div>
+        <div className="field">
+          <label>{t("incidents.createForm.tags")}</label>
+          <TagPicker value={tags} onChange={setTags} />
+        </div>
+        <button type="submit" className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={submitting}>
+          {submitting ? t("incidents.createForm.submitting") : t("incidents.createForm.submit")}
+        </button>
+      </form>
+    </div>
+  );
+}

@@ -1,0 +1,286 @@
+// Command api serves the REST API consumed by the frontend: alerts,
+// incidents, playbooks, settings. It does not accept webhook traffic
+// (see cmd/ingest) and does not run background jobs (see cmd/worker) —
+// kept separate so each can scale and fail independently in Kubernetes.
+// It is also the only service that issues session tokens: local/LDAP/SAML
+// login all live here (internal/httpserver/handlers/auth.go).
+package main
+
+import (
+	"context"
+	"crypto/rsa"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/argusops/argusops/internal/authn"
+	"github.com/argusops/argusops/internal/config"
+	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/dbmigrate"
+	"github.com/argusops/argusops/internal/events"
+	"github.com/argusops/argusops/internal/httpserver"
+	"github.com/argusops/argusops/internal/httpserver/handlers"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/argusops/argusops/internal/mailer"
+	"github.com/argusops/argusops/internal/repository"
+	"github.com/argusops/argusops/internal/secrets"
+	"github.com/argusops/argusops/internal/service"
+)
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("config load failed", "error", err)
+		os.Exit(1)
+	}
+
+	// AUTH_MODE has three values, two independent concerns:
+	//   - "jwt" (default): real JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH required, JWTAuth enforced.
+	//   - "dev": no key files needed (an ephemeral keypair is generated for this
+	//     process), but auth is still real -- login still issues a token that
+	//     JWTAuth actually verifies. This is what local/docker-compose dev should
+	//     use: it lets the frontend's real login flow work without pre-generating
+	//     keys.
+	//   - "dev-headers": same ephemeral-key convenience as "dev", PLUS swaps in
+	//     DevHeaderAuth, which trusts X-Tenant-ID/X-User-ID headers verbatim and
+	//     ignores the bearer token entirely. Only useful for curling /api/v1
+	//     directly without going through login first; a token from /auth/.../login
+	//     will NOT authenticate against this mode, since DevHeaderAuth never looks
+	//     at it. Never run this outside a developer's own machine.
+	allowEphemeralKeys := cfg.AuthMode == "dev" || cfg.AuthMode == "dev-headers"
+	useDevHeaderAuth := cfg.AuthMode == "dev-headers"
+	if useDevHeaderAuth {
+		logger.Warn("AUTH_MODE=dev-headers: /api/v1 trusts X-Tenant-ID/X-User-ID headers verbatim and ignores bearer tokens, do not run this outside local development")
+	}
+
+	privateKey, publicKey, err := loadOrGenerateJWTKeys(cfg, allowEphemeralKeys, logger)
+	if err != nil {
+		logger.Error("jwt key setup failed", "error", err)
+		os.Exit(1)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("database connection failed", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	// TagService is a dependency of AlertService/IncidentService (tag
+	// catalog validation for UpdateTags), so it's constructed first.
+	tagRepo := repository.NewTagRepository()
+	tagService := service.NewTagService(pool, tagRepo)
+	tagHandlers := handlers.NewTagHandlers(tagService)
+
+	// eventBroadcaster fans out live alert/incident updates over SSE (see
+	// internal/events, EventsHandlers.Stream). In-process only -- it never
+	// sees events from cmd/ingest (a separate container/process that also
+	// constructs its own AlertService, see cmd/ingest/main.go), so ingest's
+	// AlertService.Ingest doesn't get EnableEventPublishing wired here.
+	// A connected browser tab still shows a new alert on its next dashboard
+	// poll/manual reload, it just doesn't get an instant live push for that
+	// specific moment -- everything an analyst does interactively through
+	// cmd/api (status/severity changes, incident create/phase changes) does
+	// push live. Bridging cmd/ingest's events too would need a cross-process
+	// mechanism (Postgres LISTEN/NOTIFY, most likely) -- not attempted here.
+	eventBroadcaster := events.NewBroadcaster()
+	eventsHandlers := handlers.NewEventsHandlers(eventBroadcaster)
+
+	alertRepo := repository.NewAlertRepository()
+	alertService := service.NewAlertService(pool, alertRepo, tagService)
+	alertService.EnableEventPublishing(eventBroadcaster.Publish)
+
+	// userService is needed by IncidentHandlers/AlertHandlers (resolving a
+	// commenter's display name -- see IncidentHandlers.addComment) as well
+	// as its own Settings -> Users & Roles handlers below, so it's
+	// constructed here.
+	userRepo := repository.NewUserRepository()
+	userService := service.NewUserService(pool, userRepo)
+
+	incidentSLARepo := repository.NewIncidentSLARepository()
+	incidentSLAService := service.NewIncidentSLAService(pool, incidentSLARepo)
+	incidentSLAHandlers := handlers.NewIncidentSLAHandlers(incidentSLAService)
+
+	incidentRepo := repository.NewIncidentRepository()
+	incidentService := service.NewIncidentService(pool, incidentRepo, tagService, userRepo, incidentSLAService)
+	incidentService.EnableEventPublishing(eventBroadcaster.Publish)
+
+	// secrets.Store backend is selected by SECRETS_BACKEND -- "env" (default)
+	// is the in-memory dev-only stub (see internal/secrets/store.go), never
+	// durable and never appropriate outside development. Declared here
+	// (moved up from its old spot below) because AIAnalysisService needs it
+	// to resolve the tenant's LLM provider API key.
+	secretStore, err := secrets.NewFromConfig(cfg)
+	if err != nil {
+		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
+		os.Exit(1)
+	}
+	llmProviderRepo := repository.NewLLMProviderRepository()
+
+	// mcpServerRepo/mcpToolService are needed by AIAnalysisService's
+	// agentic tool-use loop (ProposeToolCall), so they're constructed here
+	// rather than down with the rest of MCP Servers settings wiring below.
+	mcpServerRepo := repository.NewMCPServerRepository()
+	mcpServerService := service.NewMCPServerService(pool, mcpServerRepo, secretStore)
+	aiToolCallRepo := repository.NewAIToolCallRepository()
+	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	mcpServerHandlers := handlers.NewMCPServerHandlers(mcpServerService, mcpToolService)
+
+	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), secretStore)
+	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
+
+	auditExportService := service.NewAuditExportService(pool, repository.NewAuditRepository())
+	auditExportHandlers := handlers.NewAuditExportHandlers(auditExportService)
+
+	dbMigrationService := dbmigrate.NewService(cfg.MigrationsPath)
+	dbMigrationHandlers := handlers.NewDatabaseMigrationHandlers(dbMigrationService, pool)
+
+	aiAnalysisRunRepo := repository.NewAIAnalysisRunRepository()
+	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo)
+	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
+
+	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService)
+
+	// AlertHandlers needs IncidentService for the escalate-to-incident route
+	// (see AlertHandlers.escalate), so it's constructed after incidentService.
+	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, userService)
+
+	playbookRepo := repository.NewPlaybookRepository()
+	playbookService := service.NewPlaybookService(pool, playbookRepo)
+	playbookHandlers := handlers.NewPlaybookHandlers(playbookService)
+
+	dashboardRepo := repository.NewDashboardRepository()
+	dashboardService := service.NewDashboardService(pool, dashboardRepo, alertService, incidentService)
+	dashboardHandlers := handlers.NewDashboardHandlers(dashboardService)
+
+	webhookRepo := repository.NewWebhookRepository()
+	webhookService := service.NewWebhookService(pool, webhookRepo)
+	webhookHandlers := handlers.NewWebhookHandlers(webhookService)
+
+	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore)
+	llmProviderHandlers := handlers.NewLLMProviderHandlers(llmProviderService)
+
+	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
+		logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
+		os.Exit(1)
+	}
+	storageConfigRepo := repository.NewStorageConfigRepository()
+	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir)
+	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
+	uploadHandlers := handlers.NewUploadHandlers(storageConfigService, alertService, incidentService)
+
+	smtpConfigRepo := repository.NewSMTPConfigRepository()
+	smtpConfigService := service.NewSMTPConfigService(pool, smtpConfigRepo, secretStore, mailer.SMTPSender{})
+	smtpConfigHandlers := handlers.NewSMTPConfigHandlers(smtpConfigService)
+
+	tenantRepo := repository.NewTenantRepository()
+	onCallShiftService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), userRepo, tenantRepo)
+	onCallShiftHandlers := handlers.NewOnCallShiftHandlers(onCallShiftService)
+	issuer := authn.NewIssuer(privateKey)
+	verifier := authn.NewVerifier(publicKey)
+	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), issuer)
+	userHandlers := handlers.NewUserHandlers(userService, authService)
+
+	identityCfgRepo := repository.NewIdentityConfigRepository()
+	identityCfgService := service.NewIdentityConfigService(pool, identityCfgRepo, secretStore)
+	identityCfgHandlers := handlers.NewIdentityConfigHandlers(identityCfgService)
+
+	ldapAuthService := service.NewLDAPAuthService(pool, identityCfgRepo, secretStore, authService)
+	samlAuthService := service.NewSAMLAuthService(pool, identityCfgRepo, secretStore, authService)
+	identityCfgService.SetOnSAMLConfigSaved(samlAuthService.InvalidateMetadataCache)
+	passwordResetRepo := repository.NewPasswordResetRepository()
+	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
+	authHandlers := handlers.NewAuthHandlers(authService, ldapAuthService, samlAuthService, passwordResetService)
+	accountHandlers := handlers.NewAccountHandlers(authService)
+
+	authMiddleware := middleware.JWTAuth(verifier)
+	if useDevHeaderAuth {
+		authMiddleware = middleware.DevHeaderAuth
+	}
+
+	router := httpserver.NewRouter(httpserver.Options{
+		AlertHandlers:             alertHandlers,
+		IncidentHandlers:          incidentHandlers,
+		PlaybookHandlers:          playbookHandlers,
+		DashboardHandlers:         dashboardHandlers,
+		TagHandlers:               tagHandlers,
+		WebhookHandlers:           webhookHandlers,
+		LLMProviderHandlers:       llmProviderHandlers,
+		MCPServerHandlers:         mcpServerHandlers,
+		UserHandlers:              userHandlers,
+		AuthHandlers:              authHandlers,
+		AccountHandlers:           accountHandlers,
+		IdentityConfigHandlers:    identityCfgHandlers,
+		UploadHandlers:            uploadHandlers,
+		StorageConfigHandlers:     storageConfigHandlers,
+		SMTPConfigHandlers:        smtpConfigHandlers,
+		OnCallShiftHandlers:       onCallShiftHandlers,
+		IncidentSLAHandlers:       incidentSLAHandlers,
+		EscalationPolicyHandlers:  escalationPolicyHandlers,
+		AuditExportHandlers:       auditExportHandlers,
+		DatabaseMigrationHandlers: dbMigrationHandlers,
+		EventsHandlers:            eventsHandlers,
+		AuthMiddleware:            authMiddleware,
+	})
+
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		logger.Info("api listening", "addr", cfg.HTTPAddr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	logger.Info("shutting down")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
+	}
+}
+
+// loadOrGenerateJWTKeys loads the configured RSA keypair, or — only when
+// allowEphemeral is set (AUTH_MODE=dev or dev-headers) with no paths
+// configured — generates an ephemeral one so `task deploy:up`/`make run-api`
+// work without requiring openssl-generated keys first. See
+// authn.GenerateEphemeralKeyPair for why this must never happen outside dev.
+func loadOrGenerateJWTKeys(cfg config.Config, allowEphemeral bool, logger *slog.Logger) (*rsa.PrivateKey, *rsa.PublicKey, error) {
+	if cfg.JWTPrivateKeyPath == "" && cfg.JWTPublicKeyPath == "" {
+		if !allowEphemeral {
+			return nil, nil, errors.New("JWT_PRIVATE_KEY_PATH and JWT_PUBLIC_KEY_PATH are required outside AUTH_MODE=dev/dev-headers")
+		}
+		logger.Warn("no JWT key paths configured: generating an ephemeral keypair for this process only (dev mode)")
+		key, err := authn.GenerateEphemeralKeyPair()
+		if err != nil {
+			return nil, nil, err
+		}
+		return key, &key.PublicKey, nil
+	}
+
+	privateKey, err := authn.LoadPrivateKey(cfg.JWTPrivateKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	publicKey, err := authn.LoadPublicKey(cfg.JWTPublicKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return privateKey, publicKey, nil
+}

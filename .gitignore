@@ -1,0 +1,13 @@
+# Go
+backend/bin/
+backend/jwt_private.pem
+backend/jwt_public.pem
+backend/.env
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Editors / OS
+.DS_Store
+Thumbs.db

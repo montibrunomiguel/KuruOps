@@ -1,0 +1,503 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/repository"
+)
+
+type IncidentService struct {
+	pool    *db.Pool
+	repo    *repository.IncidentRepository
+	tags    *TagService
+	users   *repository.UserRepository
+	sla     *IncidentSLAService
+	publish func(tenantID uuid.UUID, eventType string, payload any)
+}
+
+func NewIncidentService(pool *db.Pool, repo *repository.IncidentRepository, tags *TagService, users *repository.UserRepository, sla *IncidentSLAService) *IncidentService {
+	return &IncidentService{pool: pool, repo: repo, tags: tags, users: users, sla: sla}
+}
+
+// EnableEventPublishing wires a live-update notifier (events.Broadcaster.Publish
+// in practice) -- see AlertService.EnableEventPublishing for the same
+// post-construction-setter reasoning.
+func (s *IncidentService) EnableEventPublishing(publish func(tenantID uuid.UUID, eventType string, payload any)) {
+	s.publish = publish
+}
+
+func (s *IncidentService) publishEvent(tenantID, incidentID uuid.UUID, action string) {
+	if s.publish != nil {
+		s.publish(tenantID, "incident", map[string]any{"id": incidentID, "action": action})
+	}
+}
+
+// resolveAssignees validates every id in userIDs against the active-user
+// directory and returns the matching UserSummary rows, in no particular
+// order. Unlike ingest's silent tag-drop, an unknown/inactive analyst id is
+// a real user mistake worth surfacing immediately -- the whole call is
+// rejected rather than silently dropping the bad id (see Create/SetAssignees).
+func (s *IncidentService) resolveAssignees(ctx context.Context, tx pgx.Tx, userIDs []uuid.UUID) ([]domain.UserSummary, error) {
+	summaries := make([]domain.UserSummary, 0, len(userIDs))
+	for _, id := range userIDs {
+		u, err := s.users.Get(ctx, tx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("analyst %s not found", id)
+			}
+			return nil, fmt.Errorf("load analyst %s: %w", id, err)
+		}
+		if u == nil || !u.IsActive {
+			return nil, fmt.Errorf("analyst %s not found", id)
+		}
+		summaries = append(summaries, domain.UserSummary{ID: u.ID, Name: u.Name})
+	}
+	return summaries, nil
+}
+
+// Get returns the incident, or nil if it doesn't exist, belongs to another
+// tenant, or isn't visible under allowedTags -- see AlertService.Get for
+// why these cases are deliberately indistinguishable to the caller.
+func (s *IncidentService) Get(ctx context.Context, tenantID, id uuid.UUID, allowedTags []string) (*domain.Incident, error) {
+	var inc *domain.Incident
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.Get(ctx, tx, id)
+		if err != nil || v == nil {
+			return err
+		}
+		if !tagsVisible(allowedTags, v.Tags) {
+			return nil
+		}
+		inc = v
+		return nil
+	})
+	return inc, err
+}
+
+func (s *IncidentService) List(ctx context.Context, tenantID uuid.UUID, f repository.ListIncidentsFilter) ([]domain.Incident, error) {
+	var incidents []domain.Incident
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.List(ctx, tx, f)
+		incidents = v
+		return err
+	})
+	return incidents, err
+}
+
+// Create opens a new incident in the 'new' phase and records its first
+// status_history entry, matching "+ New Incident" in the design handoff.
+func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in domain.CreateIncidentInput) (*domain.Incident, error) {
+	// Same catalog rule as UpdateTags -- a tag can only be attached at
+	// creation if it already exists in Settings -> Tags.
+	knownTags, err := s.tags.FilterKnown(ctx, tenantID, in.Tags)
+	if err != nil {
+		return nil, fmt.Errorf("validate tags: %w", err)
+	}
+
+	inc := &domain.Incident{
+		TenantID:    tenantID,
+		Title:       in.Title,
+		Description: in.Description,
+		Severity:    in.Severity,
+		Priority:    in.Priority,
+		Phase:       domain.PhaseNew,
+		Tags:        orEmptySlice(knownTags), // incidents.tags is NOT NULL — see orEmptySlice
+	}
+
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		assignees, err := s.resolveAssignees(ctx, tx, in.AssigneeIDs)
+		if err != nil {
+			return err
+		}
+		dueAt, err := s.sla.DueAt(ctx, tx, inc.Severity, inc.Priority)
+		if err != nil {
+			return err
+		}
+		inc.SLADueAt = dueAt
+		if err := s.repo.Insert(ctx, tx, inc); err != nil {
+			return fmt.Errorf("insert incident: %w", err)
+		}
+		if err := s.repo.SetAssignees(ctx, tx, inc.ID, tenantID, in.AssigneeIDs); err != nil {
+			return fmt.Errorf("set assignees: %w", err)
+		}
+		inc.Assignees = assignees
+		if _, err := s.repo.RecordPhaseEntered(ctx, tx, inc.ID, tenantID, domain.PhaseNew); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]string{"title": inc.Title})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: inc.ID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventCreated,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.publishEvent(tenantID, inc.ID, "created")
+	return inc, nil
+}
+
+// ChangePhase moves the incident to newPhase. Matches the prototype: phase
+// pills allow a direct jump to any phase, no forced linear order. If the
+// jump skips one or more phases forward, an 'phase_skipped' event is logged
+// alongside the normal 'phase_changed' one — visibility for the "may want to
+// enforce or warn on skipping" note in the design handoff, without actually
+// blocking the analyst. "Close Incident" is ChangePhase(..., PhasePostIncident).
+func (s *IncidentService) ChangePhase(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, newPhase domain.IncidentPhase, allowedTags []string) error {
+	changed := false
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		if current.Phase == newPhase {
+			return nil
+		}
+
+		if err := s.repo.UpdatePhase(ctx, tx, incidentID, newPhase); err != nil {
+			return fmt.Errorf("update phase: %w", err)
+		}
+		if _, err := s.repo.RecordPhaseEntered(ctx, tx, incidentID, tenantID, newPhase); err != nil {
+			return err
+		}
+
+		data, _ := json.Marshal(map[string]string{
+			"from": string(current.Phase),
+			"to":   string(newPhase),
+		})
+		if err := s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventPhaseChanged,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		}); err != nil {
+			return err
+		}
+
+		if isForwardSkip(current.Phase, newPhase) {
+			if err := s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+				IncidentID: incidentID,
+				TenantID:   tenantID,
+				EventType:  domain.IncidentEventPhaseSkipped,
+				ActorType:  domain.ActorSystem,
+				Data:       data,
+			}); err != nil {
+				return err
+			}
+		}
+		changed = true
+		return nil
+	})
+	if err == nil && changed {
+		s.publishEvent(tenantID, incidentID, "phase_changed")
+	}
+	return err
+}
+
+// Close moves the incident to PhasePostIncident (like ChangePhase would) and
+// additionally stamps closed_at — a distinct, explicit action from just
+// reaching the post_incident phase via the phase tracker.
+//
+// These two used to be conflated: Close was literally just
+// ChangePhase(..., PhasePostIncident), and IncidentRepository.UpdatePhase
+// stamped closed_at itself the moment phase became post_incident. That meant
+// simply clicking "Post-Incident" in the phase tracker silently closed the
+// incident with no confirmation, which in turn made the frontend's "Close
+// Incident" button (disabled until phase == post_incident, hidden once
+// closedAt is set) permanently unreachable — the instant it would become
+// enabled, it was already hidden. Closing is now only ever stamped here.
+func (s *IncidentService) Close(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, allowedTags []string) error {
+	if err := s.ChangePhase(ctx, tenantID, incidentID, actorID, domain.PhasePostIncident, allowedTags); err != nil {
+		return err
+	}
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.repo.MarkClosed(ctx, tx, incidentID); err != nil {
+			return fmt.Errorf("mark closed: %w", err)
+		}
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventClosed,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       json.RawMessage(`{}`),
+		})
+	})
+}
+
+func isForwardSkip(from, to domain.IncidentPhase) bool {
+	fromIdx, toIdx := from.Index(), to.Index()
+	if fromIdx < 0 || toIdx < 0 {
+		return false
+	}
+	return toIdx-fromIdx > 1
+}
+
+// SetAssignees replaces an incident's full assignee set. Same
+// guard/write/InsertEvent shape as SetSeverityAndPriority; every id in
+// userIDs is validated against the active-user directory first, and the
+// whole call is rejected if any is unknown (see resolveAssignees).
+func (s *IncidentService) SetAssignees(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, userIDs []uuid.UUID, allowedTags []string) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SetAssignees(ctx, tx, incidentID, tenantID, userIDs); err != nil {
+			return fmt.Errorf("set assignees: %w", err)
+		}
+		names := make([]string, len(assignees))
+		for i, a := range assignees {
+			names[i] = a.Name
+		}
+		data, _ := json.Marshal(map[string]any{"assignees": names})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventAssigneesChanged,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+// SetSeverityAndPriority is the NIST Severity x Priority matrix click —
+// always sets both fields together, never one alone.
+func (s *IncidentService) SetSeverityAndPriority(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, severity domain.Severity, priority domain.IncidentPriority, allowedTags []string) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		dueAt, err := s.sla.DueAt(ctx, tx, severity, priority)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SetSeverityAndPriority(ctx, tx, incidentID, severity, priority, dueAt); err != nil {
+			return fmt.Errorf("set severity/priority: %w", err)
+		}
+		data, _ := json.Marshal(map[string]string{"severity": string(severity), "priority": string(priority)})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventSeverityPriority,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+func (s *IncidentService) UpdateDescription(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, description string, allowedTags []string) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		if err := s.repo.UpdateDescription(ctx, tx, incidentID, description); err != nil {
+			return fmt.Errorf("update description: %w", err)
+		}
+		data, _ := json.Marshal(map[string]string{"description": description})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventDescriptionEdited,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+// UpdateTags replaces an incident's tags with the given set, filtered down
+// to whatever's actually registered in Settings -> Tags -- see
+// AlertService.UpdateTags for the same rule on alerts.
+func (s *IncidentService) UpdateTags(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, tags []string, allowedTags []string) error {
+	known, err := s.tags.FilterKnown(ctx, tenantID, tags)
+	if err != nil {
+		return fmt.Errorf("validate tags: %w", err)
+	}
+	known = orEmptySlice(known)
+
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		if err := s.repo.UpdateTags(ctx, tx, incidentID, known); err != nil {
+			return fmt.Errorf("update tags: %w", err)
+		}
+		data, _ := json.Marshal(map[string]any{"tags": known})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventTagsChanged,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+// CorrectPhaseTimestamp is the audit-safe replacement for freely editing a
+// status_history entry's entered_at (see the schema comment in
+// db/migrations/0005_incidents.up.sql). The original entered_at is never
+// touched; this records what it should read as, who changed it, and why.
+func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, phase domain.IncidentPhase, correctedEnteredAt time.Time, reason string) error {
+	if reason == "" {
+		return fmt.Errorf("a correction reason is required")
+	}
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.repo.CorrectPhaseTimestamp(ctx, tx, incidentID, phase, correctedEnteredAt, actorID, reason); err != nil {
+			return fmt.Errorf("correct phase timestamp: %w", err)
+		}
+		data, _ := json.Marshal(map[string]string{
+			"phase":              string(phase),
+			"reason":             reason,
+			"correctedEnteredAt": correctedEnteredAt.Format(time.RFC3339),
+		})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventTimestampCorrected,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+// StatusHistory, Timeline, Comments, AddComment, LinkAlert, UnlinkAlert, and
+// LinkedAlerts below are sub-resources of an incident the caller has
+// already loaded via Get (tag-checked there). They rely on tenant RLS alone
+// rather than repeating the tag check — a reasonable v1 boundary, but note
+// that a client which already knows an out-of-scope incident's ID could
+// still reach these endpoints directly without going through Get first.
+// Closing that gap is a natural follow-up, not done here to keep this pass
+// reviewable.
+func (s *IncidentService) StatusHistory(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentStatusHistoryEntry, error) {
+	var entries []domain.IncidentStatusHistoryEntry
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.ListStatusHistory(ctx, tx, incidentID)
+		entries = v
+		return err
+	})
+	return entries, err
+}
+
+func (s *IncidentService) Timeline(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentEvent, error) {
+	var events []domain.IncidentEvent
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.ListEvents(ctx, tx, incidentID)
+		events = v
+		return err
+	})
+	return events, err
+}
+
+func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, authorID uuid.UUID, authorName, body string, imageURL *string) (*domain.IncidentComment, error) {
+	c := &domain.IncidentComment{
+		IncidentID: incidentID,
+		TenantID:   tenantID,
+		AuthorID:   authorID,
+		AuthorName: authorName,
+		Body:       body,
+		ImageURL:   imageURL,
+	}
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.InsertComment(ctx, tx, c)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *IncidentService) Comments(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentComment, error) {
+	var comments []domain.IncidentComment
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.ListComments(ctx, tx, incidentID)
+		comments = v
+		return err
+	})
+	return comments, err
+}
+
+func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.repo.LinkAlert(ctx, tx, incidentID, alertID, tenantID); err != nil {
+			return fmt.Errorf("link alert: %w", err)
+		}
+		data, _ := json.Marshal(map[string]string{"alertId": alertID.String()})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventAlertLinked,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+func (s *IncidentService) UnlinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.repo.UnlinkAlert(ctx, tx, incidentID, alertID); err != nil {
+			return fmt.Errorf("unlink alert: %w", err)
+		}
+		data, _ := json.Marshal(map[string]string{"alertId": alertID.String()})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  domain.IncidentEventAlertUnlinked,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
+func (s *IncidentService) LinkedAlerts(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.Alert, error) {
+	var alerts []domain.Alert
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.ListLinkedAlerts(ctx, tx, incidentID)
+		alerts = v
+		return err
+	})
+	return alerts, err
+}

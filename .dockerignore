@@ -1,0 +1,9 @@
+frontend/
+docs/
+.task/
+.claude/
+.github/
+*.pem
+.env
+backend/bin/
+backend/coverage.out

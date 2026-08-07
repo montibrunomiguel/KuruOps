@@ -1,0 +1,12 @@
+drop type if exists tool_call_status_enum;
+drop type if exists llm_kind_enum;
+drop type if exists mcp_transport_enum;
+drop type if exists actor_type_enum;
+drop type if exists auth_provider_enum;
+drop type if exists resource_access_enum;
+drop type if exists user_role_enum;
+drop type if exists incident_priority_enum;
+drop type if exists incident_phase_enum;
+drop type if exists classification_enum;
+drop type if exists alert_status_enum;
+drop type if exists severity_enum;

@@ -1,0 +1,250 @@
+version: "3"
+
+vars:
+  APP_PASSWORD: '{{.ARGUSOPS_APP_PASSWORD | default "argusops_app"}}'
+  WORKER_PASSWORD: '{{.ARGUSOPS_WORKER_PASSWORD | default "argusops_worker"}}'
+
+tasks:
+  # ---- Postgres ------------------------------------------------------
+
+  db:up:
+    desc: Start Postgres and wait until it's healthy
+    cmds:
+      # --wait blocks on Compose's own healthcheck polling (see the
+      # postgres healthcheck in docker-compose.yml) instead of a hand-rolled
+      # shell loop -- no dependency on host tools like sleep/seq, which
+      # aren't guaranteed to exist on a bare Windows PATH.
+      - docker compose up -d --wait --wait-timeout 60 postgres
+
+  db:migrate:
+    desc: Apply all pending migrations (db/migrations)
+    cmds:
+      - docker compose run --rm migrate up
+
+  db:migrate:down:
+    desc: "Roll back the last migration (pass N=2 to roll back more)"
+    vars:
+      N: '{{.N | default "1"}}'
+    cmds:
+      - docker compose run --rm migrate down {{.N}}
+
+  db:roles:
+    desc: Create/update the argusops_app + argusops_worker roles (run after db:migrate)
+    cmds:
+      - docker compose exec -T postgres psql -U postgres -d argusops -v app_password="{{.APP_PASSWORD}}" -f - < db/init/argusops_app_role.sql
+      - docker compose exec -T postgres psql -U postgres -d argusops -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/argusops_worker_role.sql
+
+  db:reset:
+    desc: Drop and recreate the local argusops database (DESTRUCTIVE — local dev only)
+    prompt: This drops all data in the local argusops database. Continue?
+    cmds:
+      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'argusops' and pid <> pg_backend_pid()"
+      - docker compose exec -T postgres psql -U postgres -c "drop database if exists argusops"
+      - docker compose exec -T postgres psql -U postgres -c "create database argusops"
+      - task: db:migrate
+      - task: db:roles
+
+  db:down:
+    desc: Stop Postgres (data volume is kept — use `docker compose down -v` to wipe it)
+    cmds:
+      - docker compose stop postgres
+
+  db:psql:
+    desc: Open a psql shell in the running Postgres container
+    interactive: true
+    cmds:
+      - docker compose exec postgres psql -U postgres -d argusops
+
+  db:test:up:
+    desc: Create/migrate a dedicated argusops_test database, reusing the running Postgres container -- for integration tests, never touches the argusops dev database
+    cmds:
+      - task: db:up
+      - |
+        docker compose exec -T postgres psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'argusops_test'" | grep -q 1 || docker compose exec -T postgres psql -U postgres -c "CREATE DATABASE argusops_test"
+      - docker compose run --rm --entrypoint migrate migrate -path=/migrations -database=postgres://postgres:postgres@postgres:5432/argusops_test?sslmode=disable up
+      - docker compose exec -T postgres psql -U postgres -d argusops_test -v app_password="{{.APP_PASSWORD}}" -f - < db/init/argusops_app_role.sql
+      - docker compose exec -T postgres psql -U postgres -d argusops_test -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/argusops_worker_role.sql
+
+  db:test:reset:
+    desc: Drop and recreate argusops_test from scratch (DESTRUCTIVE -- test data only, never touches the argusops dev database)
+    cmds:
+      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'argusops_test' and pid <> pg_backend_pid()"
+      - docker compose exec -T postgres psql -U postgres -c "drop database if exists argusops_test"
+      - task: db:test:up
+
+  # ---- Backend (Go) ---------------------------------------------------
+
+  backend:build:
+    desc: Build the three Go binaries into backend/bin/
+    dir: backend
+    cmds:
+      - go build -o bin/api ./cmd/api
+      - go build -o bin/ingest ./cmd/ingest
+      - go build -o bin/worker ./cmd/worker
+
+  backend:vet:
+    desc: go build + go vet + gofmt check (no live dependencies needed)
+    dir: backend
+    cmds:
+      - go build ./...
+      - go vet ./...
+      - |
+        unformatted=$(gofmt -l .)
+        if [ -n "$unformatted" ]; then
+          echo "gofmt would reformat:" >&2
+          echo "$unformatted" >&2
+          exit 1
+        fi
+
+  backend:test:
+    desc: Run backend Go tests (pure unit tests only -- DB-dependent tests skip themselves without TEST_DATABASE_URL)
+    dir: backend
+    cmds:
+      - go test ./...
+
+  backend:test:integration:
+    desc: Run the full backend Go test suite (unit + integration) against a real Postgres, with coverage
+    dir: backend
+    deps: [db:test:up]
+    env:
+      TEST_DATABASE_URL: 'postgres://argusops_app:{{.APP_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/argusops_test?sslmode=disable
+      # Deliberately the real least-privilege role cmd/worker connects as in
+      # production, not the superuser admin URL above -- a permission gap
+      # (e.g. missing UPDATE on a table a new worker job needs) only shows up
+      # against this role. Superuser bypasses ALL grants, not just RLS, so it
+      # would silently mask exactly this kind of bug.
+      TEST_DATABASE_WORKER_URL: 'postgres://argusops_worker:{{.WORKER_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
+    cmds:
+      - go test ./... -coverprofile=coverage.out -covermode=atomic
+      - go tool cover -func=coverage.out | tail -1
+
+  db:migration-target:up:
+    desc: Start a second, standalone local Postgres container standing in for a customer's external database -- only for internal/dbmigrate's own integration test
+    cmds:
+      - docker compose --profile tools up -d --wait --wait-timeout 60 postgres-target
+
+  backend:test:migration:
+    desc: Run the external-database-migration feature's integration test against a second local Postgres (see db:migration-target:up)
+    dir: backend
+    # db:test:reset (not db:test:up) -- the test resolves "the" tenant the
+    # same way production does (oldest row in `tenants`), so it needs a
+    # freshly reset argusops_test with no leftover tenants from other
+    # tests/runs, or it migrates the wrong tenant's data.
+    deps: [db:test:reset, db:migration-target:up]
+    env:
+      TEST_DATABASE_URL: 'postgres://argusops_app:{{.APP_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/argusops_test?sslmode=disable
+      TEST_MIGRATION_TARGET_ENABLED: "1"
+      TEST_MIGRATION_TARGET_HOST: localhost
+      TEST_MIGRATION_TARGET_PORT: "5433"
+      TEST_MIGRATION_TARGET_DB: argusops_target
+      TEST_MIGRATION_TARGET_USER: postgres
+      TEST_MIGRATION_TARGET_PASSWORD: postgres
+    cmds:
+      - go test ./internal/dbmigrate/... -v
+
+  backend:keys:
+    desc: Generate a local RSA keypair for JWT signing (only needed outside AUTH_MODE=dev)
+    dir: backend
+    status:
+      - test -f jwt_private.pem
+      - test -f jwt_public.pem
+    cmds:
+      - openssl genrsa -out jwt_private.pem 2048
+      - openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+
+  # ---- Frontend (React/Vite) ------------------------------------------
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: frontend
+    sources:
+      - package.json
+      - package-lock.json
+    cmds:
+      - npm install
+
+  frontend:typecheck:
+    desc: TypeScript typecheck, no emit
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npx tsc --noEmit
+
+  frontend:build:
+    desc: Production build (also typechecks — see package.json)
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm run build
+
+  frontend:dev:
+    desc: Start the Vite dev server (proxies /api and /auth to localhost:8080) -- hot reload, for UI development
+    dir: frontend
+    deps: [frontend:install]
+    interactive: true
+    cmds:
+      - npm run dev
+
+  frontend:test:
+    desc: Run the frontend unit/component test suite (Vitest)
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm run test
+
+  frontend:test:coverage:
+    desc: Run the frontend test suite with a coverage report
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm run test:coverage
+
+  # ---- Deploy (Docker Compose: postgres + api + ingest + worker + frontend) ----
+
+  deploy:up:
+    desc: Build images and bring up the full stack locally (backend + frontend, no hot reload)
+    cmds:
+      - task: db:up
+      - task: db:migrate
+      - task: db:roles
+      # --wait uses the healthchecks in docker-compose.yml; worker has no
+      # HTTP endpoint to probe, so --wait just confirms it's running.
+      - docker compose up -d --wait --wait-timeout 90 --build api ingest worker frontend
+      - 'echo "web UI:  http://localhost:3000"'
+      - 'echo "api:     http://localhost:8080"'
+      - 'echo "ingest:  http://localhost:8081"'
+
+  deploy:down:
+    desc: Stop the full stack (keeps the Postgres data volume)
+    cmds:
+      - docker compose down
+
+  deploy:logs:
+    desc: Follow logs from every running service
+    interactive: true
+    cmds:
+      - docker compose logs -f
+
+  # ---- Tests -----------------------------------------------------------
+
+  test:
+    desc: Everything that doesn't need a live deploy — build/vet/format/typecheck/unit tests
+    cmds:
+      - task: backend:vet
+      - task: backend:test
+      - task: frontend:typecheck
+      - task: frontend:test
+      - task: frontend:build
+
+  test:smoke:
+    desc: End-to-end smoke test against a real local deploy (brings the stack up first)
+    cmds:
+      - task: deploy:up
+      - bash scripts/smoke-test.sh
+
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list

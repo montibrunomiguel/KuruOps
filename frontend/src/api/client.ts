@@ -1,0 +1,143 @@
+// Thin fetch wrapper for /api/v1/**. Every call needs the caller's bearer
+// token explicitly (no hidden global) so it's obvious at each call site
+// that these endpoints are authenticated -- see useAuth() for where the
+// token actually comes from.
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "ApiError";
+  }
+}
+
+interface RequestOptions {
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  body?: unknown;
+  token: string | null;
+}
+
+// refreshHandler is registered by AuthProvider (see auth/AuthContext.tsx) so
+// this module -- which has no React state of its own -- can transparently
+// retry a single 401 by exchanging the stored refresh token for a new
+// access token via POST /auth/refresh, instead of every caller having to
+// handle expiry itself. inFlight dedupes concurrent 401s into one refresh
+// call: the backend rotates the refresh token on every use
+// (AuthService.Refresh), so two parallel refresh attempts would race and
+// the loser's rotated-away token would fail.
+type RefreshHandler = () => Promise<string | null>;
+let refreshHandler: RefreshHandler | null = null;
+let inFlight: Promise<string | null> | null = null;
+
+export function setRefreshHandler(fn: RefreshHandler | null) {
+  refreshHandler = fn;
+}
+
+function refreshOnce(): Promise<string | null> {
+  if (!refreshHandler) return Promise.resolve(null);
+  if (!inFlight) {
+    inFlight = refreshHandler().finally(() => {
+      inFlight = null;
+    });
+  }
+  return inFlight;
+}
+
+async function request<T>(path: string, opts: RequestOptions, isRetry = false): Promise<T> {
+  const res = await fetch(path, {
+    method: opts.method ?? "GET",
+    headers: {
+      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const payload = isJson ? await res.json().catch(() => undefined) : undefined;
+
+  if (!res.ok) {
+    // Only authenticated requests (opts.token set) are eligible for a
+    // refresh-and-retry -- login/refresh itself pass token: null, so this
+    // can't loop back into refreshing off of a refresh failure.
+    if (res.status === 401 && !isRetry && opts.token) {
+      const newToken = await refreshOnce();
+      if (newToken) {
+        return request<T>(path, { ...opts, token: newToken }, true);
+      }
+    }
+    const message =
+      (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
+      res.statusText ||
+      "Erro inesperado";
+    throw new ApiError(res.status, message);
+  }
+
+  return payload as T;
+}
+
+export const api = {
+  get: <T>(path: string, token: string | null) => request<T>(path, { token }),
+  post: <T>(path: string, body: unknown, token: string | null) =>
+    request<T>(path, { method: "POST", body, token }),
+  put: <T>(path: string, body: unknown, token: string | null) =>
+    request<T>(path, { method: "PUT", body, token }),
+  del: <T>(path: string, token: string | null) => request<T>(path, { method: "DELETE", token }),
+  // kind/id identify the alert or incident the evidence is attached to --
+  // the backend uses them to build the storage key
+  // (<Alert|Incident>/yyyy/mm/dd/id_Title/file.ext) and to enforce the same
+  // tag-visibility rule every other alert/incident endpoint does.
+  uploadImage: async (
+    file: File,
+    kind: "alert" | "incident",
+    id: string,
+    token: string | null,
+  ): Promise<{ url: string }> => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("kind", kind);
+    form.append("id", id);
+    // No Content-Type header here -- the browser sets multipart/form-data
+    // with the right boundary itself; setting it manually drops the
+    // boundary and the server can't parse the form.
+    const res = await fetch("/api/v1/uploads/images", {
+      method: "POST",
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: form,
+    });
+    const payload = await res.json().catch(() => undefined);
+    if (!res.ok) {
+      const message =
+        (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
+        res.statusText ||
+        "Erro inesperado";
+      throw new ApiError(res.status, message);
+    }
+    return payload as { url: string };
+  },
+  // For endpoints that respond with a downloadable file (Content-Disposition:
+  // attachment) rather than JSON -- e.g. the CEF audit export. request<T>
+  // above assumes a JSON body, so this bypasses it entirely rather than
+  // trying to make one function handle both shapes.
+  downloadFile: async (path: string, token: string | null): Promise<{ blob: Blob; filename: string }> => {
+    const res = await fetch(path, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => undefined);
+      const message =
+        (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
+        res.statusText ||
+        "Erro inesperado";
+      throw new ApiError(res.status, message);
+    }
+    const disposition = res.headers.get("content-disposition") ?? "";
+    const match = /filename="([^"]+)"/.exec(disposition);
+    return { blob: await res.blob(), filename: match ? match[1] : "download" };
+  },
+};
