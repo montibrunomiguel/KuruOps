@@ -4,6 +4,7 @@ backend/jwt_private.pem
 backend/jwt_public.pem
 backend/.env
 backend/coverage.out
+backend/.dev-keys/
 
 # Node
 frontend/node_modules/

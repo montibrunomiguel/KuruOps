@@ -100,6 +100,30 @@ func TestLoadPrivateKey(t *testing.T) {
 	})
 }
 
+func TestSaveKeyPair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "dev-keys")
+	key, err := authn.GenerateEphemeralKeyPair()
+	require.NoError(t, err)
+
+	require.NoError(t, authn.SaveKeyPair(dir, key))
+
+	t.Run("round-trips through LoadPrivateKey/LoadPublicKey", func(t *testing.T) {
+		loadedPriv, err := authn.LoadPrivateKey(filepath.Join(dir, "jwt_private.pem"))
+		require.NoError(t, err)
+		assert.Equal(t, key.N, loadedPriv.N)
+
+		loadedPub, err := authn.LoadPublicKey(filepath.Join(dir, "jwt_public.pem"))
+		require.NoError(t, err)
+		assert.Equal(t, key.PublicKey.N, loadedPub.N)
+	})
+
+	t.Run("creates missing parent directories", func(t *testing.T) {
+		info, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+}
+
 func TestLoadPublicKey(t *testing.T) {
 	dir := t.TempDir()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)

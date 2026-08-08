@@ -10,10 +10,12 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,10 +44,12 @@ func main() {
 
 	// AUTH_MODE has three values, two independent concerns:
 	//   - "jwt" (default): real JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH required, JWTAuth enforced.
-	//   - "dev": no key files needed (an ephemeral keypair is generated for this
-	//     process), but auth is still real -- login still issues a token that
-	//     JWTAuth actually verifies. This is what local/docker-compose dev should
-	//     use: it lets the frontend's real login flow work without pre-generating
+	//   - "dev": no key files needed (a keypair is generated once and persisted
+	//     under cfg.DevKeysDir -- see loadOrGenerateJWTKeys -- so it survives
+	//     restarts instead of invalidating every session on every deploy), but
+	//     auth is still real -- login still issues a token that JWTAuth
+	//     actually verifies. This is what local/docker-compose dev should use:
+	//     it lets the frontend's real login flow work without pre-generating
 	//     keys.
 	//   - "dev-headers": same ephemeral-key convenience as "dev", PLUS swaps in
 	//     DevHeaderAuth, which trusts X-Tenant-ID/X-User-ID headers verbatim and
@@ -262,18 +266,36 @@ func main() {
 
 // loadOrGenerateJWTKeys loads the configured RSA keypair, or — only when
 // allowEphemeral is set (AUTH_MODE=dev or dev-headers) with no paths
-// configured — generates an ephemeral one so `task deploy:up`/`make run-api`
-// work without requiring openssl-generated keys first. See
-// authn.GenerateEphemeralKeyPair for why this must never happen outside dev.
+// configured — loads a previously-generated one from cfg.DevKeysDir, or
+// generates and persists a new one there if this is the first run. Every
+// restart after the first reuses the same keypair (so a token issued before
+// a restart still verifies after it), instead of a fresh one invalidating
+// every session on every `task deploy:up`. See authn.GenerateEphemeralKeyPair
+// for why this generated keypair must never be used outside dev.
 func loadOrGenerateJWTKeys(cfg config.Config, allowEphemeral bool, logger *slog.Logger) (*rsa.PrivateKey, *rsa.PublicKey, error) {
 	if cfg.JWTPrivateKeyPath == "" && cfg.JWTPublicKeyPath == "" {
 		if !allowEphemeral {
 			return nil, nil, errors.New("JWT_PRIVATE_KEY_PATH and JWT_PUBLIC_KEY_PATH are required outside AUTH_MODE=dev/dev-headers")
 		}
-		logger.Warn("no JWT key paths configured: generating an ephemeral keypair for this process only (dev mode)")
+
+		devPrivatePath := filepath.Join(cfg.DevKeysDir, "jwt_private.pem")
+		devPublicPath := filepath.Join(cfg.DevKeysDir, "jwt_public.pem")
+		if privateKey, err := authn.LoadPrivateKey(devPrivatePath); err == nil {
+			publicKey, err := authn.LoadPublicKey(devPublicPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("load persisted dev jwt public key: %w", err)
+			}
+			logger.Info("loaded persisted dev jwt keypair", "dir", cfg.DevKeysDir)
+			return privateKey, publicKey, nil
+		}
+
+		logger.Warn("no persisted dev jwt keypair found: generating and saving one (dev mode)", "dir", cfg.DevKeysDir)
 		key, err := authn.GenerateEphemeralKeyPair()
 		if err != nil {
 			return nil, nil, err
+		}
+		if err := authn.SaveKeyPair(cfg.DevKeysDir, key); err != nil {
+			return nil, nil, fmt.Errorf("save dev jwt keypair: %w", err)
 		}
 		return key, &key.PublicKey, nil
 	}

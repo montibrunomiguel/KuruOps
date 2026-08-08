@@ -17,6 +17,27 @@ services:
       timeout: 5s
       retries: 20
 
+  # Real HashiCorp Vault in dev mode (in-memory storage, auto-unsealed, a KV
+  # v2 engine already mounted at secret/) -- backs internal/secrets.VaultStore's
+  # own integration test (see Taskfile.yml's backend:test:vault). Root token
+  # is fixed and public on purpose: this is throwaway dev-mode Vault, never
+  # start it this way outside a laptop. No volume: in-memory, gone on stop.
+  vault-dev:
+    image: hashicorp/vault:latest
+    profiles: ["tools"]
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8200/v1/sys/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   # A second, standalone Postgres instance standing in for a customer's
   # external database -- only internal/dbmigrate's own integration test
   # points at this (see Taskfile.yml's backend:test:migration), never
@@ -68,13 +89,15 @@ services:
       # whole point of row-level security actually applying.
       DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
       HTTP_ADDR: :8080
-      # AUTH_MODE=dev generates a throwaway JWT keypair instead of requiring
+      # AUTH_MODE=dev generates a JWT keypair (persisted under DEV_KEYS_DIR,
+      # see the dev-jwt-keys volume below) instead of requiring
       # JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH for a one-command local
       # deploy, but auth is still real -- login still issues a token that's
       # actually verified (see backend/cmd/api/main.go). Never do this
       # outside local dev -- switch to jwt + mount real keys for anything
       # resembling production.
       AUTH_MODE: ${AUTH_MODE:-dev}
+      DEV_KEYS_DIR: /app/.dev-keys
       UPLOAD_DIR: /data/uploads
       # Encrypts secrets.PersistentEnvStore's rows in Postgres (secret_store
       # table) -- the default dev value below is fine for local Docker
@@ -84,6 +107,13 @@ services:
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
     volumes:
       - uploads:/data/uploads
+      # Survives `docker compose restart`/`down` (without -v) so the
+      # AUTH_MODE=dev keypair generated on first boot doesn't get thrown
+      # away and regenerated -- see DEV_KEYS_DIR above and
+      # cmd/api/main.go's loadOrGenerateJWTKeys. A `docker compose down -v`
+      # wipes it same as the Postgres data volume, which is fine: it's
+      # local dev convenience, not anything that needs to survive that.
+      - dev-jwt-keys:/app/.dev-keys
     ports:
       - "8080:8080"
     depends_on:
@@ -159,3 +189,4 @@ services:
 volumes:
   pgdata:
   uploads:
+  dev-jwt-keys:
