@@ -287,6 +287,56 @@ func (s *IncidentService) SetAssignees(ctx context.Context, tenantID, incidentID
 	})
 }
 
+// SetRole replaces role's whole assignee set on incident -- additive to
+// SetAssignees, see domain.Incident.Roles's doc comment for why these are
+// two separate concepts. For a single-assignee role (Commander, Technical
+// Lead) userIDs must have at most one element, rejected with a clear error
+// otherwise rather than letting it fail opaquely against the DB's partial
+// unique index (see IncidentRepository.SetRole).
+func (s *IncidentService) SetRole(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, role domain.IncidentRole, userIDs []uuid.UUID, allowedTags []string) error {
+	if !role.Valid() {
+		return fmt.Errorf("unknown incident role %q", role)
+	}
+	if role.SingleAssignee() && len(userIDs) > 1 {
+		return fmt.Errorf("role %s allows at most one person", role)
+	}
+
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		current, err := s.repo.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SetRole(ctx, tx, incidentID, tenantID, role, userIDs); err != nil {
+			return fmt.Errorf("set role: %w", err)
+		}
+
+		eventType := domain.IncidentEventRoleAssigned
+		if len(assignees) == 0 {
+			eventType = domain.IncidentEventRoleUnassigned
+		}
+		names := make([]string, len(assignees))
+		for i, a := range assignees {
+			names[i] = a.Name
+		}
+		data, _ := json.Marshal(map[string]any{"role": role, "assignees": names})
+		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+			IncidentID: incidentID,
+			TenantID:   tenantID,
+			EventType:  eventType,
+			ActorType:  domain.ActorUser,
+			ActorID:    &actorID,
+			Data:       data,
+		})
+	})
+}
+
 // SetSeverityAndPriority is the NIST Severity x Priority matrix click —
 // always sets both fields together, never one alone.
 func (s *IncidentService) SetSeverityAndPriority(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, severity domain.Severity, priority domain.IncidentPriority, allowedTags []string) error {

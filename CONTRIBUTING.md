@@ -32,7 +32,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 ## Development Workflow
 
-- **Backend Development**: Go code resides in `backend/`. Run `task backend:vet` and `task backend:test` before submitting PRs.
+- **Backend Development**: Go code resides in `backend/`. Run `task backend:vet`, `task backend:lint` (golangci-lint), and `task backend:test` before submitting PRs.
 - **Frontend Development**: React + Vite + TS code resides in `frontend/`. For UI hot reload, run `task frontend:dev`.
 - **Database Migrations**: Database changes are managed via `golang-migrate` under `db/migrations/`.
 
@@ -41,15 +41,24 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 Before submitting a Pull Request, make sure all tests pass:
 
 ```bash
-task test         # Runs backend vet, Go tests, frontend typecheck, vitest, and build
+task test         # backend vet/lint/vulncheck/tests + frontend typecheck/lint/audit/vitest/build
 task test:smoke   # Runs full end-to-end HTTP/RLS smoke test against local deploy
+```
+
+`task test` doesn't need a live Postgres. Two more checks do, and aren't included above:
+
+```bash
+task backend:test:coverage-gate   # integration suite w/ coverage, fails if it dropped vs. backend/coverage-baseline.txt
+task backend:test:migration       # external-database-migration feature's own integration test (see its Taskfile entry)
 ```
 
 ## Pull Request Guidelines
 
 1. Create a descriptive feature branch: `git checkout -b feature/my-cool-feature` or `fix/issue-description`.
 2. Commit your changes with clear commit messages (e.g. `feat(ingest): add Wazuh webhook normalizer`).
-3. Ensure code formatting is clean (`gofmt` for Go, Prettier/ESLint for TypeScript).
+3. Ensure code formatting is clean (`gofmt` for Go) and lint passes (`task backend:lint` /
+   `npm run lint`). The frontend still has no Prettier configured — `npm run typecheck` covers
+   formatting-adjacent type errors, but not style.
 4. Make sure all automated tests pass.
 5. Push to your fork and submit a Pull Request to the `main` branch.
 

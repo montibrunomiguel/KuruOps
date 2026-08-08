@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,9 +32,27 @@ type StatsFilter struct {
 	AlertStatus   *domain.AlertStatus
 	AlertSource   *string
 	AlertTag      *string
+	// AssignedAnalystID narrows every alert-derived figure to one analyst's
+	// alerts -- the Alerts tab's new analyst filter.
+	AssignedAnalystID *uuid.UUID
 
 	IncidentSeverity *domain.Severity
 	IncidentTag      *string
+	// CommanderID narrows every incident-derived figure to incidents where
+	// this user holds the 'commander' role (see incident_role_assignments) --
+	// the Incidents tab's new commander filter.
+	CommanderID *uuid.UUID
+
+	// Since/Until restrict every count/breakdown below to alerts received (or
+	// incidents opened) within [Since, Until] -- the Dashboard's time-range
+	// filter, either endpoint optional. Applied to the same alert/incident-
+	// derived figures AllowedTags scopes; AlertTrend/IncidentTrend/the 30-day
+	// MTTA-MTTR average stay on their own fixed lookback windows regardless
+	// (see alertTrend's doc comment -- the materialized views they read from
+	// have no per-request-filterable dimension without restructuring the
+	// view itself).
+	Since *time.Time
+	Until *time.Time
 
 	// AllowedTags scopes every figure below (live counts, breakdowns) to the
 	// caller's tag-based access -- same "empty means unrestricted" semantics
@@ -118,6 +137,12 @@ func (r *DashboardRepository) Stats(ctx context.Context, tx pgx.Tx, tenantID uui
 	}
 	stats.AlertTrend = trend
 
+	incidentTrend, err := r.incidentTrend(ctx, tx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	stats.IncidentTrend = incidentTrend
+
 	if stats.AlertsBySeverity, err = countGroupedBy(ctx, tx, "alerts", "severity", alertWhere, alertArgs); err != nil {
 		return nil, fmt.Errorf("alerts by severity: %w", err)
 	}
@@ -130,8 +155,81 @@ func (r *DashboardRepository) Stats(ctx context.Context, tx pgx.Tx, tenantID uui
 	if stats.IncidentsByPhase, err = countGroupedBy(ctx, tx, "incidents", "phase", incidentWhere, incidentArgs); err != nil {
 		return nil, fmt.Errorf("incidents by phase: %w", err)
 	}
+	if stats.AlertsByAnalyst, err = r.alertsByAnalyst(ctx, tx, alertWhere, alertArgs); err != nil {
+		return nil, fmt.Errorf("alerts by analyst: %w", err)
+	}
+	if stats.IncidentsByCommander, err = r.incidentsByCommander(ctx, tx, incidentWhere, incidentArgs); err != nil {
+		return nil, fmt.Errorf("incidents by commander: %w", err)
+	}
 
 	return stats, nil
+}
+
+// alertsByAnalyst groups every alert matching where/args by
+// assigned_analyst_id, joined to the analyst's current name -- an
+// unassigned alert (assigned_analyst_id is null) groups into its own row
+// with Name left "" so the frontend renders its own localized "Unassigned"
+// label rather than a hardcoded English string coming from the backend.
+func (r *DashboardRepository) alertsByAnalyst(ctx context.Context, tx pgx.Tx, where string, args []any) ([]domain.NamedCount, error) {
+	query := `
+		select a.assigned_analyst_id, coalesce(u.name, ''), count(*)
+		from alerts a left join users u on u.id = a.assigned_analyst_id` + where + `
+		group by a.assigned_analyst_id, u.name
+		order by count(*) desc`
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query alerts by analyst: %w", err)
+	}
+	defer rows.Close()
+
+	counts := []domain.NamedCount{}
+	for rows.Next() {
+		var c domain.NamedCount
+		if err := rows.Scan(&c.ID, &c.Name, &c.Count); err != nil {
+			return nil, fmt.Errorf("scan alerts by analyst: %w", err)
+		}
+		counts = append(counts, c)
+	}
+	return counts, rows.Err()
+}
+
+// incidentsByCommander is alertsByAnalyst's incident-side counterpart --
+// but unlike assigned_analyst_id, there's no commander_id column on
+// incidents to group by directly (it's normalized into
+// incident_role_assignments, see that table's migration), so this joins
+// through it instead. An incident with no commander assigned yet groups
+// into the same nil-ID/empty-Name "unassigned" bucket. The grouping itself
+// happens in an inner subquery scoped to just incidents+incident_role_assignments
+// (where's bare column references, e.g. CommanderID's own "incidents.id in
+// (...)" clause, are unambiguous) -- users is only joined in the outer
+// query, purely for the display name, specifically so introducing it never
+// makes a bare "id" reference ambiguous inside where.
+func (r *DashboardRepository) incidentsByCommander(ctx context.Context, tx pgx.Tx, where string, args []any) ([]domain.NamedCount, error) {
+	query := `
+		select grouped.commander_id, coalesce(u.name, ''), grouped.cnt
+		from (
+			select ra.user_id as commander_id, count(*) as cnt
+			from incidents
+			left join incident_role_assignments ra on ra.incident_id = incidents.id and ra.role = 'commander'` + where + `
+			group by ra.user_id
+		) grouped
+		left join users u on u.id = grouped.commander_id
+		order by grouped.cnt desc`
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query incidents by commander: %w", err)
+	}
+	defer rows.Close()
+
+	counts := []domain.NamedCount{}
+	for rows.Next() {
+		var c domain.NamedCount
+		if err := rows.Scan(&c.ID, &c.Name, &c.Count); err != nil {
+			return nil, fmt.Errorf("scan incidents by commander: %w", err)
+		}
+		counts = append(counts, c)
+	}
+	return counts, rows.Err()
 }
 
 // alertFilterClause/incidentFilterClause build a `where ...` fragment (or
@@ -157,6 +255,18 @@ func alertFilterClause(f StatsFilter) (string, []any) {
 		args = append(args, *f.AlertTag)
 		clauses = append(clauses, fmt.Sprintf("$%d = any(tags)", len(args)))
 	}
+	if f.Since != nil {
+		args = append(args, *f.Since)
+		clauses = append(clauses, fmt.Sprintf("received_at >= $%d", len(args)))
+	}
+	if f.Until != nil {
+		args = append(args, *f.Until)
+		clauses = append(clauses, fmt.Sprintf("received_at <= $%d", len(args)))
+	}
+	if f.AssignedAnalystID != nil {
+		args = append(args, *f.AssignedAnalystID)
+		clauses = append(clauses, fmt.Sprintf("assigned_analyst_id = $%d", len(args)))
+	}
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
 		clauses = append(clauses, fmt.Sprintf("tags && $%d", len(args)))
@@ -174,6 +284,26 @@ func incidentFilterClause(f StatsFilter) (string, []any) {
 	if f.IncidentTag != nil {
 		args = append(args, *f.IncidentTag)
 		clauses = append(clauses, fmt.Sprintf("$%d = any(tags)", len(args)))
+	}
+	if f.Since != nil {
+		args = append(args, *f.Since)
+		clauses = append(clauses, fmt.Sprintf("opened_at >= $%d", len(args)))
+	}
+	if f.Until != nil {
+		args = append(args, *f.Until)
+		clauses = append(clauses, fmt.Sprintf("opened_at <= $%d", len(args)))
+	}
+	if f.CommanderID != nil {
+		args = append(args, *f.CommanderID)
+		// incidents.id (table-qualified, not "id" bare) so this stays valid
+		// both against plain `from incidents` call sites and against
+		// incidentsByCommander's own incidents-plus-incident_role_assignments
+		// join, where a bare "id" would be ambiguous the moment users (which
+		// also has an id column) enters the same query scope.
+		clauses = append(clauses, fmt.Sprintf(
+			"incidents.id in (select incident_id from incident_role_assignments where role = 'commander' and user_id = $%d)",
+			len(args),
+		))
 	}
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
@@ -227,6 +357,33 @@ func (r *DashboardRepository) alertTrend(ctx context.Context, tx pgx.Tx, tenantI
 	return points, rows.Err()
 }
 
+// incidentTrend is alertTrend's incident-side counterpart, reading from
+// mv_incident_daily_stats instead -- see IncidentTrendPoint's doc comment
+// for why there's no MTTR figure alongside the count.
+func (r *DashboardRepository) incidentTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]domain.IncidentTrendPoint, error) {
+	rows, err := tx.Query(ctx, `
+		select to_char(day, 'YYYY-MM-DD'), incident_count
+		from mv_incident_daily_stats
+		where tenant_id = $1 and day >= now() - interval '14 days'
+		order by day asc`,
+		tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("incident trend: %w", err)
+	}
+	defer rows.Close()
+
+	points := []domain.IncidentTrendPoint{}
+	for rows.Next() {
+		var p domain.IncidentTrendPoint
+		if err := rows.Scan(&p.Day, &p.IncidentCount); err != nil {
+			return nil, fmt.Errorf("scan incident trend point: %w", err)
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
+}
+
 // countGroupedBy is a small helper for the "distribution across every row
 // matching the current filter" breakdown charts (severity, status,
 // priority, phase) -- table/column are always call-site constants (never
@@ -263,11 +420,17 @@ func countGroupedBy(ctx context.Context, tx pgx.Tx, table, column, where string,
 // kind narrows the feed to "alert" or "incident" only (the Alerts dashboard
 // tab must never show incident activity and vice versa); "" means no
 // filter. allowedTags scopes every branch to the caller's tag-based access
-// (empty = unrestricted), same semantics as StatsFilter.AllowedTags. Each
-// UNION leg is a plain SELECT, so a WHERE clause can't scope individual
-// legs -- the branches are built conditionally in Go instead, and the tags
-// clause is appended to each one that needs it.
-func (r *DashboardRepository) RecentActivity(ctx context.Context, tx pgx.Tx, limit int, kind string, allowedTags []string) ([]domain.ActivityEvent, error) {
+// (empty = unrestricted), same semantics as StatsFilter.AllowedTags.
+// since/until restrict to events that happened within [since, until] (the
+// Dashboard's time-range filter, either end optional) -- filtered on each
+// branch's own event timestamp (alert_events.created_at,
+// alert_comments.created_at, ...), not the parent alert/incident's
+// received_at/opened_at, since this is "what happened recently," not "which
+// alerts/incidents are recent." Each UNION leg is a plain SELECT, so a
+// WHERE clause can't scope individual legs -- the branches are built
+// conditionally in Go instead, and branchFilter appends whichever of the
+// tags/since/until conditions apply to each one.
+func (r *DashboardRepository) RecentActivity(ctx context.Context, tx pgx.Tx, limit int, kind string, allowedTags []string, since, until *time.Time) ([]domain.ActivityEvent, error) {
 	var branches []string
 	var args []any
 	tagsIdx := 0
@@ -275,30 +438,50 @@ func (r *DashboardRepository) RecentActivity(ctx context.Context, tx pgx.Tx, lim
 		args = append(args, allowedTags)
 		tagsIdx = len(args)
 	}
-	tagFilter := func(alias string) string {
-		if tagsIdx == 0 {
+	sinceIdx := 0
+	if since != nil {
+		args = append(args, *since)
+		sinceIdx = len(args)
+	}
+	untilIdx := 0
+	if until != nil {
+		args = append(args, *until)
+		untilIdx = len(args)
+	}
+	branchFilter := func(tagsAlias, eventAlias string) string {
+		var conds []string
+		if tagsIdx != 0 {
+			conds = append(conds, fmt.Sprintf("%s.tags && $%d", tagsAlias, tagsIdx))
+		}
+		if sinceIdx != 0 {
+			conds = append(conds, fmt.Sprintf("%s.created_at >= $%d", eventAlias, sinceIdx))
+		}
+		if untilIdx != 0 {
+			conds = append(conds, fmt.Sprintf("%s.created_at <= $%d", eventAlias, untilIdx))
+		}
+		if len(conds) == 0 {
 			return ""
 		}
-		return fmt.Sprintf(" where %s.tags && $%d", alias, tagsIdx)
+		return " where " + strings.Join(conds, " and ")
 	}
 
 	if kind == "" || kind == "alert" {
 		branches = append(branches, `
 			select 'alert' as kind, a.id, a.title, ae.event_type, ae.actor_type, ae.actor_id, ae.data, ae.created_at
-			from alert_events ae join alerts a on a.id = ae.alert_id`+tagFilter("a"))
+			from alert_events ae join alerts a on a.id = ae.alert_id`+branchFilter("a", "ae"))
 		branches = append(branches, `
 			select 'alert' as kind, a.id, a.title, 'comment_added', 'user',
 			       c.author_id, jsonb_build_object('authorName', c.author_name)::jsonb, c.created_at
-			from alert_comments c join alerts a on a.id = c.alert_id`+tagFilter("a"))
+			from alert_comments c join alerts a on a.id = c.alert_id`+branchFilter("a", "c"))
 	}
 	if kind == "" || kind == "incident" {
 		branches = append(branches, `
 			select 'incident' as kind, i.id, i.title, ie.event_type, ie.actor_type, ie.actor_id, ie.data, ie.created_at
-			from incident_events ie join incidents i on i.id = ie.incident_id`+tagFilter("i"))
+			from incident_events ie join incidents i on i.id = ie.incident_id`+branchFilter("i", "ie"))
 		branches = append(branches, `
 			select 'incident' as kind, i.id, i.title, 'comment_added', 'user',
 			       c.author_id, jsonb_build_object('authorName', c.author_name)::jsonb, c.created_at
-			from incident_comments c join incidents i on i.id = c.incident_id`+tagFilter("i"))
+			from incident_comments c join incidents i on i.id = c.incident_id`+branchFilter("i", "c"))
 	}
 	if len(branches) == 0 {
 		return []domain.ActivityEvent{}, nil

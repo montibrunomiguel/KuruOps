@@ -23,24 +23,25 @@ type IdentityConfigService struct {
 	repo    *repository.IdentityConfigRepository
 	secrets secrets.Store
 
-	// onSAMLConfigSaved fires after a successful SaveSAMLConfig -- wired to
-	// SAMLAuthService.InvalidateMetadataCache (see cmd/api/main.go) via a
-	// setter rather than a constructor param, since the two services would
-	// otherwise depend on each other in a cycle (SAMLAuthService already
-	// depends on *repository.IdentityConfigRepository, not this service).
-	onSAMLConfigSaved func(tenantID uuid.UUID)
+	// onSAMLConfigChanged fires after a successful SaveSAMLConfig or
+	// DeleteSAMLConfig -- wired to SAMLAuthService.InvalidateMetadataCache
+	// (see cmd/api/main.go) via a setter rather than a constructor param,
+	// since the two services would otherwise depend on each other in a
+	// cycle (SAMLAuthService already depends on
+	// *repository.IdentityConfigRepository, not this service).
+	onSAMLConfigChanged func(tenantID uuid.UUID)
 }
 
 func NewIdentityConfigService(pool *db.Pool, repo *repository.IdentityConfigRepository, store secrets.Store) *IdentityConfigService {
 	return &IdentityConfigService{pool: pool, repo: repo, secrets: store}
 }
 
-// SetOnSAMLConfigSaved registers a callback invoked after every successful
-// SaveSAMLConfig, so a cached IdP metadata document doesn't keep serving a
-// tenant's old IdP metadata URL/XML for up to samlMetadataTTL after they
-// change it.
-func (s *IdentityConfigService) SetOnSAMLConfigSaved(fn func(tenantID uuid.UUID)) {
-	s.onSAMLConfigSaved = fn
+// SetOnSAMLConfigChanged registers a callback invoked after every successful
+// SaveSAMLConfig/DeleteSAMLConfig, so a cached IdP metadata document doesn't
+// keep serving a tenant's old (or now-deleted) IdP metadata for up to
+// samlMetadataTTL after they change or remove it.
+func (s *IdentityConfigService) SetOnSAMLConfigChanged(fn func(tenantID uuid.UUID)) {
+	s.onSAMLConfigChanged = fn
 }
 
 type SaveLDAPConfigInput struct {
@@ -135,8 +136,8 @@ func (s *IdentityConfigService) SaveSAMLConfig(ctx context.Context, tenantID uui
 			SPCertSecretRef: certRef, SPKeySecretRef: keyRef, GroupAttribute: in.GroupAttribute,
 		})
 	})
-	if err == nil && s.onSAMLConfigSaved != nil {
-		s.onSAMLConfigSaved(tenantID)
+	if err == nil && s.onSAMLConfigChanged != nil {
+		s.onSAMLConfigChanged(tenantID)
 	}
 	return err
 }
@@ -149,4 +150,28 @@ func (s *IdentityConfigService) GetSAMLConfig(ctx context.Context, tenantID uuid
 		return err
 	})
 	return cfg, err
+}
+
+// DeleteLDAPConfig removes the tenant's LDAP config, so
+// AuthHandlers.loginLDAP's "ldap is not configured for this tenant" guard
+// (LDAPAuthService.Login) takes effect immediately.
+func (s *IdentityConfigService) DeleteLDAPConfig(ctx context.Context, tenantID uuid.UUID) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.DeleteLDAPConfig(ctx, tx)
+	})
+}
+
+// DeleteSAMLConfig removes the tenant's SAML config and invalidates any
+// cached IdP metadata for it, so a stale cache entry can't keep a login
+// half-working (metadata still resolves) after the config it belonged to is
+// gone -- ServeLogin/ServeACS's own "saml is not configured" guard
+// (SAMLAuthService.loadConfig) is what actually stops the flow.
+func (s *IdentityConfigService) DeleteSAMLConfig(ctx context.Context, tenantID uuid.UUID) error {
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.DeleteSAMLConfig(ctx, tx)
+	})
+	if err == nil && s.onSAMLConfigChanged != nil {
+		s.onSAMLConfigChanged(tenantID)
+	}
+	return err
 }

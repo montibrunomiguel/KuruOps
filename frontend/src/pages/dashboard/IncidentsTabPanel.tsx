@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
@@ -9,22 +9,33 @@ import type { Incident } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
 import { SeverityBadge, PhasePill } from "../../components/badges";
 import { ShieldIcon, ClockIcon, FlagIcon } from "../../components/icons";
+import { IncidentTrendChart } from "../../components/charts/IncidentTrendChart";
 import { PRIORITY_ORDER, PHASE_ORDER, PHASE_COLOR } from "../../lib/chartColors";
 import { formatDuration, shortId } from "../../lib/format";
+import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
+import { PersonFilter } from "../../components/PersonFilter";
 
 export function IncidentsTabPanel() {
   const { t } = useTranslation();
   const [severity, setSeverity] = useState<Severity | "">("");
   const [tag, setTag] = useState("");
+  const [commanderId, setCommanderId] = useState("");
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  // Memoized -- see AlertsTabPanel's identical comment (timeRangeParams()
+  // calling Date.now() on every render would otherwise loop useList forever).
+  const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const { data: statsData, loading: statsLoading, error: statsError, reload: reloadStats } = useList<DashboardStats>(
     async (tk) => {
       const params = new URLSearchParams();
       if (severity) params.set("incidentSeverity", severity);
       if (tag) params.set("incidentTag", tag);
+      if (commanderId) params.set("commanderId", commanderId);
+      if (range.since) params.set("since", range.since);
+      if (range.until) params.set("until", range.until);
       return [await api.get<DashboardStats>(`/api/v1/dashboard/stats?${params.toString()}`, tk)];
     },
-    [severity, tag],
+    [severity, tag, commanderId, range.since, range.until],
   );
   const stats = statsData?.[0];
 
@@ -33,10 +44,13 @@ export function IncidentsTabPanel() {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
       if (tag) params.set("tag", tag);
+      if (commanderId) params.set("commanderId", commanderId);
+      if (range.since) params.set("since", range.since);
+      if (range.until) params.set("until", range.until);
       params.set("limit", "5");
       return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity, tag],
+    [severity, tag, commanderId, range.since, range.until],
   );
 
   // Live updates -- see AlertsTabPanel's identical wiring for the reasoning.
@@ -64,6 +78,8 @@ export function IncidentsTabPanel() {
           <option value="informational">{t("common.severity.informational")}</option>
         </select>
         <input className="input" placeholder={t("dashboard.filters.allTags")} value={tag} onChange={(e) => setTag(e.target.value)} />
+        <PersonFilter value={commanderId} onChange={setCommanderId} allLabel={t("dashboard.filters.allCommanders")} />
+        <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
       </div>
 
       <div className="stat-grid">
@@ -120,6 +136,14 @@ export function IncidentsTabPanel() {
 
       <div className="dashboard-grid-2">
         <div className="panel">
+          <div className="chart-card-title-row">
+            <h2 className="panel-title">{t("dashboard.incidentsTab.volumeTitle")}</h2>
+            <span className="chart-card-sub">{t("dashboard.alertsTab.last14Days")}</span>
+          </div>
+          <IncidentTrendChart points={stats?.incidentTrend ?? []} />
+        </div>
+
+        <div className="panel">
           <h2 className="panel-title" style={{ marginBottom: 16 }}>
             {t("dashboard.incidentsTab.byPriorityTitle")}
           </h2>
@@ -140,7 +164,9 @@ export function IncidentsTabPanel() {
             })}
           </div>
         </div>
+      </div>
 
+      <div className="dashboard-grid-2">
         <div className="panel">
           <h2 className="panel-title" style={{ marginBottom: 14 }}>
             {t("dashboard.incidentsTab.byPhaseTitle")}
@@ -155,6 +181,28 @@ export function IncidentsTabPanel() {
                 <span className="legend-row-value">{byPhase[phase] ?? 0}</span>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2 className="panel-title" style={{ marginBottom: 14 }}>
+            {t("dashboard.incidentsTab.byCommanderTitle")}
+          </h2>
+          <div className="breakdown-list">
+            {(stats?.incidentsByCommander ?? []).map((c) => {
+              const max = Math.max(1, ...(stats?.incidentsByCommander ?? []).map((x) => x.count));
+              return (
+                <div key={c.id ?? "none"}>
+                  <div className="breakdown-row-head">
+                    <span className="breakdown-row-head-label">{c.id ? c.name : t("dashboard.incidentsTab.noCommander")}</span>
+                    <span>{c.count}</span>
+                  </div>
+                  <div className="breakdown-bar-track">
+                    <div className="breakdown-bar-fill" style={{ width: `${(c.count / max) * 100}%`, background: "var(--accent)" }} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

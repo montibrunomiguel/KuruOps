@@ -83,7 +83,21 @@ export function WebhooksPanel() {
 
       {!loading &&
         endpoints &&
-        endpoints.map((ep) => <WebhookRow key={ep.id} endpoint={ep} onChanged={reload} />)}
+        endpoints.map((ep) => (
+          <WebhookRow
+            key={ep.id}
+            endpoint={ep}
+            onChanged={reload}
+            // Regenerate's onChanged() triggers this same reload -- which
+            // sets loading:true and (per the !loading guard above) briefly
+            // unmounts every row, including the one that just called
+            // setRegenerated on itself. A regenerated token held in local
+            // row state would be destroyed before ever being painted, so
+            // instead it's lifted here to survive the reload, the same way
+            // the create flow's newToken already does.
+            onRegenerated={(tok) => setNewToken({ name: ep.name, token: tok })}
+          />
+        ))}
     </div>
   );
 }
@@ -194,11 +208,18 @@ function expiryBadge(t: (k: string, opts?: Record<string, unknown>) => string, e
   );
 }
 
-function WebhookRow({ endpoint, onChanged }: { endpoint: WebhookEndpoint; onChanged: () => void }) {
+function WebhookRow({
+  endpoint,
+  onChanged,
+  onRegenerated,
+}: {
+  endpoint: WebhookEndpoint;
+  onChanged: () => void;
+  onRegenerated: (token: string) => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
-  const [regenerated, setRegenerated] = useState<string | null>(null);
   const [regenExpiry, setRegenExpiry] = useState("90");
   const [error, setError] = useState<string | null>(null);
 
@@ -225,7 +246,7 @@ function WebhookRow({ endpoint, onChanged }: { endpoint: WebhookEndpoint; onChan
         { expiresInDays: expiryToDays(regenExpiry) },
         token,
       );
-      setRegenerated(res.token);
+      onRegenerated(res.token);
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -250,11 +271,6 @@ function WebhookRow({ endpoint, onChanged }: { endpoint: WebhookEndpoint; onChan
         <p className="row-sub">
           {endpoint.source} · token whk_••••••••{endpoint.tokenLast4}
         </p>
-        {regenerated && (
-          <p className="row-sub" style={{ color: "var(--accent)" }}>
-            {t("settings.webhooks.newTokenLabel", { token: regenerated })}
-          </p>
-        )}
         {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
       </div>
       <div className="row-actions">

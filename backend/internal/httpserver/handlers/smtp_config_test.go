@@ -52,6 +52,22 @@ func TestSMTPConfigHandlers(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("test email invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/test", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("test email missing to -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"to": ""})
+		req := withClaims(httptest.NewRequest("POST", "/test", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	saveBody, _ := json.Marshal(map[string]any{
 		"host": "smtp.example.com", "port": 587, "useTls": true,
 		"username": "smtp-user", "password": "s3cret",
@@ -82,4 +98,18 @@ func TestSMTPConfigHandlers(t *testing.T) {
 		getRec := doRequest(r, getReq)
 		assert.Equal(t, "null\n", getRec.Body.String())
 	})
+}
+
+func TestSMTPConfigHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewSMTPConfigHandlers(nil)
+	r := newRouter(h.Routes)
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/"}, {"DELETE", "/"}, {"POST", "/test"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
+	}
 }

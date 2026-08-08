@@ -1,0 +1,34 @@
+# golangci-lint config for the backend (backend/ is the Go module root).
+# Deliberately conservative: this codebase already documents WHY in comments
+# where it matters (see any *_service.go doc comment), so style/doc-comment
+# linters would just add noise. The goal here is catching real bugs (dead
+# code, ignored errors, vet failures), not enforcing a house style.
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - govet # catches real correctness bugs (printf, shadowing, etc.)
+    - staticcheck # SA* checks: real bugs, not style
+    - unused # dead code -- exactly what caught getEnvIntDefault/IncidentSLAService.Lookup
+    - errcheck # unchecked errors -- flags the ones NOT already using the `_ = ...` idiom
+    - ineffassign
+    - gosimple
+
+issues:
+  exclude-rules:
+    # tx.Rollback() after a successful Commit() is a documented no-op
+    # throughout this codebase (see db.Pool.WithTenant and every repository
+    # method that opens its own tx) -- checking its error would just be
+    # noise on every single one of these.
+    - linters: [errcheck]
+      text: "Error return value of `.*\\.Rollback` is not checked"
+    # Test files: cleanup calls (rows.Close(), resp.Body.Close(), etc.) are
+    # routinely fire-and-forget in tests, and a real failure surfaces via
+    # the test's own assertions failing, not via the cleanup call's error.
+    - linters: [errcheck]
+      path: "_test\\.go"
+  max-issues-per-linter: 0
+  max-same-issues: 0

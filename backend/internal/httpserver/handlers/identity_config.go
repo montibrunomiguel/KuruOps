@@ -25,8 +25,10 @@ func NewIdentityConfigHandlers(svc *service.IdentityConfigService) *IdentityConf
 func (h *IdentityConfigHandlers) Routes(r chi.Router) {
 	r.Get("/ldap", h.getLDAP)
 	r.Put("/ldap", h.saveLDAP)
+	r.Delete("/ldap", h.deleteLDAP)
 	r.Get("/saml", h.getSAML)
 	r.Put("/saml", h.saveSAML)
+	r.Delete("/saml", h.deleteSAML)
 }
 
 func (h *IdentityConfigHandlers) getLDAP(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +78,19 @@ func (h *IdentityConfigHandlers) saveLDAP(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *IdentityConfigHandlers) deleteLDAP(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing tenant context")
+		return
+	}
+	if err := h.svc.DeleteLDAPConfig(r.Context(), tenantID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *IdentityConfigHandlers) getSAML(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantID(r.Context())
 	if !ok {
@@ -113,6 +128,19 @@ func (h *IdentityConfigHandlers) saveSAML(w http.ResponseWriter, r *http.Request
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *IdentityConfigHandlers) deleteSAML(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing tenant context")
+		return
+	}
+	if err := h.svc.DeleteSAMLConfig(r.Context(), tenantID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

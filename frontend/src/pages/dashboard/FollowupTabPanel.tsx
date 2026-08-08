@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
@@ -8,6 +8,7 @@ import { useEventStream } from "../../api/eventStream";
 import type { FollowupView } from "../../types/dashboard";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { shortId } from "../../lib/format";
+import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -20,10 +21,20 @@ export function FollowupTabPanel() {
   const { t } = useTranslation();
   const { hasResourceAccess } = useAuth();
   const canOpenAlerts = hasResourceAccess("alerts");
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  // Memoized -- see AlertsTabPanel's identical comment (timeRangeParams()
+  // calling Date.now() on every render would otherwise loop useList forever).
+  const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
-  const { data: viewData, loading, error, reload } = useList<FollowupView>(async (tk) => [
-    await api.get<FollowupView>("/api/v1/dashboard/followup", tk),
-  ]);
+  const { data: viewData, loading, error, reload } = useList<FollowupView>(
+    async (tk) => {
+      const params = new URLSearchParams();
+      if (range.since) params.set("since", range.since);
+      if (range.until) params.set("until", range.until);
+      return [await api.get<FollowupView>(`/api/v1/dashboard/followup?${params.toString()}`, tk)];
+    },
+    [range.since, range.until],
+  );
   const view = viewData?.[0];
 
   // Live updates -- see AlertsTabPanel's identical wiring for the reasoning.
@@ -46,6 +57,10 @@ export function FollowupTabPanel() {
 
   return (
     <div>
+      <div className="filter-bar">
+        <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
+      </div>
+
       <div className="stat-grid" data-cols="3">
         <div className="stat-card">
           <div className="stat-card-head">

@@ -342,3 +342,39 @@ func TestAlertRepository_TenantIsolation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got, "RLS must hide a cross-tenant alert even by direct id lookup")
 }
+
+func TestAlertRepository_InsertListComments(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewAlertRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	a := newTestAlert(tenantID, domain.SeverityHigh, domain.AlertStatusOpen, nil)
+	require.NoError(t, repo.Insert(t.Context(), tx, a))
+
+	t.Run("no comments yet", func(t *testing.T) {
+		comments, err := repo.ListComments(t.Context(), tx, a.ID)
+		require.NoError(t, err)
+		assert.Empty(t, comments)
+	})
+
+	authorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	imageURL := "https://example.com/evidence.png"
+	c := &domain.AlertComment{
+		AlertID: a.ID, TenantID: tenantID, AuthorID: authorID,
+		AuthorName: "Diego Costa", Body: "escalating to IR", ImageURL: &imageURL,
+	}
+	require.NoError(t, repo.InsertComment(t.Context(), tx, c))
+	assert.NotEqual(t, uuid.Nil, c.ID)
+	assert.False(t, c.CreatedAt.IsZero())
+
+	t.Run("the comment is listed back, oldest first", func(t *testing.T) {
+		comments, err := repo.ListComments(t.Context(), tx, a.ID)
+		require.NoError(t, err)
+		require.Len(t, comments, 1)
+		assert.Equal(t, "escalating to IR", comments[0].Body)
+		assert.Equal(t, "Diego Costa", comments[0].AuthorName)
+		require.NotNil(t, comments[0].ImageURL)
+		assert.Equal(t, imageURL, *comments[0].ImageURL)
+	})
+}

@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -31,7 +33,7 @@ func NewAlertRepository() *AlertRepository {
 const alertColumnsQualified = `
 	a.id, a.tenant_id, a.external_id, a.webhook_endpoint_id, a.title, a.source,
 	a.severity, a.original_severity, a.status, a.classification, a.close_comment,
-	a.close_image_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.incident_id,
+	a.close_image_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.incident_id,
 	a.assigned_analyst_id, a.received_at, a.acknowledged_at, a.closed_at, a.created_at, a.updated_at`
 
 // alertColumnsWithAssignee/alertsWithAssigneeFrom resolve
@@ -58,6 +60,11 @@ type ListAlertsFilter struct {
 	Source     *string
 	Tag        *string
 	Correlated *bool
+	// ReceivedSince/ReceivedUntil restrict to alerts received within
+	// [ReceivedSince, ReceivedUntil] -- the Dashboard's time-range filter
+	// (see repository.StatsFilter.Since/Until), either end optional.
+	ReceivedSince *time.Time
+	ReceivedUntil *time.Time
 	// AllowedTags scopes results to the caller's tag-based access (see
 	// design handoff, "Tag-based + resource-based access scoping"). Empty
 	// means unrestricted -- no filter applied, same "sees everything"
@@ -108,6 +115,14 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 			query += " and a.incident_id is null"
 		}
 	}
+	if f.ReceivedSince != nil {
+		args = append(args, *f.ReceivedSince)
+		query += fmt.Sprintf(" and a.received_at >= $%d", len(args))
+	}
+	if f.ReceivedUntil != nil {
+		args = append(args, *f.ReceivedUntil)
+		query += fmt.Sprintf(" and a.received_at <= $%d", len(args))
+	}
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
 		query += fmt.Sprintf(" and a.tags && $%d", len(args))
@@ -140,16 +155,24 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 }
 
 func (r *AlertRepository) Insert(ctx context.Context, tx pgx.Tx, a *domain.Alert) error {
+	// alerts.metadata is NOT NULL -- defaulted here (not just in
+	// AlertService.Ingest) so every direct-repository caller (every test
+	// fixture built before this column existed) keeps working without
+	// having to set Metadata itself, same as the column's own `default
+	// '{}'::jsonb` would give a bare INSERT that omitted it entirely.
+	if len(a.Metadata) == 0 {
+		a.Metadata = json.RawMessage(`{}`)
+	}
 	row := tx.QueryRow(ctx, `
 		insert into alerts (
 			tenant_id, external_id, webhook_endpoint_id, title, source,
-			severity, original_severity, status, tags, payload, rule_id, asset, src_ip,
+			severity, original_severity, status, tags, payload, metadata, rule_id, asset, src_ip,
 			assigned_analyst_id, received_at
-		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		returning id, created_at, updated_at,
 			(select name from users where id = assigned_analyst_id)`,
 		a.TenantID, a.ExternalID, a.WebhookEndpointID, a.Title, a.Source,
-		a.Severity, a.OriginalSeverity, a.Status, a.Tags, a.Payload, a.RuleID, a.Asset, a.SrcIP,
+		a.Severity, a.OriginalSeverity, a.Status, a.Tags, a.Payload, a.Metadata, a.RuleID, a.Asset, a.SrcIP,
 		a.AssignedAnalystID, a.ReceivedAt,
 	)
 	return row.Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt, &a.AssignedAnalystName)
@@ -307,7 +330,7 @@ func scanAlert(row pgx.Row) (*domain.Alert, error) {
 	err := row.Scan(
 		&a.ID, &a.TenantID, &a.ExternalID, &a.WebhookEndpointID, &a.Title, &a.Source,
 		&a.Severity, &a.OriginalSeverity, &a.Status, &a.Classification, &a.CloseComment,
-		&a.CloseImageURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.IncidentID,
+		&a.CloseImageURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.IncidentID,
 		&a.AssignedAnalystID, &a.ReceivedAt, &a.AcknowledgedAt, &a.ClosedAt, &a.CreatedAt, &a.UpdatedAt,
 		&a.AssignedAnalystName,
 	)

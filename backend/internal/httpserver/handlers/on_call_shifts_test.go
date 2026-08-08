@@ -97,3 +97,31 @@ func TestOnCallShiftHandlers_SetTimezone(t *testing.T) {
 	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &resp))
 	assert.Equal(t, "America/Sao_Paulo", resp.Timezone)
 }
+
+func TestOnCallShiftHandlers_ValidationErrors(t *testing.T) {
+	h, tenantID, _ := newOnCallShiftHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("set timezone invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/timezone", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestOnCallShiftHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewOnCallShiftHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}

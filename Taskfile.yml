@@ -96,6 +96,18 @@ tasks:
           exit 1
         fi
 
+  backend:lint:
+    desc: golangci-lint against the backend (govet/staticcheck/unused/errcheck/ineffassign/gosimple -- see backend/.golangci.yml)
+    dir: backend
+    cmds:
+      - golangci-lint run ./...
+
+  backend:vulncheck:
+    desc: Scan backend Go dependencies for known vulnerabilities (govulncheck)
+    dir: backend
+    cmds:
+      - govulncheck ./...
+
   backend:test:
     desc: Run backend Go tests (pure unit tests only -- DB-dependent tests skip themselves without TEST_DATABASE_URL)
     dir: backend
@@ -118,6 +130,13 @@ tasks:
     cmds:
       - go test ./... -coverprofile=coverage.out -covermode=atomic
       - go tool cover -func=coverage.out | tail -1
+
+  backend:test:coverage-gate:
+    desc: Run the integration suite with coverage and fail if it dropped below backend/coverage-baseline.txt
+    dir: backend
+    deps: [backend:test:integration]
+    cmds:
+      - bash scripts/check-coverage-baseline.sh coverage.out
 
   db:migration-target:up:
     desc: Start a second, standalone local Postgres container standing in for a customer's external database -- only for internal/dbmigrate's own integration test
@@ -201,6 +220,20 @@ tasks:
     cmds:
       - npm run test:coverage
 
+  frontend:lint:
+    desc: ESLint against the frontend (hooks correctness, not style -- see frontend/eslint.config.js)
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm run lint
+
+  frontend:audit:
+    desc: Scan frontend dependencies for known vulnerabilities (npm audit) -- fails on high/critical
+    dir: frontend
+    deps: [frontend:install]
+    cmds:
+      - npm audit --audit-level=high
+
   # ---- Deploy (Docker Compose: postgres + api + ingest + worker + frontend) ----
 
   deploy:up:
@@ -230,11 +263,15 @@ tasks:
   # ---- Tests -----------------------------------------------------------
 
   test:
-    desc: Everything that doesn't need a live deploy — build/vet/format/typecheck/unit tests
+    desc: Everything that doesn't need a live deploy — build/vet/format/lint/vuln-scan/typecheck/unit tests
     cmds:
       - task: backend:vet
+      - task: backend:lint
+      - task: backend:vulncheck
       - task: backend:test
       - task: frontend:typecheck
+      - task: frontend:lint
+      - task: frontend:audit
       - task: frontend:test
       - task: frontend:build
 

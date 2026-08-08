@@ -24,9 +24,7 @@ type webhookPayload struct {
 }
 
 func (WebhookSender) Send(ctx context.Context, destination string, n Notification) error {
-	body, err := json.Marshal(webhookPayload{
-		Title: n.Title, Description: n.Description, Severity: n.Severity, AlertID: n.AlertID, URL: n.URL,
-	})
+	body, err := json.Marshal(webhookPayload(n))
 	if err != nil {
 		return fmt.Errorf("encode webhook payload: %w", err)
 	}

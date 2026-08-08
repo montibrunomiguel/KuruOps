@@ -142,3 +142,17 @@ func TestUploadHandlers_ServeRejectsInvalidKey(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "key %q must be rejected", key)
 	}
 }
+
+func TestUploadHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewUploadHandlers(nil, nil, nil)
+	r := newRouter(h.Routes)
+
+	for _, tc := range []struct{ method, path string }{
+		{"POST", "/"}, {"GET", "/Alert/2026/01/01/some-key.png"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
+	}
+}

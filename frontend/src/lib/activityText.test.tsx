@@ -65,4 +65,78 @@ describe("describeActivity", () => {
     const result = describeActivity(eventFixture({ kind: "incident", eventType: "something_new" }), i18n.t);
     expect(result.text).toContain("something new");
   });
+
+  it("describes an alert closed event with no classification as an em dash", () => {
+    const result = describeActivity(eventFixture({ eventType: "closed", data: {} }), i18n.t);
+    expect(result.text).toContain("—");
+  });
+
+  it.each([
+    ["status_changed", "tone-accent"],
+    ["severity_overridden", "tone-high"],
+    ["tags_changed", "tone-muted"],
+    ["ai_analysis_run", "tone-accent"],
+    ["assignee_changed", "tone-accent"],
+  ] as const)("describes an alert %s event with the %s tone", (eventType, tone) => {
+    const result = describeActivity(eventFixture({ eventType }), i18n.t);
+    expect(result.tone).toBe(tone);
+    expect(result.text.length).toBeGreaterThan(0);
+  });
+
+  it("describes an alert linked event, pulling the linked alert id out of data", () => {
+    const result = describeActivity(
+      eventFixture({ eventType: "linked", data: { alertId: "d4a2f6c8-0000-0000-0000-000000000000" } }),
+      i18n.t,
+    );
+    expect(result.text).toContain("d4a2f6c8");
+    expect(result.tone).toBe("tone-accent");
+  });
+
+  it.each([
+    ["phase_changed", "tone-accent"],
+    ["severity_priority_changed", "tone-high"],
+    ["description_edited", "tone-muted"],
+    ["tags_changed", "tone-muted"],
+    ["ai_analysis_run", "tone-accent"],
+    ["status_timestamp_corrected", "tone-muted"],
+    ["assignees_changed", "tone-accent"],
+    ["role_assigned", "tone-accent"],
+    ["role_unassigned", "tone-accent"],
+  ] as const)("describes an incident %s event with the %s tone", (eventType, tone) => {
+    const result = describeActivity(eventFixture({ kind: "incident", eventType }), i18n.t);
+    expect(result.tone).toBe(tone);
+    expect(result.text.length).toBeGreaterThan(0);
+  });
+
+  it("role_assigned and role_unassigned produce the same description", () => {
+    const assigned = describeActivity(eventFixture({ kind: "incident", eventType: "role_assigned" }), i18n.t);
+    const unassigned = describeActivity(eventFixture({ kind: "incident", eventType: "role_unassigned" }), i18n.t);
+    expect(assigned.text).toBe(unassigned.text);
+  });
+
+  it("describes an incident alert_unlinked event, pulling the alert id out of data", () => {
+    const result = describeActivity(
+      eventFixture({ kind: "incident", eventType: "alert_unlinked", data: { alertId: "b8e21d4a-0000-0000-0000-000000000000" } }),
+      i18n.t,
+    );
+    expect(result.text).toContain("b8e21d4a");
+    expect(result.tone).toBe("tone-muted");
+  });
+
+  it("describes an incident comment_added event, including the author's name", () => {
+    const result = describeActivity(
+      eventFixture({ kind: "incident", eventType: "comment_added", data: { authorName: "Marina Alves" } }),
+      i18n.t,
+    );
+    expect(result.text).toContain("Marina Alves");
+  });
+
+  it("comment_added falls back to an em dash when the author name is missing", () => {
+    const result = describeActivity(eventFixture({ kind: "incident", eventType: "comment_added", data: {} }), i18n.t);
+    expect(result.text).toContain("—");
+  });
+
+  it("handles a null data payload defensively", () => {
+    expect(() => describeActivity(eventFixture({ eventType: "closed", data: null as unknown as Record<string, unknown> }), i18n.t)).not.toThrow();
+  });
 });

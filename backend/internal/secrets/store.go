@@ -20,15 +20,15 @@ type Store interface {
 	Resolve(ctx context.Context, ref string) (value string, err error)
 }
 
-// EnvStore is a development-only Store: Put writes into an in-memory map
-// rather than a real secret backend, so keys entered while running
-// `make run-api` locally do not survive a restart and are never durable.
-// Wire a real Store (Vault, cloud KMS) before this leaves prototype status —
-// see backend/README.md. One EnvStore is shared across every request
-// (constructed once in cmd/api/main.go and injected into every service that
-// needs a Store), so Put/Resolve need their own locking -- a plain map is
-// not safe for the concurrent goroutine-per-request access pattern net/http
-// gives every handler.
+// EnvStore is a pure in-memory Store, kept around for tests that need a
+// Store without a database connection. It is NOT what any cmd/* binary
+// constructs at runtime any more -- secrets.NewFromConfig's default "env"
+// backend is PersistentEnvStore (persistent_store.go), which persists the
+// same Put/Resolve contract to Postgres precisely because this type's
+// values don't survive a process restart. One EnvStore is shared across
+// every request in tests that use it, so Put/Resolve need their own
+// locking -- a plain map is not safe for the concurrent goroutine-per-
+// request access pattern net/http gives every handler.
 type EnvStore struct {
 	mu     sync.RWMutex
 	values map[string]string

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -36,14 +37,15 @@ func (s *DashboardService) Stats(ctx context.Context, tenantID uuid.UUID, filter
 // limit (defaults to 20 for a non-positive/zero value, matching the
 // Dashboard's default page size). kind is "alert", "incident", or "" (both).
 // allowedTags scopes the feed to the caller's tag-based access (empty =
-// unrestricted) -- see DashboardRepository.RecentActivity.
-func (s *DashboardService) Activity(ctx context.Context, tenantID uuid.UUID, limit int, kind string, allowedTags []string) ([]domain.ActivityEvent, error) {
+// unrestricted); since/until are the Dashboard's time-range filter (either
+// nil = unrestricted on that end) -- see DashboardRepository.RecentActivity.
+func (s *DashboardService) Activity(ctx context.Context, tenantID uuid.UUID, limit int, kind string, allowedTags []string, since, until *time.Time) ([]domain.ActivityEvent, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 	var events []domain.ActivityEvent
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		v, err := s.repo.RecentActivity(ctx, tx, limit, kind, allowedTags)
+		v, err := s.repo.RecentActivity(ctx, tx, limit, kind, allowedTags, since, until)
 		events = v
 		return err
 	})
@@ -58,11 +60,16 @@ func (s *DashboardService) Activity(ctx context.Context, tenantID uuid.UUID, lim
 // rather than querying directly, so this stays scoped by allowedTags the
 // same way the full Alerts/Incidents sections are -- someone with the
 // "followup" capability but not "incidents" still only sees follow-up items
-// their tag scope allows, nothing broader.
-func (s *DashboardService) Followup(ctx context.Context, tenantID uuid.UUID, allowedTags []string) (*domain.FollowupView, error) {
+// their tag scope allows, nothing broader. since/until are the Dashboard's
+// time-range filter (either nil = unrestricted on that end) -- narrows to
+// incidents opened / alerts received within [since, until], same as the
+// Alerts/Incidents tabs.
+func (s *DashboardService) Followup(ctx context.Context, tenantID uuid.UUID, allowedTags []string, since, until *time.Time) (*domain.FollowupView, error) {
 	slaBreached := true
 	incidents, err := s.incidents.List(ctx, tenantID, repository.ListIncidentsFilter{
 		SLABreached: &slaBreached,
+		OpenedSince: since,
+		OpenedUntil: until,
 		AllowedTags: allowedTags,
 		Limit:       200,
 	})
@@ -71,9 +78,11 @@ func (s *DashboardService) Followup(ctx context.Context, tenantID uuid.UUID, all
 	}
 
 	alerts, err := s.alerts.List(ctx, tenantID, repository.ListAlertsFilter{
-		Statuses:    []domain.AlertStatus{domain.AlertStatusOpen, domain.AlertStatusEscalated, domain.AlertStatusInvestigating},
-		AllowedTags: allowedTags,
-		Limit:       200,
+		Statuses:      []domain.AlertStatus{domain.AlertStatusOpen, domain.AlertStatusEscalated, domain.AlertStatusInvestigating},
+		ReceivedSince: since,
+		ReceivedUntil: until,
+		AllowedTags:   allowedTags,
+		Limit:         200,
 	})
 	if err != nil {
 		return nil, err

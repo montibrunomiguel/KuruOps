@@ -3,6 +3,7 @@ package ingest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -135,6 +136,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		SrcIP:      srcIP,
 		Tags:       tags,
 		Payload:    body,
+		Metadata:   extractMetadata(body),
 	})
 	if err != nil {
 		h.logger.Error("ingest alert failed", "error", err, "tenant_id", endpoint.TenantID)
@@ -145,6 +147,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write([]byte(`{"id":"` + alert.ID.String() + `"}`))
+}
+
+// extractMetadata pulls an optional top-level "metadata" object out of the
+// raw webhook body -- generic across every source/normalizer (unlike
+// Title/Severity/Tags/etc., which are vendor-specific and go through
+// Normalizer), since this is the sender's own free-form list of whatever
+// they want surfaced: a Slack channel, a playbook/runbook/notebook link,
+// which environment it's from, or any other key they choose. E.g.
+// {"metadata": {"slackChannel": "#incident-response", "environment": "production"}}.
+// Anything malformed (missing, not an object, not valid JSON at all) just
+// yields empty metadata -- same "don't fail the whole alert over one
+// optional, best-effort field" principle FilterKnown's unknown-tag handling
+// already follows.
+func extractMetadata(body []byte) json.RawMessage {
+	var envelope struct {
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Metadata) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Metadata, &probe); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return envelope.Metadata
 }
 
 func hashToken(token string) string {

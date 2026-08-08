@@ -12,14 +12,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/ingest"
 	"github.com/argusops/argusops/internal/repository"
+	"github.com/argusops/argusops/internal/secrets"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -52,6 +56,42 @@ func main() {
 	// the analyst-facing API needs to know about.
 	onCallShiftService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
 	alertService.EnableOnCallAutoAssign(onCallShiftService)
+
+	// Auto-analysis is enabled only here too, for the same reason -- see
+	// AlertService.EnableAutoAnalysis. This duplicates a chunk of cmd/api's
+	// own AIAnalysisService wiring (secrets store, MCP tool service, LLM
+	// provider repo); each cmd/* binary constructs whatever services it
+	// needs independently (see cmd/worker's own secrets.Store setup) rather
+	// than sharing a wiring package across processes.
+	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
+	if err != nil {
+		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
+		os.Exit(1)
+	}
+	mcpServerRepo := repository.NewMCPServerRepository()
+	aiToolCallRepo := repository.NewAIToolCallRepository()
+	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	aiAnalysisService := service.NewAIAnalysisService(
+		pool, repository.NewLLMProviderRepository(), alertRepo, repository.NewIncidentRepository(), secretStore,
+		mcpServerRepo, mcpToolService, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+	)
+	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
+	alertService.EnableAutoAnalysis(func(tenantID, alertID uuid.UUID) {
+		// actorID nil: no human triggered this, see AnalyzeAlert's doc
+		// comment. allowedTags nil: the tag-visibility guard is for a
+		// specific analyst's view: this is the system analyzing an alert
+		// the instant it exists, before any access-scoping question applies.
+		if _, err := aiAnalysisService.AnalyzeAlert(context.Background(), tenantID, alertID, nil, nil); err != nil {
+			// "no LLM provider configured" is the expected, common case for
+			// a tenant that hasn't set up Settings -> AI Integration -- not
+			// worth error-level noise on every single ingested alert.
+			if strings.Contains(err.Error(), "no LLM provider configured") {
+				logger.Debug("auto-analysis skipped, no LLM provider configured", "tenant_id", tenantID)
+				return
+			}
+			logger.Warn("auto-analysis failed", "tenant_id", tenantID, "alert_id", alertID, "error", err)
+		}
+	})
 
 	webhookRepo := repository.NewWebhookRepository()
 	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, logger)

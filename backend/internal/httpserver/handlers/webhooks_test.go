@@ -67,3 +67,40 @@ func TestWebhookHandlers_CreateListRegenerateEnableDisable(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
 }
+
+// TestWebhookHandlers_List_MissingTenantContext exercises the defensive
+// "missing tenant context" 401 guard directly -- unreachable via a real
+// request in production (JWTAuth always populates tenant context before a
+// handler runs), but worth its own test since it's a distinct code path.
+// A nil service is safe here: the guard returns before ever touching it.
+func TestWebhookHandlers_ValidationErrors(t *testing.T) {
+	h, tenantID, actorID := newWebhookHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("regenerate invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/regenerate", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("disable invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/disable", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("enable invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/enable", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestWebhookHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewWebhookHandlers(nil)
+	r := newRouter(h.Routes)
+	rec := doRequest(r, httptest.NewRequest("GET", "/", nil))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}

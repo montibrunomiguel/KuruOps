@@ -40,6 +40,12 @@ func (r *IncidentRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (
 	// key -- normalize so the JSON response is always [], never null (see
 	// domain.Incident.Assignees's json tag, which has no omitempty).
 	inc.Assignees = orEmptyUserSummarySlice(assignees[inc.ID])
+
+	roles, err := r.RolesForIncident(ctx, tx, inc.ID)
+	if err != nil {
+		return nil, err
+	}
+	inc.Roles = roles
 	return inc, nil
 }
 
@@ -49,6 +55,15 @@ type ListIncidentsFilter struct {
 	Phase       *domain.IncidentPhase
 	SLABreached *bool
 	Tag         *string
+	// OpenedSince/OpenedUntil restrict to incidents opened within
+	// [OpenedSince, OpenedUntil] -- the Dashboard's time-range filter (see
+	// repository.StatsFilter.Since/Until), either end optional.
+	OpenedSince *time.Time
+	OpenedUntil *time.Time
+	// CommanderID restricts to incidents where this user holds the
+	// 'commander' role -- the Dashboard Incidents tab's commander filter
+	// (see repository.StatsFilter.CommanderID).
+	CommanderID *uuid.UUID
 	// AllowedTags scopes results to the caller's tag-based access -- see
 	// the identical field on ListAlertsFilter for the full explanation.
 	AllowedTags []string
@@ -79,6 +94,21 @@ func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncident
 	if f.Tag != nil {
 		args = append(args, *f.Tag)
 		query += fmt.Sprintf(" and $%d = any(tags)", len(args))
+	}
+	if f.OpenedSince != nil {
+		args = append(args, *f.OpenedSince)
+		query += fmt.Sprintf(" and opened_at >= $%d", len(args))
+	}
+	if f.OpenedUntil != nil {
+		args = append(args, *f.OpenedUntil)
+		query += fmt.Sprintf(" and opened_at <= $%d", len(args))
+	}
+	if f.CommanderID != nil {
+		args = append(args, *f.CommanderID)
+		query += fmt.Sprintf(
+			" and id in (select incident_id from incident_role_assignments where role = 'commander' and user_id = $%d)",
+			len(args),
+		)
 	}
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
@@ -199,6 +229,61 @@ func (r *IncidentRepository) AssigneesForIncidents(ctx context.Context, tx pgx.T
 		result[incidentID] = append(result[incidentID], u)
 	}
 	return result, rows.Err()
+}
+
+// RolesForIncident loads every NIST-role assignment for one incident,
+// ordered by role then assignee name -- matching the display order
+// domain.IncidentRoles defines closely enough for a stable, readable list
+// (an exact domain.IncidentRoles order would need a `case` expression in
+// SQL; plain alphabetical-by-role-string is good enough here since the
+// frontend groups by role anyway, not by this ordering).
+func (r *IncidentRepository) RolesForIncident(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentRoleAssignment, error) {
+	rows, err := tx.Query(ctx, `
+		select ra.role, u.id, u.name
+		from incident_role_assignments ra
+		join users u on u.id = ra.user_id
+		where ra.incident_id = $1
+		order by ra.role, u.name`,
+		incidentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query incident role assignments: %w", err)
+	}
+	defer rows.Close()
+
+	roles := []domain.IncidentRoleAssignment{}
+	for rows.Next() {
+		var ra domain.IncidentRoleAssignment
+		if err := rows.Scan(&ra.Role, &ra.User.ID, &ra.User.Name); err != nil {
+			return nil, fmt.Errorf("scan incident role assignment: %w", err)
+		}
+		roles = append(roles, ra)
+	}
+	return roles, rows.Err()
+}
+
+// SetRole replaces every assignee currently holding role on incident with
+// exactly userIDs (delete-then-bulk-insert, same "replace a set" shape as
+// SetAssignees/UpdateTags) -- empty userIDs just clears the role. Callers
+// must validate cardinality themselves for single-assignee roles (see
+// domain.IncidentRole.SingleAssignee and IncidentService.SetRole) --
+// the partial unique index in db/migrations/0030_incident_role_assignments
+// only guards against a concurrent-request race, it's not the primary
+// validation path (a bulk-insert of 2 rows for 'commander' would just fail
+// with an opaque constraint-violation error otherwise).
+func (r *IncidentRepository) SetRole(ctx context.Context, tx pgx.Tx, incidentID, tenantID uuid.UUID, role domain.IncidentRole, userIDs []uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `delete from incident_role_assignments where incident_id = $1 and role = $2`, incidentID, role); err != nil {
+		return fmt.Errorf("clear role %s: %w", role, err)
+	}
+	for _, userID := range userIDs {
+		if _, err := tx.Exec(ctx, `
+			insert into incident_role_assignments (incident_id, user_id, tenant_id, role) values ($1,$2,$3,$4)`,
+			incidentID, userID, tenantID, role,
+		); err != nil {
+			return fmt.Errorf("insert role assignment: %w", err)
+		}
+	}
+	return nil
 }
 
 // UpdatePhase moves the incident to phase. It never stamps closed_at itself

@@ -108,3 +108,74 @@ func TestMCPServerHandlers_ToolCallApprovals(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 }
+
+func TestMCPServerHandlers_ValidationAndNotFound(t *testing.T) {
+	h, tenantID, actorID := newMCPServerHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"name": "X", "transport": "http", "endpointOrCommand": "https://example.com"})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+uuid.New().String(), bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update unknown server -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"name": "X", "transport": "http", "endpointOrCommand": "https://example.com"})
+		req := withClaims(httptest.NewRequest("PUT", "/"+uuid.New().String(), bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("enable invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/enable", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("disable invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/disable", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("discover-tools invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/discover-tools", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("approve malformed call id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/tool-calls/not-a-number/approve", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("reject unknown call id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/tool-calls/999999/reject", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestMCPServerHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewMCPServerHandlers(nil, nil)
+	r := newRouter(h.Routes)
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/"}, {"GET", "/tool-calls"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
+	}
+}

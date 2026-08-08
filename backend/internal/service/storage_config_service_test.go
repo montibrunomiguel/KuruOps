@@ -44,6 +44,38 @@ func TestStorageConfigService_S3(t *testing.T) {
 	})
 }
 
+func TestStorageConfigService_GCS(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	dir := t.TempDir()
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir)
+
+	t.Run("initial save requires credentials JSON", func(t *testing.T) {
+		err := svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{Bucket: "b", ProjectID: "p"})
+		assert.ErrorContains(t, err, "credential value is required")
+	})
+
+	require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+		Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
+	}))
+
+	cfg, err := svc.Get(t.Context(), tenantID)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "argusops-prod", *cfg.GCSProjectID)
+	assert.NotContains(t, cfg.GCSCredentialsJSONSecretRef, "service_account", "the plaintext credentials JSON never lands in the stored ref")
+
+	t.Run("re-saving without new credentials keeps the existing ones", func(t *testing.T) {
+		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+			Bucket: "evidence-renamed", ProjectID: "argusops-prod",
+		}))
+		got, err := svc.Get(t.Context(), tenantID)
+		require.NoError(t, err)
+		assert.Equal(t, "evidence-renamed", *got.GCSBucket)
+		assert.Equal(t, cfg.GCSCredentialsJSONSecretRef, got.GCSCredentialsJSONSecretRef)
+	})
+}
+
 func TestStorageConfigService_BuildStore(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
@@ -73,5 +105,21 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 		require.NoError(t, err)
 		_, ok := store.(*blobstore.LocalStore)
 		assert.True(t, ok)
+	})
+
+	t.Run("gcs configured but the credentials JSON doesn't build a real client", func(t *testing.T) {
+		// {"type":"service_account"} (see TestStorageConfigService_GCS) is
+		// structurally valid JSON but missing the fields
+		// (private_key/client_email/token_uri) a real service-account
+		// credential needs -- NewGCSStore fails locally parsing it, no
+		// network involved, which is enough to cover BuildStore's "build
+		// gcs client" error-wrap branch. The success branch needs a fully
+		// valid credential and is exercised against real GCS in Fase 3, not
+		// here.
+		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+			Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
+		}))
+		_, err := svc.BuildStore(t.Context(), tenantID)
+		assert.ErrorContains(t, err, "build gcs client")
 	})
 }

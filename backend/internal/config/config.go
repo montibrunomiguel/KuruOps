@@ -6,7 +6,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -45,10 +44,15 @@ type Config struct {
 
 	// SecretsBackend selects the secrets.Store implementation cmd/api (and
 	// cmd/ingest/worker, wherever they resolve a secret) construct at
-	// startup -- "env" (default) is the in-memory dev-only stub
-	// (secrets.EnvStore), "vault" and "kms" are real backends. See
-	// secrets.NewStoreFromConfig for the factory switch this drives.
+	// startup -- "env" (default) is secrets.PersistentEnvStore (encrypted,
+	// Postgres-backed), "vault" and "kms" are real external backends. See
+	// secrets.NewFromConfig for the factory switch this drives.
 	SecretsBackend string
+
+	// SecretsEncryptionKey is the base64 of 32 random bytes (AES-256),
+	// required when SecretsBackend is "" or "env" -- see
+	// secrets.NewPersistentEnvStore. Generate with `openssl rand -base64 32`.
+	SecretsEncryptionKey string
 
 	// Vault* configure secrets.VaultStore, only read when SecretsBackend="vault".
 	VaultAddr  string
@@ -84,10 +88,11 @@ func Load() (Config, error) {
 		UploadDir:         getEnvDefault("UPLOAD_DIR", "/data/uploads"),
 		AppBaseURL:        getEnvDefault("APP_BASE_URL", "http://localhost:3000"),
 
-		SecretsBackend: getEnvDefault("SECRETS_BACKEND", "env"),
-		VaultAddr:      os.Getenv("VAULT_ADDR"),
-		VaultToken:     os.Getenv("VAULT_TOKEN"),
-		VaultMount:     getEnvDefault("VAULT_MOUNT", "secret"),
+		SecretsBackend:       getEnvDefault("SECRETS_BACKEND", "env"),
+		SecretsEncryptionKey: os.Getenv("SECRETS_ENCRYPTION_KEY"),
+		VaultAddr:            os.Getenv("VAULT_ADDR"),
+		VaultToken:           os.Getenv("VAULT_TOKEN"),
+		VaultMount:           getEnvDefault("VAULT_MOUNT", "secret"),
 
 		KMSRegion:          os.Getenv("KMS_REGION"),
 		KMSAccessKeyID:     os.Getenv("KMS_ACCESS_KEY_ID"),
@@ -121,16 +126,4 @@ func getEnvDurationDefault(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
-}
-
-func getEnvIntDefault(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
 }

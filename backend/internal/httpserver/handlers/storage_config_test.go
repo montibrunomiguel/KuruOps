@@ -37,6 +37,11 @@ func TestStorageConfigHandlers_S3(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/s3", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	saveBody, _ := json.Marshal(map[string]string{
 		"bucket": "evidence", "region": "us-east-1", "accessKeyId": "AKIA", "secretAccessKey": "s3cret",
 	})
@@ -68,6 +73,23 @@ func TestStorageConfigHandlers_GCS(t *testing.T) {
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
+	t.Run("save without a project id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"bucket": "evidence"})
+		req := withClaims(httptest.NewRequest("PUT", "/gcs", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("save without credentials on initial configuration -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"bucket": "evidence", "projectId": "my-project"})
+		req := withClaims(httptest.NewRequest("PUT", "/gcs", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/gcs", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	body, _ := json.Marshal(map[string]string{
 		"bucket": "evidence", "projectId": "my-project", "credentialsJson": `{"type":"service_account"}`,
 	})
@@ -78,4 +100,18 @@ func TestStorageConfigHandlers_GCS(t *testing.T) {
 	getRec := doRequest(r, getReq)
 	assert.NotContains(t, getRec.Body.String(), "service_account")
 	assert.Contains(t, getRec.Body.String(), `"provider":"gcs"`)
+}
+
+func TestStorageConfigHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewStorageConfigHandlers(nil)
+	r := newRouter(h.Routes)
+
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/"}, {"DELETE", "/"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
+	}
 }

@@ -67,3 +67,54 @@ func TestLLMProviderHandlers_CreateListUpdateSetDefaultDelete(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
 }
+
+func TestLLMProviderHandlers_ValidationAndNotFound(t *testing.T) {
+	h, tenantID, actorID := newLLMProviderHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("create unknown kind -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"name": "Bad", "kind": "bogus", "model": "gpt-4o", "apiKey": "sk-test"})
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"name": "OpenAI", "kind": "openai_compatible", "model": "gpt-4o"})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+uuid.New().String(), bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update unknown provider -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"name": "OpenAI", "kind": "openai_compatible", "model": "gpt-4o"})
+		req := withClaims(httptest.NewRequest("PUT", "/"+uuid.New().String(), bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("setDefault invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/default", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestLLMProviderHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewLLMProviderHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}

@@ -291,6 +291,15 @@ func TestAlertHandlers_List_MissingTenantContext(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+func TestAlertHandlers_Get_MissingTenantContext(t *testing.T) {
+	h, _, _, _ := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/"+uuid.New().String(), nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
 func TestAlertHandlers_Comments(t *testing.T) {
 	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
 	r := newRouter(h.Routes)
@@ -318,6 +327,144 @@ func TestAlertHandlers_Comments(t *testing.T) {
 		var comments []domain.AlertComment
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &comments))
 		assert.Empty(t, comments)
+	})
+}
+
+func TestAlertHandlers_List_Filters(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("severity filter matches the fixture alert", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?severity=high", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
+	t.Run("severity filter excludes a non-matching severity", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?severity=low", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Empty(t, alerts)
+	})
+
+	t.Run("status filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?status=open", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
+	t.Run("source filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?source=wazuh", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
+	t.Run("tag filter excludes an untagged alert", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?tag=phishing", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Empty(t, alerts)
+	})
+
+	t.Run("since filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?since=2000-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
+	_ = alertID
+}
+
+func TestAlertHandlers_MalformedID_Returns400(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+	otherID := newSecondAlert(t, h, tenantID)
+
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{"close", httptest.NewRequest("POST", "/not-a-uuid/close", bytes.NewReader([]byte(`{}`)))},
+		{"updateTags malformed id", httptest.NewRequest("PUT", "/not-a-uuid/tags", bytes.NewReader([]byte(`{}`)))},
+		{"overrideSeverity malformed id", httptest.NewRequest("PUT", "/not-a-uuid/severity", bytes.NewReader([]byte(`{}`)))},
+		{"reassign malformed id", httptest.NewRequest("PUT", "/not-a-uuid/assignee", bytes.NewReader([]byte(`{}`)))},
+		{"listLinkedAlerts malformed id", httptest.NewRequest("GET", "/not-a-uuid/alerts", nil)},
+		{"linkAlert malformed id", httptest.NewRequest("PUT", "/not-a-uuid/alerts/"+otherID.String(), nil)},
+		{"linkAlert malformed otherId", httptest.NewRequest("PUT", "/"+alertID.String()+"/alerts/not-a-uuid", nil)},
+		{"unlinkAlert malformed id", httptest.NewRequest("DELETE", "/not-a-uuid/alerts/"+otherID.String(), nil)},
+		{"unlinkAlert malformed otherId", httptest.NewRequest("DELETE", "/"+alertID.String()+"/alerts/not-a-uuid", nil)},
+		{"escalate malformed id", httptest.NewRequest("POST", "/not-a-uuid/escalate", nil)},
+		{"analyze malformed id", httptest.NewRequest("POST", "/not-a-uuid/analyze", nil)},
+		{"listComments malformed id", httptest.NewRequest("GET", "/not-a-uuid/comments", nil)},
+		{"addComment malformed id", httptest.NewRequest("POST", "/not-a-uuid/comments", bytes.NewReader([]byte(`{}`)))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := withClaims(tc.req, tenantID, actorID, nil)
+			rec := doRequest(r, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func TestAlertHandlers_Close_MalformedBody(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/close", bytes.NewReader([]byte("not json"))), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAlertHandlers_UpdateTags_MalformedBody(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("PUT", "/"+alertID.String()+"/tags", bytes.NewReader([]byte("not json"))), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAlertHandlers_Reassign_MalformedBody(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("PUT", "/"+alertID.String()+"/assignee", bytes.NewReader([]byte("not json"))), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestAlertHandlers_AddComment_MalformedBodyAndUnknownActor(t *testing.T) {
+	h, tenantID, _, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("malformed body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/comments", bytes.NewReader([]byte("not json"))), tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("actor not found -- 401", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"body": "hi"})
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/comments", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }
 

@@ -105,7 +105,7 @@ func TestDashboardService_Activity_AllowedTagsScoping(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", []string{"ifood"})
+	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", []string{"ifood"}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "in scope", events[0].ContextTitle)
@@ -122,7 +122,7 @@ func TestDashboardService_Activity(t *testing.T) {
 	_, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload})
 	require.NoError(t, err)
 
-	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", nil)
+	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1, "a non-positive limit defaults to 20, not zero results")
 	assert.Equal(t, "alert", events[0].Kind)
@@ -139,11 +139,11 @@ func TestDashboardService_Activity_KindFilter(t *testing.T) {
 	_, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload})
 	require.NoError(t, err)
 
-	incidentEvents, err := dashSvc.Activity(t.Context(), tenantID, 0, "incident", nil)
+	incidentEvents, err := dashSvc.Activity(t.Context(), tenantID, 0, "incident", nil, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, incidentEvents, "kind=incident must not surface the alert we just ingested")
 
-	alertEvents, err := dashSvc.Activity(t.Context(), tenantID, 0, "alert", nil)
+	alertEvents, err := dashSvc.Activity(t.Context(), tenantID, 0, "alert", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, alertEvents, 1)
 	assert.Equal(t, "alert", alertEvents[0].Kind)
@@ -171,7 +171,7 @@ func TestDashboardService_Followup(t *testing.T) {
 	open, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "c", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
 	require.NoError(t, err)
 
-	view, err := dashSvc.Followup(t.Context(), tenantID, nil)
+	view, err := dashSvc.Followup(t.Context(), tenantID, nil, nil, nil)
 	require.NoError(t, err)
 	assert.Len(t, view.Alerts, 3, "open, escalated, and investigating alerts all appear in follow-up")
 
@@ -181,7 +181,7 @@ func TestDashboardService_Followup(t *testing.T) {
 	assert.Contains(t, ids, open.ID, "a freshly-received untriaged alert needs follow-up too")
 
 	t.Run("respects allowedTags scoping", func(t *testing.T) {
-		view, err := dashSvc.Followup(t.Context(), tenantID, []string{"unrelated-tag"})
+		view, err := dashSvc.Followup(t.Context(), tenantID, []string{"unrelated-tag"}, nil, nil)
 		require.NoError(t, err)
 		assert.Empty(t, view.Alerts)
 	})

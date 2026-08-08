@@ -44,7 +44,13 @@ type Options struct {
 func NewRouter(opts Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	// ClientIPFromHeader("X-Real-IP"), not the deprecated chimw.RealIP: RealIP
+	// also trusts X-Forwarded-For / True-Client-IP, both client-suppliable and
+	// therefore spoofable if a caller sends one directly (see GO-2026-5777 /
+	// GO-2026-5775). nginx.conf sets X-Real-IP unconditionally on every
+	// request (proxy_set_header X-Real-IP $remote_addr), overwriting whatever
+	// the client sent, so it's the only header safe to trust here.
+	r.Use(chimw.ClientIPFromHeader("X-Real-IP"))
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.SecurityHeaders)

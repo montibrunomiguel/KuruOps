@@ -821,6 +821,22 @@
   align-items: stretch;
 }
 
+/* align-items: stretch above equalizes the two panels' *heights*, but a
+   short breakdown-list (few rows) still looks lopsided sitting at the top
+   of that extra space next to a taller chart/donut panel -- making the
+   panel a flex column and letting the list grow to fill it centers the
+   rows in the available height instead, which reads as intentional. */
+.dashboard-grid-2 > .panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-grid-2 .breakdown-list,
+.dashboard-grid-2 .legend-list {
+  flex: 1;
+  justify-content: center;
+}
+
 .chart-card-title-row {
   display: flex;
   align-items: baseline;

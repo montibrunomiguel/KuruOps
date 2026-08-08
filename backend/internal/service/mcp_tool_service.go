@@ -191,6 +191,16 @@ func (s *MCPToolService) ApproveToolCall(ctx context.Context, tenantID uuid.UUID
 
 func (s *MCPToolService) RejectToolCall(ctx context.Context, tenantID uuid.UUID, callID int64, approverID uuid.UUID) error {
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		c, err := s.toolCalls.Get(ctx, tx, callID)
+		if err != nil {
+			return err
+		}
+		if c == nil {
+			return fmt.Errorf("tool call %d not found", callID)
+		}
+		if c.Status != domain.ToolCallProposed {
+			return fmt.Errorf("tool call %d is not awaiting approval (status=%s)", callID, c.Status)
+		}
 		return s.toolCalls.SetStatus(ctx, tx, callID, domain.ToolCallRejected, &approverID)
 	})
 	if err == nil && s.onToolCallResolved != nil {

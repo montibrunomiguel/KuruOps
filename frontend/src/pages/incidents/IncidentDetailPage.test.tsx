@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { IncidentDetailPage } from "./IncidentDetailPage";
@@ -12,7 +12,7 @@ function jsonResponse(body: unknown, status = 200) {
 function incidentFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "i1", title: "Ransomware suspected", description: "Encrypted files found",
-    severity: "critical", priority: "p1", phase: "new", tags: [], assignees: [],
+    severity: "critical", priority: "p1", phase: "new", tags: [], assignees: [], roles: [],
     slaBreached: false, openedAt: "2026-01-01T00:00:00Z", ...overrides,
   };
 }
@@ -288,24 +288,73 @@ describe("IncidentDetailPage", () => {
     expect(matrix.querySelectorAll('.nist-matrix-cell[data-active="true"]')).toHaveLength(1);
   });
 
-  it("renders existing assignees as chips, and adding one PUTs the assignees endpoint", async () => {
+  it("renders the Team Roles section with existing role assignments", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/api/v1/users/directory")) {
         return Promise.resolve(jsonResponse([{ id: "u1", name: "Marina Alves" }, { id: "u2", name: "Diego Costa" }]));
       }
-      return routeFetch(incidentFixture({ assignees: [{ id: "u1", name: "Marina Alves" }] }))(url, init);
+      return routeFetch(
+        incidentFixture({
+          roles: [
+            { role: "commander", user: { id: "u1", name: "Marina Alves" } },
+            { role: "incident_handler", user: { id: "u2", name: "Diego Costa" } },
+          ],
+        }),
+      )(url, init);
     });
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
-    expect(await screen.findByText("Marina Alves")).toBeInTheDocument();
+    await screen.findByText("Team Roles");
+    expect(screen.getByText("Incident Commander")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Marina Alves")).toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByDisplayValue("+ Add assignee..."), "Diego Costa");
+    const handlerPanel = within(screen.getByText("Incident Handler(s)").closest("div") as HTMLElement);
+    expect(handlerPanel.getByText("Diego Costa")).toBeInTheDocument();
+  });
+
+  it("assigning a Commander PUTs the role endpoint with a single userId", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/v1/users/directory")) {
+        return Promise.resolve(jsonResponse([{ id: "u1", name: "Marina Alves" }]));
+      }
+      if (url.includes("/roles/commander")) return Promise.resolve(new Response(null, { status: 204 }));
+      return routeFetch(incidentFixture())(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail();
+
+    await screen.findByText("Team Roles");
+    const commanderSelect = screen.getByLabelText("Incident Commander");
+    await userEvent.selectOptions(commanderSelect, "Marina Alves");
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/v1/incidents/i1/assignees",
-        expect.objectContaining({ method: "PUT", body: JSON.stringify({ assigneeIds: ["u1", "u2"] }) }),
+        "/api/v1/incidents/i1/roles/commander",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ userIds: ["u1"] }) }),
+      ),
+    );
+  });
+
+  it("adding a person to a multi-assignee role PUTs the role endpoint with the full list", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/v1/users/directory")) {
+        return Promise.resolve(jsonResponse([{ id: "u1", name: "Marina Alves" }]));
+      }
+      if (url.includes("/roles/privacy_officer")) return Promise.resolve(new Response(null, { status: 204 }));
+      return routeFetch(incidentFixture())(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail();
+
+    await screen.findByText("Team Roles");
+    const privacyPanel = within(screen.getByText("Privacy Officer").closest("div") as HTMLElement);
+    await userEvent.selectOptions(privacyPanel.getByDisplayValue("+ Add assignee..."), "Marina Alves");
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/incidents/i1/roles/privacy_officer",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ userIds: ["u1"] }) }),
       ),
     );
   });

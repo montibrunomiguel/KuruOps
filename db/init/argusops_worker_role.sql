@@ -59,9 +59,10 @@ grant update (escalated_at) on alerts to argusops_worker;
 
 alter materialized view mv_alert_daily_stats owner to argusops_worker;
 alter materialized view mv_incident_kpis owner to argusops_worker;
+alter materialized view mv_incident_daily_stats owner to argusops_worker;
 
 -- The API (argusops_app) still needs to read these for the dashboard --
 -- only the owner (this role) can REFRESH them, but ownership doesn't imply
 -- SELECT for anyone else, and moving ownership away from argusops_app drops
 -- whatever implicit access it had as the previous owner.
-grant select on mv_alert_daily_stats, mv_incident_kpis to argusops_app;
+grant select on mv_alert_daily_stats, mv_incident_kpis, mv_incident_daily_stats to argusops_app;

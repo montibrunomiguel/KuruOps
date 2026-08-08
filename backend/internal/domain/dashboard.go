@@ -17,6 +17,16 @@ type AlertTrendPoint struct {
 	AvgMTTRSeconds *float64 `json:"avgMttrSeconds,omitempty"`
 }
 
+// IncidentTrendPoint is one day of mv_incident_daily_stats, exposed for the
+// Dashboard's Incidents-tab volume chart -- the incident-side counterpart of
+// AlertTrendPoint. No MTTR figure: mv_incident_kpis' MTTA/MTTR averages are
+// already tenant-wide (see DashboardStats.IncidentAvgMTTASeconds), and
+// there's no per-day breakdown of them requested here.
+type IncidentTrendPoint struct {
+	Day           string `json:"day"`
+	IncidentCount int    `json:"incidentCount"`
+}
+
 // ActivityEvent is one row of the Dashboard's Recent Activity feed -- a
 // union of alert_events and incident_events, newest first. Kind/ContextID
 // tell the frontend which detail page a click should navigate to.
@@ -29,6 +39,17 @@ type ActivityEvent struct {
 	ActorID      *uuid.UUID      `json:"actorId,omitempty"`
 	Data         json.RawMessage `json:"data"`
 	CreatedAt    time.Time       `json:"createdAt"`
+}
+
+// NamedCount is a breakdown row keyed by a person's identity rather than a
+// fixed enum value (unlike AlertsBySeverity/IncidentsByPhase's map[string]int,
+// which is safe to key by the enum string itself) -- two different analysts
+// can share a display name, and "unassigned"/"no commander yet" needs its
+// own bucket, so ID (nil for that bucket) is what actually disambiguates.
+type NamedCount struct {
+	ID    *uuid.UUID `json:"id,omitempty"`
+	Name  string     `json:"name"`
+	Count int        `json:"count"`
 }
 
 // DashboardStats is computed server-side for the Dashboard's KPI cards --
@@ -58,6 +79,9 @@ type DashboardStats struct {
 	// AlertTrend is the last 14 days of mv_alert_daily_stats, oldest first --
 	// the Dashboard Alerts tab's trend chart.
 	AlertTrend []AlertTrendPoint `json:"alertTrend"`
+	// IncidentTrend is the last 14 days of mv_incident_daily_stats, oldest
+	// first -- the Dashboard Incidents tab's volume chart.
+	IncidentTrend []IncidentTrendPoint `json:"incidentTrend"`
 	// AlertsBySeverity/AlertStatusDistribution are live counts across every
 	// alert regardless of status/age -- an overall-distribution snapshot,
 	// not a "currently open" one (that's OpenAlerts/CriticalAlerts above).
@@ -67,6 +91,13 @@ type DashboardStats struct {
 	// live full-history breakdown, for incidents.
 	IncidentsByPriority map[string]int `json:"incidentsByPriority"`
 	IncidentsByPhase    map[string]int `json:"incidentsByPhase"`
+	// AlertsByAnalyst/IncidentsByCommander are identity-keyed breakdowns
+	// (see NamedCount) -- one row per assigned_analyst_id / per-incident
+	// 'commander' role assignment, most recent-history-wide like the other
+	// breakdowns above. A nil-ID row is the "unassigned"/"no commander yet"
+	// bucket.
+	AlertsByAnalyst      []NamedCount `json:"alertsByAnalyst"`
+	IncidentsByCommander []NamedCount `json:"incidentsByCommander"`
 }
 
 // FollowupView is the Dashboard's Follow-up tab: alerts and incidents that

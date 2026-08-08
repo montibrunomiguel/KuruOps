@@ -79,7 +79,10 @@ const pausedForApprovalMessage = "Analysis paused: a tool call requires analyst 
 // "alert_analysis") or drives an agentic tool-use loop (see
 // runAgentAnalysis). Either way the final result is recorded as an
 // ai_analysis_run event once available.
-func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID, actorID uuid.UUID, allowedTags []string) (string, error) {
+// actorID is nil for a system-triggered analysis (see
+// AlertService.EnableAutoAnalysis) -- a human clicking "Analyze with AI"
+// always passes their own id.
+func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID uuid.UUID, actorID *uuid.UUID, allowedTags []string) (string, error) {
 	var alert *domain.Alert
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -117,7 +120,7 @@ func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID,
 // AnalyzeIncident is AnalyzeAlert's counterpart for incidents. Incidents
 // have no tag-visibility guard on Get elsewhere in this codebase (see
 // IncidentService.Get), so this doesn't apply one either.
-func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, allowedTags []string) (string, error) {
+func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incidentID uuid.UUID, actorID *uuid.UUID, allowedTags []string) (string, error) {
 	var incident *domain.Incident
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -156,7 +159,7 @@ func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incid
 // no tools. Kept as its own path (rather than routing everything through
 // the agentic loop with zero tools) so the common case -- no MCP servers
 // configured -- has exactly the same shape it always did.
-func (s *AIAnalysisService) analyzeSimple(ctx context.Context, tenantID, actorID uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, userPrompt string) (string, error) {
+func (s *AIAnalysisService) analyzeSimple(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, userPrompt string) (string, error) {
 	text, err := client.Complete(ctx, analysisSystemPrompt, userPrompt)
 	if err != nil {
 		return "", fmt.Errorf("llm analysis: %w", err)
@@ -227,7 +230,7 @@ func (s *AIAnalysisService) resolveAgentTools(ctx context.Context, tenantID uuid
 // runAgentAnalysis starts a fresh agentic run: persists an ai_analysis_runs
 // row up front (so even a first-turn pause has something ResumeAnalysisRun
 // can find), then drives turns via driveAgentLoop.
-func (s *AIAnalysisService) runAgentAnalysis(ctx context.Context, tenantID, actorID uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, tools []llmclient.Tool, routes map[string]agentToolRoute, userPrompt string) (string, error) {
+func (s *AIAnalysisService) runAgentAnalysis(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, tools []llmclient.Tool, routes map[string]agentToolRoute, userPrompt string) (string, error) {
 	messages := []llmclient.Message{{Role: llmclient.RoleUser, Content: userPrompt}}
 
 	messagesJSON, err := json.Marshal(messages)
@@ -436,18 +439,18 @@ func (s *AIAnalysisService) failRun(ctx context.Context, tenantID uuid.UUID, run
 // recordEvent logs the finished analysis text onto the alert/incident
 // timeline -- the same ai_analysis_run event both the pre-agentic-loop
 // analyzeSimple path and a completed/resumed agentic run produce.
-func (s *AIAnalysisService) recordEvent(ctx context.Context, tenantID, actorID uuid.UUID, contextType string, contextID uuid.UUID, text string) error {
+func (s *AIAnalysisService) recordEvent(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, text string) error {
 	data, _ := json.Marshal(map[string]string{"result": text})
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		if contextType == "alert" {
 			return s.alerts.InsertEvent(ctx, tx, &domain.AlertEvent{
 				AlertID: contextID, TenantID: tenantID, EventType: domain.AlertEventAIAnalysisRun,
-				ActorType: domain.ActorAI, ActorID: &actorID, Data: data,
+				ActorType: domain.ActorAI, ActorID: actorID, Data: data,
 			})
 		}
 		return s.incidents.InsertEvent(ctx, tx, &domain.IncidentEvent{
 			IncidentID: contextID, TenantID: tenantID, EventType: domain.IncidentEventAIAnalysisRun,
-			ActorType: domain.ActorAI, ActorID: &actorID, Data: data,
+			ActorType: domain.ActorAI, ActorID: actorID, Data: data,
 		})
 	})
 }

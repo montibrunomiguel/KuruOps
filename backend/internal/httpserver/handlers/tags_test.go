@@ -50,6 +50,16 @@ func TestTagHandlers_SettingsRoutes(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	body, _ := json.Marshal(map[string]string{"name": "phishing"})
 	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
 	rec := doRequest(r, req)
@@ -60,4 +70,12 @@ func TestTagHandlers_SettingsRoutes(t *testing.T) {
 	req = withClaims(httptest.NewRequest("DELETE", "/"+tag.ID.String(), nil), tenantID, actorID, nil)
 	rec = doRequest(r, req)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestTagHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewTagHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 }

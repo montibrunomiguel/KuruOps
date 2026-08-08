@@ -129,4 +129,120 @@ describe("PlaybookDetailPage", () => {
 
     expect(await screen.findByText("playbook not found")).toBeInTheDocument();
   });
+
+  it("editing category/keywords/description and an existing step, then saving, PUTs the cleaned payload and exits edit mode", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(playbookFixture(), 200));
+      return Promise.resolve(jsonResponse(playbookFixture()));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    await userEvent.clear(screen.getByLabelText("Category"));
+    await userEvent.type(screen.getByLabelText("Category"), "Malware");
+    await userEvent.clear(screen.getByLabelText("Keywords (comma separated)"));
+    await userEvent.type(screen.getByLabelText("Keywords (comma separated)"), "malware, ransomware");
+    await userEvent.clear(screen.getByLabelText("Description"));
+    await userEvent.type(screen.getByLabelText("Description"), "Updated description");
+
+    const stepInput = screen.getByDisplayValue("Check headers");
+    await userEvent.clear(stepInput);
+    await userEvent.type(stepInput, "Check email headers");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.category).toBe("Malware");
+      expect(body.keywords).toEqual(["malware", "ransomware"]);
+      expect(body.description).toBe("Updated description");
+      expect(body.steps.detection_analysis).toEqual(["Check email headers"]);
+    });
+
+    // Save exits edit mode back to the read-only view.
+    expect(screen.queryByLabelText("Category")).not.toBeInTheDocument();
+  });
+
+  it("removing a step in edit mode drops its input, and adding-then-leaving-blank omits the phase from the save payload", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(playbookFixture(), 200));
+      return Promise.resolve(jsonResponse(playbookFixture()));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    expect(screen.queryByDisplayValue("Check headers")).not.toBeInTheDocument();
+
+    // Add a fresh step but leave it blank -- cleanSteps should filter it and
+    // drop the phase entirely from the payload since it has no other steps.
+    const addButtons = screen.getAllByRole("button", { name: "+ Add step" });
+    await userEvent.click(addButtons[0]);
+    await userEvent.type(screen.getByPlaceholderText("Step 1"), "   ");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.steps.detection_analysis).toBeUndefined();
+    });
+  });
+
+  it("Cancel while editing an existing playbook reverts the title without saving", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbookFixture())));
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const titleInput = screen.getByDisplayValue("Phishing Response");
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, "Something else entirely");
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("heading", { name: "Phishing Response" })).toBeInTheDocument();
+    expect(screen.queryByText("Something else entirely")).not.toBeInTheDocument();
+  });
+
+  it("shows an error message when saving an edit to an existing playbook fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        if (init?.method === "PUT") return Promise.resolve(jsonResponse({ error: "save boom" }, 400));
+        return Promise.resolve(jsonResponse(playbookFixture()));
+      }),
+    );
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("save boom")).toBeInTheDocument();
+    // Stays in edit mode so the analyst can retry.
+    expect(screen.getByLabelText("Category")).toBeInTheDocument();
+  });
+
+  it("shows an error message when delete fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        if (init?.method === "DELETE") return Promise.resolve(jsonResponse({ error: "delete boom" }, 500));
+        return Promise.resolve(jsonResponse(playbookFixture()));
+      }),
+    );
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByText("delete boom")).toBeInTheDocument();
+    // Falls back out of the confirming state on failure.
+    expect(screen.queryByRole("button", { name: "Confirm delete" })).not.toBeInTheDocument();
+  });
 });

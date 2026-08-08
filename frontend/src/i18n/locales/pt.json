@@ -138,8 +138,18 @@
       "allSources": "Todas origens",
       "allTags": "Todas tags",
       "anyTime": "Qualquer período",
+      "last24h": "Últimas 24 horas",
+      "last7d": "Últimos 7 dias",
+      "last30d": "Últimos 30 dias",
+      "last90d": "Últimos 90 dias",
+      "customRange": "Período personalizado",
+      "customRangeFrom": "De",
+      "customRangeTo": "Até",
+      "timeRangeLabel": "Período",
       "allPriorities": "Todas prioridades",
       "allOwners": "Todos responsáveis",
+      "allAnalysts": "Todos analistas",
+      "allCommanders": "Todos commanders",
       "slaAny": "SLA: qualquer",
       "correlatedAny": "Correlacionado: qualquer",
       "correlatedYes": "Correlacionado: sim",
@@ -159,6 +169,8 @@
       "legendReceived": "Alertas recebidos",
       "legendMttr": "MTTR (hrs)",
       "bySeverityTitle": "Alertas por Severidade",
+      "byAnalystTitle": "Alertas por Analista",
+      "unassigned": "Não atribuído",
       "statusDistributionTitle": "Distribuição por Status",
       "total": "TOTAL",
       "recentActivityTitle": "Atividade Recente",
@@ -174,8 +186,11 @@
       "p1OpenSub": "Prioridade máxima",
       "avgMttaMttr": "MTTA / MTTR Médio",
       "avgMttaMttrSub": "Tempo até análise / fechamento",
+      "volumeTitle": "Volume de Incidentes",
       "byPriorityTitle": "Incidentes por Prioridade (NIST)",
       "byPhaseTitle": "Incidentes por Fase NIST",
+      "byCommanderTitle": "Incidentes por Commander",
+      "noCommander": "Sem commander",
       "recentIncidentsTitle": "Incidentes Recentes",
       "noIncidents": "Nenhum incidente ainda."
     },
@@ -212,7 +227,8 @@
         "ai_analysis_run": "Análise de IA executada no incidente {{id}}",
         "status_timestamp_corrected": "Horário do incidente {{id}} corrigido",
         "comment_added": "{{actor}} adicionou uma nota ao incidente {{id}}",
-        "assignees_changed": "Responsáveis pelo incidente {{id}} atualizados"
+        "assignees_changed": "Responsáveis pelo incidente {{id}} atualizados",
+        "role_changed": "Papéis da equipe do incidente {{id}} atualizados"
       }
     }
   },
@@ -242,6 +258,7 @@
       "escalateToIncident": "Escalar para Incidente",
       "escalating": "Escalando...",
       "receivedLine": "Origem: {{source}} · Recebido em {{date}}",
+      "customMetadataTitle": "Metadados Personalizados",
       "payloadTitle": "Payload do Webhook",
       "collapse": "Recolher",
       "expand": "Expandir",
@@ -338,7 +355,6 @@
       "matrixTitle": "Matriz de Severidade × Prioridade NIST",
       "matrixHint": "Clique em uma célula para alterar a severidade e prioridade do incidente.",
       "statusHistoryTitle": "Histórico de Status",
-      "current": "Atual",
       "correctTime": "Corrigir horário",
       "correctionReason": "Motivo da correção",
       "correctionReasonPlaceholder": "ex.: horário registrado errado por atraso na ingestão do alerta de origem",
@@ -347,6 +363,17 @@
       "originalWas": "original: {{date}} · corrigido por {{by}}",
       "notFound": "Incidente não encontrado.",
       "warningBadge": "atenção"
+    },
+    "roles": {
+      "title": "Papéis da Equipe",
+      "unassigned": "— Não atribuído —",
+      "role": {
+        "commander": "Incident Commander",
+        "incident_handler": "Incident Handler(s)",
+        "communications_lead": "Communications Lead",
+        "privacy_officer": "Privacy Officer",
+        "technical_lead": "Technical Lead"
+      }
     }
   },
   "settings": {
@@ -551,7 +578,9 @@
         "groupAttribute": "Group attribute",
         "groupBaseDn": "Group base DN",
         "optional": "(opcional)",
-        "configureButton": "Configurar LDAP"
+        "configureButton": "Configurar LDAP",
+        "remove": "Remover configuração",
+        "removeConfirm": "Remover a configuração de LDAP? Os usuários não conseguirão mais fazer login via LDAP até que seja reconfigurado."
       },
       "saml": {
         "title": "SAML",
@@ -570,7 +599,9 @@
         "acsUrl": "ACS URL",
         "groupAttribute": "Group attribute",
         "groupAttributeHint": "(usado para mapear grupo → role/tags)",
-        "configureButton": "Configurar SAML"
+        "configureButton": "Configurar SAML",
+        "remove": "Remover configuração",
+        "removeConfirm": "Remover a configuração de SAML? Os usuários não conseguirão mais fazer login via SSO até que seja reconfigurado (salvar novamente gera um novo par de chaves de assinatura, que você precisará registrar de novo no seu IdP)."
       }
     },
     "tags": {

@@ -31,6 +31,12 @@ func TestUserRepository_GetAndList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.Equal(t, userID, list[0].ID)
+
+	t.Run("get unknown id returns nil, nil", func(t *testing.T) {
+		got, err := repo.Get(t.Context(), tx, uuid.New())
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
 }
 
 func TestUserRepository_ListSummaries(t *testing.T) {
@@ -209,6 +215,22 @@ func TestUserRepository_SetPassword(t *testing.T) {
 	require.NotNil(t, got.PasswordHash)
 	assert.Equal(t, "$argon2id$newhash", *got.PasswordHash)
 	assert.False(t, got.MustChangePassword, "SetPassword must always clear must_change_password")
+}
+
+func TestUserRepository_SetPasswordAndForceChange(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", nil)
+	repo := repository.NewUserRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	require.NoError(t, repo.SetPasswordAndForceChange(t.Context(), tx, userID, "$argon2id$temphash"))
+
+	got, err := repo.Get(t.Context(), tx, userID)
+	require.NoError(t, err)
+	require.NotNil(t, got.PasswordHash)
+	assert.Equal(t, "$argon2id$temphash", *got.PasswordHash)
+	assert.True(t, got.MustChangePassword, "SetPasswordAndForceChange must always set must_change_password -- this is the admin-reset path, the temp password must not become a permanent one")
 }
 
 func TestUserRepository_SetActive(t *testing.T) {

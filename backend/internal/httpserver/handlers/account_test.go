@@ -34,6 +34,11 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/change-password", bytes.NewReader([]byte("{not-json"))), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	t.Run("valid change -- 200 with a fresh token", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"currentPassword": testutil.TestPassword, "newPassword": "NewPassword123!"})
 		req := withClaims(httptest.NewRequest("POST", "/change-password", bytes.NewReader(body)), tenantID, userID, nil)
@@ -61,6 +66,11 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	t.Run("missing name -- 400", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"name": "", "email": "someone@test.local"})
 		req := withClaims(httptest.NewRequest("PUT", "/profile", bytes.NewReader(body)), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/profile", bytes.NewReader([]byte("{not-json"))), tenantID, userID, nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 

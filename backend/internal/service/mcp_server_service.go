@@ -151,10 +151,12 @@ func validateToolLists(allowed, sideEffecting []string) error {
 	return nil
 }
 
-// ToolInvocationPolicy is what the worker's analysis agent (not yet
-// implemented — see cmd/worker/main.go TODO) must consult before calling
-// any MCP tool: allowed at all, and if so, whether it needs analyst
-// approval first via the ai_tool_calls proposed/approved flow.
+// ToolInvocationPolicy is what AIAnalysisService.ProposeToolCall (via
+// MCPToolService) consults before calling any MCP tool: allowed at all, and
+// if so, whether it needs analyst approval first via the ai_tool_calls
+// proposed/approved flow. Runs inline in cmd/api/cmd/ingest's agentic
+// analysis loop, not in cmd/worker -- see runAgentAnalysis in
+// ai_analysis_service.go.
 type ToolInvocationPolicy struct {
 	Allowed          bool
 	RequiresApproval bool

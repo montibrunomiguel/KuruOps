@@ -1,0 +1,11 @@
+-- Optional, user-defined key/value metadata a webhook source can attach to
+-- an alert -- e.g. a Slack channel to notify in, a link to an external
+-- playbook or runbook/notebook, which environment it fired in, or any other
+-- "important variable" the sender wants surfaced on the alert without
+-- ArgusOps needing to understand what it means. Distinct from `payload`
+-- (the full raw webhook body, kept verbatim for reference) -- metadata is
+-- the sender's own curated subset they explicitly want shown prominently
+-- (see internal/ingest's extractMetadata and the frontend's Metadata panel
+-- on AlertDetailPage). Always an object (possibly empty), never null --
+-- same NOT NULL DEFAULT convention as tags.
+alter table alerts add column metadata jsonb not null default '{}'::jsonb;

@@ -58,6 +58,17 @@ func TestUserHandlers_ListAndUpdateAccess(t *testing.T) {
 		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/access", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
+
+	t.Run("invalid id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"role": "admin", "resourceAccess": []string{"alerts"}})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid/access", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/access", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
 }
 
 func TestUserHandlers_Create(t *testing.T) {
@@ -67,6 +78,11 @@ func TestUserHandlers_Create(t *testing.T) {
 	t.Run("missing email -- 400", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"name": "No Email", "role": "analyst", "resourceAccess": []string{"alerts"}})
 		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
@@ -119,6 +135,16 @@ func TestUserHandlers_ActivateDeactivate(t *testing.T) {
 
 	req = withClaims(httptest.NewRequest("POST", "/"+targetUserID.String()+"/activate", nil), tenantID, uuid.New(), nil)
 	assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+	t.Run("deactivate invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/deactivate", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("activate invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/not-a-uuid/activate", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
 }
 
 // TestUserHandlers_Deactivate_RevokesRefreshToken guards the actual security
@@ -198,6 +224,16 @@ func TestUserHandlers_GroupMappings(t *testing.T) {
 
 	req = withClaims(httptest.NewRequest("DELETE", "/group-mappings/"+id, nil), tenantID, uuid.New(), nil)
 	assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+	t.Run("save mapping invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/group-mappings/ldap/soc-analysts", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete mapping invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/group-mappings/not-a-uuid", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
 }
 
 // TestUserHandlers_Directory exercises the un-gated GET /users/directory
@@ -224,5 +260,30 @@ func TestUserHandlers_Directory_MissingTenantContext(t *testing.T) {
 	r := newRouter(func(rt chi.Router) { rt.Get("/", h.Directory) })
 
 	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}
+
+func TestUserHandlers_List_MissingTenantContext(t *testing.T) {
+	h, _, _ := newUserHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}
+
+func TestUserHandlers_Create_MissingTenantContext(t *testing.T) {
+	h, _, _ := newUserHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	body, _ := json.Marshal(map[string]string{"email": "new@example.com", "name": "New", "role": "viewer"})
+	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}
+
+func TestUserHandlers_ListGroupMappings_MissingTenantContext(t *testing.T) {
+	h, _, _ := newUserHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/group-mappings", nil)
 	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 }

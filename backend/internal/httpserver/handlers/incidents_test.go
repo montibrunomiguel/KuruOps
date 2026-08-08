@@ -126,6 +126,55 @@ func TestIncidentHandlers_SetAssignees(t *testing.T) {
 	})
 }
 
+func TestIncidentHandlers_SetRole(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+	otherAnalyst := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	t.Run("assigns a single-assignee role", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"userIds": []string{actorID.String()}})
+		req := withClaims(httptest.NewRequest("PUT", "/"+incidentID.String()+"/roles/commander", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		getReq := withClaims(httptest.NewRequest("GET", "/"+incidentID.String(), nil), tenantID, actorID, nil)
+		var inc domain.Incident
+		require.NoError(t, json.Unmarshal(doRequest(r, getReq).Body.Bytes(), &inc))
+		require.Len(t, inc.Roles, 1)
+		assert.Equal(t, domain.RoleCommander, inc.Roles[0].Role)
+	})
+
+	t.Run("two people for commander -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"userIds": []string{actorID.String(), otherAnalyst.String()}})
+		req := withClaims(httptest.NewRequest("PUT", "/"+incidentID.String()+"/roles/commander", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "at most one person")
+	})
+
+	t.Run("unknown role -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"userIds": []string{actorID.String()}})
+		req := withClaims(httptest.NewRequest("PUT", "/"+incidentID.String()+"/roles/not-a-role", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("multi-assignee role accepts several people", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"userIds": []string{actorID.String(), otherAnalyst.String()}})
+		req := withClaims(httptest.NewRequest("PUT", "/"+incidentID.String()+"/roles/incident_handler", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		getReq := withClaims(httptest.NewRequest("GET", "/"+incidentID.String(), nil), tenantID, actorID, nil)
+		var inc domain.Incident
+		require.NoError(t, json.Unmarshal(doRequest(r, getReq).Body.Bytes(), &inc))
+		handlerCount := 0
+		for _, ra := range inc.Roles {
+			if ra.Role == domain.RoleIncidentHandler {
+				handlerCount++
+			}
+		}
+		assert.Equal(t, 2, handlerCount)
+	})
+}
+
 func TestIncidentHandlers_Get(t *testing.T) {
 	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
 	r := newRouter(h.Routes)
@@ -241,4 +290,163 @@ func TestIncidentHandlers_TimelineCommentsAndAlertLinks(t *testing.T) {
 		req = withClaims(httptest.NewRequest("DELETE", "/"+incidentID.String()+"/alerts/"+alert.ID.String(), nil), tenantID, actorID, nil)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
+}
+
+func TestIncidentHandlers_List_Filters(t *testing.T) {
+	h, tenantID, actorID, _ := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("severity filter matches", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?severity=critical", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+
+	t.Run("priority filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?priority=p1", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+
+	t.Run("phase filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?phase=new", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+
+	t.Run("tag filter excludes an untagged incident", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?tag=phishing", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Empty(t, incidents)
+	})
+
+	t.Run("commanderId filter with no commander set yet excludes it", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?commanderId="+actorID.String(), nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Empty(t, incidents)
+	})
+
+	t.Run("since filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?since=2000-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+}
+
+func TestIncidentHandlers_MalformedID_Returns400(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{"get", httptest.NewRequest("GET", "/not-a-uuid", nil)},
+		{"changePhase", httptest.NewRequest("POST", "/not-a-uuid/phase", bytes.NewReader([]byte(`{}`)))},
+		{"close", httptest.NewRequest("POST", "/not-a-uuid/close", nil)},
+		{"setSeverityPriority", httptest.NewRequest("POST", "/not-a-uuid/severity-priority", bytes.NewReader([]byte(`{}`)))},
+		{"updateDescription", httptest.NewRequest("PUT", "/not-a-uuid/description", bytes.NewReader([]byte(`{}`)))},
+		{"updateTags", httptest.NewRequest("PUT", "/not-a-uuid/tags", bytes.NewReader([]byte(`{}`)))},
+		{"setAssignees", httptest.NewRequest("PUT", "/not-a-uuid/assignees", bytes.NewReader([]byte(`{}`)))},
+		{"setRole", httptest.NewRequest("PUT", "/not-a-uuid/roles/commander", bytes.NewReader([]byte(`{}`)))},
+		{"statusHistory", httptest.NewRequest("GET", "/not-a-uuid/status-history", nil)},
+		{"correctPhaseTimestamp", httptest.NewRequest("POST", "/not-a-uuid/status-history/new/correct", bytes.NewReader([]byte(`{}`)))},
+		{"timeline", httptest.NewRequest("GET", "/not-a-uuid/timeline", nil)},
+		{"listComments", httptest.NewRequest("GET", "/not-a-uuid/comments", nil)},
+		{"addComment", httptest.NewRequest("POST", "/not-a-uuid/comments", bytes.NewReader([]byte(`{}`)))},
+		{"linkedAlerts", httptest.NewRequest("GET", "/not-a-uuid/alerts", nil)},
+		{"linkAlert malformed id", httptest.NewRequest("PUT", "/not-a-uuid/alerts/"+uuid.New().String(), nil)},
+		{"linkAlert malformed alertId", httptest.NewRequest("PUT", "/"+incidentID.String()+"/alerts/not-a-uuid", nil)},
+		{"unlinkAlert malformed id", httptest.NewRequest("DELETE", "/not-a-uuid/alerts/"+uuid.New().String(), nil)},
+		{"unlinkAlert malformed alertId", httptest.NewRequest("DELETE", "/"+incidentID.String()+"/alerts/not-a-uuid", nil)},
+		{"analyze", httptest.NewRequest("POST", "/not-a-uuid/analyze", nil)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := withClaims(tc.req, tenantID, actorID, nil)
+			rec := doRequest(r, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func TestIncidentHandlers_MalformedBody_Returns400(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+	badBody := bytes.NewReader([]byte("not json"))
+
+	cases := []struct {
+		name string
+		req  *http.Request
+	}{
+		{"changePhase", httptest.NewRequest("POST", "/"+incidentID.String()+"/phase", badBody)},
+		{"setSeverityPriority", httptest.NewRequest("POST", "/"+incidentID.String()+"/severity-priority", bytes.NewReader([]byte("not json")))},
+		{"updateDescription", httptest.NewRequest("PUT", "/"+incidentID.String()+"/description", bytes.NewReader([]byte("not json")))},
+		{"updateTags", httptest.NewRequest("PUT", "/"+incidentID.String()+"/tags", bytes.NewReader([]byte("not json")))},
+		{"setAssignees", httptest.NewRequest("PUT", "/"+incidentID.String()+"/assignees", bytes.NewReader([]byte("not json")))},
+		{"setRole", httptest.NewRequest("PUT", "/"+incidentID.String()+"/roles/commander", bytes.NewReader([]byte("not json")))},
+		{"correctPhaseTimestamp", httptest.NewRequest("POST", "/"+incidentID.String()+"/status-history/new/correct", bytes.NewReader([]byte("not json")))},
+		{"addComment", httptest.NewRequest("POST", "/"+incidentID.String()+"/comments", bytes.NewReader([]byte("not json")))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := withClaims(tc.req, tenantID, actorID, nil)
+			rec := doRequest(r, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+// TestIncidentHandlers_Close_Twice documents that, unlike alerts.Close,
+// closing an incident is idempotent: IncidentService.ChangePhase treats
+// "already at the target phase" as a no-op (current.Phase == newPhase
+// returns nil rather than an error), so a second close still returns 204,
+// not 400/409.
+func TestIncidentHandlers_Close_Twice(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("POST", "/"+incidentID.String()+"/close", nil), tenantID, actorID, nil)
+	assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+	t.Run("closing twice is idempotent -- still 204", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/"+incidentID.String()+"/close", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+	})
+}
+
+func TestIncidentHandlers_AddComment_UnknownActor(t *testing.T) {
+	h, tenantID, _, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	body, _ := json.Marshal(map[string]string{"body": "hi"})
+	req := withClaims(httptest.NewRequest("POST", "/"+incidentID.String()+"/comments", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestIncidentHandlers_List_MissingTenantContext(t *testing.T) {
+	h, _, _, _ := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 }

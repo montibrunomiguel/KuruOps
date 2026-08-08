@@ -20,7 +20,16 @@ type GCSStore struct {
 }
 
 func NewGCSStore(ctx context.Context, credentialsJSON, bucket string) (*GCSStore, error) {
-	client, err := storage.NewClient(ctx, option.WithCredentialsJSON([]byte(credentialsJSON)))
+	// WithAuthCredentialsJSON(ServiceAccount, ...) rather than the older
+	// WithCredentialsJSON: the latter auto-detects the credential *type*
+	// from whatever JSON it's handed, including types (e.g.
+	// "external_account") that can point at an attacker-controlled token
+	// endpoint if the JSON was tampered with -- see the google-api-go-client
+	// deprecation notice on WithCredentialsJSON. This admin-supplied blob
+	// (Settings -> Storage Integration) is only ever meant to be a plain
+	// service-account key, so pinning the accepted type rejects anything
+	// else outright instead of trusting whatever type the JSON claims.
+	client, err := storage.NewClient(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON)))
 	if err != nil {
 		return nil, err
 	}

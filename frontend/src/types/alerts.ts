@@ -23,6 +23,10 @@ export interface Alert {
   srcIp?: string;
   tags: string[];
   payload: unknown;
+  // Sender-curated key/value list -- Slack channel, playbook link,
+  // environment, or anything else the source wants surfaced (see backend
+  // internal/ingest's extractMetadata). Always an object, possibly empty.
+  metadata: Record<string, unknown>;
   incidentId?: string;
   assignedAnalystId?: string;
   assignedAnalystName?: string;
@@ -31,6 +35,10 @@ export interface Alert {
   closedAt?: string;
   createdAt: string;
   updatedAt: string;
+  // Most recent completed "Analyze with AI" result -- resolved live at Get
+  // time (see backend AlertService.Get / domain.Alert.LatestAnalysis),
+  // undefined if no analysis has completed yet for this alert.
+  latestAnalysis?: string;
 }
 
 export type AlertEventType =

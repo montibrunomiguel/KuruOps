@@ -131,6 +131,85 @@ func TestIncidentService_SetAssignees(t *testing.T) {
 	})
 }
 
+// TestIncidentService_SetRole guards the NIST-role validation layer on top
+// of IncidentRepository.SetRole: single-assignee cardinality is rejected
+// with a clear error before ever reaching the DB, replacing a role's set
+// works the same "replace" way SetAssignees does, and both assign/unassign
+// record a timeline event.
+func TestIncidentService_SetRole(t *testing.T) {
+	_, incSvc, _ := newIncidentServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	analystA := testutil.NewUser(t, tenantID, "analyst", nil)
+	analystB := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: "t", Severity: domain.SeverityLow, Priority: domain.PriorityP4,
+	})
+	require.NoError(t, err)
+
+	t.Run("rejects an unknown role", func(t *testing.T) {
+		err := incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.IncidentRole("nope"), []uuid.UUID{analystA}, nil)
+		assert.ErrorContains(t, err, "unknown incident role")
+	})
+
+	t.Run("rejects two people for a single-assignee role before touching the DB", func(t *testing.T) {
+		err := incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{analystA, analystB}, nil)
+		assert.ErrorContains(t, err, "at most one person")
+	})
+
+	t.Run("assigns a single-assignee role and records role_assigned", func(t *testing.T) {
+		require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{analystA}, nil))
+		got, err := incSvc.Get(t.Context(), tenantID, inc.ID, nil)
+		require.NoError(t, err)
+		require.Len(t, got.Roles, 1)
+		assert.Equal(t, domain.RoleCommander, got.Roles[0].Role)
+		assert.Equal(t, analystA, got.Roles[0].User.ID)
+
+		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		require.NoError(t, err)
+		assert.Equal(t, domain.IncidentEventRoleAssigned, events[len(events)-1].EventType)
+	})
+
+	t.Run("replacing the Commander swaps, doesn't add a second", func(t *testing.T) {
+		require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{analystB}, nil))
+		got, err := incSvc.Get(t.Context(), tenantID, inc.ID, nil)
+		require.NoError(t, err)
+		require.Len(t, got.Roles, 1)
+		assert.Equal(t, analystB, got.Roles[0].User.ID)
+	})
+
+	t.Run("multi-assignee role accepts several people", func(t *testing.T) {
+		require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleIncidentHandler, []uuid.UUID{analystA, analystB}, nil))
+		got, err := incSvc.Get(t.Context(), tenantID, inc.ID, nil)
+		require.NoError(t, err)
+		handlerCount := 0
+		for _, r := range got.Roles {
+			if r.Role == domain.RoleIncidentHandler {
+				handlerCount++
+			}
+		}
+		assert.Equal(t, 2, handlerCount)
+	})
+
+	t.Run("clearing a role records role_unassigned", func(t *testing.T) {
+		require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleIncidentHandler, nil, nil))
+		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		require.NoError(t, err)
+		assert.Equal(t, domain.IncidentEventRoleUnassigned, events[len(events)-1].EventType)
+	})
+
+	t.Run("rejects an unknown assignee id", func(t *testing.T) {
+		err := incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RolePrivacyOfficer, []uuid.UUID{uuid.New()}, nil)
+		assert.ErrorContains(t, err, "not found")
+	})
+
+	t.Run("an out-of-scope incident reads as not found", func(t *testing.T) {
+		err := incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RolePrivacyOfficer, []uuid.UUID{analystA}, []string{"unrelated-tag"})
+		assert.ErrorContains(t, err, "not found")
+	})
+}
+
 func TestIncidentService_ChangePhase(t *testing.T) {
 	_, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)

@@ -21,6 +21,32 @@ export const NIST_PHASE_ORDER: IncidentPhase[] = [
 
 export type IncidentPriority = "p1" | "p2" | "p3" | "p4";
 
+// NIST 800-61 team roles -- additive to `assignees` above, not a
+// replacement (see backend domain.Incident.Roles's doc comment). Commander
+// and Technical Lead are single-assignee; the rest allow any number of people.
+export type IncidentRole =
+  | "commander"
+  | "incident_handler"
+  | "communications_lead"
+  | "privacy_officer"
+  | "technical_lead";
+
+// Display order for the "Team Roles" section -- single-assignee roles first.
+export const INCIDENT_ROLE_ORDER: IncidentRole[] = [
+  "commander",
+  "technical_lead",
+  "incident_handler",
+  "communications_lead",
+  "privacy_officer",
+];
+
+export const SINGLE_ASSIGNEE_ROLES: IncidentRole[] = ["commander", "technical_lead"];
+
+export interface IncidentRoleAssignment {
+  role: IncidentRole;
+  user: UserSummary;
+}
+
 export interface Incident {
   id: string;
   tenantId: string;
@@ -32,6 +58,8 @@ export interface Incident {
   // Resolved via a live join server-side (see backend's
   // IncidentRepository.AssigneesForIncidents) -- zero or more analysts.
   assignees: UserSummary[];
+  // NIST team-role assignments -- see IncidentRole above.
+  roles: IncidentRoleAssignment[];
   tags: string[];
   slaDueAt?: string;
   slaBreached: boolean;
@@ -79,7 +107,9 @@ export type IncidentEventType =
   | "alert_unlinked"
   | "ai_analysis_run"
   | "status_timestamp_corrected"
-  | "assignees_changed";
+  | "assignees_changed"
+  | "role_assigned"
+  | "role_unassigned";
 
 export interface IncidentEvent {
   id: number;

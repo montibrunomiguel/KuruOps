@@ -74,6 +74,7 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 		b := v == "true"
 		f.Correlated = &b
 	}
+	f.ReceivedSince = parseSince(r)
 	f.Limit, f.Offset = parsePaging(r)
 	f.AllowedTags = middleware.AllowedTags(r.Context())
 
@@ -372,7 +373,7 @@ func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ai.AnalyzeAlert(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()))
+	result, err := h.ai.AnalyzeAlert(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -473,7 +473,6 @@ function DiscoverToolsPanel({
       .then(setTools)
       .catch((err: unknown) => setError(mutationErrorMessage(err)))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server.id, token]);
 
   function toggleAllowed(name: string) {

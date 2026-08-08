@@ -34,7 +34,6 @@ export function useList<T>(fetcher: (token: string | null) => Promise<T[]>, deps
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reload]);
 
   return { ...state, reload };
@@ -97,15 +96,18 @@ export function usePaginatedList<T>(
           const message = err instanceof ApiError ? err.message : "Falha ao carregar dados";
           setState((s) => ({ ...s, loading: false, loadingMore: false, error: message }));
         });
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     },
+    // fetcher/logout deliberately excluded, same reasoning as reload()'s
+    // useCallback above -- they're referenced by identity from the enclosing
+    // component, but listing them would recreate load() (and re-fire the
+    // effect below) on every render a caller passes a fresh inline fetcher.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [token, ...deps],
   );
 
   useEffect(() => {
     offsetRef.current = 0;
     load(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
   return { ...state, loadMore: () => load(false), reload: () => load(true) };

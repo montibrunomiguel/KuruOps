@@ -104,19 +104,21 @@ func NewRateLimiter(limit int, window time.Duration) func(http.Handler) http.Han
 }
 
 func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For if behind a proxy
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
-	}
-	// Check X-Real-IP
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
+	// Only X-Real-IP is trusted, and only because nginx.conf sets it
+	// unconditionally on every proxied request (proxy_set_header X-Real-IP
+	// $remote_addr) -- it always overwrites whatever the client sent, so a
+	// forged inbound X-Real-IP never survives the hop through nginx.
+	// X-Forwarded-For is deliberately NOT consulted: it's client-suppliable,
+	// and trusting it (as this function used to, and as chi's now-deprecated
+	// RealIP middleware still does) let an attacker bypass this exact rate
+	// limiter by sending a fresh X-Forwarded-For on every request. See
+	// GHSA-3fxj-6jh8-hvhx / GO-2026-5777 / GO-2026-5775.
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		return xri
 	}
 
-	// Fallback to RemoteAddr
+	// No trusted proxy header present -- direct connection (dev, or nginx
+	// not in front) or a test harness. Fall back to the TCP-level RemoteAddr.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

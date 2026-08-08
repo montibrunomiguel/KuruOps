@@ -82,3 +82,67 @@ func TestPlaybookHandlers_Match(t *testing.T) {
 		assert.Equal(t, "null\n", rec.Body.String())
 	})
 }
+
+func TestPlaybookHandlers_List(t *testing.T) {
+	h, tenantID, actorID := newPlaybookHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("empty list -- 200", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "[]\n", rec.Body.String())
+	})
+
+	body, _ := json.Marshal(map[string]any{"title": "Phishing Response", "category": "Phishing"})
+	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+	require.Equal(t, http.StatusCreated, doRequest(r, req).Code)
+
+	t.Run("list reflects created playbook", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var pbs []domain.Playbook
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pbs))
+		require.Len(t, pbs, 1)
+	})
+}
+
+func TestPlaybookHandlers_ValidationErrors(t *testing.T) {
+	h, tenantID, actorID := newPlaybookHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("get invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("create invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"title": "X"})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("update invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+uuid.New().String(), bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("delete invalid id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestPlaybookHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewPlaybookHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}

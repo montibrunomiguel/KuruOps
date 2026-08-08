@@ -90,10 +90,147 @@ describe("AlertsListPage", () => {
     expect(row).toHaveTextContent("—");
   });
 
+  it("falls back to a shortened analyst id when no assignee name was resolved", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse([alertFixture({ assignedAnalystId: "u1234567-abcd" })])),
+    );
+    render(<AlertsListPage />, { wrapper });
+
+    await screen.findByText("Suspicious login");
+    const row = screen.getByText("Suspicious login").closest("tr")!;
+    expect(row).toHaveTextContent("u1234567");
+  });
+
   it("shows the error banner on a failed fetch", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } })));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
+  });
+
+  it("shows a correlated badge when the alert has an incidentId", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ incidentId: "inc-1" })])));
+    render(<AlertsListPage />, { wrapper });
+
+    await screen.findByText("Suspicious login");
+    const row = screen.getByText("Suspicious login").closest("tr")!;
+    expect(row).toHaveTextContent("Yes");
+  });
+
+  it("renders tag chips for an alert that has tags", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ tags: ["ransomware", "priority"] })])));
+    render(<AlertsListPage />, { wrapper });
+
+    await screen.findByText("Suspicious login");
+    expect(screen.getByText("ransomware")).toBeInTheDocument();
+    expect(screen.getByText("priority")).toBeInTheDocument();
+  });
+
+  it("changing the status filter re-fetches with the new query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const selects = screen.getAllByRole("combobox");
+    await userEvent.selectOptions(selects[1], "escalated");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("status=escalated");
+    });
+  });
+
+  it("changing the correlated filter re-fetches with the new query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const selects = screen.getAllByRole("combobox");
+    await userEvent.selectOptions(selects[2], "true");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("correlated=true");
+    });
+  });
+
+  it("typing in the source filter re-fetches with the new query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const sourceInput = screen.getByPlaceholderText("All sources");
+    await userEvent.type(sourceInput, "wazuh");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("source=wazuh");
+    });
+  });
+
+  it("typing in the tag filter re-fetches with the new query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const tagInput = screen.getByPlaceholderText("All tags");
+    await userEvent.type(tagInput, "ransomware");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("tag=ransomware");
+    });
+  });
+
+  it("reloads the list when a live alert event comes in over the event stream", async () => {
+    localStorage.setItem(
+      "argusops.session",
+      JSON.stringify({
+        token: "tok",
+        refreshToken: "rt",
+        user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] },
+      }),
+    );
+
+    const encoder = new TextEncoder();
+    const streamResponse = new Response(
+      new ReadableStream({
+        start(controller) {
+          // An "incident" event should be ignored (no reload) -- only "alert"
+          // events reload this page's list -- while the following "alert"
+          // event should trigger exactly one reload.
+          controller.enqueue(encoder.encode('event: incident\ndata: {"id":"i1"}\n\nevent: alert\ndata: {"id":"a1"}\n\n'));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    );
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith("/api/v1/events/stream")) return Promise.resolve(streamResponse);
+      return Promise.resolve(jsonResponse([alertFixture()]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AlertsListPage />, { wrapper });
+    await screen.findByText("Suspicious login");
+
+    // The stream event fires the "alert" reload as soon as the SSE connection's
+    // single frame is processed -- assert the alerts endpoint was hit at least
+    // twice (initial load + the reload triggered by the event) rather than
+    // snapshotting a "before" count, since the reload can race ahead of it.
+    await waitFor(() => {
+      const alertsCalls = fetchMock.mock.calls.filter((c) => (c[0] as string).startsWith("/api/v1/alerts")).length;
+      expect(alertsCalls).toBeGreaterThanOrEqual(2);
+    });
   });
 });

@@ -24,11 +24,15 @@ const (
 // map[string]uuid.UUID) -- domain doesn't depend on llmclient, same reason
 // AIToolCall.Args/Result stay json.RawMessage.
 type AIAnalysisRun struct {
-	ID                int64               `json:"id"`
-	TenantID          uuid.UUID           `json:"tenantId"`
-	ContextType       string              `json:"contextType"` // "alert" | "incident"
-	ContextID         uuid.UUID           `json:"contextId"`
-	ActorID           uuid.UUID           `json:"actorId"`
+	ID          int64     `json:"id"`
+	TenantID    uuid.UUID `json:"tenantId"`
+	ContextType string    `json:"contextType"` // "alert" | "incident"
+	ContextID   uuid.UUID `json:"contextId"`
+	// ActorID is nil for a system-triggered run (see
+	// AlertService.EnableAutoAnalysis) -- events it produces still stamp
+	// ActorType='ai' regardless, this only reflects whether a human clicked
+	// "Analyze with AI" or an alert's arrival triggered it automatically.
+	ActorID           *uuid.UUID          `json:"actorId,omitempty"`
 	Status            AIAnalysisRunStatus `json:"status"`
 	Messages          json.RawMessage     `json:"-"`
 	Tools             json.RawMessage     `json:"-"`

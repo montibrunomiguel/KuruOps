@@ -43,13 +43,15 @@ usado para rodar as migrations.
 
 Motivo: `REFRESH MATERIALIZED VIEW` só pode ser rodado pelo dono da view, e uma materialized view
 roda sua query com o privilégio do **dono**, não de quem chama o REFRESH (mesma regra de views
-comuns). `mv_alert_daily_stats`/`mv_incident_kpis` são agregados cross-tenant por definição
-(agrupados por `tenant_id`, sem um tenant único) e o refresh roda fora de qualquer contexto de
-tenant -- então, se o dono da view for um role sem `BYPASSRLS`, a policy `tenant_id =
-current_tenant_id()` de `alerts`/`incidents` nunca casa (não há tenant setado), e o REFRESH
-"funciona" mas sempre recalcula para zero linhas, sem erro nenhum. `argusops_worker` existe só para
-isso: só `SELECT`, nunca `INSERT`/`UPDATE`/`DELETE`, e não deve ser reusado para mais nada -- ver o
-comentário em `db/init/argusops_worker_role.sql` para o histórico completo desse bug.
+comuns). `mv_alert_daily_stats`/`mv_incident_kpis`/`mv_incident_daily_stats` são agregados
+cross-tenant por definição (agrupados por `tenant_id`, sem um tenant único) e o refresh roda fora
+de qualquer contexto de tenant -- então, se o dono da view for um role sem `BYPASSRLS`, a policy
+`tenant_id = current_tenant_id()` de `alerts`/`incidents` nunca casa (não há tenant setado), e o
+REFRESH "funciona" mas sempre recalcula para zero linhas, sem erro nenhum. `argusops_worker` existe
+para isso -- majoritariamente só `SELECT`, com duas exceções pontuais de `UPDATE` restritas a uma
+coluna cada (`incidents.sla_breached` e `alerts.escalated_at`, para os sweeps periódicos que também
+rodam nesse role, ver `db/init/argusops_worker_role.sql`) -- e não deve ser reusado para mais nada
+além dessas responsabilidades específicas.
 
 ## Por que RLS e não só filtro na aplicação
 
@@ -62,7 +64,8 @@ backend Go).
 
 ## Limitação conhecida: materialized views e RLS
 
-Postgres não suporta RLS em materialized views. `mv_alert_daily_stats` e `mv_incident_kpis`
-(`0009_materialized_views.up.sql`) são agregações cross-tenant por definição — toda query contra
-elas na camada de API **precisa** incluir `where tenant_id = $1` manualmente. Isso é uma exceção
-documentada ao princípio "isolamento no banco, não na query", não um descuido.
+Postgres não suporta RLS em materialized views. `mv_alert_daily_stats`, `mv_incident_kpis`
+(`0009_materialized_views.up.sql`) e `mv_incident_daily_stats`
+(`0034_mv_incident_daily_stats.up.sql`) são agregações cross-tenant por definição — toda query
+contra elas na camada de API **precisa** incluir `where tenant_id = $1` manualmente. Isso é uma
+exceção documentada ao princípio "isolamento no banco, não na query", não um descuido.

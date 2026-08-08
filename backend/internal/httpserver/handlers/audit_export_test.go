@@ -70,3 +70,11 @@ func TestAuditExportHandlers_ExportCEF(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 }
+
+func TestAuditExportHandlers_ExportCEF_MissingTenantContext(t *testing.T) {
+	h := handlers.NewAuditExportHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/cef", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}

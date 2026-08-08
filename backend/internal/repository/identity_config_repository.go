@@ -54,6 +54,17 @@ func (r *IdentityConfigRepository) UpsertLDAPConfig(ctx context.Context, tx pgx.
 	return nil
 }
 
+// DeleteLDAPConfig removes the tenant's LDAP config -- there's at most one
+// row (tenant_ldap_config's PK is tenant_id), so no id/where param is
+// needed beyond the RLS-scoped tx. A no-op (not an error) if nothing was
+// configured to begin with.
+func (r *IdentityConfigRepository) DeleteLDAPConfig(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `delete from tenant_ldap_config`); err != nil {
+		return fmt.Errorf("delete ldap config: %w", err)
+	}
+	return nil
+}
+
 func (r *IdentityConfigRepository) GetSAMLConfig(ctx context.Context, tx pgx.Tx) (*domain.SAMLConfig, error) {
 	var c domain.SAMLConfig
 	err := tx.QueryRow(ctx, `
@@ -87,6 +98,19 @@ func (r *IdentityConfigRepository) UpsertSAMLConfig(ctx context.Context, tx pgx.
 	)
 	if err != nil {
 		return fmt.Errorf("upsert saml config: %w", err)
+	}
+	return nil
+}
+
+// DeleteSAMLConfig removes the tenant's SAML config -- see DeleteLDAPConfig's
+// doc comment for the same "at most one row, no-op if absent" reasoning.
+// Does not revoke the SP keypair from the secrets.Store -- an orphaned
+// secret is harmless (nothing references its ref any more) and callers
+// often re-configure shortly after, at which point a fresh keypair is
+// generated anyway (see IdentityConfigService.SaveSAMLConfig).
+func (r *IdentityConfigRepository) DeleteSAMLConfig(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `delete from tenant_saml_config`); err != nil {
+		return fmt.Errorf("delete saml config: %w", err)
 	}
 	return nil
 }

@@ -59,7 +59,13 @@ type Alert struct {
 	// json.RawMessage (not []byte) so this embeds as a JSON object/value in
 	// API responses instead of getting base64-encoded -- encoding/json
 	// base64s a plain []byte field regardless of its actual content.
-	Payload    json.RawMessage `json:"payload"`
+	Payload json.RawMessage `json:"payload"`
+	// Metadata is the sender's own curated key/value list (Slack channel,
+	// playbook link, environment, anything they want surfaced) -- see
+	// db/migrations/0032_alert_metadata.up.sql. Always an object, possibly
+	// empty (`{}`), never null. Distinct from Payload, which is the
+	// unfiltered raw webhook body.
+	Metadata   json.RawMessage `json:"metadata"`
 	IncidentID *uuid.UUID      `json:"incidentId,omitempty"`
 	// AssignedAnalystID/AssignedAnalystName mirror Incident's Assignees field
 	// (see Incident.Assignees's doc comment) -- a live join against users
@@ -72,6 +78,13 @@ type Alert struct {
 	ClosedAt            *time.Time `json:"closedAt,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
+	// LatestAnalysis is the most recent completed "Analyze with AI" run's
+	// result text (see AIAnalysisRunRepository.LatestCompletedResult), nil
+	// if none has completed yet -- resolved live at Get time (AlertService.Get,
+	// via the optional EnableAnalysisLookup dependency), same "not
+	// denormalized" reasoning as AssignedAnalystName. Only populated on a
+	// single-alert Get, not List, matching Incident.Roles' precedent.
+	LatestAnalysis *string `json:"latestAnalysis,omitempty"`
 }
 
 // CloseAlert is the only way classification gets set — matches the

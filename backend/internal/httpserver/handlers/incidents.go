@@ -36,6 +36,7 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Put("/{id}/description", h.updateDescription)
 	r.Put("/{id}/tags", h.updateTags)
 	r.Put("/{id}/assignees", h.setAssignees)
+	r.Put("/{id}/roles/{role}", h.setRole)
 	r.Get("/{id}/status-history", h.statusHistory)
 	r.Post("/{id}/status-history/{phase}/correct", h.correctPhaseTimestamp)
 	r.Get("/{id}/timeline", h.timeline)
@@ -70,6 +71,8 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("tag"); v != "" {
 		f.Tag = &v
 	}
+	f.OpenedSince = parseSince(r)
+	f.CommanderID = parseUUIDQueryParam(r, "commanderId")
 	f.Limit, f.Offset = parsePaging(r)
 	f.AllowedTags = middleware.AllowedTags(r.Context())
 
@@ -286,6 +289,38 @@ func (h *IncidentHandlers) setAssignees(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type setRoleRequest struct {
+	UserIDs []uuid.UUID `json:"userIds"`
+}
+
+// setRole is Settings-free: role comes from the URL path (one of
+// domain.IncidentRoles), not the request body, so a malformed/unknown role
+// is a 400 from domain.IncidentRole.Valid() inside IncidentService.SetRole
+// rather than a routing 404 -- keeps the error message specific ("unknown
+// incident role") instead of a generic not-found.
+func (h *IncidentHandlers) setRole(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	actorID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+	role := domain.IncidentRole(chi.URLParam(r, "role"))
+
+	var req setRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.SetRole(r.Context(), tenantID, id, actorID, role, req.UserIDs, middleware.AllowedTags(r.Context())); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *IncidentHandlers) statusHistory(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -477,7 +512,7 @@ func (h *IncidentHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ai.AnalyzeIncident(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()))
+	result, err := h.ai.AnalyzeIncident(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

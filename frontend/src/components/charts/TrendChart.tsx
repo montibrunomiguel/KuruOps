@@ -12,7 +12,10 @@ export function TrendChart({ points }: { points: AlertTrendPoint[] }) {
   const locale = i18n.language === "en" ? "en-US" : "pt-BR";
 
   const data = points.map((p) => ({
-    day: new Date(p.day + "T00:00:00").toLocaleDateString(locale, { weekday: "narrow" }),
+    // "day/month" (e.g. "07/08") rather than a single-letter weekday --
+    // narrow weekday labels repeat within a 14-day window (two Mondays both
+    // render "S"/"M"), which reads as duplicate/wrong data on the x-axis.
+    day: new Date(p.day + "T00:00:00").toLocaleDateString(locale, { day: "2-digit", month: "2-digit" }),
     alertCount: p.alertCount,
     mttrHours: p.avgMttrSeconds != null ? Math.round((p.avgMttrSeconds / 3600) * 10) / 10 : undefined,
   }));

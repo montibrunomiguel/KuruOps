@@ -9,6 +9,13 @@ export interface AlertTrendPoint {
   avgMttrSeconds?: number;
 }
 
+// Mirrors domain.IncidentTrendPoint -- one day of mv_incident_daily_stats,
+// for the Dashboard Incidents tab's volume chart.
+export interface IncidentTrendPoint {
+  day: string;
+  incidentCount: number;
+}
+
 // Mirrors domain.ActivityEvent -- one row of the Dashboard's Recent Activity
 // feed, a union of alert_events and incident_events.
 export interface ActivityEvent {
@@ -40,10 +47,22 @@ export interface DashboardStats {
   alertAvgMttrSeconds?: number;
 
   alertTrend: AlertTrendPoint[];
+  incidentTrend: IncidentTrendPoint[];
   alertsBySeverity: Record<string, number>;
   alertStatusDistribution: Record<string, number>;
   incidentsByPriority: Record<string, number>;
   incidentsByPhase: Record<string, number>;
+  // Identity-keyed breakdowns (see backend domain.NamedCount) -- id is
+  // absent for the "unassigned"/"no commander yet" bucket, whose name the
+  // frontend renders itself rather than trusting a server-supplied label.
+  alertsByAnalyst: NamedCount[];
+  incidentsByCommander: NamedCount[];
+}
+
+export interface NamedCount {
+  id?: string;
+  name: string;
+  count: number;
 }
 
 // Mirrors domain.FollowupView -- GET /api/v1/dashboard/followup, gated by

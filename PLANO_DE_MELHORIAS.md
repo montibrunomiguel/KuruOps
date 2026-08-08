@@ -1,5 +1,23 @@
 # Plano de Análise e Proposta de Melhorias — ArgusOps
 
+> **Status: todas as 3 fases abaixo foram implementadas.** Este documento é mantido como registro
+> histórico do diagnóstico e do raciocínio por trás de cada item — para o estado atual e mais
+> preciso de cada um (o que ficou diferente do proposto originalmente, e o que ainda não foi
+> validado contra infraestrutura real), ver a seção "Autenticação: o que falta para produção" e
+> "Resolvidos desde a última revisão deste documento" em `backend/README.md`. Resumo rápido do que
+> saiu diferente do plano original:
+> - **Fase 1** — rate limiting, refresh tokens/revogação de sessão e cache de metadata SAML: feitos
+>   como descrito.
+> - **Fase 2** — loop agêntico MCP, normalizadores Wazuh/CrowdStrike/GuardDuty e SSE: feitos: porém
+>   nenhum normalizador foi validado contra tráfego real do respectivo vendor (tratar como ponto de
+>   partida).
+> - **Fase 3** — Vault/KMS, escalonamento on-call e exportação CEF: feitos; Vault/KMS só testado
+>   contra backend mockado (sem servidor Vault/conta AWS reais disponíveis neste ambiente).
+> - **Achado fora do escopo original**: o secret store padrão (`EnvStore`) era puramente em memória
+>   e perdia toda credencial (LDAP, SAML, LLM, webhook) a cada restart do processo — bug real
+>   descoberto durante teste ao vivo de LDAP/SAML, corrigido com `PersistentEnvStore` (criptografado,
+>   persistido em Postgres). Não estava listado como lacuna neste documento original.
+
 ## Visão Geral da Aplicação
 
 O **ArgusOps** é uma plataforma moderna e open-source de gerenciamento de alertas de segurança (SOC) e resposta a incidentes (IRP/SIEM Incident Response). Ela foi projetada com arquitetura Go + PostgreSQL no backend e React + Vite + TypeScript no frontend.
@@ -34,8 +52,8 @@ graph TD
 | **Gestão de Alertas** | ✅ Implementado | Ciclo de vida (Open → Investigating → Closed), sugestão automática de Playbooks por palavra-chave, linha do tempo auditável (*append-only*). |
 | **Gestão de Incidentes**| ✅ Implementado | Fases NIST 800-61, timestamps originais imutáveis, detecção e auditoria de salto de fases (*phase jumping*), notas de equipe e vínculo N:N com alertas. |
 | **Playbooks de SOC** | ✅ Implementado | Biblioteca de procedimentos operacionais organizados por fase NIST e categoria com auto-matching. |
-| **Integração IA & MCP** | 🟡 Parcial | Suporte a provedores LLM compatíveis com OpenAI. Cliente **MCP (Model Context Protocol)** funcional sobre HTTP, suporte a aprovação humana para chamadas com efeitos colaterais (`side_effecting_tools`). |
-| **Dashboards & KPIs** | ✅ Implementado | Métricas operacionais (MTTA, MTTR, alertas críticos, SLA estourado) calculadas de forma assíncrona no backend via materialized views. |
+| **Integração IA & MCP** | ✅ Implementado | Suporte a provedores LLM compatíveis com OpenAI. Cliente **MCP (Model Context Protocol)** funcional sobre HTTP. `AIAnalysisService` roda um loop agêntico iterativo (tool-use) que chama `ProposeToolCall`; ferramentas com efeito colateral (`side_effecting_tools`) ficam em `proposed` até aprovação humana. Análise dispara automaticamente na ingestão de um alerta, se houver provedor LLM configurado. |
+| **Dashboards & KPIs** | ✅ Implementado | Métricas operacionais (MTTA, MTTR, alertas críticos, SLA estourado, volume de alertas/incidentes por dia) calculadas de forma assíncrona no backend via materialized views; filtro de período por preset ou intervalo customizado (data + hora). |
 
 ---
 

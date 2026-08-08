@@ -76,6 +76,12 @@ services:
       # resembling production.
       AUTH_MODE: ${AUTH_MODE:-dev}
       UPLOAD_DIR: /data/uploads
+      # Encrypts secrets.PersistentEnvStore's rows in Postgres (secret_store
+      # table) -- the default dev value below is fine for local Docker
+      # Compose, never reuse it for anything resembling production (generate
+      # your own with `openssl rand -base64 32` and set it in the
+      # environment instead).
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
     volumes:
       - uploads:/data/uploads
     ports:
@@ -103,6 +109,10 @@ services:
     environment:
       DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
       HTTP_ADDR: :8081
+      # Must match the api service's key -- both resolve refs written by
+      # either service (webhook/AI-analysis secrets can be set from either
+      # side). See the api service's own comment above.
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
     ports:
       - "8081:8081"
     depends_on:
@@ -125,6 +135,8 @@ services:
       # mv_alert_daily_stats/mv_incident_kpis, which needs BYPASSRLS to see
       # across all tenants. See db/init/argusops_worker_role.sql.
       DATABASE_URL: postgres://argusops_worker:${ARGUSOPS_WORKER_PASSWORD:-argusops_worker}@postgres:5432/argusops?sslmode=disable
+      # Must match the api service's key -- see its comment above.
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
     depends_on:
       postgres:
         condition: service_healthy

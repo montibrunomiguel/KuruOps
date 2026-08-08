@@ -419,3 +419,97 @@ func TestIncidentRepository_IncidentAssignees_TenantIsolation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, assignees[inc.ID], "RLS must prevent tenant B from seeing tenant A's incident_assignees rows")
 }
+
+// TestIncidentRepository_Roles guards SetRole's replace-the-set semantics
+// (additive to, and independent of, incident_assignees -- see
+// domain.Incident.Roles's doc comment) and the single-assignee
+// (Commander/Technical Lead) DB constraint from
+// db/migrations/0030_incident_role_assignments.
+func TestIncidentRepository_Roles(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	analystA := testutil.NewUser(t, tenantID, "analyst", nil)
+	analystB := testutil.NewUser(t, tenantID, "analyst", nil)
+	repo := repository.NewIncidentRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	inc := newTestIncident(tenantID, domain.SeverityCritical, domain.PriorityP1, nil)
+	require.NoError(t, repo.Insert(t.Context(), tx, inc))
+
+	t.Run("no roles assigned initially -- empty, not nil", func(t *testing.T) {
+		roles, err := repo.RolesForIncident(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		assert.Empty(t, roles)
+		assert.NotNil(t, roles)
+
+		got, err := repo.Get(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, got.Roles)
+	})
+
+	t.Run("multi-assignee role accepts more than one person", func(t *testing.T) {
+		require.NoError(t, repo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleIncidentHandler, []uuid.UUID{analystA, analystB}))
+		roles, err := repo.RolesForIncident(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		require.Len(t, roles, 2)
+		for _, r := range roles {
+			assert.Equal(t, domain.RoleIncidentHandler, r.Role)
+		}
+	})
+
+	t.Run("SetRole replaces the whole set for that role", func(t *testing.T) {
+		require.NoError(t, repo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleIncidentHandler, []uuid.UUID{analystA}))
+		roles, err := repo.RolesForIncident(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		require.Len(t, roles, 1)
+		assert.Equal(t, analystA, roles[0].User.ID)
+	})
+
+	t.Run("single-assignee role accepts one person", func(t *testing.T) {
+		require.NoError(t, repo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleCommander, []uuid.UUID{analystA}))
+		roles, err := repo.RolesForIncident(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		commanders := 0
+		for _, r := range roles {
+			if r.Role == domain.RoleCommander {
+				commanders++
+			}
+		}
+		assert.Equal(t, 1, commanders)
+	})
+
+	t.Run("clearing a role with an empty set", func(t *testing.T) {
+		require.NoError(t, repo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleIncidentHandler, nil))
+		roles, err := repo.RolesForIncident(t.Context(), tx, inc.ID)
+		require.NoError(t, err)
+		for _, r := range roles {
+			assert.NotEqual(t, domain.RoleIncidentHandler, r.Role)
+		}
+	})
+
+	// Last: a failed statement poisons the rest of the enclosing Postgres
+	// transaction (aborts it until rollback), so nothing else in this tx
+	// can run after this subtest.
+	t.Run("the DB rejects two Commanders in one SetRole call", func(t *testing.T) {
+		err := repo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleCommander, []uuid.UUID{analystA, analystB})
+		assert.Error(t, err, "the partial unique index on (incident_id) where role='commander' must reject a second row")
+	})
+}
+
+func TestIncidentRepository_Roles_TenantIsolation(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantA := testutil.NewTenant(t)
+	tenantB := testutil.NewTenant(t)
+	analystA := testutil.NewUser(t, tenantA, "analyst", nil)
+	repo := repository.NewIncidentRepository()
+
+	txA := testutil.BeginTx(t, pool, tenantA)
+	inc := newTestIncident(tenantA, domain.SeverityHigh, domain.PriorityP1, nil)
+	require.NoError(t, repo.Insert(t.Context(), txA, inc))
+	require.NoError(t, repo.SetRole(t.Context(), txA, inc.ID, tenantA, domain.RoleCommander, []uuid.UUID{analystA}))
+
+	txB := testutil.BeginTx(t, pool, tenantB)
+	roles, err := repo.RolesForIncident(t.Context(), txB, inc.ID)
+	require.NoError(t, err)
+	assert.Empty(t, roles, "RLS must prevent tenant B from seeing tenant A's incident_role_assignments rows")
+}

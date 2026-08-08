@@ -145,19 +145,32 @@ func BuildServiceProvider(ctx context.Context, p SAMLParams) (*saml.ServiceProvi
 }
 
 // samlRequestIDCookie carries the AuthnRequest ID from RedirectToIDP to
-// ParseAssertion so the ACS handler can check the response's InResponseTo
+// ParseAssertion as a same-site defense-in-depth check, alongside RelayState
+// (see below) -- so the ACS handler can check the response's InResponseTo
 // against the request WE actually sent, rather than accepting any
 // validly-signed assertion (which is what AllowIDPInitiated=true would do,
 // trading away replay/CSRF protection on the login flow). The cookie value
 // is an opaque, unguessable ID; forging it only helps an attacker if they
 // can also forge a matching assertion signed by the trusted IdP, which is
 // the real security boundary here — no HMAC signing needed on the cookie.
+//
+// This alone is NOT sufficient: SameSite=Lax cookies are never sent on a
+// cross-site POST, and the SAML HTTP-POST binding every real IdP uses to
+// return the assertion is exactly that (confirmed live against
+// mocksaml.com -- the cookie never arrived at ACS, so possibleRequestIDs
+// was always empty and every login failed with "invalid saml assertion").
+// SameSite=None would fix that, but requires Secure (HTTPS), which this
+// app doesn't assume. RelayState is the standard workaround: the IdP
+// echoes it back verbatim in the POST body, immune to cookie SameSite
+// rules, so RedirectToIDP carries the request ID there instead of (or in
+// addition to) the cookie.
 const samlRequestIDCookie = "argusops_saml_req"
 
 // RedirectToIDP starts the SP-initiated login flow: builds an
-// AuthnRequest, remembers its ID for the later ACS check, and redirects the
-// browser to the IdP's SSO endpoint via the HTTP-Redirect binding.
-func RedirectToIDP(sp *saml.ServiceProvider, w http.ResponseWriter, r *http.Request, relayState string) error {
+// AuthnRequest, remembers its ID for the later ACS check (via RelayState,
+// and the cookie as a same-site-only fallback), and redirects the browser
+// to the IdP's SSO endpoint via the HTTP-Redirect binding.
+func RedirectToIDP(sp *saml.ServiceProvider, w http.ResponseWriter, r *http.Request) error {
 	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding), saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 	if err != nil {
 		return fmt.Errorf("make authentication request: %w", err)
@@ -173,7 +186,9 @@ func RedirectToIDP(sp *saml.ServiceProvider, w http.ResponseWriter, r *http.Requ
 		MaxAge:   5 * 60,
 	})
 
-	redirectURL, err := req.Redirect(relayState, sp)
+	// req.ID doubles as RelayState -- see the package doc comment above for
+	// why the cookie alone can't carry this across the IdP's POST binding.
+	redirectURL, err := req.Redirect(req.ID, sp)
 	if err != nil {
 		return fmt.Errorf("build redirect: %w", err)
 	}
@@ -211,8 +226,13 @@ type SAMLIdentity struct {
 // the SAML analogue of LDAPParams.GroupAttribute.
 func ParseAssertion(sp *saml.ServiceProvider, w http.ResponseWriter, r *http.Request, groupAttributeName string) (*SAMLIdentity, error) {
 	var possibleRequestIDs []string
+	// RelayState is the primary source -- see RedirectToIDP's doc comment
+	// for why the cookie can't be relied on for the IdP's POST binding.
+	if relayState := r.FormValue("RelayState"); relayState != "" {
+		possibleRequestIDs = append(possibleRequestIDs, relayState)
+	}
 	if cookie, err := r.Cookie(samlRequestIDCookie); err == nil && cookie.Value != "" {
-		possibleRequestIDs = []string{cookie.Value}
+		possibleRequestIDs = append(possibleRequestIDs, cookie.Value)
 		http.SetCookie(w, &http.Cookie{Name: samlRequestIDCookie, Value: "", Path: "/", MaxAge: -1})
 	}
 

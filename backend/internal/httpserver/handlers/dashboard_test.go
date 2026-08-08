@@ -105,3 +105,127 @@ func TestDashboardHandlers_StatsAndFollowup(t *testing.T) {
 		}
 	})
 }
+
+func TestDashboardHandlers_Stats_MoreFilters(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
+	h := handlers.NewDashboardHandlers(dashSvc)
+	r := newRouter(h.Routes)
+
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		Title: "open one", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+	_, err = incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: "an incident", Severity: domain.SeverityHigh, Priority: domain.PriorityP2,
+	})
+	require.NoError(t, err)
+
+	t.Run("alertStatus filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?alertStatus=open", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("alertSource filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?alertSource=wazuh", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("alertTag filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?alertTag=phishing", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("assignedAnalystId filter -- valid uuid", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?assignedAnalystId="+actorID.String(), nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("assignedAnalystId filter -- malformed uuid is treated as absent, not an error", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?assignedAnalystId=not-a-uuid", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("incidentTag filter", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?incidentTag=phishing", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("commanderId filter -- valid uuid", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?commanderId="+actorID.String(), nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("since and until both set, valid range", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?since=2000-01-01T00:00:00Z&until=2100-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("malformed since/until are treated as absent, not an error", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/stats?since=not-a-date&until=also-not-a-date", nil), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+}
+
+func TestDashboardHandlers_Activity_SinceUntil(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
+	h := handlers.NewDashboardHandlers(dashSvc)
+	r := newRouter(h.Routes)
+
+	t.Run("valid since/until narrows the feed", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/activity?since=2000-01-01T00:00:00Z&until=2100-01-01T00:00:00Z&limit=5", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+
+	t.Run("malformed since is treated as absent, not an error", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/activity?since=not-a-date", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+}
+
+func TestDashboardHandlers_Followup_SinceUntil(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
+	h := handlers.NewDashboardHandlers(dashSvc)
+	r := newRouter(h.FollowupRoutes)
+
+	req := withClaims(httptest.NewRequest("GET", "/?since=2000-01-01T00:00:00Z&until=2100-01-01T00:00:00Z", nil), tenantID, uuid.New(), nil)
+	assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+}
+
+func TestDashboardHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewDashboardHandlers(nil)
+
+	t.Run("stats", func(t *testing.T) {
+		r := newRouter(h.Routes)
+		req := httptest.NewRequest("GET", "/stats", nil)
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+	})
+
+	t.Run("activity", func(t *testing.T) {
+		r := newRouter(h.Routes)
+		req := httptest.NewRequest("GET", "/activity", nil)
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+	})
+
+	t.Run("followup", func(t *testing.T) {
+		r := newRouter(h.FollowupRoutes)
+		req := httptest.NewRequest("GET", "/", nil)
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+	})
+}

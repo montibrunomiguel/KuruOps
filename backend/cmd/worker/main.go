@@ -44,7 +44,7 @@ func main() {
 	// (PagerDuty routing key / Slack webhook URL / generic webhook URL) --
 	// same SECRETS_BACKEND-driven factory cmd/api uses, see
 	// secrets.NewFromConfig.
-	secretStore, err := secrets.NewFromConfig(cfg)
+	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
 		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
 		os.Exit(1)
@@ -61,19 +61,25 @@ func main() {
 	escalationTicker := time.NewTicker(1 * time.Minute)
 	defer escalationTicker.Stop()
 
-	// TODO(fase 4/5 do roadmap): consumir a fila de análise de IA aqui —
-	// candidato natural é uma tabela `ai_analysis_jobs` consultada via
-	// `SELECT ... FOR UPDATE SKIP LOCKED`, chamando o llm_providers /
-	// mcp_servers configurados pelo tenant do job. Ver review de
-	// arquitetura, seção 4.
+	// Análise por IA na ingestão NÃO passa por este worker -- ficou resolvida
+	// de um jeito mais simples do que a fila via `ai_analysis_jobs` que este
+	// comentário cogitava originalmente: AlertService.Ingest (cmd/ingest)
+	// dispara `go s.autoAnalyze(...)` -- uma goroutine fire-and-forget no
+	// próprio processo de ingest, sem fila persistida, sem retry automático
+	// se a chamada à LLM falhar (fica só logado). Isso é aceitável para o
+	// volume atual; se isso um dia virar gargalo (rajada de alertas
+	// derrubando o throughput de ingest, ou precisar de retry/backoff em
+	// falha de LLM), uma fila consumida aqui pelo worker (mesmo desenho
+	// cogitado abaixo: tabela + `SELECT ... FOR UPDATE SKIP LOCKED`) resolve
+	// isso sem tocar em `AlertService.Ingest` de novo.
 	//
-	// IMPORTANT quando isso for implementado: cfg.DatabaseURL agora conecta
-	// como argusops_worker, que tem BYPASSRLS (necessário só para o refresh
-	// das materialized views abaixo -- ver db/init/argusops_worker_role.sql).
-	// Processar jobs de IA por tenant usando essa MESMA pool seria um bypass
-	// silencioso de RLS nesse código; abra uma pool separada conectada como
-	// argusops_app + Pool.WithTenant para esse consumo, do jeito que
-	// api/ingest já fazem.
+	// IMPORTANT se isso for implementado: cfg.DatabaseURL aqui conecta como
+	// argusops_worker, que tem BYPASSRLS (necessário só para o refresh das
+	// materialized views e os sweeps abaixo -- ver
+	// db/init/argusops_worker_role.sql). Processar jobs de IA por tenant
+	// usando essa MESMA pool seria um bypass silencioso de RLS; abra uma
+	// pool separada conectada como argusops_app + Pool.WithTenant para esse
+	// consumo, do jeito que api/ingest já fazem.
 
 	for {
 		select {
@@ -90,8 +96,8 @@ func main() {
 	}
 }
 
-// refreshMaterializedViews recomputes mv_alert_daily_stats and
-// mv_incident_kpis. This intentionally runs outside Pool.WithTenant: the
+// refreshMaterializedViews recomputes mv_alert_daily_stats, mv_incident_kpis,
+// and mv_incident_daily_stats. This intentionally runs outside Pool.WithTenant: the
 // views are cross-tenant by definition (grouped by tenant_id) and
 // materialized views cannot carry RLS policies in Postgres, so tenant
 // isolation for these two views is the API layer's responsibility -- every
@@ -109,7 +115,7 @@ func main() {
 // error, MTTA/MTTR just stay empty forever. See
 // db/init/argusops_worker_role.sql.
 func refreshMaterializedViews(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
-	views := []string{"mv_alert_daily_stats", "mv_incident_kpis"}
+	views := []string{"mv_alert_daily_stats", "mv_incident_kpis", "mv_incident_daily_stats"}
 	for _, v := range views {
 		if _, err := pool.Exec(ctx, "refresh materialized view concurrently "+v); err != nil {
 			logger.Error("refresh materialized view failed", "view", v, "error", err)

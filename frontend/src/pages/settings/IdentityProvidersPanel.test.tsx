@@ -97,6 +97,67 @@ describe("IdentityProvidersPanel", () => {
     expect(screen.queryByLabelText("IdP Metadata URL")).not.toBeInTheDocument();
   });
 
+  it("shows a Remove button once configured, and removing clears the form back to Configure", async () => {
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.includes("/ldap")) {
+        return Promise.resolve(
+          jsonResponse({
+            host: "ldap.example.com", port: 636, useTls: true, bindDn: "cn=svc",
+            userBaseDn: "ou=people", userFilter: "(mail=%s)", groupBaseDn: "", groupAttribute: "memberOf",
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          spEntityId: "https://argusops.example/saml", acsUrl: "https://argusops.example/acs",
+          idpMetadataUrl: "https://idp.example.com/metadata",
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+
+    expect(await screen.findAllByRole("button", { name: "Remove configuration" })).toHaveLength(2);
+
+    const [ldapRemove] = screen.getAllByRole("button", { name: "Remove configuration" });
+    await userEvent.click(ldapRemove);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/identity-providers/ldap", expect.objectContaining({ method: "DELETE" })),
+    );
+    expect(await screen.findByRole("button", { name: "Configure LDAP" })).toBeInTheDocument();
+  });
+
+  it("cancelling the removal confirmation leaves the config untouched", async () => {
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") throw new Error("must not be called when confirm is cancelled");
+      if (url.includes("/ldap")) {
+        return Promise.resolve(
+          jsonResponse({
+            host: "ldap.example.com", port: 636, useTls: true, bindDn: "cn=svc",
+            userBaseDn: "ou=people", userFilter: "(mail=%s)", groupBaseDn: "", groupAttribute: "memberOf",
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          spEntityId: "https://argusops.example/saml", acsUrl: "https://argusops.example/acs",
+          idpMetadataUrl: "https://idp.example.com/metadata",
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+
+    const [ldapRemove] = await screen.findAllByRole("button", { name: "Remove configuration" });
+    await userEvent.click(ldapRemove);
+
+    expect(screen.getAllByText("configured")).toHaveLength(2);
+  });
+
   it("a fetch error surfaces the error banner instead of the form silently failing", async () => {
     // mockImplementation (not mockResolvedValue) so each of the two panels'
     // GET calls gets its own Response -- a Response body can only be read

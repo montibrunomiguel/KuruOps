@@ -3,6 +3,7 @@ package service_test
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -43,6 +44,13 @@ func TestIdentityConfigService_LDAP(t *testing.T) {
 		assert.Equal(t, "ldap2.example.com", got.Host)
 		assert.Equal(t, cfg.BindPasswordSecretRef, got.BindPasswordSecretRef)
 	})
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		require.NoError(t, svc.DeleteLDAPConfig(t.Context(), tenantID))
+		got, err := svc.GetLDAPConfig(t.Context(), tenantID)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
 }
 
 func TestIdentityConfigService_SAML(t *testing.T) {
@@ -80,5 +88,23 @@ func TestIdentityConfigService_SAML(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, newURL, *got.IDPMetadataURL)
 		assert.Equal(t, firstCertRef, got.SPCertSecretRef, "the IdP already trusts this certificate")
+	})
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		require.NoError(t, svc.DeleteSAMLConfig(t.Context(), tenantID))
+		got, err := svc.GetSAMLConfig(t.Context(), tenantID)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("delete fires onSAMLConfigChanged to invalidate any cached IdP metadata", func(t *testing.T) {
+		var invalidated bool
+		svc.SetOnSAMLConfigChanged(func(id uuid.UUID) {
+			if id == tenantID {
+				invalidated = true
+			}
+		})
+		require.NoError(t, svc.DeleteSAMLConfig(t.Context(), tenantID))
+		assert.True(t, invalidated)
 	})
 }

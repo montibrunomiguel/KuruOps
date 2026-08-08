@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
+import i18n from "../i18n";
 import { Sidebar } from "./Sidebar";
 import { AuthProvider } from "../auth/AuthContext";
 
@@ -61,5 +63,43 @@ describe("Sidebar", () => {
     render(<Sidebar />, { wrapper });
     expect(await screen.findByText("Ana Lyst")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();
+  });
+
+  describe("theme and language toggles", () => {
+    afterEach(() => {
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.removeItem("argusops.theme");
+      void i18n.changeLanguage("en");
+      localStorage.removeItem("argusops.language");
+    });
+
+    it("toggling the theme button flips data-theme and persists it", async () => {
+      sessionWith(["alerts"]);
+      render(<Sidebar />, { wrapper });
+
+      const toggle = await screen.findByRole("button", { name: /modo claro|light mode/i });
+      await userEvent.click(toggle);
+
+      expect(document.documentElement.dataset.theme).toBe("light");
+      expect(localStorage.getItem("argusops.theme")).toBe("light");
+
+      await userEvent.click(screen.getByRole("button", { name: /modo escuro|dark mode/i }));
+      expect(document.documentElement.dataset.theme).toBe("dark");
+    });
+
+    it("clicking EN/PT switches the active language and marks it active", async () => {
+      sessionWith(["alerts"]);
+      render(<Sidebar />, { wrapper });
+
+      const ptButton = await screen.findByRole("button", { name: "PT" });
+      await userEvent.click(ptButton);
+      expect(i18n.language).toBe("pt");
+      expect(ptButton.dataset.active).toBe("true");
+
+      const enButton = screen.getByRole("button", { name: "EN" });
+      await userEvent.click(enButton);
+      expect(i18n.language).toBe("en");
+      expect(enButton.dataset.active).toBe("true");
+    });
   });
 });

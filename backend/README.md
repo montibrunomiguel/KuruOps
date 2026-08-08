@@ -7,7 +7,7 @@ review de arquitetura. Três binários, um módulo:
 |---|---|---|
 | `cmd/api` | REST para o frontend: alertas, incidentes, playbooks, settings | escala/falha independente da ingestão |
 | `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) | perfil de carga/rate-limit diferente do `api` |
-| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI; futuramente, fila de análise por IA | não deixa uma chamada de LLM lenta bloquear o CRUD |
+| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | não deixa uma chamada de LLM lenta bloquear o CRUD; a análise por IA em si dispara numa goroutine dentro de `cmd/ingest` (na ingestão do alerta), não passa por este worker |
 
 ## Rodando local
 
@@ -78,16 +78,25 @@ curl -X POST http://localhost:8081/hooks \
 **Implementado**: schema completo (`db/migrations`) com RLS por tenant, e o CRUD completo com
 regras de negócio para:
 - **Alertas** — ciclo de vida (open → investigating/escalated → closed, classificação só no
-  fechamento), auditoria append-only (`alert_events`)
+  fechamento), auditoria append-only (`alert_events`), metadados customizados aceitos no payload do
+  webhook (lista arbitrária de chave/valor — canal do Slack, link de playbook externo, etc.,
+  renderizada num painel dedicado no detalhe), análise por IA disparada automaticamente na
+  ingestão quando há provedor LLM configurado (mesmo resultado do botão manual "Analisar com IA")
 - **Incidentes** — fases NIST com salto livre + detecção de "fase pulada", matriz
   severidade×prioridade, correção auditável de timestamp (nunca sobrescreve o valor original),
-  Team Notes, alertas correlacionados
+  Team Notes, alertas correlacionados, papéis de equipe NIST 800-61 (Commander, Technical Lead,
+  Incident Handler(s), Communications Lead, Privacy Officer — `domain.Incident.Roles`, substituiu
+  o painel genérico de "responsáveis" na tela de detalhe)
 - **Playbooks** — CRUD + auto-match por keyword (com fallback "General Security Event")
 - **Settings**: endpoints de webhook (token com hash + rotação), provedores de LLM por tenant
   (`kind=openai_compatible` genérico, chave nunca persistida em claro — ver
   `internal/secrets/store.go`), servidores MCP (allow-list de tools + lista de tools com efeito
   colateral que sempre exigem aprovação — ver `service.EvaluateToolInvocation`), usuários/roles e
-  mapeamento de grupo LDAP/SAML → role/tags
+  mapeamento de grupo LDAP/SAML → role/tags (com botão de remover configuração, além de
+  criar/atualizar), integração de armazenamento de evidências (S3/GCS), SMTP (reset de senha por
+  email), tags, escalas de plantão, SLAs de incidente por severidade×prioridade, políticas de
+  escalonamento (PagerDuty/Slack/webhook genérico), exportação de auditoria em CEF, e migração
+  assistida para um Postgres externo (Settings → Banco de Dados Externo)
 - Ingestão de webhook com normalização genérica, cálculo de MTTA/MTTR como materialized view em
   vez de client-side
 - **Autenticação**: login local (argon2id + JWT RS256), bind LDAP (`internal/authn/ldap.go`, com
@@ -122,11 +131,13 @@ do limite por IP já existente), normalizers dedicados para Wazuh/CrowdStrike/Gu
 (`internal/ingest/normalize_*.go`, roteados por `webhook_endpoints.source` em `Handler.normalizerFor`
 — fontes sem adapter dedicado continuam caindo no `genericNormalizer`; nenhum dos três foi validado
 contra tráfego real do respectivo vendor, tratar como ponto de partida), e um backend de
-`secrets.Store` real além do `EnvStore` em memória: `SECRETS_BACKEND=vault` (`VaultStore`, engine
-KV v2 via HTTP direto, sem o SDK oficial) ou `SECRETS_BACKEND=kms` (`AWSKMSStore`, Encrypt/Decrypt
-puro, sem Secrets Manager) — ver `.env.example` para as variáveis de cada um e
-`cmd/api/main.go`'s `newSecretStore` para o factory switch. Nenhum dos dois foi validado contra um
-servidor Vault/conta AWS reais — só testes unitários contra um backend mockado.
+`secrets.Store` real além do `PersistentEnvStore` padrão (encriptado com `SECRETS_ENCRYPTION_KEY`,
+persistido na tabela `secret_store` — sobrevive a um restart do processo, ao contrário do antigo
+`EnvStore` em memória puro, que ainda existe só para uso em testes): `SECRETS_BACKEND=vault`
+(`VaultStore`, engine KV v2 via HTTP direto, sem o SDK oficial) ou `SECRETS_BACKEND=kms`
+(`AWSKMSStore`, Encrypt/Decrypt puro, sem Secrets Manager) — ver `secrets.NewFromConfig` para o
+factory switch e as variáveis de cada backend. Nenhum dos dois foi validado contra um servidor
+Vault/conta AWS reais — só testes unitários contra um backend mockado.
 
 ## Client MCP
 
@@ -147,11 +158,20 @@ sólido, não como algo pronto pra produção sem validação.
   executa uma tool de efeito colateral sozinho (ver review de arquitetura, "IA sugere vs IA
   executa"). Endpoints: `GET/POST /api/v1/settings/mcp-servers/tool-calls[/{id}/approve|reject]`.
 
-**O que ainda falta**: só o transporte HTTP está implementado (`stdio`/`sse` retornam erro claro
-em vez de tentar e falhar confuso). E o mais importante — **nada ainda chama `ProposeToolCall`**:
-isso é trabalho do agente de análise por IA (LLM + tool-use), que não existe ainda. O client MCP e
-a política de aprovação estão prontos e testáveis isoladamente (`DiscoverTools` já é usável hoje),
-mas o fluxo "Analyze with AI" do design handoff ainda não os aciona de ponta a ponta.
+**Resolvido desde a última revisão deste documento**: `AIAnalysisService.runAgentAnalysis` agora
+roda um loop agêntico de verdade (até `maxAgenticTurns = 5` idas e vindas com a LLM) e chama
+`ProposeToolCall` a cada tool que o modelo pedir. Uma tool sem efeito colateral executa na hora e o
+resultado volta pro próximo turno; uma tool marcada `side_effecting_tools` pausa o run inteiro
+(persistido em `ai_analysis_runs` com status `paused`) até um analista aprovar/rejeitar em
+Settings → Servidores MCP → Aprovações Pendentes (painel novo, `MCPServersPanel.tsx`) —
+`MCPToolService.SetOnToolCallResolved` retoma o run de onde parou via `ResumeAnalysisRun`. O
+"Analyze with AI" do detalhe de alerta/incidente aciona esse loop de ponta a ponta, e a ingestão de
+um alerta também dispara a mesma análise automaticamente quando há provedor LLM configurado.
+
+**O que ainda falta**: só o transporte HTTP do client MCP está implementado (`stdio`/`sse`
+retornam erro claro em vez de tentar e falhar confuso) — nem o client MCP nem o loop agêntico
+foram validados contra um servidor MCP real (não havia um disponível durante o desenvolvimento;
+tratar como ponto de partida sólido, não como algo pronto pra produção sem validação).
 
 ### Configurando LDAP/SAML de um tenant
 

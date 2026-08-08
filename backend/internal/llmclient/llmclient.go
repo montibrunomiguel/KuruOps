@@ -496,7 +496,7 @@ func toAnthropicTools(tools []Tool) []anthropicToolDef {
 	}
 	wire := make([]anthropicToolDef, len(tools))
 	for i, t := range tools {
-		wire[i] = anthropicToolDef{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}
+		wire[i] = anthropicToolDef(t)
 	}
 	return wire
 }

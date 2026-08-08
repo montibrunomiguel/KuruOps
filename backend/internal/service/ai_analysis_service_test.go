@@ -48,7 +48,7 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, nil)
+		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
 		assert.ErrorContains(t, err, "no LLM provider configured")
 	})
 
@@ -72,7 +72,7 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		result, err := aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, nil)
+		result, err := aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "likely a brute-force login attempt", result)
 	})
@@ -83,7 +83,7 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, []string{"unrelated-tag"})
+		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
 	})
 }
@@ -115,12 +115,12 @@ func TestAIAnalysisService_AnalyzeIncident(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, actorID, nil)
+	result, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, &actorID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "recommend immediate containment", result)
 
 	t.Run("an unknown incident id fails", func(t *testing.T) {
-		_, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, actorID, []string{"unrelated-tag"})
+		_, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, &actorID, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
 	})
 }

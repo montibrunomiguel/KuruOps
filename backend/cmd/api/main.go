@@ -115,11 +115,11 @@ func main() {
 	incidentService.EnableEventPublishing(eventBroadcaster.Publish)
 
 	// secrets.Store backend is selected by SECRETS_BACKEND -- "env" (default)
-	// is the in-memory dev-only stub (see internal/secrets/store.go), never
-	// durable and never appropriate outside development. Declared here
-	// (moved up from its old spot below) because AIAnalysisService needs it
-	// to resolve the tenant's LLM provider API key.
-	secretStore, err := secrets.NewFromConfig(cfg)
+	// is PersistentEnvStore, encrypted and Postgres-backed (see
+	// internal/secrets/persistent_store.go). Declared here (moved up from
+	// its old spot below) because AIAnalysisService needs it to resolve the
+	// tenant's LLM provider API key.
+	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
 		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
 		os.Exit(1)
@@ -147,6 +147,10 @@ func main() {
 	aiAnalysisRunRepo := repository.NewAIAnalysisRunRepository()
 	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo)
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
+	// So GET /alerts/{id} surfaces the latest completed analysis automatically
+	// (see AlertService.Get) -- the auto-trigger itself lives in cmd/ingest,
+	// not here; cmd/api only needs to be able to *show* the result.
+	alertService.EnableAnalysisLookup(aiAnalysisRunRepo)
 
 	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService)
 
@@ -196,7 +200,7 @@ func main() {
 
 	ldapAuthService := service.NewLDAPAuthService(pool, identityCfgRepo, secretStore, authService)
 	samlAuthService := service.NewSAMLAuthService(pool, identityCfgRepo, secretStore, authService)
-	identityCfgService.SetOnSAMLConfigSaved(samlAuthService.InvalidateMetadataCache)
+	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
 	authHandlers := handlers.NewAuthHandlers(authService, ldapAuthService, samlAuthService, passwordResetService)

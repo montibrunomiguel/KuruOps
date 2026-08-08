@@ -87,4 +87,17 @@ func TestEscalationPolicyHandlers(t *testing.T) {
 		req := withClaims(httptest.NewRequest("DELETE", "/not-a-uuid", nil), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
+
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestEscalationPolicyHandlers_List_MissingTenantContext(t *testing.T) {
+	h := handlers.NewEscalationPolicyHandlers(nil)
+	r := newRouter(h.Routes)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 }

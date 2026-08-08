@@ -191,6 +191,38 @@ describe("AlertDetailPage", () => {
     expect(await screen.findByText("looks like a brute-force attempt")).toBeInTheDocument();
   });
 
+  it("shows a previously completed AI analysis automatically, without clicking Analyze", async () => {
+    vi.stubGlobal("fetch", routeFetch(alertFixture({ latestAnalysis: "auto-triggered analysis from ingest" })));
+    renderDetail();
+
+    expect(await screen.findByText("auto-triggered analysis from ingest")).toBeInTheDocument();
+    expect(screen.getByText("AI Analysis")).toBeInTheDocument();
+  });
+
+  it("shows the Metadata panel with a clickable link for URL-shaped values", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(alertFixture({ metadata: { slackChannel: "#incident-response", playbookUrl: "https://runbooks.example.com/brute-force" } })),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("Custom Metadata")).toBeInTheDocument();
+    expect(screen.getByText("slackChannel")).toBeInTheDocument();
+    expect(screen.getByText("#incident-response")).toBeInTheDocument();
+
+    const link = screen.getByRole("link", { name: "https://runbooks.example.com/brute-force" });
+    expect(link).toHaveAttribute("href", "https://runbooks.example.com/brute-force");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("hides the Metadata panel entirely when there's no metadata", async () => {
+    vi.stubGlobal("fetch", routeFetch(alertFixture({ metadata: {} })));
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Suspicious login" });
+    expect(screen.queryByText("Custom Metadata")).not.toBeInTheDocument();
+  });
+
   it("changing severity in the override panel shows Save, and saving PUTs the new severity", async () => {
     const fetchMock = routeFetch(alertFixture());
     vi.stubGlobal("fetch", fetchMock);

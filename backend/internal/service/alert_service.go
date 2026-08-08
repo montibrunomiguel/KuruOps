@@ -28,11 +28,13 @@ type OnCallResolver interface {
 }
 
 type AlertService struct {
-	pool    *db.Pool
-	repo    *repository.AlertRepository
-	tags    *TagService
-	onCall  OnCallResolver
-	publish func(tenantID uuid.UUID, eventType string, payload any)
+	pool        *db.Pool
+	repo        *repository.AlertRepository
+	tags        *TagService
+	onCall      OnCallResolver
+	publish     func(tenantID uuid.UUID, eventType string, payload any)
+	autoAnalyze func(tenantID, alertID uuid.UUID)
+	runs        *repository.AIAnalysisRunRepository
 }
 
 func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService) *AlertService {
@@ -58,6 +60,28 @@ func (s *AlertService) EnableEventPublishing(publish func(tenantID uuid.UUID, ev
 	s.publish = publish
 }
 
+// EnableAutoAnalysis wires an AI-analysis trigger fired (in its own
+// goroutine, never awaited -- see Ingest) the moment a webhook alert lands,
+// so an analyst opening a freshly-received alert already has a triage
+// summary waiting instead of needing to click "Analyze with AI" first.
+// Optional, same post-construction-setter reasoning as
+// EnableOnCallAutoAssign: only cmd/ingest wires a real one (via
+// AIAnalysisService.AnalyzeAlert with a nil actorID, see that method's doc
+// comment) -- cmd/api's own "Analyze with AI" button already goes straight
+// through the handler, it doesn't need Ingest to also trigger one.
+func (s *AlertService) EnableAutoAnalysis(trigger func(tenantID, alertID uuid.UUID)) {
+	s.autoAnalyze = trigger
+}
+
+// EnableAnalysisLookup wires the repository Get uses to populate
+// domain.Alert.LatestAnalysis. Optional, same reasoning as
+// EnableOnCallAutoAssign/EnableAutoAnalysis -- most tests construct
+// AlertService without it and just get a nil LatestAnalysis, which is
+// exactly what "no completed analysis yet" should look like.
+func (s *AlertService) EnableAnalysisLookup(runs *repository.AIAnalysisRunRepository) {
+	s.runs = runs
+}
+
 func (s *AlertService) publishEvent(tenantID uuid.UUID, alertID uuid.UUID, action string) {
 	if s.publish != nil {
 		s.publish(tenantID, "alert", map[string]any{"id": alertID, "action": action})
@@ -79,6 +103,13 @@ func (s *AlertService) Get(ctx context.Context, tenantID, id uuid.UUID, allowedT
 		}
 		if !tagsVisible(allowedTags, a.Tags) {
 			return nil
+		}
+		if s.runs != nil {
+			result, err := s.runs.LatestCompletedResult(ctx, tx, "alert", a.ID)
+			if err != nil {
+				return fmt.Errorf("load latest analysis: %w", err)
+			}
+			a.LatestAnalysis = result
 		}
 		alert = a
 		return nil
@@ -225,6 +256,18 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 		return nil, err
 	}
 	s.publishEvent(tenantID, in.ID, "received")
+
+	// Fire-and-forget: an LLM call (possibly an agentic tool-use loop) can
+	// take several seconds, and this is the webhook ingest path -- the
+	// source SIEM/XDR tool is waiting on this HTTP response, it must never
+	// block on analysis. context.Background() deliberately, not ctx: by
+	// the time the goroutine runs, the request that triggered Ingest may
+	// already have returned and had its context cancelled.
+	if s.autoAnalyze != nil {
+		alertID := in.ID
+		go s.autoAnalyze(tenantID, alertID)
+	}
+
 	return &in, nil
 }
 

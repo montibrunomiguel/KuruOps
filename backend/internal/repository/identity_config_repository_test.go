@@ -56,6 +56,18 @@ func TestIdentityConfigRepository_LDAP(t *testing.T) {
 		assert.Equal(t, "ldap2.example.com", got.Host)
 		assert.Equal(t, 389, got.Port)
 	})
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		require.NoError(t, repo.DeleteLDAPConfig(t.Context(), tx))
+
+		got, err := repo.GetLDAPConfig(t.Context(), tx)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("delete is a no-op when nothing is configured", func(t *testing.T) {
+		require.NoError(t, repo.DeleteLDAPConfig(t.Context(), tx))
+	})
 }
 
 func TestIdentityConfigRepository_SAML(t *testing.T) {
@@ -89,4 +101,16 @@ func TestIdentityConfigRepository_SAML(t *testing.T) {
 	assert.Equal(t, "https://argusops.example/saml/metadata", got.SPEntityID)
 	require.NotNil(t, got.IDPMetadataURL)
 	assert.Equal(t, metadataURL, *got.IDPMetadataURL)
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		require.NoError(t, repo.DeleteSAMLConfig(t.Context(), tx))
+
+		got, err := repo.GetSAMLConfig(t.Context(), tx)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+
+	t.Run("delete is a no-op when nothing is configured", func(t *testing.T) {
+		require.NoError(t, repo.DeleteSAMLConfig(t.Context(), tx))
+	})
 }

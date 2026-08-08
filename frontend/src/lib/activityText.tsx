@@ -96,6 +96,9 @@ export function describeActivity(e: ActivityEvent, t: TFunction): Described {
       };
     case "assignees_changed":
       return { icon: <ShieldIcon />, tone: "tone-accent", text: t("dashboard.activity.incident.assignees_changed", { id }) };
+    case "role_assigned":
+    case "role_unassigned":
+      return { icon: <ShieldIcon />, tone: "tone-accent", text: t("dashboard.activity.incident.role_changed", { id }) };
     default:
       return { icon: <ClockIcon />, tone: "tone-muted", text: `${e.eventType.replace(/_/g, " ")} (${id})` };
   }

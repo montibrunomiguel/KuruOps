@@ -105,6 +105,30 @@ func TestSweepSLABreaches(t *testing.T) {
 	})
 }
 
+// TestRefreshMaterializedViews inserts a committed alert directly (REFRESH
+// MATERIALIZED VIEW CONCURRENTLY only ever sees committed data -- there's no
+// tenant-scoped transaction here to commit, admin pool writes are
+// auto-committed already) and confirms the refresh actually picks it up,
+// proving both that the three views refresh without error under the real
+// argusops_worker role/grants and that mv_alert_daily_stats reflects new
+// data afterward.
+func TestRefreshMaterializedViews(t *testing.T) {
+	adminPool := sweepAdminPool(t)
+	workerPool := sweepWorkerPool(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+
+	tenantID := insertSweepTestTenant(t, adminPool)
+	insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now())
+
+	refreshMaterializedViews(ctx, workerPool, logger)
+
+	var alertCount int
+	err := adminPool.QueryRow(ctx, `select coalesce(sum(alert_count), 0) from mv_alert_daily_stats where tenant_id = $1`, tenantID).Scan(&alertCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, alertCount, "the refresh must pick up the alert committed just before it ran")
+}
+
 // insertSweepTestTenant is escalation-sweep tests' equivalent of
 // insertSweepTestIncident's inline tenant insert -- pulled into its own
 // helper since every escalation test needs a fresh tenant plus at least one

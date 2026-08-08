@@ -64,14 +64,67 @@ type Incident struct {
 	// denormalized -- an incident can have zero or more assignees, and
 	// membership changes after creation (see IncidentService.SetAssignees),
 	// so a live join always reflects who's currently assigned.
-	Assignees   []UserSummary `json:"assignees"`
-	Tags        []string      `json:"tags"`
-	SLADueAt    *time.Time    `json:"slaDueAt,omitempty"`
-	SLABreached bool          `json:"slaBreached"`
-	OpenedAt    time.Time     `json:"openedAt"`
-	ClosedAt    *time.Time    `json:"closedAt,omitempty"`
-	CreatedAt   time.Time     `json:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt"`
+	Assignees []UserSummary `json:"assignees"`
+	// Roles is the NIST-800-61-style team-role assignment (Commander,
+	// Incident Handler, Communications Lead, Privacy Officer, Technical
+	// Lead) -- additive to Assignees above, not a replacement: Assignees is
+	// "who's generally working this," Roles is "who holds which formal
+	// role." Only populated by IncidentRepository.Get (the detail page),
+	// not List -- the incident list view has no use for it, same reasoning
+	// Assignees itself doesn't bother batch-loading there either.
+	Roles       []IncidentRoleAssignment `json:"roles"`
+	Tags        []string                 `json:"tags"`
+	SLADueAt    *time.Time               `json:"slaDueAt,omitempty"`
+	SLABreached bool                     `json:"slaBreached"`
+	OpenedAt    time.Time                `json:"openedAt"`
+	ClosedAt    *time.Time               `json:"closedAt,omitempty"`
+	CreatedAt   time.Time                `json:"createdAt"`
+	UpdatedAt   time.Time                `json:"updatedAt"`
+}
+
+// IncidentRole is one of the NIST 800-61 incident-response team roles.
+// RoleCommander and RoleTechnicalLead are single-assignee (enforced by a
+// partial unique index in db/migrations/0030_incident_role_assignments --
+// see that migration's comment); the other three allow any number of
+// people.
+type IncidentRole string
+
+const (
+	RoleCommander          IncidentRole = "commander"
+	RoleIncidentHandler    IncidentRole = "incident_handler"
+	RoleCommunicationsLead IncidentRole = "communications_lead"
+	RolePrivacyOfficer     IncidentRole = "privacy_officer"
+	RoleTechnicalLead      IncidentRole = "technical_lead"
+)
+
+// IncidentRoles lists every valid role, in the display order the frontend
+// renders the "Team Roles" section -- Commander and Technical Lead first
+// (the two single-assignee roles), then the multi-assignee ones.
+var IncidentRoles = []IncidentRole{
+	RoleCommander, RoleTechnicalLead, RoleIncidentHandler, RoleCommunicationsLead, RolePrivacyOfficer,
+}
+
+// SingleAssignee reports whether role permits at most one person at a
+// time -- Commander and Technical Lead, per NIST 800-61's convention that
+// both are individually-accountable roles, not a team.
+func (r IncidentRole) SingleAssignee() bool {
+	return r == RoleCommander || r == RoleTechnicalLead
+}
+
+func (r IncidentRole) Valid() bool {
+	for _, v := range IncidentRoles {
+		if v == r {
+			return true
+		}
+	}
+	return false
+}
+
+// IncidentRoleAssignment is one row of incident_role_assignments, joined
+// with the assignee's name for display.
+type IncidentRoleAssignment struct {
+	Role IncidentRole `json:"role"`
+	User UserSummary  `json:"user"`
 }
 
 type CreateIncidentInput struct {
@@ -124,6 +177,8 @@ const (
 	IncidentEventAIAnalysisRun      IncidentEventType = "ai_analysis_run"
 	IncidentEventTimestampCorrected IncidentEventType = "status_timestamp_corrected"
 	IncidentEventAssigneesChanged   IncidentEventType = "assignees_changed"
+	IncidentEventRoleAssigned       IncidentEventType = "role_assigned"
+	IncidentEventRoleUnassigned     IncidentEventType = "role_unassigned"
 )
 
 // IncidentEvent is an append-only audit row — see incident_events in

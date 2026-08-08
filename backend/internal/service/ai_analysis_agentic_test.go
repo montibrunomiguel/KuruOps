@@ -163,7 +163,7 @@ func TestAIAnalysisService_AgenticLoop_NonSideEffectingTool(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, nil)
+	result, err := fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "IP reputation is clean, likely a false positive.", result)
 
@@ -206,7 +206,7 @@ func TestAIAnalysisService_AgenticLoop_SideEffectingTool_PausesAndResumesOnAppro
 	require.NoError(t, err)
 
 	t.Run("first call pauses instead of returning a final answer", func(t *testing.T) {
-		result, err := fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, nil)
+		result, err := fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
 		require.NoError(t, err)
 		assert.Contains(t, result, "requires analyst approval")
 		assert.True(t, strings.Contains(result, "alert"), "the paused message should reference the context type")
@@ -270,7 +270,7 @@ func TestAIAnalysisService_AgenticLoop_RejectedToolCall(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, actorID, nil)
+	_, err = fx.ai.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
 	require.NoError(t, err)
 
 	pending, err := fx.mcpTool.PendingApprovals(t.Context(), tenantID)

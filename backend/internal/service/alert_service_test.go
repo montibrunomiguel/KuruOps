@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -115,6 +116,105 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 }
 
+// TestAlertService_EnableAutoAnalysis guards the fire-and-forget hook
+// Ingest fires once a new alert is committed (see AlertService.EnableAutoAnalysis) --
+// the trigger runs in its own goroutine, so this test synchronizes via a
+// channel instead of asserting anything synchronously right after Ingest returns.
+func TestAlertService_EnableAutoAnalysis(t *testing.T) {
+	pool, _, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+
+	t.Run("no hook enabled -- Ingest completes fine without one", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		_, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("hook enabled -- fired exactly once with the new alert's tenant/id", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		fired := make(chan [2]uuid.UUID, 2)
+		svc.EnableAutoAnalysis(func(gotTenantID, gotAlertID uuid.UUID) {
+			fired <- [2]uuid.UUID{gotTenantID, gotAlertID}
+		})
+
+		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		})
+		require.NoError(t, err)
+
+		select {
+		case got := <-fired:
+			assert.Equal(t, tenantID, got[0])
+			assert.Equal(t, alert.ID, got[1])
+		case <-time.After(2 * time.Second):
+			t.Fatal("EnableAutoAnalysis hook was never fired")
+		}
+
+		select {
+		case <-fired:
+			t.Fatal("hook fired more than once for a single Ingest call")
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+}
+
+// TestAlertService_Get_LatestAnalysis guards the optional EnableAnalysisLookup
+// wiring -- Get populates domain.Alert.LatestAnalysis from the most recently
+// completed AI analysis run, and leaves it nil when no lookup is wired
+// (the common case for tests/cmd/ingest's own AlertService instance).
+func TestAlertService_Get_LatestAnalysis(t *testing.T) {
+	pool, _, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	runsRepo := repository.NewAIAnalysisRunRepository()
+
+	t.Run("no lookup wired -- nil, not an error", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		})
+		require.NoError(t, err)
+
+		got, err := svc.Get(t.Context(), tenantID, alert.ID, nil)
+		require.NoError(t, err)
+		assert.Nil(t, got.LatestAnalysis)
+	})
+
+	t.Run("lookup wired -- surfaces the latest completed analysis", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc.EnableAnalysisLookup(runsRepo)
+
+		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		})
+		require.NoError(t, err)
+
+		got, err := svc.Get(t.Context(), tenantID, alert.ID, nil)
+		require.NoError(t, err)
+		assert.Nil(t, got.LatestAnalysis, "no analysis has run yet")
+
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			run := &domain.AIAnalysisRun{
+				TenantID: tenantID, ContextType: "alert", ContextID: alert.ID, ActorID: nil,
+				Status: domain.AIAnalysisRunRunning, Messages: json.RawMessage(`[]`),
+				Tools: json.RawMessage(`[]`), ToolRoutes: json.RawMessage(`{}`),
+			}
+			if err := runsRepo.Insert(t.Context(), tx, run); err != nil {
+				return err
+			}
+			return runsRepo.SetCompleted(t.Context(), tx, run.ID, json.RawMessage(`[]`), "looks like a brute-force attempt")
+		}))
+
+		got, err = svc.Get(t.Context(), tenantID, alert.ID, nil)
+		require.NoError(t, err)
+		require.NotNil(t, got.LatestAnalysis)
+		assert.Equal(t, "looks like a brute-force attempt", *got.LatestAnalysis)
+	})
+}
+
 func TestAlertService_GetVisibility(t *testing.T) {
 	_, alertSvc, _ := newAlertServices(t)
 	tenantID := testutil.NewTenant(t)
@@ -182,6 +282,35 @@ func TestAlertService_ChangeStatus(t *testing.T) {
 		require.NoError(t, err)
 		err = alertSvc.ChangeStatus(t.Context(), tenantID, alert.ID, actorID, domain.AlertStatusInvestigating, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
+	})
+}
+
+func TestAlertService_AddCommentAndComments(t *testing.T) {
+	_, alertSvc, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	require.NoError(t, err)
+
+	t.Run("a fresh alert has no comments", func(t *testing.T) {
+		comments, err := alertSvc.Comments(t.Context(), tenantID, alert.ID)
+		require.NoError(t, err)
+		assert.Empty(t, comments)
+	})
+
+	imageURL := "https://example.com/screenshot.png"
+	created, err := alertSvc.AddComment(t.Context(), tenantID, alert.ID, actorID, "Marina Alves", "confirmed malicious", &imageURL)
+	require.NoError(t, err)
+	assert.Equal(t, "confirmed malicious", created.Body)
+	assert.Equal(t, "Marina Alves", created.AuthorName)
+	require.NotNil(t, created.ImageURL)
+	assert.Equal(t, imageURL, *created.ImageURL)
+
+	t.Run("the comment is returned afterward", func(t *testing.T) {
+		comments, err := alertSvc.Comments(t.Context(), tenantID, alert.ID)
+		require.NoError(t, err)
+		require.Len(t, comments, 1)
+		assert.Equal(t, "confirmed malicious", comments[0].Body)
 	})
 }
 

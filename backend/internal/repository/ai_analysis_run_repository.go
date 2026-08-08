@@ -68,6 +68,28 @@ func (r *AIAnalysisRunRepository) ListByContext(ctx context.Context, tx pgx.Tx, 
 	return runs, rows.Err()
 }
 
+// LatestCompletedResult returns the most recent completed analysis's result
+// text for one alert/incident, or nil if none exists yet -- backs "show the
+// latest AI analysis automatically" on the alert detail page (see
+// AlertService.Get), without fetching the full conversation history
+// ListByContext would.
+func (r *AIAnalysisRunRepository) LatestCompletedResult(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID) (*string, error) {
+	var result string
+	err := tx.QueryRow(ctx, `
+		select result from ai_analysis_runs
+		where context_type = $1 and context_id = $2 and status = 'completed'
+		order by created_at desc limit 1`,
+		contextType, contextID,
+	).Scan(&result)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("query latest analysis result: %w", err)
+	}
+	return &result, nil
+}
+
 // GetPausedByToolCall finds the run (if any) waiting on callID -- how a
 // tool-call approval finds its way back to the conversation it belongs to.
 // nil, nil (not an error) when no run is waiting on it, which is the normal

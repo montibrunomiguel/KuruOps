@@ -11,9 +11,11 @@ import type {
   IncidentEvent,
   IncidentPhase,
   IncidentPriority,
+  IncidentRole,
   IncidentStatusHistoryEntry,
 } from "../../types/incidents";
-import { NIST_PHASE_ORDER } from "../../types/incidents";
+import { NIST_PHASE_ORDER, INCIDENT_ROLE_ORDER, SINGLE_ASSIGNEE_ROLES } from "../../types/incidents";
+import type { UserSummary } from "../../types/users";
 import { SeverityBadge, PriorityBadge, AlertStatusBadge } from "../../components/badges";
 import { TagPicker } from "../../components/TagPicker";
 import { AssigneePicker } from "../../components/AssigneePicker";
@@ -298,7 +300,7 @@ export function IncidentDetailPage() {
         </div>
 
         <div className="detail-side">
-          <AssigneesPanel incident={incident} onSaved={reloadIncidentAndTimeline} />
+          <IncidentRolesPanel incident={incident} onSaved={reloadIncidentAndTimeline} />
           <NistMatrixPanel incident={incident} onSaved={reloadIncidentAndTimeline} />
           <StatusHistoryPanel
             incidentId={incident.id}
@@ -348,35 +350,72 @@ function IncidentTagsRow({ incident, onSaved }: { incident: Incident; onSaved: (
   );
 }
 
-function AssigneesPanel({ incident, onSaved }: { incident: Incident; onSaved: () => void }) {
+// IncidentRolesPanel is the NIST 800-61 "Team Roles" section -- the only
+// per-person assignment UI on the incident detail page (the generic
+// assignees panel that used to sit alongside it was removed; Commander/
+// Technical Lead/etc. now fully replace it). Commander/Technical Lead
+// render as a plain single-select (at most one person); the other three
+// reuse AssigneePicker, same auto-save-on-change UX as IncidentTagsRow.
+function IncidentRolesPanel({ incident, onSaved }: { incident: Incident; onSaved: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [assigneeIds, setAssigneeIds] = useState<string[]>(incident.assignees.map((a) => a.id));
-  const [submitting, setSubmitting] = useState(false);
+  const { data: directory } = useList<UserSummary>((tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
   const [error, setError] = useState<string | null>(null);
+  const [submittingRole, setSubmittingRole] = useState<IncidentRole | null>(null);
 
-  async function save(next: string[]) {
-    setAssigneeIds(next);
-    setSubmitting(true);
+  function usersFor(role: IncidentRole): string[] {
+    return incident.roles.filter((r) => r.role === role).map((r) => r.user.id);
+  }
+
+  async function save(role: IncidentRole, userIds: string[]) {
+    setSubmittingRole(role);
     setError(null);
     try {
-      await api.put(`/api/v1/incidents/${incident.id}/assignees`, { assigneeIds: next }, token);
+      await api.put(`/api/v1/incidents/${incident.id}/roles/${role}`, { userIds }, token);
       onSaved();
     } catch (err) {
-      setAssigneeIds(incident.assignees.map((a) => a.id));
       setError(mutationErrorMessage(err));
     } finally {
-      setSubmitting(false);
+      setSubmittingRole(null);
     }
   }
 
   return (
     <div className="panel">
       <h2 className="panel-title" style={{ marginBottom: 12 }}>
-        {t("incidents.table.assignees")}
+        {t("incidents.roles.title")}
       </h2>
-      {error && <div className="error-banner">{error}</div>}
-      <AssigneePicker value={assigneeIds} onChange={save} disabled={submitting} />
+      {error && <div className="error-banner" style={{ marginBottom: 10 }}>{error}</div>}
+      {INCIDENT_ROLE_ORDER.map((role) => {
+        const isSingleAssignee = SINGLE_ASSIGNEE_ROLES.includes(role);
+        const current = usersFor(role);
+        const disabled = submittingRole === role;
+        return (
+          <div key={role} style={{ marginBottom: 14 }}>
+            <label htmlFor={`incident-role-${role}`} style={{ display: "block", marginBottom: 4, fontWeight: 600, fontSize: 13 }}>
+              {t(`incidents.roles.role.${role}`)}
+            </label>
+            {isSingleAssignee ? (
+              <select
+                id={`incident-role-${role}`}
+                className="select"
+                value={current[0] ?? ""}
+                disabled={disabled}
+                onChange={(e) => save(role, e.target.value ? [e.target.value] : [])}
+              >
+                <option value="">{t("incidents.roles.unassigned")}</option>
+                {(directory ?? []).map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <AssigneePicker value={current} onChange={(next) => save(role, next)} disabled={disabled} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -605,20 +644,15 @@ function StatusHistoryRow({
 
   return (
     <form className="row" style={{ display: "block" }} onSubmit={save}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: dirty ? 8 : 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: dirty ? 8 : 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600 }}>
           <span className="legend-dot" style={{ background: isCurrent ? "var(--accent)" : "var(--success)" }} />
           {t(`common.phase.${phase}`)}
-          {isCurrent && (
-            <span className="badge badge-admin" style={{ marginLeft: 2 }}>
-              {t("incidents.detail.current")}
-            </span>
-          )}
         </span>
         <input
           type="datetime-local"
           className="input"
-          style={{ fontSize: 11.5, padding: "4px 8px" }}
+          style={{ fontSize: 11.5, padding: "4px 8px", minWidth: 0 }}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           aria-label={`${t("incidents.detail.correctTime")} — ${t(`common.phase.${phase}`)}`}
@@ -781,6 +815,12 @@ function describeIncidentEvent(ev: IncidentEvent, t: (key: string, opts?: Record
     case "assignees_changed": {
       const names = Array.isArray(data.assignees) ? (data.assignees as unknown[]).map(String) : [];
       return { text: names.length > 0 ? names.join(", ") : t("common.unassigned"), warning: false };
+    }
+    case "role_assigned":
+    case "role_unassigned": {
+      const names = Array.isArray(data.assignees) ? (data.assignees as unknown[]).map(String) : [];
+      const roleLabel = typeof data.role === "string" ? t(`incidents.roles.role.${data.role}`) : String(data.role);
+      return { text: `${roleLabel}: ${names.length > 0 ? names.join(", ") : t("common.unassigned")}`, warning: false };
     }
     default:
       return { text: ev.eventType.replace(/_/g, " "), warning: false };

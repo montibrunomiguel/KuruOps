@@ -61,13 +61,24 @@ mesmo tempo.
 
 ### O que tem depois de logado
 
-- **Dashboard** — KPIs computados no backend (não somando listas no navegador): alertas
-  abertos/críticos, incidentes ativos, SLA estourado, e **MTTA/MTTR** de alertas e incidentes,
-  vindos de materialized views (`mv_alert_daily_stats`, `mv_incident_kpis`) recalculadas a cada 1
-  minuto pelo `worker`. Se você acabou de fechar um alerta/incidente, o número pode levar até um
-  minuto para refletir — é o trade-off deliberado de não recalcular isso a cada request.
+- **Dashboard** — três abas (Alertas / Incidentes / Follow-up), com KPIs computados no backend
+  (não somando listas no navegador): alertas abertos/críticos, incidentes ativos, SLA estourado, e
+  **MTTA/MTTR** de alertas e incidentes, além de volume de alertas e de incidentes por dia,
+  distribuição por severidade/status/prioridade/fase e por analista/commander responsável. As
+  médias e os gráficos de volume vêm de materialized views (`mv_alert_daily_stats`,
+  `mv_incident_kpis`, `mv_incident_daily_stats`) recalculadas a cada 1 minuto pelo `worker` — se
+  você acabou de fechar um alerta/incidente, o número pode levar até um minuto para refletir, é o
+  trade-off deliberado de não recalcular isso a cada request. Contadores "ao vivo" (abertos,
+  críticos) e a lista/atividade recente atualizam via SSE, sem precisar recarregar a página. O
+  filtro de período aceita tanto um preset (24h/7d/30d/90d) quanto um intervalo customizado com
+  data e hora exatas.
 - **Alertas / Incidentes** — listagem com filtros e paginação (`Carregar mais`), detalhe com
-  timeline de eventos, comentários, vínculo alerta↔incidente.
+  timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (manual via botão,
+  ou automática na ingestão se houver um provedor LLM configurado). Um alerta recebido via webhook
+  pode carregar metadados customizados (canal do Slack, link de playbook externo, ambiente, ou
+  qualquer chave/valor que a fonte quiser mandar), renderizados num painel dedicado no detalhe.
+- **Papéis da Equipe** (no detalhe do incidente) — Commander, Technical Lead, Incident Handler(s),
+  Communications Lead e Privacy Officer (NIST 800-61), cada um atribuível a um usuário.
 - **Histórico de Fases** (no detalhe do incidente) — cada fase NIST 800-61 registra quando foi
   entrada; o horário original nunca é sobrescrito. Uma correção exige motivo, fica registrada com
   autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0005_incidents.up.sql`.
@@ -76,8 +87,13 @@ mesmo tempo.
 - **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no
   detalhe do alerta.
 - **Settings** (admin) — Webhook Endpoints (token com política de expiração/rotação — 90 dias por
-  padrão, configurável na criação/regeneração), AI Integration (LLM providers), MCP Servers, Users
-  & Roles, Identity Providers (LDAP/SAML).
+  padrão, configurável na criação/regeneração), AI Integration (LLM providers), MCP Servers
+  (com painel de aprovações pendentes para tools de efeito colateral que a IA propõe usar),
+  Integração de Armazenamento (S3/GCS, para evidências anexadas), SMTP (reset de senha por email),
+  Users & Roles, Identity Providers (LDAP/SAML — configurar, atualizar e remover), Tags, Escala de
+  Atendimento, SLAs de Incidentes, Escalonamento de Plantão (PagerDuty/Slack/webhook genérico),
+  Exportação de Auditoria (CEF) e Banco de Dados Externo (migração assistida do Postgres embutido
+  para um Postgres gerenciado pelo cliente).
 
 ## Testes
 

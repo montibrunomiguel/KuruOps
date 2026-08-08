@@ -1,0 +1,11 @@
+-- ai_analysis_runs.actor_id was NOT NULL because until now every analysis
+-- run was started by a human clicking "Analyze with AI" (see
+-- service.AIAnalysisService's original doc comment). AlertService now
+-- supports auto-triggering an analysis the moment a webhook alert arrives
+-- (see AlertService.EnableAutoAnalysis), which has no human actor -- same
+-- "system-triggered, nullable actor" convention alert_events/incident_events
+-- already use (ActorType='system'/'ai' rows have a null actor_id there
+-- too). AI-triggered analysis events already stamp ActorType='ai'
+-- regardless of who/what started the run; this only changes who owns the
+-- FK, not that classification.
+alter table ai_analysis_runs alter column actor_id drop not null;

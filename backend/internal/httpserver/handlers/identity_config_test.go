@@ -36,6 +36,11 @@ func TestIdentityConfigHandlers_LDAP(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/ldap", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	body, _ := json.Marshal(map[string]any{"host": "ldap.example.com", "port": 636, "bindDn": "cn=svc", "bindPassword": "s3cret"})
 	req := withClaims(httptest.NewRequest("PUT", "/ldap", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 	assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
@@ -45,6 +50,15 @@ func TestIdentityConfigHandlers_LDAP(t *testing.T) {
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.NotEqual(t, "null\n", rec.Body.String())
+	})
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		delReq := withClaims(httptest.NewRequest("DELETE", "/ldap", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, delReq).Code)
+
+		req := withClaims(httptest.NewRequest("GET", "/ldap", nil), tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, "null\n", rec.Body.String())
 	})
 }
 
@@ -61,6 +75,11 @@ func TestIdentityConfigHandlers_SAML(t *testing.T) {
 		assert.Equal(t, "null\n", rec.Body.String())
 	})
 
+	t.Run("save invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/saml", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
 	body, _ := json.Marshal(map[string]string{
 		"spEntityId":     "https://argusops.example/saml/metadata",
 		"acsUrl":         "https://argusops.example/auth/saml/acs",
@@ -75,4 +94,29 @@ func TestIdentityConfigHandlers_SAML(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.NotEqual(t, "null\n", rec.Body.String())
 	})
+
+	t.Run("delete removes the config", func(t *testing.T) {
+		delReq := withClaims(httptest.NewRequest("DELETE", "/saml", nil), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, delReq).Code)
+
+		req := withClaims(httptest.NewRequest("GET", "/saml", nil), tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, "null\n", rec.Body.String())
+	})
+}
+
+func TestIdentityConfigHandlers_MissingTenantContext(t *testing.T) {
+	h := handlers.NewIdentityConfigHandlers(nil)
+	r := newRouter(h.Routes)
+
+	for _, tc := range []struct {
+		method, path string
+	}{
+		{"GET", "/ldap"}, {"DELETE", "/ldap"}, {"GET", "/saml"}, {"DELETE", "/saml"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
+	}
 }

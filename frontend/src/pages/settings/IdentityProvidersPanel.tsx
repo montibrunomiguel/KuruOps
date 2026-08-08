@@ -74,6 +74,29 @@ function LDAPPanel() {
     }
   }
 
+  async function handleRemove() {
+    if (!confirm(t("settings.identityProviders.ldap.removeConfirm"))) return;
+    setSubmitting(true);
+    setSaveError(null);
+    try {
+      await api.del("/api/v1/settings/identity-providers/ldap", token);
+      setExisting(null);
+      setHost("");
+      setPort(636);
+      setUseTls(true);
+      setBindDn("");
+      setBindPassword("");
+      setUserBaseDn("");
+      setUserFilter("(mail=%s)");
+      setGroupBaseDn("");
+      setGroupAttribute("memberOf");
+    } catch (err) {
+      setSaveError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
 
   return (
@@ -145,9 +168,16 @@ function LDAPPanel() {
         </div>
       </div>
 
-      <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-        {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
-      </button>
+      <div className="row-actions">
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+          {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
+        </button>
+        {existing && (
+          <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+            {t("settings.identityProviders.ldap.remove")}
+          </button>
+        )}
+      </div>
     </form>
   );
 }
@@ -209,6 +239,26 @@ function SAMLPanel() {
         token,
       );
       setSaved(true);
+    } catch (err) {
+      setSaveError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemove() {
+    if (!confirm(t("settings.identityProviders.saml.removeConfirm"))) return;
+    setSubmitting(true);
+    setSaveError(null);
+    try {
+      await api.del("/api/v1/settings/identity-providers/saml", token);
+      setExisting(null);
+      setMetadataMode("url");
+      setIdpMetadataUrl("");
+      setIdpMetadataXml("");
+      setSpEntityId(`${window.location.origin}/auth/saml`);
+      setAcsUrl(`${window.location.origin}/auth/saml/acs`);
+      setGroupAttribute("groups");
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -320,9 +370,16 @@ function SAMLPanel() {
         </div>
       </div>
 
-      <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-        {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
-      </button>
+      <div className="row-actions">
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+          {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
+        </button>
+        {existing && (
+          <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+            {t("settings.identityProviders.saml.remove")}
+          </button>
+        )}
+      </div>
     </form>
   );
 }

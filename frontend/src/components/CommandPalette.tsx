@@ -19,12 +19,12 @@ interface CommandItem {
 }
 
 const COMMANDS: CommandItem[] = [
-  { id: "dashboard", labelKey: "nav.dashboard", path: "/dashboard", icon: DashboardIcon, category: "Navigation" },
-  { id: "alerts", labelKey: "nav.alerts", path: "/alerts", icon: AlertIcon, category: "Navigation" },
-  { id: "incidents", labelKey: "nav.incidents", path: "/incidents", icon: ShieldIcon, category: "Navigation" },
-  { id: "playbooks", labelKey: "nav.playbooks", path: "/playbooks", icon: PlaybookIcon, category: "Navigation" },
-  { id: "settings", labelKey: "nav.settings", path: "/settings", icon: GearIcon, category: "Settings" },
-  { id: "profile", labelKey: "nav.profile", path: "/settings/users", icon: UserIcon, category: "Settings" },
+  { id: "dashboard", labelKey: "sidebar.nav.dashboard", path: "/dashboard", icon: DashboardIcon, category: "Navigation" },
+  { id: "alerts", labelKey: "sidebar.nav.alerts", path: "/alerts", icon: AlertIcon, category: "Navigation" },
+  { id: "incidents", labelKey: "sidebar.nav.incidents", path: "/incidents", icon: ShieldIcon, category: "Navigation" },
+  { id: "playbooks", labelKey: "sidebar.nav.playbooks", path: "/playbooks", icon: PlaybookIcon, category: "Navigation" },
+  { id: "settings", labelKey: "sidebar.nav.settings", path: "/settings", icon: GearIcon, category: "Settings" },
+  { id: "profile", labelKey: "profile.title", path: "/profile", icon: UserIcon, category: "Settings" },
 ];
 
 export function CommandPalette() {

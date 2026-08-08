@@ -3,6 +3,7 @@ package authn_test
 import (
 	"context"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/authn"
+	"github.com/argusops/argusops/internal/testutil"
 )
 
 func TestGenerateSPKeyPair(t *testing.T) {
@@ -19,38 +21,12 @@ func TestGenerateSPKeyPair(t *testing.T) {
 	assert.Contains(t, keyPEM, "BEGIN RSA PRIVATE KEY")
 }
 
-// idpMetadataXML builds a minimal, well-formed SAML 2.0 IdP metadata
-// document embedding certPEM as its signing certificate -- enough for
-// samlsp.ParseMetadata (called by BuildServiceProvider) without needing a
-// live IdP or network access.
-func idpMetadataXML(t *testing.T, entityID, certPEM string) string {
-	t.Helper()
-	certDER := strings.TrimSpace(certPEM)
-	certDER = strings.TrimPrefix(certDER, "-----BEGIN CERTIFICATE-----")
-	certDER = strings.TrimSuffix(certDER, "-----END CERTIFICATE-----")
-	certDER = strings.TrimSpace(certDER)
-
-	return `<?xml version="1.0" encoding="UTF-8"?>
-<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="` + entityID + `">
-  <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
-    <KeyDescriptor use="signing">
-      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
-        <ds:X509Data>
-          <ds:X509Certificate>` + certDER + `</ds:X509Certificate>
-        </ds:X509Data>
-      </ds:KeyInfo>
-    </KeyDescriptor>
-    <SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example/sso"/>
-  </IDPSSODescriptor>
-</EntityDescriptor>`
-}
-
 func TestBuildServiceProvider(t *testing.T) {
 	spCert, spKey, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
-	metadataXML := idpMetadataXML(t, "https://idp.example/metadata", idpCert)
+	metadataXML := testutil.IDPMetadataXML(t, "https://idp.example/metadata", idpCert)
 
 	t.Run("valid config with inline IdP metadata XML", func(t *testing.T) {
 		sp, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
@@ -166,7 +142,7 @@ func buildTestSP(t *testing.T) *authn.SAMLParams {
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
-	metadataXML := idpMetadataXML(t, "https://idp.example/metadata", idpCert)
+	metadataXML := testutil.IDPMetadataXML(t, "https://idp.example/metadata", idpCert)
 	return &authn.SAMLParams{
 		EntityID:       "https://argusops.example/saml/metadata",
 		ACSURL:         "https://argusops.example/auth/saml/acs",
@@ -183,15 +159,24 @@ func TestRedirectToIDP(t *testing.T) {
 	req := httptest.NewRequest("GET", "https://argusops.example/auth/saml/login", nil)
 	rec := httptest.NewRecorder()
 
-	err = authn.RedirectToIDP(sp, rec, req, "relay-state-value")
+	err = authn.RedirectToIDP(sp, rec, req)
 	require.NoError(t, err)
 
 	assert.Equal(t, 302, rec.Code)
-	assert.NotEmpty(t, rec.Header().Get("Location"))
+	location := rec.Header().Get("Location")
+	require.NotEmpty(t, location)
 
 	cookies := rec.Result().Cookies()
 	require.Len(t, cookies, 1)
 	assert.NotEmpty(t, cookies[0].Value, "the AuthnRequest ID must be stashed in a cookie for the later ACS check")
+
+	// RelayState must carry the same request ID as the cookie -- it's the
+	// primary channel now, since a SameSite=Lax cookie is never sent on the
+	// cross-site POST every real IdP uses to return the assertion (see
+	// RedirectToIDP's doc comment).
+	parsedLocation, err := url.Parse(location)
+	require.NoError(t, err)
+	assert.Equal(t, cookies[0].Value, parsedLocation.Query().Get("RelayState"))
 }
 
 func TestServeMetadata(t *testing.T) {

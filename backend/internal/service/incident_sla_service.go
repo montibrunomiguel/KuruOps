@@ -15,7 +15,7 @@ import (
 
 // IncidentSLAService is Settings -> Incident SLAs: lets an admin configure,
 // per (severity, priority) pair, how many minutes an incident has before
-// it's SLA breached. Lookup is also used directly by IncidentService at
+// it's SLA breached. DueAt is used directly by IncidentService at
 // create/severity-change time to compute sla_due_at.
 type IncidentSLAService struct {
 	pool *db.Pool
@@ -34,12 +34,6 @@ func (s *IncidentSLAService) List(ctx context.Context, tenantID uuid.UUID) ([]do
 		return err
 	})
 	return policies, err
-}
-
-// Lookup returns nil (not an error) when the pair has no configured
-// policy.
-func (s *IncidentSLAService) Lookup(ctx context.Context, tx pgx.Tx, severity domain.Severity, priority domain.IncidentPriority) (*domain.IncidentSLAPolicy, error) {
-	return s.repo.Lookup(ctx, tx, severity, priority)
 }
 
 // DueAt resolves how much time an incident of this (severity, priority)

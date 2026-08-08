@@ -150,7 +150,7 @@ func (s *SAMLAuthService) ServeLogin(ctx context.Context, tenantID uuid.UUID, w 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := authn.RedirectToIDP(sp, w, r, tenantID.String()); err != nil {
+	if err := authn.RedirectToIDP(sp, w, r); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

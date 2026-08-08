@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -76,6 +77,12 @@ func TestDashboardRepository_Stats(t *testing.T) {
 		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{})
 		require.NoError(t, err)
 		assert.Empty(t, stats.AlertTrend, "mv_alert_daily_stats only sees committed data as of its last refresh")
+	})
+
+	t.Run("incident trend is empty for a tenant whose data hasn't been through a materialized view refresh yet", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{})
+		require.NoError(t, err)
+		assert.Empty(t, stats.IncidentTrend, "mv_incident_daily_stats only sees committed data as of its last refresh")
 	})
 }
 
@@ -196,7 +203,7 @@ func TestDashboardRepository_RecentActivity(t *testing.T) {
 		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
 	}))
 
-	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil)
+	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "alert", events[0].Kind)
@@ -209,7 +216,7 @@ func TestDashboardRepository_RecentActivity(t *testing.T) {
 			AlertID: a.ID, TenantID: tenantID, EventType: domain.AlertEventStatusChanged,
 			ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
 		}))
-		limited, err := dashboardRepo.RecentActivity(t.Context(), tx, 1, "", nil)
+		limited, err := dashboardRepo.RecentActivity(t.Context(), tx, 1, "", nil, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, limited, 1)
 	})
@@ -247,21 +254,21 @@ func TestDashboardRepository_RecentActivity_KindFilter(t *testing.T) {
 		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
 	}))
 
-	alertOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "alert", nil)
+	alertOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "alert", nil, nil, nil)
 	require.NoError(t, err)
 	for _, e := range alertOnly {
 		assert.Equal(t, "alert", e.Kind)
 	}
 	require.Len(t, alertOnly, 1)
 
-	incidentOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "incident", nil)
+	incidentOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "incident", nil, nil, nil)
 	require.NoError(t, err)
 	for _, e := range incidentOnly {
 		assert.Equal(t, "incident", e.Kind)
 	}
 	require.Len(t, incidentOnly, 1)
 
-	both, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil)
+	both, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, both, 2)
 }
@@ -310,12 +317,12 @@ func TestDashboardRepository_RecentActivity_AllowedTagsScoping(t *testing.T) {
 		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
 	}))
 
-	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", []string{"ifood"})
+	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", []string{"ifood"}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1, "only the ifood-tagged alert's event should surface")
 	assert.Equal(t, inScope.ID, events[0].ContextID)
 
-	unrestricted, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil)
+	unrestricted, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, nil)
 	require.NoError(t, err)
 	assert.Len(t, unrestricted, 3, "nil allowedTags sees everything")
 }
@@ -343,7 +350,7 @@ func TestDashboardRepository_RecentActivity_IncludesComments(t *testing.T) {
 		Body: "Backup from Jul 20 verified clean.",
 	}))
 
-	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil)
+	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "incident", events[0].Kind)
@@ -379,7 +386,7 @@ func TestDashboardRepository_RecentActivity_IncludesAlertComments(t *testing.T) 
 		Body: "Confirmed source IP is a known scanner.",
 	}))
 
-	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "alert", nil)
+	events, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "alert", nil, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, "alert", events[0].Kind)
@@ -390,7 +397,241 @@ func TestDashboardRepository_RecentActivity_IncludesAlertComments(t *testing.T) 
 	require.NoError(t, json.Unmarshal(events[0].Data, &data))
 	assert.Equal(t, "Marina Alves", data["authorName"])
 
-	incidentOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "incident", nil)
+	incidentOnly, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "incident", nil, nil, nil)
 	require.NoError(t, err)
 	assert.Empty(t, incidentOnly, "an alert comment must never leak into the incident-only feed")
+}
+
+// TestDashboardRepository_Stats_SinceFilter guards the Dashboard's
+// time-range filter: an alert received before the cutoff must not count
+// toward the live figures, an incident opened before it must not either.
+func TestDashboardRepository_Stats_SinceFilter(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	alertRepo := repository.NewAlertRepository()
+	incidentRepo := repository.NewIncidentRepository()
+	dashboardRepo := repository.NewDashboardRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	oldAlert := &domain.Alert{
+		TenantID: tenantID, Title: "old", Source: "test",
+		Severity: domain.SeverityCritical, OriginalSeverity: domain.SeverityCritical, Status: domain.AlertStatusOpen,
+		Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: cutoff.Add(-24 * time.Hour),
+	}
+	require.NoError(t, alertRepo.Insert(t.Context(), tx, oldAlert))
+	newAlert := &domain.Alert{
+		TenantID: tenantID, Title: "new", Source: "test",
+		Severity: domain.SeverityCritical, OriginalSeverity: domain.SeverityCritical, Status: domain.AlertStatusOpen,
+		Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: cutoff.Add(24 * time.Hour),
+	}
+	require.NoError(t, alertRepo.Insert(t.Context(), tx, newAlert))
+
+	oldIncident := &domain.Incident{
+		TenantID: tenantID, Title: "old incident", Severity: domain.SeverityCritical,
+		Priority: domain.PriorityP1, Phase: domain.PhaseNew, Tags: []string{},
+	}
+	require.NoError(t, incidentRepo.Insert(t.Context(), tx, oldIncident))
+	_, err := tx.Exec(t.Context(), `update incidents set opened_at = $1 where id = $2`, cutoff.Add(-24*time.Hour), oldIncident.ID)
+	require.NoError(t, err)
+	newIncident := &domain.Incident{
+		TenantID: tenantID, Title: "new incident", Severity: domain.SeverityCritical,
+		Priority: domain.PriorityP1, Phase: domain.PhaseNew, Tags: []string{},
+	}
+	require.NoError(t, incidentRepo.Insert(t.Context(), tx, newIncident))
+	_, err = tx.Exec(t.Context(), `update incidents set opened_at = $1 where id = $2`, cutoff.Add(24*time.Hour), newIncident.ID)
+	require.NoError(t, err)
+
+	t.Run("no Since -- both count", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{})
+		require.NoError(t, err)
+		assert.Equal(t, 2, stats.OpenAlerts)
+		assert.Equal(t, 2, stats.ActiveIncidents)
+	})
+
+	t.Run("Since the cutoff -- only the new ones count", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{Since: &cutoff})
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.OpenAlerts, "only the alert received after the cutoff")
+		assert.Equal(t, 1, stats.ActiveIncidents, "only the incident opened after the cutoff")
+	})
+
+	t.Run("Until the cutoff -- only the old ones count", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{Until: &cutoff})
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.OpenAlerts, "only the alert received before the cutoff")
+		assert.Equal(t, 1, stats.ActiveIncidents, "only the incident opened before the cutoff")
+	})
+
+	t.Run("Since and Until together -- a narrow window excludes both", func(t *testing.T) {
+		narrowSince := cutoff.Add(-1 * time.Hour)
+		narrowUntil := cutoff.Add(1 * time.Hour)
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{Since: &narrowSince, Until: &narrowUntil})
+		require.NoError(t, err)
+		assert.Equal(t, 0, stats.OpenAlerts, "neither alert falls inside this narrow window")
+		assert.Equal(t, 0, stats.ActiveIncidents, "neither incident falls inside this narrow window")
+	})
+}
+
+// TestDashboardRepository_RecentActivity_SinceFilter mirrors the Stats
+// version, for the activity feed -- filtered on each event's own
+// created_at, not the parent alert's received_at (see RecentActivity's doc
+// comment).
+func TestDashboardRepository_RecentActivity_SinceFilter(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	alertRepo := repository.NewAlertRepository()
+	dashboardRepo := repository.NewDashboardRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	a := &domain.Alert{
+		TenantID: tenantID, Title: "Suspicious login", Source: "test",
+		Severity: domain.SeverityHigh, OriginalSeverity: domain.SeverityHigh, Status: domain.AlertStatusOpen,
+		Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: time.Now(),
+	}
+	require.NoError(t, alertRepo.Insert(t.Context(), tx, a))
+
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	oldEvent := &domain.AlertEvent{
+		AlertID: a.ID, TenantID: tenantID, EventType: domain.AlertEventReceived,
+		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
+	}
+	require.NoError(t, alertRepo.InsertEvent(t.Context(), tx, oldEvent))
+	_, err := tx.Exec(t.Context(), `update alert_events set created_at = $1 where id = $2`, cutoff.Add(-time.Hour), oldEvent.ID)
+	require.NoError(t, err)
+
+	newEvent := &domain.AlertEvent{
+		AlertID: a.ID, TenantID: tenantID, EventType: domain.AlertEventStatusChanged,
+		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
+	}
+	require.NoError(t, alertRepo.InsertEvent(t.Context(), tx, newEvent))
+	_, err = tx.Exec(t.Context(), `update alert_events set created_at = $1 where id = $2`, cutoff.Add(time.Hour), newEvent.ID)
+	require.NoError(t, err)
+
+	all, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	sinceCutoff, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, &cutoff, nil)
+	require.NoError(t, err)
+	require.Len(t, sinceCutoff, 1, "only the event after the cutoff")
+	assert.Equal(t, domain.AlertEventStatusChanged, domain.AlertEventType(sinceCutoff[0].EventType))
+
+	untilCutoff, err := dashboardRepo.RecentActivity(t.Context(), tx, 10, "", nil, nil, &cutoff)
+	require.NoError(t, err)
+	require.Len(t, untilCutoff, 1, "only the event before the cutoff")
+	assert.Equal(t, domain.AlertEventReceived, domain.AlertEventType(untilCutoff[0].EventType))
+}
+
+// TestDashboardRepository_Stats_AlertsByAnalyst guards the new identity-keyed
+// breakdown: an assigned alert groups under its analyst's name, an
+// unassigned one groups into the nil-ID/empty-Name bucket, and
+// AssignedAnalystID narrows every other alert-derived figure the same way
+// AlertSeverity etc. already do.
+func TestDashboardRepository_Stats_AlertsByAnalyst(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	analystA := testutil.NewUser(t, tenantID, "analyst", nil)
+	analystB := testutil.NewUser(t, tenantID, "analyst", nil)
+	alertRepo := repository.NewAlertRepository()
+	dashboardRepo := repository.NewDashboardRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	mustInsert := func(analyst *uuid.UUID) {
+		a := &domain.Alert{
+			TenantID: tenantID, Title: "t", Source: "test",
+			Severity: domain.SeverityHigh, OriginalSeverity: domain.SeverityHigh, Status: domain.AlertStatusOpen,
+			Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: time.Now(), AssignedAnalystID: analyst,
+		}
+		require.NoError(t, alertRepo.Insert(t.Context(), tx, a))
+	}
+	mustInsert(&analystA)
+	mustInsert(&analystA)
+	mustInsert(&analystB)
+	mustInsert(nil)
+
+	t.Run("groups by analyst, unassigned bucket has a nil id", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{})
+		require.NoError(t, err)
+		require.Len(t, stats.AlertsByAnalyst, 3)
+
+		byID := map[string]domain.NamedCount{}
+		for _, c := range stats.AlertsByAnalyst {
+			key := "unassigned"
+			if c.ID != nil {
+				key = c.ID.String()
+			}
+			byID[key] = c
+		}
+		assert.Equal(t, 2, byID[analystA.String()].Count)
+		assert.Equal(t, 1, byID[analystB.String()].Count)
+		assert.Equal(t, 1, byID["unassigned"].Count)
+		assert.Empty(t, byID["unassigned"].Name, "unassigned bucket carries no server-rendered label")
+	})
+
+	t.Run("AssignedAnalystID narrows every other alert-derived figure too", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AssignedAnalystID: &analystA})
+		require.NoError(t, err)
+		assert.Equal(t, 2, stats.OpenAlerts)
+	})
+}
+
+// TestDashboardRepository_Stats_IncidentsByCommander mirrors the alert-side
+// test above, for the incident_role_assignments-backed commander breakdown.
+func TestDashboardRepository_Stats_IncidentsByCommander(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	commanderA := testutil.NewUser(t, tenantID, "analyst", nil)
+	commanderB := testutil.NewUser(t, tenantID, "analyst", nil)
+	incidentRepo := repository.NewIncidentRepository()
+	dashboardRepo := repository.NewDashboardRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	mustInsert := func(commander *uuid.UUID) uuid.UUID {
+		inc := &domain.Incident{
+			TenantID: tenantID, Title: "t", Severity: domain.SeverityCritical,
+			Priority: domain.PriorityP1, Phase: domain.PhaseNew, Tags: []string{},
+		}
+		require.NoError(t, incidentRepo.Insert(t.Context(), tx, inc))
+		if commander != nil {
+			require.NoError(t, incidentRepo.SetRole(t.Context(), tx, inc.ID, tenantID, domain.RoleCommander, []uuid.UUID{*commander}))
+		}
+		return inc.ID
+	}
+	mustInsert(&commanderA)
+	mustInsert(&commanderA)
+	incWithB := mustInsert(&commanderB)
+	mustInsert(nil)
+
+	t.Run("groups by commander, no-commander bucket has a nil id", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{})
+		require.NoError(t, err)
+		require.Len(t, stats.IncidentsByCommander, 3)
+
+		byID := map[string]domain.NamedCount{}
+		for _, c := range stats.IncidentsByCommander {
+			key := "none"
+			if c.ID != nil {
+				key = c.ID.String()
+			}
+			byID[key] = c
+		}
+		assert.Equal(t, 2, byID[commanderA.String()].Count)
+		assert.Equal(t, 1, byID[commanderB.String()].Count)
+		assert.Equal(t, 1, byID["none"].Count)
+	})
+
+	t.Run("CommanderID narrows every other incident-derived figure too", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{CommanderID: &commanderB})
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.ActiveIncidents)
+	})
+
+	t.Run("ListIncidentsFilter.CommanderID narrows the plain incidents list too", func(t *testing.T) {
+		list, err := incidentRepo.List(t.Context(), tx, repository.ListIncidentsFilter{CommanderID: &commanderB})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, incWithB, list[0].ID)
+	})
 }
