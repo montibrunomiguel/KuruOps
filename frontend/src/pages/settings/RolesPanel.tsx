@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { TagPicker } from "../../components/TagPicker";
 import type { ResourceCapability, Role } from "../../types/api";
 import { RESOURCE_CAPABILITIES } from "../../types/api";
 
@@ -169,7 +170,7 @@ function RoleForm({ role, onCancel, onSaved }: { role?: Role; onCancel: () => vo
   const [name, setName] = useState(role?.name ?? "");
   const [isAdmin, setIsAdmin] = useState(role?.isAdmin ?? false);
   const [resourceAccess, setResourceAccess] = useState<ResourceCapability[]>(role?.resourceAccess ?? ["alerts", "incidents"]);
-  const [allowedTags, setAllowedTags] = useState(role?.allowedTags.join(", ") ?? "");
+  const [allowedTags, setAllowedTags] = useState<string[]>(role?.allowedTags ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,8 +179,7 @@ function RoleForm({ role, onCancel, onSaved }: { role?: Role; onCancel: () => vo
     setSubmitting(true);
     setError(null);
     try {
-      const tags = allowedTags.split(",").map((t) => t.trim()).filter(Boolean);
-      const body = { name, isAdmin, resourceAccess, allowedTags: tags };
+      const body = { name, isAdmin, resourceAccess, allowedTags };
       if (role) {
         await api.put(`/api/v1/settings/roles/${role.id}`, body, token);
       } else {
@@ -213,17 +213,11 @@ function RoleForm({ role, onCancel, onSaved }: { role?: Role; onCancel: () => vo
           <ResourceAccessCheckboxes value={resourceAccess} onChange={setResourceAccess} />
         </div>
         <div className="field field-full">
-          <label htmlFor="role-tags">
+          <label>
             {t("settings.roles.form.allowedTags")}{" "}
             <span className="field-hint">{t("settings.roles.form.allowedTagsHint")}</span>
           </label>
-          <input
-            id="role-tags"
-            className="input"
-            placeholder="Company: Acme Corp"
-            value={allowedTags}
-            onChange={(e) => setAllowedTags(e.target.value)}
-          />
+          <TagPicker value={allowedTags} onChange={setAllowedTags} />
         </div>
       </div>
       <div className="row-actions">
