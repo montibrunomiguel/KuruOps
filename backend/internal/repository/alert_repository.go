@@ -33,7 +33,7 @@ func NewAlertRepository() *AlertRepository {
 const alertColumnsQualified = `
 	a.id, a.tenant_id, a.external_id, a.webhook_endpoint_id, a.title, a.source,
 	a.severity, a.original_severity, a.status, a.classification, a.close_comment,
-	a.close_image_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.incident_id,
+	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.incident_id,
 	a.assigned_analyst_id, a.received_at, a.acknowledged_at, a.closed_at, a.created_at, a.updated_at`
 
 // alertColumnsWithAssignee/alertsWithAssigneeFrom resolve
@@ -204,11 +204,11 @@ func (r *AlertRepository) Close(ctx context.Context, tx pgx.Tx, id uuid.UUID, in
 		set status = 'closed',
 		    classification = $2,
 		    close_comment = $3,
-		    close_image_url = $4,
+		    close_attachment_url = $4,
 		    closed_at = now(),
 		    updated_at = now()
 		where id = $1`,
-		id, in.Classification, in.Comment, in.ImageURL,
+		id, in.Classification, in.Comment, in.AttachmentURL,
 	)
 	return err
 }
@@ -283,17 +283,17 @@ func (r *AlertRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, alert
 // IncidentRepository.InsertComment/ListComments.
 func (r *AlertRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *domain.AlertComment) error {
 	row := tx.QueryRow(ctx, `
-		insert into alert_comments (alert_id, tenant_id, author_id, author_name, body, image_url)
+		insert into alert_comments (alert_id, tenant_id, author_id, author_name, body, attachment_url)
 		values ($1,$2,$3,$4,$5,$6)
 		returning id, created_at`,
-		c.AlertID, c.TenantID, c.AuthorID, c.AuthorName, c.Body, c.ImageURL,
+		c.AlertID, c.TenantID, c.AuthorID, c.AuthorName, c.Body, c.AttachmentURL,
 	)
 	return row.Scan(&c.ID, &c.CreatedAt)
 }
 
 func (r *AlertRepository) ListComments(ctx context.Context, tx pgx.Tx, alertID uuid.UUID) ([]domain.AlertComment, error) {
 	rows, err := tx.Query(ctx, `
-		select id, alert_id, tenant_id, author_id, author_name, body, image_url, created_at
+		select id, alert_id, tenant_id, author_id, author_name, body, attachment_url, created_at
 		from alert_comments
 		where alert_id = $1
 		order by created_at asc`,
@@ -307,7 +307,7 @@ func (r *AlertRepository) ListComments(ctx context.Context, tx pgx.Tx, alertID u
 	comments := []domain.AlertComment{}
 	for rows.Next() {
 		var c domain.AlertComment
-		if err := rows.Scan(&c.ID, &c.AlertID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.ImageURL, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.AlertID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan alert comment: %w", err)
 		}
 		comments = append(comments, c)
@@ -330,7 +330,7 @@ func scanAlert(row pgx.Row) (*domain.Alert, error) {
 	err := row.Scan(
 		&a.ID, &a.TenantID, &a.ExternalID, &a.WebhookEndpointID, &a.Title, &a.Source,
 		&a.Severity, &a.OriginalSeverity, &a.Status, &a.Classification, &a.CloseComment,
-		&a.CloseImageURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.IncidentID,
+		&a.CloseAttachmentURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.IncidentID,
 		&a.AssignedAnalystID, &a.ReceivedAt, &a.AcknowledgedAt, &a.ClosedAt, &a.CreatedAt, &a.UpdatedAt,
 		&a.AssignedAnalystName,
 	)

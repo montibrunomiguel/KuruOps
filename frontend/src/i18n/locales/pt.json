@@ -18,7 +18,7 @@
     "update": "Atualizar",
     "confirmDelete": "Confirmar exclusão",
     "confirm": "Confirmar",
-    "attachImage": "Anexar imagem",
+    "attachFile": "Anexar arquivo",
     "uploading": "Enviando...",
     "webhookOnline": "Webhook online",
     "removeTag": "Remover tag {{name}}",

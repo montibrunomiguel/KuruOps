@@ -107,6 +107,15 @@ export function PaperclipIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function FileIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M6 2.5h8l4 4v15h-12Z" />
+      <path d="M14 2.5v4h4" />
+    </Icon>
+  );
+}
+
 export function BellIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <Icon {...props}>

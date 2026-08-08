@@ -467,7 +467,7 @@ func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uui
 		data, _ := json.Marshal(map[string]any{
 			"classification": in.Classification,
 			"hasComment":     in.Comment != "",
-			"hasImage":       in.ImageURL != nil,
+			"hasAttachment":  in.AttachmentURL != nil,
 		})
 		return s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
 			AlertID:   alertID,
@@ -484,14 +484,14 @@ func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uui
 // IncidentService.AddComment/Comments. Unlike the mutating methods above,
 // this doesn't repeat the tag-visibility check (see the equivalent note on
 // IncidentService's sub-resource methods) -- relies on tenant RLS alone.
-func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, authorID uuid.UUID, authorName, body string, imageURL *string) (*domain.AlertComment, error) {
+func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, authorID uuid.UUID, authorName, body string, attachmentURL *string) (*domain.AlertComment, error) {
 	c := &domain.AlertComment{
-		AlertID:    alertID,
-		TenantID:   tenantID,
-		AuthorID:   authorID,
-		AuthorName: authorName,
-		Body:       body,
-		ImageURL:   imageURL,
+		AlertID:       alertID,
+		TenantID:      tenantID,
+		AuthorID:      authorID,
+		AuthorName:    authorName,
+		Body:          body,
+		AttachmentURL: attachmentURL,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.InsertComment(ctx, tx, c)

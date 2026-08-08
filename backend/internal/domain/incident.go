@@ -196,7 +196,7 @@ type IncidentEvent struct {
 
 // IncidentComment is a Team Notes entry — separate from IncidentEvent, which
 // is the system+user audit trail. Comments are user-authored discussion,
-// optionally with an attached image.
+// optionally with an attached file.
 type IncidentComment struct {
 	ID         uuid.UUID `json:"id"`
 	IncidentID uuid.UUID `json:"incidentId"`
@@ -206,8 +206,8 @@ type IncidentComment struct {
 	// db/migrations/0017_incident_comment_author_name.up.sql) so Team Notes
 	// can show who wrote a comment without a user-lookup endpoint a non-admin
 	// analyst wouldn't have access to.
-	AuthorName string    `json:"authorName"`
-	Body       string    `json:"body"`
-	ImageURL   *string   `json:"imageUrl,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
+	AuthorName    string    `json:"authorName"`
+	Body          string    `json:"body"`
+	AttachmentURL *string   `json:"attachmentUrl,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
 }

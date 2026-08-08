@@ -440,17 +440,17 @@ func (r *IncidentRepository) ListEvents(ctx context.Context, tx pgx.Tx, incident
 
 func (r *IncidentRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *domain.IncidentComment) error {
 	row := tx.QueryRow(ctx, `
-		insert into incident_comments (incident_id, tenant_id, author_id, author_name, body, image_url)
+		insert into incident_comments (incident_id, tenant_id, author_id, author_name, body, attachment_url)
 		values ($1,$2,$3,$4,$5,$6)
 		returning id, created_at`,
-		c.IncidentID, c.TenantID, c.AuthorID, c.AuthorName, c.Body, c.ImageURL,
+		c.IncidentID, c.TenantID, c.AuthorID, c.AuthorName, c.Body, c.AttachmentURL,
 	)
 	return row.Scan(&c.ID, &c.CreatedAt)
 }
 
 func (r *IncidentRepository) ListComments(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentComment, error) {
 	rows, err := tx.Query(ctx, `
-		select id, incident_id, tenant_id, author_id, author_name, body, image_url, created_at
+		select id, incident_id, tenant_id, author_id, author_name, body, attachment_url, created_at
 		from incident_comments
 		where incident_id = $1
 		order by created_at asc`,
@@ -464,7 +464,7 @@ func (r *IncidentRepository) ListComments(ctx context.Context, tx pgx.Tx, incide
 	comments := []domain.IncidentComment{}
 	for rows.Next() {
 		var c domain.IncidentComment
-		if err := rows.Scan(&c.ID, &c.IncidentID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.ImageURL, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.IncidentID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan incident comment: %w", err)
 		}
 		comments = append(comments, c)

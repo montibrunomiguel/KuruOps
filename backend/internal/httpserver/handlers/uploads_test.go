@@ -32,12 +32,17 @@ func tinyPNG(t *testing.T) []byte {
 
 func multipartUploadRequest(t *testing.T, fields map[string]string, fileContent []byte) *http.Request {
 	t.Helper()
+	return multipartUploadRequestNamed(t, fields, "screenshot.png", fileContent)
+}
+
+func multipartUploadRequestNamed(t *testing.T, fields map[string]string, filename string, fileContent []byte) *http.Request {
+	t.Helper()
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	for k, v := range fields {
 		require.NoError(t, w.WriteField(k, v))
 	}
-	part, err := w.CreateFormFile("file", "screenshot.png")
+	part, err := w.CreateFormFile("file", filename)
 	require.NoError(t, err)
 	_, err = part.Write(fileContent)
 	require.NoError(t, err)
@@ -86,7 +91,7 @@ func TestUploadHandlers_UploadAndServe(t *testing.T) {
 		URL string `json:"url"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	assert.Regexp(t, `^/api/v1/uploads/images/Alert/\d{4}/\d{2}/\d{2}/`+alert.ID.String()+`_Outbound-C2-Traffic/[0-9a-f-]{36}\.png$`, resp.URL)
+	assert.Regexp(t, `^/api/v1/uploads/images/Alert/\d{4}/\d{2}/\d{2}/Outbound-C2-Traffic/[0-9a-f-]{36}_screenshot\.png$`, resp.URL)
 
 	key := resp.URL[len("/api/v1/uploads/images/"):]
 	getReq := httptest.NewRequest("GET", "/"+key, nil)
@@ -94,6 +99,51 @@ func TestUploadHandlers_UploadAndServe(t *testing.T) {
 	getRec := doRequest(r, getReq)
 	assert.Equal(t, http.StatusOK, getRec.Code)
 	assert.Equal(t, tinyPNG(t), getRec.Body.Bytes())
+	assert.Empty(t, getRec.Header().Get("Content-Disposition"), "images must stay inline")
+}
+
+func TestUploadHandlers_UploadAndServeNonImageAttachment(t *testing.T) {
+	h, alertSvc, tenantID := setupUploadHandlers(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Outbound C2 Traffic", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "packet-capture.pcap", []byte("not really a pcap but the extension is what's checked"))
+	req = withClaims(req, tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	var resp struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Regexp(t, `^/api/v1/uploads/images/Alert/\d{4}/\d{2}/\d{2}/Outbound-C2-Traffic/[0-9a-f-]{36}_packet-capture\.pcap$`, resp.URL)
+
+	key := resp.URL[len("/api/v1/uploads/images/"):]
+	getReq := httptest.NewRequest("GET", "/"+key, nil)
+	getReq = withClaims(getReq, tenantID, uuid.New(), nil)
+	getRec := doRequest(r, getReq)
+	assert.Equal(t, http.StatusOK, getRec.Code)
+	assert.Equal(t, `attachment; filename="packet-capture.pcap"`, getRec.Header().Get("Content-Disposition"))
+	assert.Equal(t, "nosniff", getRec.Header().Get("X-Content-Type-Options"))
+}
+
+func TestUploadHandlers_RejectsExecutableExtension(t *testing.T) {
+	h, alertSvc, tenantID := setupUploadHandlers(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "totally-safe.exe", []byte("MZ fake binary"))
+	req = withClaims(req, tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestUploadHandlers_RejectsUnknownKind(t *testing.T) {

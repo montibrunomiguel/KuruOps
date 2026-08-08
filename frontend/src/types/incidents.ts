@@ -129,6 +129,6 @@ export interface IncidentComment {
   authorId: string;
   authorName: string;
   body: string;
-  imageUrl?: string;
+  attachmentUrl?: string;
   createdAt: string;
 }

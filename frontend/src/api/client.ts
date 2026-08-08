@@ -90,9 +90,11 @@ export const api = {
   del: <T>(path: string, token: string | null) => request<T>(path, { method: "DELETE", token }),
   // kind/id identify the alert or incident the evidence is attached to --
   // the backend uses them to build the storage key
-  // (<Alert|Incident>/yyyy/mm/dd/id_Title/file.ext) and to enforce the same
-  // tag-visibility rule every other alert/incident endpoint does.
-  uploadImage: async (
+  // (<Alert|Incident>/yyyy/mm/dd/Title/uuid_file.ext) and to enforce the
+  // same tag-visibility rule every other alert/incident endpoint does. Any
+  // file type is accepted here -- the backend is what actually enforces
+  // what's allowed (see UploadHandlers.resolveAttachmentExt).
+  uploadAttachment: async (
     file: File,
     kind: "alert" | "incident",
     id: string,

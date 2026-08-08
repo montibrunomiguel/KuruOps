@@ -191,11 +191,11 @@ func TestAlertRepository_Close(t *testing.T) {
 	a := newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusInvestigating, nil)
 	require.NoError(t, repo.Insert(t.Context(), tx, a))
 
-	imageURL := "https://cdn.example.com/screenshot.png"
+	attachmentURL := "https://cdn.example.com/screenshot.png"
 	require.NoError(t, repo.Close(t.Context(), tx, a.ID, domain.CloseAlertInput{
 		Classification: domain.ClassificationFalsePositive,
 		Comment:        "Confirmed benign",
-		ImageURL:       &imageURL,
+		AttachmentURL:  &attachmentURL,
 	}))
 
 	got, err := repo.Get(t.Context(), tx, a.ID)
@@ -359,10 +359,10 @@ func TestAlertRepository_InsertListComments(t *testing.T) {
 	})
 
 	authorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	imageURL := "https://example.com/evidence.png"
+	attachmentURL := "https://example.com/evidence.png"
 	c := &domain.AlertComment{
 		AlertID: a.ID, TenantID: tenantID, AuthorID: authorID,
-		AuthorName: "Diego Costa", Body: "escalating to IR", ImageURL: &imageURL,
+		AuthorName: "Diego Costa", Body: "escalating to IR", AttachmentURL: &attachmentURL,
 	}
 	require.NoError(t, repo.InsertComment(t.Context(), tx, c))
 	assert.NotEqual(t, uuid.Nil, c.ID)
@@ -374,7 +374,7 @@ func TestAlertRepository_InsertListComments(t *testing.T) {
 		require.Len(t, comments, 1)
 		assert.Equal(t, "escalating to IR", comments[0].Body)
 		assert.Equal(t, "Diego Costa", comments[0].AuthorName)
-		require.NotNil(t, comments[0].ImageURL)
-		assert.Equal(t, imageURL, *comments[0].ImageURL)
+		require.NotNil(t, comments[0].AttachmentURL)
+		assert.Equal(t, attachmentURL, *comments[0].AttachmentURL)
 	})
 }

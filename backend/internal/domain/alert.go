@@ -40,22 +40,22 @@ const (
 // straight to the repository, so the close-requires-classification rule
 // (also enforced by a DB check constraint) has one place to live.
 type Alert struct {
-	ID                uuid.UUID       `json:"id"`
-	TenantID          uuid.UUID       `json:"tenantId"`
-	ExternalID        *string         `json:"externalId,omitempty"`
-	WebhookEndpointID *uuid.UUID      `json:"webhookEndpointId,omitempty"`
-	Title             string          `json:"title"`
-	Source            string          `json:"source"`
-	Severity          Severity        `json:"severity"`
-	OriginalSeverity  Severity        `json:"originalSeverity"`
-	Status            AlertStatus     `json:"status"`
-	Classification    *Classification `json:"classification,omitempty"`
-	CloseComment      *string         `json:"closeComment,omitempty"`
-	CloseImageURL     *string         `json:"closeImageUrl,omitempty"`
-	RuleID            *string         `json:"ruleId,omitempty"`
-	Asset             *string         `json:"asset,omitempty"`
-	SrcIP             net.IP          `json:"srcIp,omitempty"`
-	Tags              []string        `json:"tags"`
+	ID                 uuid.UUID       `json:"id"`
+	TenantID           uuid.UUID       `json:"tenantId"`
+	ExternalID         *string         `json:"externalId,omitempty"`
+	WebhookEndpointID  *uuid.UUID      `json:"webhookEndpointId,omitempty"`
+	Title              string          `json:"title"`
+	Source             string          `json:"source"`
+	Severity           Severity        `json:"severity"`
+	OriginalSeverity   Severity        `json:"originalSeverity"`
+	Status             AlertStatus     `json:"status"`
+	Classification     *Classification `json:"classification,omitempty"`
+	CloseComment       *string         `json:"closeComment,omitempty"`
+	CloseAttachmentURL *string         `json:"closeAttachmentUrl,omitempty"`
+	RuleID             *string         `json:"ruleId,omitempty"`
+	Asset              *string         `json:"asset,omitempty"`
+	SrcIP              net.IP          `json:"srcIp,omitempty"`
+	Tags               []string        `json:"tags"`
 	// json.RawMessage (not []byte) so this embeds as a JSON object/value in
 	// API responses instead of getting base64-encoded -- encoding/json
 	// base64s a plain []byte field regardless of its actual content.
@@ -93,7 +93,7 @@ type Alert struct {
 type CloseAlertInput struct {
 	Classification Classification
 	Comment        string
-	ImageURL       *string
+	AttachmentURL  *string
 }
 
 type AlertEventType string
@@ -134,14 +134,14 @@ type AlertEvent struct {
 // AlertComment is a Team Notes entry for an alert — same shape and purpose
 // as IncidentComment (see domain.IncidentComment): user-authored discussion
 // separate from the system+user AlertEvent audit trail, optionally with an
-// attached image.
+// attached file.
 type AlertComment struct {
-	ID         uuid.UUID `json:"id"`
-	AlertID    uuid.UUID `json:"alertId"`
-	TenantID   uuid.UUID `json:"tenantId"`
-	AuthorID   uuid.UUID `json:"authorId"`
-	AuthorName string    `json:"authorName"`
-	Body       string    `json:"body"`
-	ImageURL   *string   `json:"imageUrl,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID            uuid.UUID `json:"id"`
+	AlertID       uuid.UUID `json:"alertId"`
+	TenantID      uuid.UUID `json:"tenantId"`
+	AuthorID      uuid.UUID `json:"authorId"`
+	AuthorName    string    `json:"authorName"`
+	Body          string    `json:"body"`
+	AttachmentURL *string   `json:"attachmentUrl,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
 }

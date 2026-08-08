@@ -17,7 +17,7 @@ export interface Alert {
   status: AlertStatus;
   classification?: Classification;
   closeComment?: string;
-  closeImageUrl?: string;
+  closeAttachmentUrl?: string;
   ruleId?: string;
   asset?: string;
   srcIp?: string;
@@ -69,6 +69,6 @@ export interface AlertComment {
   authorId: string;
   authorName: string;
   body: string;
-  imageUrl?: string;
+  attachmentUrl?: string;
   createdAt: string;
 }

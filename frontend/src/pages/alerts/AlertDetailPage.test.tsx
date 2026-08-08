@@ -124,7 +124,7 @@ describe("AlertDetailPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/v1/alerts/a1/close",
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ classification: "true_positive", comment: "Confirmed benign", imageUrl: null }) }),
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ classification: "true_positive", comment: "Confirmed benign", attachmentUrl: null }) }),
       ),
     );
   });
@@ -158,7 +158,7 @@ describe("AlertDetailPage", () => {
         "/api/v1/alerts/a1/close",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ classification: "true_positive", comment: "", imageUrl: "/api/v1/uploads/images/Alert/2026/01/01/a1_x/f.png" }),
+          body: JSON.stringify({ classification: "true_positive", comment: "", attachmentUrl: "/api/v1/uploads/images/Alert/2026/01/01/a1_x/f.png" }),
         }),
       ),
     );
@@ -339,7 +339,7 @@ describe("AlertDetailPage", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/v1/alerts/a1/comments",
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "Investigating further", imageUrl: null }) }),
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "Investigating further", attachmentUrl: null }) }),
       ),
     );
   });

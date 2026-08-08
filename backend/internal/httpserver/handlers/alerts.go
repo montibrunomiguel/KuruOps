@@ -139,7 +139,7 @@ func (h *AlertHandlers) changeStatus(w http.ResponseWriter, r *http.Request) {
 type closeAlertRequest struct {
 	Classification domain.Classification `json:"classification"`
 	Comment        string                `json:"comment"`
-	ImageURL       *string               `json:"imageUrl,omitempty"`
+	AttachmentURL  *string               `json:"attachmentUrl,omitempty"`
 }
 
 func (h *AlertHandlers) close(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +160,7 @@ func (h *AlertHandlers) close(w http.ResponseWriter, r *http.Request) {
 	in := domain.CloseAlertInput{
 		Classification: req.Classification,
 		Comment:        req.Comment,
-		ImageURL:       req.ImageURL,
+		AttachmentURL:  req.AttachmentURL,
 	}
 	if err := h.svc.Close(r.Context(), tenantID, id, userID, in, middleware.AllowedTags(r.Context())); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -398,8 +398,8 @@ func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
 }
 
 type addAlertCommentRequest struct {
-	Body     string  `json:"body"`
-	ImageURL *string `json:"imageUrl,omitempty"`
+	Body          string  `json:"body"`
+	AttachmentURL *string `json:"attachmentUrl,omitempty"`
 }
 
 func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +434,7 @@ func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.ImageURL)
+	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
