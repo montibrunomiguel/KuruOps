@@ -54,3 +54,18 @@ func New(channelType string) (Sender, error) {
 		return nil, fmt.Errorf("unknown escalation channel type %q", channelType)
 	}
 }
+
+// NewForPolicy is New, but for the webhook channel also attaches a
+// per-tenant payload template (EscalationPolicy.WebhookPayloadTemplate) --
+// nil or empty falls back to WebhookSender's default fixed payload shape.
+// webhookTemplate is ignored for every other channel type.
+func NewForPolicy(channelType string, webhookTemplate *string) (Sender, error) {
+	if channelType != "webhook" {
+		return New(channelType)
+	}
+	template := ""
+	if webhookTemplate != nil {
+		template = *webhookTemplate
+	}
+	return WebhookSender{Template: template}, nil
+}

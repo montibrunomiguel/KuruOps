@@ -14,8 +14,35 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/mailer"
+	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
+	"github.com/argusops/argusops/internal/service"
+	"github.com/argusops/argusops/internal/testutil"
 )
+
+// noOnCallDeps builds the on-call/SMTP dependencies sweepEscalations needs,
+// bound to pool -- for tests that don't configure a shift or SMTP,
+// notifyOnCallAnalyst simply fails its best-effort lookup every time
+// (logged, never asserted on), same as it does in production for a tenant
+// that hasn't set either up.
+func noOnCallDeps(pool *db.Pool) (*service.OnCallShiftService, *repository.UserRepository, *service.SMTPConfigService) {
+	users := repository.NewUserRepository()
+	onCall := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), users, repository.NewTenantRepository())
+	smtp := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), mailer.SMTPSender{})
+	return onCall, users, smtp
+}
+
+// fakeMailSender is a mailer.Sender test double that records every message
+// instead of dialing a real SMTP server.
+type fakeMailSender struct {
+	sent []mailer.Message
+}
+
+func (f *fakeMailSender) Send(_ context.Context, _ mailer.Config, msg mailer.Message) error {
+	f.sent = append(f.sent, msg)
+	return nil
+}
 
 // sweepAdminPool connects with superuser privileges -- used ONLY for
 // fixture setup (inserting a throwaway tenant/incident), never for calling
@@ -168,6 +195,7 @@ func TestSweepEscalations(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx := context.Background()
 	store := secrets.NewEnvStore()
+	onCall, users, smtp := noOnCallDeps(workerPool)
 
 	t.Run("an overdue open alert with a configured policy fires a notification and stamps escalated_at", func(t *testing.T) {
 		var notified bool
@@ -188,7 +216,7 @@ func TestSweepEscalations(t *testing.T) {
 		require.NoError(t, err)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
 
 		assert.True(t, notified, "the webhook destination must have been called")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
@@ -213,7 +241,7 @@ func TestSweepEscalations(t *testing.T) {
 		require.NoError(t, err)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-5*time.Minute))
 
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
 
 		assert.False(t, notified)
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
@@ -238,7 +266,7 @@ func TestSweepEscalations(t *testing.T) {
 		require.NoError(t, err)
 		insertSweepTestAlert(t, adminPool, tenantID, "critical", "investigating", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
 
 		assert.False(t, notified, "an already-acknowledged alert must not escalate")
 	})
@@ -247,7 +275,7 @@ func TestSweepEscalations(t *testing.T) {
 		tenantID := insertSweepTestTenant(t, adminPool)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "low", "open", time.Now().Add(-24*time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
 
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
 	})
@@ -271,10 +299,70 @@ func TestSweepEscalations(t *testing.T) {
 		require.NoError(t, err)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
-		sweepEscalations(ctx, workerPool, store, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
 
 		assert.Equal(t, 1, callCount, "a second sweep tick must not re-notify an already-escalated alert")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
 	})
+}
+
+// TestSweepEscalations_NotifiesOnCallAnalyst confirms the additive on-call
+// email step (see notifyOnCallAnalyst): when the tenant has both a shift
+// covering right now and SMTP configured, the analyst on that shift gets
+// emailed alongside the normal webhook firing -- neither replaces the
+// other.
+func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
+	adminPool := sweepAdminPool(t)
+	workerPool := sweepWorkerPool(t)
+	appPool := testutil.RequireTestDB(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+	store := secrets.NewEnvStore()
+
+	var webhookNotified bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		webhookNotified = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	tenantID := testutil.NewTenant(t)
+	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	ref, err := store.Put(ctx, tenantID.String(), "escalation:critical", srv.URL)
+	require.NoError(t, err)
+	_, err = adminPool.Exec(ctx, `
+		insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
+		values ($1, 'critical', 15, 'webhook', $2)`,
+		tenantID, ref,
+	)
+	require.NoError(t, err)
+	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
+
+	// On shift every day, all day -- irrelevant of when this test actually
+	// runs, "now" always resolves to analystID.
+	setupOnCall := service.NewOnCallShiftService(appPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	for weekday := 0; weekday <= 6; weekday++ {
+		_, err := setupOnCall.Create(ctx, tenantID, analystID, weekday, 0, 1439)
+		require.NoError(t, err)
+	}
+
+	fake := &fakeMailSender{}
+	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
+	require.NoError(t, setupSMTP.Save(ctx, tenantID, service.SaveSMTPInput{
+		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
+	}))
+
+	onCall := service.NewOnCallShiftService(workerPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	users := repository.NewUserRepository()
+	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
+
+	sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+
+	assert.True(t, webhookNotified, "the configured webhook channel must still fire")
+	require.Len(t, fake.sent, 1, "the on-call analyst must also be emailed")
+	assert.Contains(t, fake.sent[0].To, "@test.local")
+	assert.Contains(t, fake.sent[0].Body, alertID.String())
+	assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
 }

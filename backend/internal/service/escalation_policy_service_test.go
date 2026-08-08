@@ -1,6 +1,9 @@
 package service_test
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,21 +23,21 @@ func TestEscalationPolicyService_Save(t *testing.T) {
 	svc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), store)
 
 	t.Run("rejects a non-positive threshold", func(t *testing.T) {
-		_, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 0, domain.EscalationChannelPagerDuty, "routing-key")
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 0, domain.EscalationChannelPagerDuty, "routing-key", "")
 		assert.ErrorContains(t, err, "greater than zero")
 	})
 
 	t.Run("rejects an unknown channel type", func(t *testing.T) {
-		_, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 15, "carrier-pigeon", "dest")
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 15, "carrier-pigeon", "dest", "")
 		assert.ErrorContains(t, err, "unknown channel type")
 	})
 
 	t.Run("initial save requires a destination", func(t *testing.T) {
-		_, err := svc.Save(t.Context(), tenantID, domain.SeverityHigh, 15, domain.EscalationChannelSlack, "")
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityHigh, 15, domain.EscalationChannelSlack, "", "")
 		assert.ErrorContains(t, err, "destination is required")
 	})
 
-	policy, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 15, domain.EscalationChannelPagerDuty, "R0UTING-KEY")
+	policy, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 15, domain.EscalationChannelPagerDuty, "R0UTING-KEY", "")
 	require.NoError(t, err)
 	assert.Equal(t, 15, policy.UnacknowledgedAfterMinutes)
 	assert.Equal(t, domain.EscalationChannelPagerDuty, policy.ChannelType)
@@ -44,7 +47,7 @@ func TestEscalationPolicyService_Save(t *testing.T) {
 	assert.Equal(t, "R0UTING-KEY", resolved)
 
 	t.Run("blank destination on update keeps the existing one", func(t *testing.T) {
-		updated, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 30, domain.EscalationChannelPagerDuty, "")
+		updated, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 30, domain.EscalationChannelPagerDuty, "", "")
 		require.NoError(t, err)
 		assert.Equal(t, 30, updated.UnacknowledgedAfterMinutes)
 
@@ -54,7 +57,7 @@ func TestEscalationPolicyService_Save(t *testing.T) {
 	})
 
 	t.Run("a non-blank destination on update replaces the stored secret", func(t *testing.T) {
-		updated, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 30, domain.EscalationChannelPagerDuty, "NEW-ROUTING-KEY")
+		updated, err := svc.Save(t.Context(), tenantID, domain.SeverityCritical, 30, domain.EscalationChannelPagerDuty, "NEW-ROUTING-KEY", "")
 		require.NoError(t, err)
 
 		resolved, err := store.Resolve(t.Context(), updated.DestinationSecretRef)
@@ -63,7 +66,7 @@ func TestEscalationPolicyService_Save(t *testing.T) {
 	})
 
 	t.Run("List returns every configured policy", func(t *testing.T) {
-		_, err := svc.Save(t.Context(), tenantID, domain.SeverityHigh, 30, domain.EscalationChannelSlack, "https://hooks.slack.example/x")
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityHigh, 30, domain.EscalationChannelSlack, "https://hooks.slack.example/x", "")
 		require.NoError(t, err)
 
 		list, err := svc.List(t.Context(), tenantID)
@@ -78,5 +81,58 @@ func TestEscalationPolicyService_Save(t *testing.T) {
 		for _, p := range list {
 			assert.NotEqual(t, policy.ID, p.ID)
 		}
+	})
+}
+
+func TestEscalationPolicyService_WebhookPayloadTemplate(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	store := secrets.NewEnvStore()
+	svc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), store)
+
+	t.Run("rejects a template that doesn't render to valid JSON", func(t *testing.T) {
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityLow, 15, domain.EscalationChannelWebhook, "https://hook.example/x", `{"title": {{title}}`)
+		assert.ErrorContains(t, err, "valid JSON")
+	})
+
+	t.Run("accepts and stores a valid custom template", func(t *testing.T) {
+		policy, err := svc.Save(t.Context(), tenantID, domain.SeverityMedium, 15, domain.EscalationChannelWebhook, "https://hook.example/x", `{"text": "{{severity}}: {{title}}"}`)
+		require.NoError(t, err)
+		require.NotNil(t, policy.WebhookPayloadTemplate)
+		assert.Equal(t, `{"text": "{{severity}}: {{title}}"}`, *policy.WebhookPayloadTemplate)
+	})
+
+	t.Run("a non-webhook channel ignores the template even if one is supplied", func(t *testing.T) {
+		policy, err := svc.Save(t.Context(), tenantID, domain.SeverityInformational, 15, domain.EscalationChannelSlack, "https://hooks.slack.example/y", `{"text": "ignored"}`)
+		require.NoError(t, err)
+		assert.Nil(t, policy.WebhookPayloadTemplate)
+	})
+}
+
+func TestEscalationPolicyService_Test(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	store := secrets.NewEnvStore()
+	svc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), store)
+
+	t.Run("errors when no policy is configured for the severity", func(t *testing.T) {
+		err := svc.Test(t.Context(), tenantID, domain.SeverityCritical)
+		assert.ErrorContains(t, err, "no escalation policy configured")
+	})
+
+	t.Run("sends a real notification through the saved channel, using the saved template", func(t *testing.T) {
+		var received string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			received = string(body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		_, err := svc.Save(t.Context(), tenantID, domain.SeverityHigh, 15, domain.EscalationChannelWebhook, srv.URL, `{"custom": "{{severity}}"}`)
+		require.NoError(t, err)
+
+		require.NoError(t, svc.Test(t.Context(), tenantID, domain.SeverityHigh))
+		assert.JSONEq(t, `{"custom": "high"}`, received)
 	})
 }

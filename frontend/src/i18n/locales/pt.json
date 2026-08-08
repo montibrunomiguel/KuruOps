@@ -697,10 +697,21 @@
     },
     "escalation": {
       "title": "Escalonamento de Plantão",
-      "helper": "Notifica quem está de plantão quando um alerta de uma dada severidade fica sem reconhecimento (ainda \"aberto\") por tempo demais. Uma tarefa em segundo plano verifica a cada minuto e nunca notifica duas vezes o mesmo alerta.",
+      "helper": "Notifica quem está de plantão quando um alerta de uma dada severidade fica sem reconhecimento (ainda \"aberto\") por tempo demais. Uma tarefa em segundo plano verifica a cada minuto e nunca notifica duas vezes o mesmo alerta. O analista atualmente de plantão (Configurações -> Escala de Plantão) também recebe um e-mail automaticamente quando o SMTP está configurado, além do canal abaixo.",
       "notConfigured": "Não configurado",
+      "configured": "Configurado",
       "configure": "Configurar",
+      "test": "Enviar teste",
+      "testing": "Enviando...",
+      "testOk": "Notificação de teste enviada.",
+      "testFailed": "Teste falhou: {{error}}",
       "removeConfirm": "Parar de escalar esta severidade?",
+      "columns": {
+        "severity": "Severidade",
+        "status": "Status",
+        "channel": "Canal",
+        "minutes": "Minutos"
+      },
       "form": {
         "minutes": "Minutos sem reconhecimento",
         "channel": "Canal",
@@ -710,7 +721,19 @@
           "webhook": "Webhook genérico"
         },
         "destination": "Destino",
-        "destinationHint": "(deixe em branco para manter o atual)"
+        "destinationHint": "(deixe em branco para manter o atual)",
+        "destinationLabel": {
+          "pagerduty": "Integration/Routing Key",
+          "slack": "Webhook URL do Slack",
+          "webhook": "URL de destino"
+        },
+        "destinationHelp": {
+          "pagerduty": "A Integration Key de uma integração PagerDuty Events API v2.",
+          "slack": "Uma URL de webhook de entrada criada no Slack (Apps -> Incoming Webhooks).",
+          "webhook": "Qualquer URL que aceite um HTTP POST -- uma ferramenta de plantão própria, um relay interno, etc."
+        },
+        "webhookPayloadTemplate": "Payload customizado (opcional)",
+        "webhookPayloadTemplateHelp": "Deixe em branco para enviar o payload padrão. Placeholders disponíveis:"
       }
     },
     "auditExport": {

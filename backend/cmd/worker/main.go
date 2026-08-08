@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,11 +15,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/mailer"
 	"github.com/argusops/argusops/internal/notifier"
+	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
+	"github.com/argusops/argusops/internal/service"
 )
 
 func main() {
@@ -49,6 +54,15 @@ func main() {
 		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
 		os.Exit(1)
 	}
+
+	// Only needed for sweepEscalations' best-effort "also email whoever's on
+	// shift" step -- see notifyOnCallAnalyst. Every constructor here is the
+	// same one cmd/api uses, just wired to the worker's own BYPASSRLS pool
+	// (each call is still scoped to one tenant via pool.WithTenant, same as
+	// cmd/api's per-request scoping).
+	onCallService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	userRepo := repository.NewUserRepository()
+	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{})
 
 	logger.Info("worker started")
 
@@ -91,7 +105,7 @@ func main() {
 		case <-slaTicker.C:
 			sweepSLABreaches(ctx, pool, logger)
 		case <-escalationTicker.C:
-			sweepEscalations(ctx, pool, secretStore, cfg.AppBaseURL, logger)
+			sweepEscalations(ctx, pool, secretStore, onCallService, userRepo, smtpService, cfg.AppBaseURL, logger)
 		}
 	}
 }
@@ -154,11 +168,13 @@ func sweepSLABreaches(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
 // escalationCandidate is one open, unacknowledged, un-escalated alert whose
 // severity has a configured escalation policy that's now overdue.
 type escalationCandidate struct {
-	alertID        uuid.UUID
-	title          string
-	severity       string
-	channelType    string
-	destinationRef string
+	alertID         uuid.UUID
+	tenantID        uuid.UUID
+	title           string
+	severity        string
+	channelType     string
+	destinationRef  string
+	webhookTemplate *string
 }
 
 // sweepEscalations fires an on-call notification for every alert that's
@@ -173,9 +189,14 @@ type escalationCandidate struct {
 // destination secret) is logged and skipped, not retried here -- the alert
 // stays un-escalated (escalated_at stays null), so the very next sweep
 // tick will simply try it again.
-func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.Store, appBaseURL string, logger *slog.Logger) {
+//
+// Beyond the configured channel, this also makes a best-effort attempt to
+// email whoever's actually on shift right now (see notifyOnCallAnalyst) --
+// additive only: no on-call analyst resolved, or no SMTP configured for the
+// tenant, never blocks or fails the primary escalation.
+func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.Store, onCall *service.OnCallShiftService, users *repository.UserRepository, smtp *service.SMTPConfigService, appBaseURL string, logger *slog.Logger) {
 	rows, err := pool.Query(ctx, `
-		select a.id, a.title, a.severity::text, ep.channel_type, ep.destination_secret_ref
+		select a.id, a.tenant_id, a.title, a.severity::text, ep.channel_type, ep.destination_secret_ref, ep.webhook_payload_template
 		from alerts a
 		join escalation_policies ep on ep.tenant_id = a.tenant_id and ep.severity = a.severity
 		where a.status = 'open'
@@ -189,7 +210,7 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 	var candidates []escalationCandidate
 	for rows.Next() {
 		var c escalationCandidate
-		if err := rows.Scan(&c.alertID, &c.title, &c.severity, &c.channelType, &c.destinationRef); err != nil {
+		if err := rows.Scan(&c.alertID, &c.tenantID, &c.title, &c.severity, &c.channelType, &c.destinationRef, &c.webhookTemplate); err != nil {
 			logger.Error("scan escalation candidate failed", "error", err)
 			continue
 		}
@@ -202,7 +223,7 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 	}
 
 	for _, c := range candidates {
-		sender, err := notifier.New(c.channelType)
+		sender, err := notifier.NewForPolicy(c.channelType, c.webhookTemplate)
 		if err != nil {
 			logger.Error("unknown escalation channel", "alert_id", c.alertID, "channel", c.channelType, "error", err)
 			continue
@@ -213,13 +234,18 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 			continue
 		}
 
-		err = sender.Send(ctx, destination, notifier.Notification{
+		notification := notifier.Notification{
 			Title: c.title, Severity: c.severity, AlertID: c.alertID.String(),
 			URL: appBaseURL + "/alerts/" + c.alertID.String(),
-		})
+		}
+		err = sender.Send(ctx, destination, notification)
 		if err != nil {
 			logger.Error("send escalation notification failed", "alert_id", c.alertID, "channel", c.channelType, "error", err)
 			continue
+		}
+
+		if err := notifyOnCallAnalyst(ctx, pool, onCall, users, smtp, c, appBaseURL); err != nil {
+			logger.Warn("on-call analyst email skipped", "alert_id", c.alertID, "error", err)
 		}
 
 		if _, err := pool.Exec(ctx, `update alerts set escalated_at = now() where id = $1`, c.alertID); err != nil {
@@ -228,4 +254,51 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 		}
 		logger.Info("alert escalated", "alert_id", c.alertID, "channel", c.channelType)
 	}
+}
+
+// notifyOnCallAnalyst resolves whoever's on shift for c.tenantID right now
+// and, if SMTP is configured for that tenant, emails them -- the escalation
+// policy's own channel (PagerDuty/Slack/webhook) is a fixed external
+// destination that has no idea who's actually on the schedule; this closes
+// that gap without changing what the configured channel does. Returns a
+// non-nil error only to describe why nothing was sent (no shift covers
+// right now, no SMTP configured, delivery failed) -- callers treat every
+// case as best-effort, never a reason to fail the escalation itself.
+func notifyOnCallAnalyst(ctx context.Context, pool *db.Pool, onCall *service.OnCallShiftService, users *repository.UserRepository, smtp *service.SMTPConfigService, c escalationCandidate, appBaseURL string) error {
+	analystID, err := onCall.ResolveCurrentAnalyst(ctx, c.tenantID, time.Now())
+	if err != nil {
+		return fmt.Errorf("resolve on-call analyst: %w", err)
+	}
+	if analystID == nil {
+		return fmt.Errorf("no analyst currently on shift")
+	}
+
+	var analystEmail string
+	err = pool.WithTenant(ctx, c.tenantID, func(tx pgx.Tx) error {
+		u, err := users.Get(ctx, tx, *analystID)
+		if err != nil {
+			return err
+		}
+		if u == nil {
+			return fmt.Errorf("on-call analyst %s not found", *analystID)
+		}
+		analystEmail = u.Email
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("load on-call analyst: %w", err)
+	}
+
+	msg := mailer.Message{
+		To:      analystEmail,
+		Subject: fmt.Sprintf("[ArgusOps] Alerta escalado: %s", c.title),
+		Body: fmt.Sprintf(
+			"O alerta \"%s\" (severidade %s) ficou sem reconhecimento além do tempo configurado para escalonamento e você está de plantão agora.\n\n%s/alerts/%s",
+			c.title, c.severity, appBaseURL, c.alertID,
+		),
+	}
+	if err := smtp.Send(ctx, c.tenantID, msg); err != nil {
+		return fmt.Errorf("send on-call email: %w", err)
+	}
+	return nil
 }

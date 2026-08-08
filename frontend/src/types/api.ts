@@ -128,9 +128,17 @@ export interface EscalationPolicy {
   severity: Severity;
   unacknowledgedAfterMinutes: number;
   channelType: EscalationChannelType;
+  // Only meaningful when channelType is "webhook" -- undefined means the
+  // default fixed payload shape (see backend notifier.WebhookSender).
+  webhookPayloadTemplate?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+// The placeholders a webhook payload template can use -- mirrors backend
+// notifier.WebhookPlaceholders exactly, kept here rather than fetched so
+// the panel can show them without an extra round trip.
+export const WEBHOOK_PAYLOAD_PLACEHOLDERS = ["{{title}}", "{{description}}", "{{severity}}", "{{alertId}}", "{{url}}"] as const;
 
 // TargetDatabaseConfig is the request body for both
 // /settings/database-migration/test-connection and .../migrate -- mirrors
