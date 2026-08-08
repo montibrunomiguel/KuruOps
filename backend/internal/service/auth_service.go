@@ -27,11 +27,12 @@ type AuthService struct {
 	tenants       *repository.TenantRepository
 	users         *repository.UserRepository
 	refreshTokens *repository.RefreshTokenRepository
+	roles         *RoleService
 	issuer        *authn.Issuer
 }
 
-func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, issuer *authn.Issuer) *AuthService {
-	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, issuer: issuer}
+func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, roles *RoleService, issuer *authn.Issuer) *AuthService {
+	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, roles: roles, issuer: issuer}
 }
 
 // refreshTokenTTL is how long a refresh token stays valid after issuance or
@@ -124,7 +125,7 @@ func (s *AuthService) LoginLocal(ctx context.Context, tenantID uuid.UUID, email,
 		return nil, "", "", nil
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, string(user.Role), user.ResourceAccess, user.AllowedTags, user.MustChangePassword)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("issue token: %w", err)
 	}
@@ -174,7 +175,7 @@ func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshTo
 		return "", "", nil
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, string(user.Role), user.ResourceAccess, user.AllowedTags, user.MustChangePassword)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword)
 	if err != nil {
 		return "", "", fmt.Errorf("issue token: %w", err)
 	}
@@ -231,7 +232,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 		return "", err
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, string(user.Role), user.ResourceAccess, user.AllowedTags, false)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false)
 	if err != nil {
 		return "", fmt.Errorf("issue token: %w", err)
 	}
@@ -291,11 +292,13 @@ func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.U
 
 // ProvisionFederated is the just-in-time provisioning step shared by the
 // LDAP and SAML flows: given the external identity (email, display name,
-// provider, external id) and the groups the IdP reported, resolve
-// role/resource_access/allowed_tags from AuthGroupMapping, upsert the user,
-// and issue a session token. The first matching mapping wins if the user
-// belongs to more than one mapped group -- there is no "most privileged
-// wins" merge in v1, callers configure mappings accordingly.
+// provider, external id) and the groups the IdP reported, resolve a Role
+// from AuthGroupMapping, upsert the user, and issue a session token. The
+// first matching mapping wins if the user belongs to more than one mapped
+// group -- there is no "most privileged wins" merge in v1, callers
+// configure mappings accordingly. A user whose groups match no mapping
+// gets RoleService.EnsureUnmappedFallback's least-privilege role instead of
+// being rejected -- see that method's doc comment.
 func (s *AuthService) ProvisionFederated(ctx context.Context, tenantID uuid.UUID, provider domain.AuthProvider, externalID, email, name string, groups []string) (*domain.User, string, string, error) {
 	var user *domain.User
 	var refreshToken string
@@ -305,28 +308,30 @@ func (s *AuthService) ProvisionFederated(ctx context.Context, tenantID uuid.UUID
 			return fmt.Errorf("load group mappings: %w", err)
 		}
 
-		access := defaultFederatedAccess()
+		var roleID uuid.UUID
+	matchGroups:
 		for _, group := range groups {
 			for _, m := range mappings {
 				if m.Provider == provider && m.ExternalGroup == group {
-					access = domain.UpdateUserAccessInput{
-						Role: m.Role, ResourceAccess: m.ResourceAccess, AllowedTags: m.AllowedTags,
-					}
-					goto matched
+					roleID = m.RoleID
+					break matchGroups
 				}
 			}
 		}
-	matched:
+		if roleID == uuid.Nil {
+			roleID, err = s.roles.EnsureUnmappedFallback(ctx, tx, tenantID)
+			if err != nil {
+				return fmt.Errorf("resolve fallback role: %w", err)
+			}
+		}
 
 		u := &domain.User{
-			TenantID:       tenantID,
-			Email:          email,
-			Name:           name,
-			AuthProvider:   provider,
-			ExternalID:     &externalID,
-			Role:           access.Role,
-			ResourceAccess: access.ResourceAccess,
-			AllowedTags:    access.AllowedTags,
+			TenantID:     tenantID,
+			Email:        email,
+			Name:         name,
+			AuthProvider: provider,
+			ExternalID:   &externalID,
+			RoleID:       roleID,
 		}
 		if err := s.users.UpsertFederated(ctx, tx, u); err != nil {
 			return err
@@ -336,34 +341,25 @@ func (s *AuthService) ProvisionFederated(ctx context.Context, tenantID uuid.UUID
 			return err
 		}
 		refreshToken = rt
-		user = u
+
+		// UpsertFederated only returns id/is_active/timestamps, not the
+		// joined Role -- reload so the token is issued from the real,
+		// current capability set (also covers "existing federated user,
+		// mapping just changed", not only first-ever provisioning).
+		reloaded, err := s.users.Get(ctx, tx, u.ID)
+		if err != nil {
+			return fmt.Errorf("reload provisioned user: %w", err)
+		}
+		user = reloaded
 		return nil
 	})
 	if err != nil {
 		return nil, "", "", err
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, string(user.Role), user.ResourceAccess, user.AllowedTags, false)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("issue token: %w", err)
 	}
 	return user, token, refreshToken, nil
-}
-
-// unmappedGroupSentinel is a tag no real alert/incident will ever carry.
-// domain.User.AllowedTags treats an EMPTY slice as "unrestricted, sees
-// everything" (see the design handoff's tag model) -- so an unmapped
-// federated user can't be given an empty slice to mean "no access", that
-// would mean the opposite. This sentinel is the least-privilege default
-// until an admin adds a real AuthGroupMapping for the user's IdP group.
-const unmappedGroupSentinel = "__unmapped__"
-
-// defaultFederatedAccess is applied when a federated user's IdP groups
-// match no configured AuthGroupMapping.
-func defaultFederatedAccess() domain.UpdateUserAccessInput {
-	return domain.UpdateUserAccessInput{
-		Role:           domain.RoleViewer,
-		ResourceAccess: domain.ResourceAccess{domain.ResourceCapabilityAlerts, domain.ResourceCapabilityIncidents},
-		AllowedTags:    []string{unmappedGroupSentinel},
-	}
 }

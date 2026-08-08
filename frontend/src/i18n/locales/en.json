@@ -390,7 +390,8 @@
       "aiIntegration": "AI Integration",
       "mcpServers": "MCP Servers",
       "tags": "Tags",
-      "users": "Users & Roles",
+      "users": "Users",
+      "roles": "Roles",
       "identityProviders": "Identity Providers",
       "storage": "Storage Integration",
       "smtp": "SMTP",
@@ -511,7 +512,7 @@
       }
     },
     "users": {
-      "title": "Users & Roles",
+      "title": "Users",
       "noUsers": "No users yet.",
       "newUser": "+ New User",
       "createdTitle": "{{name}} created",
@@ -538,13 +539,15 @@
       },
       "form": {
         "email": "Email",
-        "name": "Name"
+        "name": "Name",
+        "role": "Role",
+        "noRolesYet": "No roles configured yet -- create one in Settings -> Roles first."
       },
       "groupMappings": {
         "title": "LDAP/SAML Group Mapping",
         "helper": "Applied on every federated login — change the group in your directory, access here changes on the next login, no need to edit the user manually.",
         "newMapping": "+ New Mapping",
-        "noMappings": "No mapping configured — federated users with no mapped group sign in as Viewer with no tag access.",
+        "noMappings": "No mapping configured — federated users with no mapped group sign in under the tenant's Unmapped fallback role, with no tag access.",
         "noAccess": "no access",
         "allTags": "all",
         "removeConfirm": "Remove this group mapping?",
@@ -552,12 +555,27 @@
           "provider": "Provider",
           "group": "Group",
           "groupLdapHint": "(DN or group name)",
-          "groupSamlHint": "(attribute value)",
-          "role": "Role",
-          "resourceAccess": "Resource access",
-          "allowedTags": "Allowed tags",
-          "allowedTagsHint": "(empty = all)"
+          "groupSamlHint": "(attribute value)"
         }
+      }
+    },
+    "roles": {
+      "title": "Roles",
+      "helper": "A Role bundles admin access, resource capabilities, and tag scope into one reusable, nameable entity -- build one (e.g. \"SOC L1\", \"Analyst - Acme\") and assign it to any number of users or LDAP/SAML group mappings, instead of re-picking the same settings on every user individually.",
+      "newRole": "+ New Role",
+      "noRoles": "No roles yet.",
+      "adminBadge": "Admin",
+      "noResourceAccess": "no resource access",
+      "tagsLabel": "tags",
+      "allTags": "all",
+      "removeConfirm": "Delete this role? Users assigned to it must be reassigned first.",
+      "form": {
+        "name": "Name",
+        "isAdmin": "Administrator",
+        "isAdminHint": "(grants access to Settings)",
+        "resourceAccess": "Resource access",
+        "allowedTags": "Allowed tags",
+        "allowedTagsHint": "(empty = all)"
       }
     },
     "identityProviders": {

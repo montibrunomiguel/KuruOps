@@ -1,17 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, ApiError, setRefreshHandler } from "../api/client";
-import type { LoginResponse, UserRole } from "../types/api";
+import type { LoginResponse } from "../types/api";
 
 interface SessionUser {
   id: string;
   email: string;
   name: string;
-  role: UserRole;
+  // Display-only: the assigned Role's name (e.g. "Admin", "Analyst 1").
+  // Never used for an authorization decision -- see isAdmin/resourceAccess.
+  role: string;
   mustChangePassword: boolean;
-  // Decoded from the JWT (not the login response body) so it works
-  // uniformly across local/LDAP/SAML -- SAML's redirect flow has no JSON
-  // body for the frontend to read a resourceAccess field out of, only the
-  // token itself. See decodeTokenClaims.
+  // isAdmin and resourceAccess are decoded from the JWT (not the login
+  // response body) so they work uniformly across local/LDAP/SAML -- SAML's
+  // redirect flow has no JSON body for the frontend to read them out of,
+  // only the token itself. See decodeTokenClaims.
+  isAdmin: boolean;
   resourceAccess: string[];
 }
 
@@ -57,17 +60,18 @@ function loadStoredSession(): AuthState {
 // the backend re-verifies on every request) so callers don't need the login
 // response shape, just the token string -- the one thing every login path
 // (local, LDAP, SAML) actually produces.
-function decodeTokenClaims(token: string): { mustChangePassword: boolean; resourceAccess: string[] } {
+function decodeTokenClaims(token: string): { mustChangePassword: boolean; isAdmin: boolean; resourceAccess: string[] } {
   try {
     const payload = token.split(".")[1];
     const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
     const claims = JSON.parse(json);
     return {
       mustChangePassword: Boolean(claims.must_change_password),
+      isAdmin: Boolean(claims.is_admin),
       resourceAccess: Array.isArray(claims.resource_access) ? claims.resource_access : [],
     };
   } catch {
-    return { mustChangePassword: false, resourceAccess: [] };
+    return { mustChangePassword: false, isAdmin: false, resourceAccess: [] };
   }
 }
 
@@ -92,8 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginLocal = useCallback(
     async (email: string, password: string) => {
       const res = await api.post<LoginResponse>("/auth/login", { email, password }, null);
-      const { resourceAccess } = decodeTokenClaims(res.token);
-      persist({ token: res.token, refreshToken: res.refreshToken, user: { ...res.user, resourceAccess } });
+      const { isAdmin, resourceAccess } = decodeTokenClaims(res.token);
+      persist({ token: res.token, refreshToken: res.refreshToken, user: { ...res.user, isAdmin, resourceAccess } });
     },
     [persist],
   );
@@ -106,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const next: AuthState = {
           ...prev,
           token,
-          user: { ...prev.user, mustChangePassword: claims.mustChangePassword, resourceAccess: claims.resourceAccess },
+          user: { ...prev.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess },
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
@@ -151,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       persist({
         token: res.token,
         refreshToken: res.refreshToken,
-        user: { ...current.user, mustChangePassword: claims.mustChangePassword, resourceAccess: claims.resourceAccess },
+        user: { ...current.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess },
       });
       return res.token;
     } catch {
@@ -169,7 +173,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       isAuthenticated: state.token !== null,
-      isAdmin: state.user?.role === "admin",
+      isAdmin: state.user?.isAdmin ?? false,
       mustChangePassword: state.user?.mustChangePassword ?? false,
       hasResourceAccess: (capability) => state.user?.resourceAccess.includes(capability) ?? false,
       loginLocal,

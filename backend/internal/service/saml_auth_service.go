@@ -196,6 +196,6 @@ func (s *SAMLAuthService) ServeACS(ctx context.Context, tenantID uuid.UUID, w ht
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"token":        token,
 		"refreshToken": refreshToken,
-		"user":         map[string]string{"id": user.ID.String(), "email": user.Email, "name": user.Name, "role": string(user.Role)},
+		"user":         map[string]string{"id": user.ID.String(), "email": user.Email, "name": user.Name, "role": user.Role.Name},
 	})
 }

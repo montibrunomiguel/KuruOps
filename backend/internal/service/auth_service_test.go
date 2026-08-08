@@ -21,7 +21,8 @@ func newAuthService(t *testing.T) (*db.Pool, *service.AuthService) {
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	issuer := authn.NewIssuer(priv)
-	svc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), issuer)
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+	svc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), roleSvc, issuer)
 	return pool, svc
 }
 
@@ -179,7 +180,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	t.Run("rejects a federated user", func(t *testing.T) {
 		priv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
-		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), authn.NewIssuer(priv))
+		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
 		fedUser, _, _, err := fedSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed2,dc=example,dc=com", "fed2@example.com", "Fed User", nil)
 		require.NoError(t, err)
 
@@ -198,21 +199,22 @@ func TestAuthService_ProvisionFederated(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
 		assert.NotEmpty(t, refreshToken)
-		assert.Equal(t, domain.RoleViewer, user.Role)
-		assert.Equal(t, domain.ResourceAccess{domain.ResourceCapabilityAlerts, domain.ResourceCapabilityIncidents}, user.ResourceAccess)
-		assert.NotEmpty(t, user.AllowedTags, "an unmapped user gets a sentinel tag, not unrestricted access")
+		require.NotNil(t, user.Role)
+		assert.False(t, user.Role.IsAdmin)
+		assert.Equal(t, domain.ResourceAccess{domain.ResourceCapabilityAlerts, domain.ResourceCapabilityIncidents}, user.Role.ResourceAccess)
+		assert.NotEmpty(t, user.Role.AllowedTags, "an unmapped user gets a sentinel tag, not unrestricted access")
 	})
 
 	t.Run("a matching group mapping wins over the default", func(t *testing.T) {
-		_, err := userSvc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", domain.UpdateUserAccessInput{
-			Role: domain.RoleAnalyst, ResourceAccess: domain.ResourceAccess{"alerts", "followup"},
-		})
+		roleID := testutil.NewRole(t, tenantID, false, []string{"alerts", "followup"})
+		_, err := userSvc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", roleID)
 		require.NoError(t, err)
 
 		user, _, _, err := svc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=asmith,dc=example,dc=com", "asmith@example.com", "Alex Smith", []string{"soc-analysts"})
 		require.NoError(t, err)
-		assert.Equal(t, domain.RoleAnalyst, user.Role)
-		assert.Equal(t, domain.ResourceAccess{"alerts", "followup"}, user.ResourceAccess)
+		require.NotNil(t, user.Role)
+		assert.Equal(t, roleID, user.RoleID)
+		assert.Equal(t, domain.ResourceAccess{"alerts", "followup"}, user.Role.ResourceAccess)
 	})
 
 	t.Run("re-provisioning the same external identity updates rather than duplicates", func(t *testing.T) {

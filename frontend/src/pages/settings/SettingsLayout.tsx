@@ -4,6 +4,7 @@ import { WebhooksPanel } from "./WebhooksPanel";
 import { LLMProvidersPanel } from "./LLMProvidersPanel";
 import { MCPServersPanel } from "./MCPServersPanel";
 import { UsersPanel } from "./UsersPanel";
+import { RolesPanel } from "./RolesPanel";
 import { IdentityProvidersPanel } from "./IdentityProvidersPanel";
 import { TagsPanel } from "./TagsPanel";
 import { StorageIntegrationPanel } from "./StorageIntegrationPanel";
@@ -40,6 +41,7 @@ const NAV_GROUPS = [
     labelKey: "settings.navGroups.identityAccess",
     items: [
       { to: "/settings/users", labelKey: "settings.nav.users" },
+      { to: "/settings/roles", labelKey: "settings.nav.roles" },
       { to: "/settings/identity-providers", labelKey: "settings.nav.identityProviders" },
       { to: "/settings/tags", labelKey: "settings.nav.tags" },
     ],
@@ -89,6 +91,7 @@ export function SettingsLayout() {
             <Route path="mcp-servers" element={<MCPServersPanel />} />
             <Route path="tags" element={<TagsPanel />} />
             <Route path="users" element={<UsersPanel />} />
+            <Route path="roles" element={<RolesPanel />} />
             <Route path="identity-providers" element={<IdentityProvidersPanel />} />
             <Route path="storage" element={<StorageIntegrationPanel />} />
             <Route path="smtp" element={<SMTPConfigPanel />} />

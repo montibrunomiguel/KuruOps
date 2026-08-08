@@ -15,12 +15,12 @@ function wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-function sessionWith(resourceAccess: string[], role = "analyst") {
+function sessionWith(resourceAccess: string[], role = "Analyst", isAdmin = false) {
   localStorage.setItem(
     "argusops.session",
     JSON.stringify({
       token: "tok",
-      user: { id: "1", email: "analyst@test.local", name: "Ana Lyst", role, mustChangePassword: false, resourceAccess },
+      user: { id: "1", email: "analyst@test.local", name: "Ana Lyst", role, isAdmin, mustChangePassword: false, resourceAccess },
     }),
   );
 }
@@ -43,7 +43,7 @@ describe("Sidebar", () => {
   });
 
   it("shows Incidents when granted, and Settings only for admins", async () => {
-    sessionWith(["alerts", "incidents"], "admin");
+    sessionWith(["alerts", "incidents"], "Admin", true);
     render(<Sidebar />, { wrapper });
 
     expect(await screen.findByText("Incidents")).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe("Sidebar", () => {
   });
 
   it("shows the logged-in user's name and role", async () => {
-    sessionWith(["alerts"], "admin");
+    sessionWith(["alerts"], "Admin", true);
     render(<Sidebar />, { wrapper });
     expect(await screen.findByText("Ana Lyst")).toBeInTheDocument();
     expect(screen.getByText("Admin")).toBeInTheDocument();

@@ -390,7 +390,8 @@
       "aiIntegration": "Integração de IA",
       "mcpServers": "Servidores MCP",
       "tags": "Tags",
-      "users": "Usuários e Papéis",
+      "users": "Usuários",
+      "roles": "Papéis",
       "identityProviders": "Provedores de Identidade",
       "storage": "Integração de Armazenamento",
       "smtp": "SMTP",
@@ -511,7 +512,7 @@
       }
     },
     "users": {
-      "title": "Usuários e Papéis",
+      "title": "Usuários",
       "noUsers": "Nenhum usuário ainda.",
       "newUser": "+ Novo Usuário",
       "createdTitle": "{{name}} criado",
@@ -538,13 +539,15 @@
       },
       "form": {
         "email": "E-mail",
-        "name": "Nome"
+        "name": "Nome",
+        "role": "Papel",
+        "noRolesYet": "Nenhum papel configurado ainda -- crie um em Configurações -> Papéis primeiro."
       },
       "groupMappings": {
         "title": "Mapeamento de grupos LDAP/SAML",
         "helper": "Aplicado a cada login federado — mudou o grupo no seu diretório, muda o acesso aqui no próximo login, sem precisar editar o usuário manualmente.",
         "newMapping": "+ Novo Mapeamento",
-        "noMappings": "Nenhum mapeamento configurado — usuários federados sem grupo mapeado entram como Viewer sem acesso a tags.",
+        "noMappings": "Nenhum mapeamento configurado — usuários federados sem grupo mapeado entram com o papel padrão de fallback \"Unmapped\" do tenant, sem acesso a tags.",
         "noAccess": "nenhum acesso",
         "allTags": "todas",
         "removeConfirm": "Remover este mapeamento de grupo?",
@@ -552,12 +555,27 @@
           "provider": "Provider",
           "group": "Grupo",
           "groupLdapHint": "(DN ou nome do grupo)",
-          "groupSamlHint": "(valor do atributo)",
-          "role": "Role",
-          "resourceAccess": "Resource access",
-          "allowedTags": "Allowed tags",
-          "allowedTagsHint": "(vazio = todas)"
+          "groupSamlHint": "(valor do atributo)"
         }
+      }
+    },
+    "roles": {
+      "title": "Papéis",
+      "helper": "Um Papel empacota acesso de administrador, capacidades de recurso e escopo de tags em uma única entidade nomeada e reutilizável -- crie um (ex.: \"SOC L1\", \"Analista - Acme\") e atribua a quantos usuários ou mapeamentos de grupo LDAP/SAML precisar, em vez de escolher as mesmas configurações usuário por usuário.",
+      "newRole": "+ Novo Papel",
+      "noRoles": "Nenhum papel ainda.",
+      "adminBadge": "Admin",
+      "noResourceAccess": "sem acesso a recursos",
+      "tagsLabel": "tags",
+      "allTags": "todas",
+      "removeConfirm": "Excluir este papel? Usuários atribuídos a ele precisam ser realocados primeiro.",
+      "form": {
+        "name": "Nome",
+        "isAdmin": "Administrador",
+        "isAdminHint": "(concede acesso a Configurações)",
+        "resourceAccess": "Acesso a recursos",
+        "allowedTags": "Tags permitidas",
+        "allowedTagsHint": "(vazio = todas)"
       }
     },
     "identityProviders": {

@@ -4,7 +4,6 @@
 
 import type { Severity } from "./alerts";
 
-export type UserRole = "admin" | "analyst" | "viewer";
 // A capability set, not a mutually-exclusive choice -- mirrors
 // domain.ResourceAccess on the backend (see db/migrations/0015_resource_access_capabilities.up.sql).
 // "followup" grants the Dashboard's Follow-up view independently of the
@@ -14,6 +13,23 @@ export type ResourceCapability = "alerts" | "incidents" | "followup";
 export const RESOURCE_CAPABILITIES: ResourceCapability[] = ["alerts", "incidents", "followup"];
 export type AuthProviderKind = "local" | "ldap" | "saml";
 
+// Role mirrors backend domain.Role -- Settings -> Roles' reusable access
+// bundle (admin gate + resource capabilities + tag scope), assigned to
+// users and to LDAP/SAML group mappings. Replaces the old fixed
+// admin/analyst/viewer tier: nothing in the backend ever branched on that
+// tier beyond "is this an admin or not", so IsAdmin is the only tier
+// distinction that survived -- see domain.Role's doc comment.
+export interface Role {
+  id: string;
+  tenantId: string;
+  name: string;
+  isAdmin: boolean;
+  resourceAccess: ResourceCapability[];
+  allowedTags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface User {
   id: string;
   tenantId: string;
@@ -21,9 +37,8 @@ export interface User {
   name: string;
   authProvider: AuthProviderKind;
   externalId?: string;
-  role: UserRole;
-  resourceAccess: ResourceCapability[];
-  allowedTags: string[];
+  roleId: string;
+  role: Role;
   isActive: boolean;
   lastLoginAt?: string;
   createdAt: string;
@@ -42,9 +57,8 @@ export interface AuthGroupMapping {
   tenantId: string;
   provider: "ldap" | "saml";
   externalGroup: string;
-  role: UserRole;
-  resourceAccess: ResourceCapability[];
-  allowedTags: string[];
+  roleId: string;
+  role: Role;
   createdAt: string;
 }
 
@@ -238,7 +252,11 @@ export interface LoginResponse {
     id: string;
     email: string;
     name: string;
-    role: UserRole;
+    // The assigned Role's display name (see backend loginUser.Role) --
+    // authorization itself is decided from the JWT's is_admin/
+    // resource_access claims (see AuthContext.decodeTokenClaims), never
+    // from this string.
+    role: string;
     mustChangePassword: boolean;
   };
 }

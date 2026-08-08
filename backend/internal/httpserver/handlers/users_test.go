@@ -32,9 +32,10 @@ func newUserHandlerFixtureWithAuth(t *testing.T) (h *handlers.UserHandlers, tena
 	tenantID = testutil.NewTenant(t)
 	targetUserID = testutil.NewUser(t, tenantID, "viewer", nil)
 	userRepo := repository.NewUserRepository()
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), authn.NewIssuer(priv))
+	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), roleSvc, authn.NewIssuer(priv))
 	h = handlers.NewUserHandlers(service.NewUserService(pool, userRepo), authSvc)
 	return h, tenantID, targetUserID, authSvc
 }
@@ -42,25 +43,26 @@ func newUserHandlerFixtureWithAuth(t *testing.T) (h *handlers.UserHandlers, tena
 func TestUserHandlers_ListAndUpdateAccess(t *testing.T) {
 	h, tenantID, targetUserID := newUserHandlerFixture(t)
 	r := newRouter(h.Routes)
+	roleID := testutil.NewRole(t, tenantID, true, []string{"alerts", "incidents"})
 
 	req := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, uuid.New(), nil)
 	rec := doRequest(r, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
-	t.Run("invalid capability -- 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"role": "analyst", "resourceAccess": []string{"bogus"}})
+	t.Run("unknown role id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"roleId": uuid.New().String()})
 		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/access", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
 	t.Run("valid update -- 204", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"role": "admin", "resourceAccess": []string{"alerts", "incidents"}})
+		body, _ := json.Marshal(map[string]any{"roleId": roleID.String()})
 		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/access", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
 
 	t.Run("invalid id -- 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"role": "admin", "resourceAccess": []string{"alerts"}})
+		body, _ := json.Marshal(map[string]any{"roleId": roleID.String()})
 		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid/access", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
@@ -74,9 +76,10 @@ func TestUserHandlers_ListAndUpdateAccess(t *testing.T) {
 func TestUserHandlers_Create(t *testing.T) {
 	h, tenantID, _ := newUserHandlerFixture(t)
 	r := newRouter(h.Routes)
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 
 	t.Run("missing email -- 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"name": "No Email", "role": "analyst", "resourceAccess": []string{"alerts"}})
+		body, _ := json.Marshal(map[string]any{"name": "No Email", "roleId": roleID.String()})
 		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
@@ -88,8 +91,7 @@ func TestUserHandlers_Create(t *testing.T) {
 
 	t.Run("valid create -- 201 with a temp password that isn't stored anywhere else", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
-			"email": "newuser@test.local", "name": "New User",
-			"role": "analyst", "resourceAccess": []string{"alerts"},
+			"email": "newuser@test.local", "name": "New User", "roleId": roleID.String(),
 		})
 		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		rec := doRequest(r, req)
@@ -118,8 +120,7 @@ func TestUserHandlers_Create(t *testing.T) {
 
 	t.Run("duplicate email -- 400", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
-			"email": "newuser@test.local", "name": "Duplicate",
-			"role": "viewer", "resourceAccess": []string{},
+			"email": "newuser@test.local", "name": "Duplicate", "roleId": roleID.String(),
 		})
 		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
@@ -209,11 +210,12 @@ func TestUserHandlers_ResetPassword(t *testing.T) {
 func TestUserHandlers_GroupMappings(t *testing.T) {
 	h, tenantID, _ := newUserHandlerFixture(t)
 	r := newRouter(h.Routes)
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 
 	req := withClaims(httptest.NewRequest("GET", "/group-mappings", nil), tenantID, uuid.New(), nil)
 	assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
 
-	body, _ := json.Marshal(map[string]any{"role": "analyst", "resourceAccess": []string{"alerts"}})
+	body, _ := json.Marshal(map[string]any{"roleId": roleID.String()})
 	req = withClaims(httptest.NewRequest("PUT", "/group-mappings/ldap/soc-analysts", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 	rec := doRequest(r, req)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -275,7 +277,7 @@ func TestUserHandlers_Create_MissingTenantContext(t *testing.T) {
 	h, _, _ := newUserHandlerFixture(t)
 	r := newRouter(h.Routes)
 
-	body, _ := json.Marshal(map[string]string{"email": "new@example.com", "name": "New", "role": "viewer"})
+	body, _ := json.Marshal(map[string]string{"email": "new@example.com", "name": "New"})
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
 	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 }

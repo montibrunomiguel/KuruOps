@@ -73,11 +73,9 @@ func (h *UserHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 type createUserRequest struct {
-	Email          string                `json:"email"`
-	Name           string                `json:"name"`
-	Role           domain.UserRole       `json:"role"`
-	ResourceAccess domain.ResourceAccess `json:"resourceAccess"`
-	AllowedTags    []string              `json:"allowedTags"`
+	Email  string    `json:"email"`
+	Name   string    `json:"name"`
+	RoleID uuid.UUID `json:"roleId"`
 }
 
 type createUserResponse struct {
@@ -101,7 +99,7 @@ func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, req.Email, req.Name, req.Role, req.ResourceAccess, req.AllowedTags)
+	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, req.Email, req.Name, req.RoleID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -110,9 +108,7 @@ func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateAccessRequest struct {
-	Role           domain.UserRole       `json:"role"`
-	ResourceAccess domain.ResourceAccess `json:"resourceAccess"`
-	AllowedTags    []string              `json:"allowedTags"`
+	RoleID uuid.UUID `json:"roleId"`
 }
 
 func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
@@ -129,10 +125,7 @@ func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.svc.UpdateAccess(r.Context(), tenantID, id, domain.UpdateUserAccessInput{
-		Role: req.Role, ResourceAccess: req.ResourceAccess, AllowedTags: req.AllowedTags,
-	})
-	if err != nil {
+	if err := h.svc.UpdateAccess(r.Context(), tenantID, id, req.RoleID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -234,9 +227,7 @@ func (h *UserHandlers) saveGroupMapping(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	m, err := h.svc.SaveGroupMapping(r.Context(), tenantID, provider, group, domain.UpdateUserAccessInput{
-		Role: req.Role, ResourceAccess: req.ResourceAccess, AllowedTags: req.AllowedTags,
-	})
+	m, err := h.svc.SaveGroupMapping(r.Context(), tenantID, provider, group, req.RoleID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

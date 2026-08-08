@@ -7,14 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type UserRole string
-
-const (
-	RoleAdmin   UserRole = "admin"
-	RoleAnalyst UserRole = "analyst"
-	RoleViewer  UserRole = "viewer"
-)
-
 // ResourceAccess is a capability set, not a mutually-exclusive choice: a
 // user can hold any combination of the three capabilities below, which is
 // what lets a SOC analyst see Follow-up without full Incidents access while
@@ -64,20 +56,25 @@ func ValidateResourceAccess(ra ResourceAccess) error {
 // User mirrors `users`. PasswordHash and MFATOTPSecret are tagged
 // json:"-" so they can never leak through an API response even if a
 // handler accidentally serializes the whole struct.
+//
+// Access (role tier, resource capabilities, tag scope) lives entirely on
+// the referenced Role now, not on User directly -- see domain.Role's doc
+// comment. Role is always populated by the repository (a join, not a lazy
+// load) whenever a User is read, so callers can go straight to
+// user.Role.IsAdmin / user.Role.ResourceAccess.Has(...) /
+// user.Role.AllowedTags without a second query.
 type User struct {
-	ID             uuid.UUID      `json:"id"`
-	TenantID       uuid.UUID      `json:"tenantId"`
-	Email          string         `json:"email"`
-	Name           string         `json:"name"`
-	AuthProvider   AuthProvider   `json:"authProvider"`
-	ExternalID     *string        `json:"externalId,omitempty"`
-	PasswordHash   *string        `json:"-"`
-	Role           UserRole       `json:"role"`
-	ResourceAccess ResourceAccess `json:"resourceAccess"`
-	// empty slice = unrestricted, sees all tags (matches the design handoff)
-	AllowedTags   []string `json:"allowedTags"`
-	MFATOTPSecret *string  `json:"-"`
-	IsActive      bool     `json:"isActive"`
+	ID            uuid.UUID    `json:"id"`
+	TenantID      uuid.UUID    `json:"tenantId"`
+	Email         string       `json:"email"`
+	Name          string       `json:"name"`
+	AuthProvider  AuthProvider `json:"authProvider"`
+	ExternalID    *string      `json:"externalId,omitempty"`
+	PasswordHash  *string      `json:"-"`
+	RoleID        uuid.UUID    `json:"roleId"`
+	Role          *Role        `json:"role"`
+	MFATOTPSecret *string      `json:"-"`
+	IsActive      bool         `json:"isActive"`
 	// MustChangePassword locks the account to POST /api/v1/account/change-password
 	// only (see middleware.RequirePasswordChanged) until the password is
 	// rotated. Set true for the seeded default admin (0013_seed_default_admin.up.sql)
@@ -108,28 +105,17 @@ const (
 	AuthProviderSAML  AuthProvider = "saml"
 )
 
-// UpdateUserAccessInput is what Settings -> Users & Roles edits: role,
-// which resource types the user can see, and the tag scope — never
-// email/name/auth_provider, which come from the identity source of truth
-// (local signup or IdP-provisioned).
-type UpdateUserAccessInput struct {
-	Role           UserRole
-	ResourceAccess ResourceAccess
-	AllowedTags    []string
-}
-
 // AuthGroupMapping mirrors `auth_group_mappings` — the LDAP group / SAML
-// attribute value to role+access mapping applied on every federated login
+// attribute value to Role mapping applied on every federated login
 // (just-in-time provisioning), so IdP group membership changes take effect
 // without an admin manually editing users. See architecture review, "Auth:
 // local + LDAP + SAML".
 type AuthGroupMapping struct {
-	ID             uuid.UUID      `json:"id"`
-	TenantID       uuid.UUID      `json:"tenantId"`
-	Provider       AuthProvider   `json:"provider"`
-	ExternalGroup  string         `json:"externalGroup"`
-	Role           UserRole       `json:"role"`
-	ResourceAccess ResourceAccess `json:"resourceAccess"`
-	AllowedTags    []string       `json:"allowedTags"`
-	CreatedAt      time.Time      `json:"createdAt"`
+	ID            uuid.UUID    `json:"id"`
+	TenantID      uuid.UUID    `json:"tenantId"`
+	Provider      AuthProvider `json:"provider"`
+	ExternalGroup string       `json:"externalGroup"`
+	RoleID        uuid.UUID    `json:"roleId"`
+	Role          *Role        `json:"role"`
+	CreatedAt     time.Time    `json:"createdAt"`
 }

@@ -24,7 +24,7 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
 	h := handlers.NewAccountHandlers(authSvc)
 	r := newRouter(h.Routes)
 
@@ -59,7 +59,7 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
 	h := handlers.NewAccountHandlers(authSvc)
 	r := newRouter(h.Routes)
 

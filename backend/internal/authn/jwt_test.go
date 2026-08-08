@@ -19,7 +19,7 @@ func TestIssueVerify_RoundTrip(t *testing.T) {
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
 	tenantID, userID := uuid.New(), uuid.New()
-	token, err := issuer.Issue(tenantID, userID, "admin", []string{"alerts", "incidents", "followup"}, []string{"CompanyA"}, true)
+	token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "incidents", "followup"}, []string{"CompanyA"}, true)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
 
@@ -27,7 +27,7 @@ func TestIssueVerify_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tenantID, claims.TenantID)
 	assert.Equal(t, userID, claims.UserID)
-	assert.Equal(t, "admin", claims.Role)
+	assert.True(t, claims.IsAdmin)
 	assert.Equal(t, []string{"alerts", "incidents", "followup"}, claims.ResourceAccess)
 	assert.Equal(t, []string{"CompanyA"}, claims.AllowedTags)
 	assert.True(t, claims.MustChangePassword)
@@ -39,7 +39,7 @@ func TestIssue_EmptyResourceAccessAndTags(t *testing.T) {
 	issuer := authn.NewIssuer(priv)
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), "viewer", []string{}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false)
 	require.NoError(t, err)
 
 	claims, err := verifier.Verify(token)
@@ -58,7 +58,7 @@ func TestVerify_RejectsTokenSignedByADifferentKey(t *testing.T) {
 	issuer := authn.NewIssuer(priv1)
 	wrongVerifier := authn.NewVerifier(&priv2.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), "admin", []string{"alerts"}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), true, []string{"alerts"}, nil, false)
 	require.NoError(t, err)
 
 	_, err = wrongVerifier.Verify(token)
@@ -128,7 +128,7 @@ func TestVerify_RejectsTamperedPayload(t *testing.T) {
 	issuer := authn.NewIssuer(priv)
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), "viewer", []string{}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false)
 	require.NoError(t, err)
 
 	// Flip one character in the middle of the token (payload segment) --

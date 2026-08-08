@@ -110,6 +110,10 @@ func main() {
 	userRepo := repository.NewUserRepository()
 	userService := service.NewUserService(pool, userRepo)
 
+	roleRepo := repository.NewRoleRepository()
+	roleService := service.NewRoleService(pool, roleRepo)
+	roleHandlers := handlers.NewRoleHandlers(roleService)
+
 	incidentSLARepo := repository.NewIncidentSLARepository()
 	incidentSLAService := service.NewIncidentSLAService(pool, incidentSLARepo)
 	incidentSLAHandlers := handlers.NewIncidentSLAHandlers(incidentSLAService)
@@ -195,7 +199,7 @@ func main() {
 	onCallShiftHandlers := handlers.NewOnCallShiftHandlers(onCallShiftService)
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)
-	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), issuer)
+	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), roleService, issuer)
 	userHandlers := handlers.NewUserHandlers(userService, authService)
 
 	identityCfgRepo := repository.NewIdentityConfigRepository()
@@ -225,6 +229,7 @@ func main() {
 		LLMProviderHandlers:       llmProviderHandlers,
 		MCPServerHandlers:         mcpServerHandlers,
 		UserHandlers:              userHandlers,
+		RoleHandlers:              roleHandlers,
 		AuthHandlers:              authHandlers,
 		AccountHandlers:           accountHandlers,
 		IdentityConfigHandlers:    identityCfgHandlers,

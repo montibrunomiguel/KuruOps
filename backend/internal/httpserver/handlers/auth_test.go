@@ -31,7 +31,8 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 
 	tenants := repository.NewTenantRepository()
 	users := repository.NewUserRepository()
-	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), issuer)
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), roleSvc, issuer)
 	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
 	ldapSvc := service.NewLDAPAuthService(pool, identityCfg, store, authSvc)

@@ -21,7 +21,7 @@ type ctxKey string
 const (
 	ctxKeyTenantID           ctxKey = "tenant_id"
 	ctxKeyUserID             ctxKey = "user_id"
-	ctxKeyRole               ctxKey = "role"
+	ctxKeyIsAdmin            ctxKey = "is_admin"
 	ctxKeyResourceAccess     ctxKey = "resource_access"
 	ctxKeyAllowedTags        ctxKey = "allowed_tags"
 	ctxKeyMustChangePassword ctxKey = "must_change_password"
@@ -34,7 +34,7 @@ const (
 type Claims struct {
 	TenantID           uuid.UUID
 	UserID             uuid.UUID
-	Role               string
+	IsAdmin            bool
 	ResourceAccess     []string
 	AllowedTags        []string
 	MustChangePassword bool
@@ -64,7 +64,7 @@ func JWTAuth(verifier *authn.Verifier) func(http.Handler) http.Handler {
 			ctx := WithClaims(r.Context(), Claims{
 				TenantID:           claims.TenantID,
 				UserID:             claims.UserID,
-				Role:               claims.Role,
+				IsAdmin:            claims.IsAdmin,
 				ResourceAccess:     claims.ResourceAccess,
 				AllowedTags:        claims.AllowedTags,
 				MustChangePassword: claims.MustChangePassword,
@@ -74,7 +74,7 @@ func JWTAuth(verifier *authn.Verifier) func(http.Handler) http.Handler {
 	}
 }
 
-// DevHeaderAuth trusts X-Tenant-ID / X-User-ID / X-Role / X-Resource-Access
+// DevHeaderAuth trusts X-Tenant-ID / X-User-ID / X-Is-Admin / X-Resource-Access
 // / X-Allowed-Tags request headers verbatim, bypassing JWT verification
 // entirely — a token from /auth/.../login will NOT work against this, since
 // it never looks at the Authorization header at all. It exists only so
@@ -83,6 +83,7 @@ func JWTAuth(verifier *authn.Verifier) func(http.Handler) http.Handler {
 // wires this in when AUTH_MODE=dev-headers (never plain "dev", which keeps
 // real JWTAuth so a real login still works — see cmd/api/main.go), and that
 // must never be set in a deployed environment (see backend/README.md).
+// X-Is-Admin is "true"/"false", defaulting to false when omitted.
 // X-Resource-Access is a comma-separated capability list (e.g.
 // "alerts,incidents,followup"), defaulting to "alerts,incidents" when
 // omitted; X-Allowed-Tags defaults to unrestricted (empty) when omitted, so
@@ -101,10 +102,7 @@ func DevHeaderAuth(next http.Handler) http.Handler {
 			http.Error(w, "missing/invalid X-User-ID (dev auth mode)", http.StatusUnauthorized)
 			return
 		}
-		role := r.Header.Get("X-Role")
-		if role == "" {
-			role = "analyst"
-		}
+		isAdmin := r.Header.Get("X-Is-Admin") == "true"
 		resourceAccess := []string{"alerts", "incidents"}
 		if v := r.Header.Get("X-Resource-Access"); v != "" {
 			resourceAccess = strings.Split(v, ",")
@@ -115,31 +113,29 @@ func DevHeaderAuth(next http.Handler) http.Handler {
 		}
 
 		ctx := WithClaims(r.Context(), Claims{
-			TenantID: tenantID, UserID: userID, Role: role,
+			TenantID: tenantID, UserID: userID, IsAdmin: isAdmin,
 			ResourceAccess: resourceAccess, AllowedTags: allowedTags,
 		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// RequireRole gates a route group to callers whose Role is one of allowed —
-// e.g. wrapping /api/v1/settings/** with RequireRole("admin"). Must run
-// after JWTAuth/DevHeaderAuth in the middleware chain.
-func RequireRole(allowed ...string) func(http.Handler) http.Handler {
+// RequireAdmin gates a route group to callers whose Role.IsAdmin is true —
+// e.g. wrapping /api/v1/settings/**. Must run after JWTAuth/DevHeaderAuth in
+// the middleware chain.
+func RequireAdmin() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role, ok := Role(r.Context())
+			isAdmin, ok := IsAdmin(r.Context())
 			if !ok {
 				http.Error(w, "missing auth context", http.StatusUnauthorized)
 				return
 			}
-			for _, a := range allowed {
-				if role == a {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if !isAdmin {
+				http.Error(w, "forbidden: this action requires an admin role", http.StatusForbidden)
+				return
 			}
-			http.Error(w, "forbidden: this action requires a different role", http.StatusForbidden)
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -196,7 +192,7 @@ func RequirePasswordChanged(changePasswordPath string) func(http.Handler) http.H
 func WithClaims(ctx context.Context, c Claims) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyTenantID, c.TenantID)
 	ctx = context.WithValue(ctx, ctxKeyUserID, c.UserID)
-	ctx = context.WithValue(ctx, ctxKeyRole, c.Role)
+	ctx = context.WithValue(ctx, ctxKeyIsAdmin, c.IsAdmin)
 	ctx = context.WithValue(ctx, ctxKeyResourceAccess, c.ResourceAccess)
 	ctx = context.WithValue(ctx, ctxKeyAllowedTags, c.AllowedTags)
 	ctx = context.WithValue(ctx, ctxKeyMustChangePassword, c.MustChangePassword)
@@ -213,8 +209,8 @@ func UserID(ctx context.Context) (uuid.UUID, bool) {
 	return v, ok
 }
 
-func Role(ctx context.Context) (string, bool) {
-	v, ok := ctx.Value(ctxKeyRole).(string)
+func IsAdmin(ctx context.Context) (bool, bool) {
+	v, ok := ctx.Value(ctxKeyIsAdmin).(bool)
 	return v, ok
 }
 
