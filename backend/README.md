@@ -95,7 +95,10 @@ regras de negócio para:
   com IA" funciona ponta a ponta com um provedor real, não só mockado), servidores MCP (allow-list de tools + lista de tools com efeito
   colateral que sempre exigem aprovação — ver `service.EvaluateToolInvocation`), usuários/roles e
   mapeamento de grupo LDAP/SAML → role/tags (com botão de remover configuração, além de
-  criar/atualizar), integração de armazenamento de evidências (S3/GCS), SMTP (reset de senha por
+  criar/atualizar), integração de armazenamento de evidências (S3/GCS — `S3Store` validado ao vivo
+  contra um bucket real: upload de uma imagem via `POST /api/v1/uploads/images`, depois `GET` de
+  volta confirmando o mesmo conteúdo, latência consistente com uma chamada de rede real à AWS, não
+  disco local; `GCSStore` ainda não validado contra uma conta GCP real), SMTP (reset de senha por
   email), tags, escalas de plantão, SLAs de incidente por severidade×prioridade, políticas de
   escalonamento (PagerDuty/Slack/webhook genérico), exportação de auditoria em CEF, e migração
   assistida para um Postgres externo (Settings → Banco de Dados Externo)
