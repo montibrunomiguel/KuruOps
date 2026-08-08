@@ -90,7 +90,9 @@ regras de negócio para:
 - **Playbooks** — CRUD + auto-match por keyword (com fallback "General Security Event")
 - **Settings**: endpoints de webhook (token com hash + rotação), provedores de LLM por tenant
   (`kind=openai_compatible` genérico, chave nunca persistida em claro — ver
-  `internal/secrets/store.go`), servidores MCP (allow-list de tools + lista de tools com efeito
+  `internal/secrets/store.go`; validado ao vivo contra o endpoint OpenAI-compatible real do Gemini,
+  `generativelanguage.googleapis.com/v1beta`, sem precisar de nenhum adapter dedicado — "Analisar
+  com IA" funciona ponta a ponta com um provedor real, não só mockado), servidores MCP (allow-list de tools + lista de tools com efeito
   colateral que sempre exigem aprovação — ver `service.EvaluateToolInvocation`), usuários/roles e
   mapeamento de grupo LDAP/SAML → role/tags (com botão de remover configuração, além de
   criar/atualizar), integração de armazenamento de evidências (S3/GCS), SMTP (reset de senha por

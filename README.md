@@ -167,6 +167,24 @@ deles, não só para requests vindos do navegador — ver `db/README.md`. Os com
 tenant em Settings; sem nenhum configurado, o sistema roda só com auth local + storage em disco
 local + segredos criptografados no próprio Postgres.
 
+### Limitação conhecida: `api` só escala verticalmente hoje
+
+Duas peças do `api` guardam estado em memória, no processo — `internal/events.Broadcaster` (fan-out
+de eventos SSE para as abas conectadas) e `middleware.NewRateLimiter` (rate limit de login, por
+IP/conta). Isso é suficiente pro modelo single-instance do ArgusOps (ver "Primeiro login" acima —
+não existe conceito de tenant/empresa no login, então nunca houve razão pra rodar mais de uma
+réplica do `api`), mas significa que **rodar duas ou mais réplicas do `api` atrás de um load
+balancer quebra os dois**: um cliente conectado à réplica A nunca recebe um evento publicado pela
+réplica B (fica sem update ao vivo até o próximo reload manual, os dados continuam corretos — SSE é
+só um "algo mudou" opcional, ver `internal/events`'s doc comment), e o rate limit de login conta
+tentativas por réplica, não no total, então o limite efetivo multiplica pelo número de réplicas.
+
+Se isso precisar mudar: um `Broadcaster` sobre Redis pub/sub (ou NATS) resolve o primeiro, e um
+rate limiter contra Redis (`INCR`+`EXPIRE`, padrão bem conhecido) resolve o segundo — nenhum dos
+dois exige mudar o formato dos dados ou a API pública, só trocar a implementação por trás da mesma
+interface. Não é um problema hoje porque não há motivo pra rodar mais de uma réplica; vira um
+problema no dia em que houver.
+
 ## Estrutura do repositório
 
 ```

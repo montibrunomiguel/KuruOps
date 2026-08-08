@@ -33,6 +33,10 @@ export function StorageIntegrationPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Inline confirm/cancel instead of window.confirm() -- some embedded
+  // browser contexts silently auto-dismiss native confirm() dialogs, which
+  // made delete look like it does nothing (see OnCallShiftsPanel/TagsPanel).
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   function load() {
     setLoading(true);
@@ -89,7 +93,7 @@ export function StorageIntegrationPanel() {
   }
 
   async function handleRemove() {
-    if (!confirm(t("settings.storage.removeConfirm"))) return;
+    setConfirmingRemove(false);
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/storage", token);
@@ -199,10 +203,21 @@ export function StorageIntegrationPanel() {
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.storage.configureButton")}
         </button>
-        {existing && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+        {existing && !confirmingRemove && (
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
             {t("settings.storage.remove")}
           </button>
+        )}
+        {existing && confirmingRemove && (
+          <>
+            <span className="helper-text">{t("settings.storage.removeConfirm")}</span>
+            <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+              {submitting ? t("common.saving") : t("common.confirmDelete")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+              {t("common.cancel")}
+            </button>
+          </>
         )}
       </div>
     </form>

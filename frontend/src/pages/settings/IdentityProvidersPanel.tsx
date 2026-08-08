@@ -33,6 +33,10 @@ function LDAPPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Inline confirm/cancel instead of window.confirm() -- some embedded
+  // browser contexts silently auto-dismiss native confirm() dialogs, which
+  // made delete look like it does nothing (see OnCallShiftsPanel/TagsPanel).
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
     api
@@ -75,7 +79,7 @@ function LDAPPanel() {
   }
 
   async function handleRemove() {
-    if (!confirm(t("settings.identityProviders.ldap.removeConfirm"))) return;
+    setConfirmingRemove(false);
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -172,10 +176,21 @@ function LDAPPanel() {
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
         </button>
-        {existing && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+        {existing && !confirmingRemove && (
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
             {t("settings.identityProviders.ldap.remove")}
           </button>
+        )}
+        {existing && confirmingRemove && (
+          <>
+            <span className="helper-text">{t("settings.identityProviders.ldap.removeConfirm")}</span>
+            <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+              {submitting ? t("common.saving") : t("common.confirmDelete")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+              {t("common.cancel")}
+            </button>
+          </>
         )}
       </div>
     </form>
@@ -198,6 +213,10 @@ function SAMLPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Inline confirm/cancel instead of window.confirm() -- some embedded
+  // browser contexts silently auto-dismiss native confirm() dialogs, which
+  // made delete look like it does nothing (see OnCallShiftsPanel/TagsPanel).
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
     api
@@ -247,7 +266,7 @@ function SAMLPanel() {
   }
 
   async function handleRemove() {
-    if (!confirm(t("settings.identityProviders.saml.removeConfirm"))) return;
+    setConfirmingRemove(false);
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -374,10 +393,21 @@ function SAMLPanel() {
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
         </button>
-        {existing && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+        {existing && !confirmingRemove && (
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
             {t("settings.identityProviders.saml.remove")}
           </button>
+        )}
+        {existing && confirmingRemove && (
+          <>
+            <span className="helper-text">{t("settings.identityProviders.saml.removeConfirm")}</span>
+            <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+              {submitting ? t("common.saving") : t("common.confirmDelete")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+              {t("common.cancel")}
+            </button>
+          </>
         )}
       </div>
     </form>
