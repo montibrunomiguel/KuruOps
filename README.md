@@ -55,9 +55,9 @@ login. "Empresa" existe apenas como tag em alertas/incidentes, usada para restri
 usuário enxerga (`allowedTags`); um mesmo usuário pode ter acesso a alertas de várias empresas ao
 mesmo tempo.
 
-> Como `AUTH_MODE=dev` gera um par de chaves JWT novo a cada vez que o container `api` sobe/reinicia
-> (ver `backend/README.md`), qualquer sessão logada antes de um `task deploy:up` seguinte é
-> invalidada — é só logar de novo, não é bug.
+> `AUTH_MODE=dev` gera um par de chaves JWT na primeira subida do container `api` e persiste em
+> `.dev-keys/` (ver `backend/README.md`) — sessões continuam válidas entre restarts/redeploys
+> normais. Um `docker compose down -v` (que também zera o Postgres) apaga esse volume junto.
 
 ### O que tem depois de logado
 
@@ -117,21 +117,78 @@ LDAP/SAML nem MCP —, é o smoke test que pega regressão de "a stack nem sobe"
 task --list
 ```
 
+## Arquitetura
+
+```mermaid
+graph TD
+    Browser["Navegador"]
+
+    subgraph Compose["Docker Compose (task deploy:up)"]
+        Nginx["frontend (nginx)\n:3000 -- SPA + proxy /api, /auth"]
+        Api["api\n:8080 -- REST + login (local/LDAP/SAML) + SSE"]
+        Ingest["ingest\n:8081 -- só recebe webhook de alertas"]
+        Worker["worker\n(sem porta) -- refresh de materialized views,\nsweep de SLA/escalonamento"]
+        PG[("Postgres\nRLS por tenant_id")]
+    end
+
+    IdP["LDAP / SAML IdP\n(diretório do cliente)"]
+    LLM["Provedor LLM\n(Anthropic/OpenAI-compatible/Gemini)"]
+    MCP["Servidor(es) MCP\n(tools que a IA pode invocar)"]
+    Blob["S3 / GCS\n(evidências anexadas)"]
+    Secrets["Vault / AWS KMS\n(SECRETS_BACKEND=vault|kms)"]
+    SMTP["SMTP\n(reset de senha)"]
+    OnCall["PagerDuty / Slack / webhook\n(escalonamento de plantão)"]
+    Vendors["Wazuh / CrowdStrike / GuardDuty\n(origem dos alertas)"]
+
+    Browser -->|HTTPS| Nginx
+    Vendors -->|webhook HTTPS| Ingest
+    Nginx -->|"/api, /auth"| Api
+
+    Api --> PG
+    Ingest --> PG
+    Worker --> PG
+
+    Api -->|bind/search| IdP
+    Api -->|analyze/tool-use| LLM
+    Api -->|tools/list, tools/call| MCP
+    Api -->|upload/download evidência| Blob
+    Api -->|Resolve/Put segredo| Secrets
+    Api -->|reset de senha| SMTP
+    Api -->|disparo de plantão| OnCall
+```
+
+`api`/`ingest`/`worker` são três binários Go separados (mesmo módulo, `cmd/api`, `cmd/ingest`,
+`cmd/worker`) para escalar/falhar independentemente — `ingest` é a única superfície exposta a
+webhooks de terceiros (superfície de ataque menor e isolada do resto da API), `worker` não expõe
+porta nenhuma (só cron interno). Todos os três conectam no Postgres como o mesmo role
+least-privilege (`argusops_app`), então a row-level security por `tenant_id` vale para qualquer um
+deles, não só para requests vindos do navegador — ver `db/README.md`. Os componentes externos
+(IdP, LLM, MCP, blobstore, secrets backend, SMTP, on-call) são todos opcionais e configurados por
+tenant em Settings; sem nenhum configurado, o sistema roda só com auth local + storage em disco
+local + segredos criptografados no próprio Postgres.
+
 ## Estrutura do repositório
 
 ```
 backend/    Go: cmd/api, cmd/ingest, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
 frontend/   React + Vite + TS
 db/         migrations (golang-migrate) + init scripts (role least-privilege)
-docs/       assets estáticos (logo)
-Taskfile.yml, docker-compose.yml   orquestração local
+docs/       logo, openapi.yaml, TROUBLESHOOTING.md, history/ (planos já executados)
+CHANGELOG.md, Taskfile.yml, docker-compose.yml   changelog + orquestração local
 ```
 
 ## Estado do projeto e Governança Open-Source
 
-O projeto conta com suítes de testes unitários no backend (`go test ./...`) e no frontend (`npm test` via Vitest), além de verificação estática de tipos (`tsc`) e validação de formatação (`gofmt`). 
+`task test` roda tudo que não precisa de deploy: `go build`/`go vet`/`gofmt` + `golangci-lint` +
+`govulncheck` + `go test ./...` no backend, `tsc --noEmit` + ESLint + `npm audit` + Vitest + `vite
+build` no frontend. Cobertura de teste tem gate próprio contra regressão
+(`task backend:test:coverage-gate`, compara contra `backend/coverage-baseline.txt`).
+`task test:smoke` sobe a stack completa em Docker Compose e valida ponta a ponta (Postgres real +
+RLS + JWT + HTTP) — é o teste que prova que a cadeia inteira funciona, não só que o código compila.
 
-O `task test:smoke` executa a validação end-to-end sobre a stack completa em Docker Compose (Postgres + RLS + JWT + HTTP).
+Documentação: [CHANGELOG.md](CHANGELOG.md) (o que mudou e quando),
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (pegadinhas conhecidas do deploy/testes),
+[docs/openapi.yaml](docs/openapi.yaml) (contrato da API `/api/v1/**`).
 
 Consulte os arquivos de governança open-source:
 - [LICENSE](LICENSE) (Apache 2.0)

@@ -136,17 +136,22 @@ persistido na tabela `secret_store` — sobrevive a um restart do processo, ao c
 `EnvStore` em memória puro, que ainda existe só para uso em testes): `SECRETS_BACKEND=vault`
 (`VaultStore`, engine KV v2 via HTTP direto, sem o SDK oficial) ou `SECRETS_BACKEND=kms`
 (`AWSKMSStore`, Encrypt/Decrypt puro, sem Secrets Manager) — ver `secrets.NewFromConfig` para o
-factory switch e as variáveis de cada backend. Nenhum dos dois foi validado contra um servidor
-Vault/conta AWS reais — só testes unitários contra um backend mockado.
+factory switch e as variáveis de cada backend. `VaultStore` já foi validado contra um servidor
+Vault real em modo dev (`internal/secrets/vault_store_live_test.go`, `task backend:test:vault`) —
+um ciclo Put→Resolve de verdade, não só o mock em `vault_store_test.go`. `AWSKMSStore` ainda não
+foi validado contra uma conta AWS real (precisa de credencial real, ver Fase 3 do histórico de
+planos em `docs/history/`).
 
 ## Client MCP
 
 `internal/mcpclient` fala Model Context Protocol de verdade com um servidor MCP registrado —
 handshake (`initialize` + `notifications/initialized`), `tools/list` (com paginação) e
 `tools/call`, sobre o transporte "Streamable HTTP" (POST JSON-RPC 2.0, com suporte a resposta
-`text/event-stream` de um único evento). **Nada disso foi testado contra um servidor MCP real** —
-não havia um disponível para validar durante o desenvolvimento; trate como um ponto de partida
-sólido, não como algo pronto pra produção sem validação.
+`text/event-stream` de um único evento). Validado contra o servidor de referência oficial
+(`@modelcontextprotocol/server-everything`, `internal/mcpclient/live_test.go`, `task backend:test:mcp`)
+— handshake, listagem e chamada de tool passam contra uma implementação MCP real e independente,
+não só contra os mocks internos deste repo. `stdio`/`sse` como transporte continuam não
+implementados (retornam erro claro em vez de tentar e falhar confuso).
 
 `service.MCPToolService` é a fronteira entre esse client e a política de acesso:
 - `DiscoverTools` conecta no servidor ao vivo e devolve o catálogo real de `tools/list` — é o que
@@ -167,11 +172,6 @@ Settings → Servidores MCP → Aprovações Pendentes (painel novo, `MCPServers
 `MCPToolService.SetOnToolCallResolved` retoma o run de onde parou via `ResumeAnalysisRun`. O
 "Analyze with AI" do detalhe de alerta/incidente aciona esse loop de ponta a ponta, e a ingestão de
 um alerta também dispara a mesma análise automaticamente quando há provedor LLM configurado.
-
-**O que ainda falta**: só o transporte HTTP do client MCP está implementado (`stdio`/`sse`
-retornam erro claro em vez de tentar e falhar confuso) — nem o client MCP nem o loop agêntico
-foram validados contra um servidor MCP real (não havia um disponível durante o desenvolvimento;
-tratar como ponto de partida sólido, não como algo pronto pra produção sem validação).
 
 ### Configurando LDAP/SAML de um tenant
 
