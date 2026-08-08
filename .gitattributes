@@ -1,0 +1,11 @@
+# Go source must always check out with LF, regardless of a contributor's
+# global/repo `core.autocrlf` -- gofmt's canonical output is LF-terminated,
+# so a Windows checkout with autocrlf=true (the commonly recommended
+# Windows default) silently converts every .go file to CRLF on `git
+# checkout`, and `gofmt -l` then flags every single one as "needs
+# reformatting" even though the actual code is untouched and correct (see
+# docs/TROUBLESHOOTING.md). Forcing eol=lf here means `task backend:vet`
+# stays green regardless of whoever's local autocrlf setting.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
