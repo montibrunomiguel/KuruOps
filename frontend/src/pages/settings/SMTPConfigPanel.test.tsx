@@ -93,10 +93,10 @@ describe("SMTPConfigPanel", () => {
       return Promise.resolve(jsonResponse(configured));
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPanel();
 
     await userEvent.click(await screen.findByRole("button", { name: "Remove configuration" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm delete" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/smtp", expect.objectContaining({ method: "DELETE" })),

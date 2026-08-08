@@ -98,7 +98,6 @@ describe("IdentityProvidersPanel", () => {
   });
 
   it("shows a Remove button once configured, and removing clears the form back to Configure", async () => {
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
       if (url.includes("/ldap")) {
@@ -123,6 +122,7 @@ describe("IdentityProvidersPanel", () => {
 
     const [ldapRemove] = screen.getAllByRole("button", { name: "Remove configuration" });
     await userEvent.click(ldapRemove);
+    await userEvent.click(await screen.findByRole("button", { name: "Confirm delete" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/identity-providers/ldap", expect.objectContaining({ method: "DELETE" })),
@@ -131,7 +131,6 @@ describe("IdentityProvidersPanel", () => {
   });
 
   it("cancelling the removal confirmation leaves the config untouched", async () => {
-    vi.stubGlobal("confirm", vi.fn().mockReturnValue(false));
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") throw new Error("must not be called when confirm is cancelled");
       if (url.includes("/ldap")) {
@@ -154,7 +153,9 @@ describe("IdentityProvidersPanel", () => {
 
     const [ldapRemove] = await screen.findAllByRole("button", { name: "Remove configuration" });
     await userEvent.click(ldapRemove);
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/settings/identity-providers/ldap", expect.objectContaining({ method: "DELETE" }));
     expect(screen.getAllByText("configured")).toHaveLength(2);
   });
 

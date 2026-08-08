@@ -28,6 +28,10 @@ export function SMTPConfigPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Inline confirm/cancel instead of window.confirm() -- some embedded
+  // browser contexts silently auto-dismiss native confirm() dialogs, which
+  // made delete look like it does nothing (see OnCallShiftsPanel/TagsPanel).
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const [testTo, setTestTo] = useState("");
   const [testSending, setTestSending] = useState(false);
@@ -76,7 +80,7 @@ export function SMTPConfigPanel() {
   }
 
   async function handleRemove() {
-    if (!confirm(t("settings.smtp.removeConfirm"))) return;
+    setConfirmingRemove(false);
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/smtp", token);
@@ -174,10 +178,21 @@ export function SMTPConfigPanel() {
           <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
             {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.smtp.configureButton")}
           </button>
-          {existing && (
-            <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+          {existing && !confirmingRemove && (
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
               {t("settings.smtp.remove")}
             </button>
+          )}
+          {existing && confirmingRemove && (
+            <>
+              <span className="helper-text">{t("settings.smtp.removeConfirm")}</span>
+              <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
+                {submitting ? t("common.saving") : t("common.confirmDelete")}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+                {t("common.cancel")}
+              </button>
+            </>
           )}
         </div>
       </form>

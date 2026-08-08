@@ -11,6 +11,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/coverage/
 
+# Task (taskfile.dev) checksum cache -- local build-state tracking, not source
+.task/
+
 # Editors / OS
 .DS_Store
 Thumbs.db
