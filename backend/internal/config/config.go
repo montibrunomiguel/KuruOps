@@ -30,6 +30,12 @@ type Config struct {
 	// verification. Never set to "dev" outside a developer's own machine.
 	AuthMode string
 
+	// DevKeysDir is where cmd/api persists the JWT keypair it generates for
+	// AUTH_MODE=dev/dev-headers when JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH
+	// aren't set -- see main.loadOrGenerateJWTKeys. Only read in that
+	// ephemeral-keys path; jwt mode always requires explicit key paths.
+	DevKeysDir string
+
 	ShutdownTimeout time.Duration
 
 	// UploadDir is where uploaded comment/close-classification images are
@@ -84,6 +90,7 @@ func Load() (Config, error) {
 		JWTPublicKeyPath:  os.Getenv("JWT_PUBLIC_KEY_PATH"),
 		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
 		AuthMode:          getEnvDefault("AUTH_MODE", "jwt"),
+		DevKeysDir:        getEnvDefault("DEV_KEYS_DIR", ".dev-keys"),
 		ShutdownTimeout:   getEnvDurationDefault("SHUTDOWN_TIMEOUT", 15*time.Second),
 		UploadDir:         getEnvDefault("UPLOAD_DIR", "/data/uploads"),
 		AppBaseURL:        getEnvDefault("APP_BASE_URL", "http://localhost:3000"),

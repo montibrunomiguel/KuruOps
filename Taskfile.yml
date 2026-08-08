@@ -163,6 +163,27 @@ tasks:
     cmds:
       - go test ./internal/dbmigrate/... -v
 
+  vault-dev:up:
+    desc: Start a real HashiCorp Vault dev-mode server -- only for internal/secrets' VaultStore live integration test
+    cmds:
+      - docker compose --profile tools up -d --wait --wait-timeout 30 vault-dev
+
+  backend:test:vault:
+    desc: Run VaultStore's integration test against a real Vault dev-mode server (see vault-dev:up)
+    dir: backend
+    deps: [vault-dev:up]
+    env:
+      TEST_VAULT_ADDR: http://localhost:8200
+      TEST_VAULT_TOKEN: dev-root-token
+    cmds:
+      - go test ./internal/secrets/... -run TestVaultStore_Live -v
+
+  backend:test:mcp:
+    desc: Run internal/mcpclient's integration test against the official MCP reference server (needs Node/npx)
+    dir: backend
+    cmds:
+      - bash scripts/run-mcp-reference-test.sh
+
   backend:keys:
     desc: Generate a local RSA keypair for JWT signing (only needed outside AUTH_MODE=dev)
     dir: backend

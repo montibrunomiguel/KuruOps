@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // GenerateEphemeralKeyPair creates a throwaway RSA keypair for local
@@ -14,8 +15,42 @@ import (
 // JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH unset). Tokens signed with it
 // don't survive a process restart and no other service could ever verify
 // them — never use this outside cmd/api's dev-mode bootstrap.
+//
+// cmd/api.loadOrGenerateJWTKeys persists the result via SaveKeyPair so this
+// only actually runs once per dev environment, not once per restart --
+// generating it here doesn't imply throwing it away after the process
+// exits, just that it was never meant to leave this machine.
 func GenerateEphemeralKeyPair() (*rsa.PrivateKey, error) {
 	return rsa.GenerateKey(rand.Reader, 2048)
+}
+
+// SaveKeyPair PEM-encodes key and writes jwt_private.pem/jwt_public.pem into
+// dir (created if it doesn't exist), for loadOrGenerateJWTKeys to read back
+// on the next process start via LoadPrivateKey/LoadPublicKey -- the dev-mode
+// equivalent of running the two `openssl` commands LoadPrivateKey/
+// LoadPublicKey's doc comments describe, so a generated dev keypair survives
+// a restart instead of invalidating every session on every deploy.
+func SaveKeyPair(dir string, key *rsa.PrivateKey) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create key dir: %w", err)
+	}
+
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	// 0600: this is a real signing key, even if only a dev one -- other
+	// local users on a shared machine shouldn't be able to read it.
+	if err := os.WriteFile(filepath.Join(dir, "jwt_private.pem"), privPEM, 0o600); err != nil {
+		return fmt.Errorf("write private key: %w", err)
+	}
+
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		return fmt.Errorf("marshal public key: %w", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	if err := os.WriteFile(filepath.Join(dir, "jwt_public.pem"), pubPEM, 0o644); err != nil {
+		return fmt.Errorf("write public key: %w", err)
+	}
+	return nil
 }
 
 // LoadPrivateKey reads a PKCS#1 or PKCS#8 PEM-encoded RSA private key —

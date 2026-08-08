@@ -25,6 +25,12 @@ USER argusops
 FROM base AS api
 COPY --from=build /out/api /usr/local/bin/api
 COPY --from=build --chown=argusops /src/db/migrations /app/db/migrations
+# DEV_KEYS_DIR's mount point (see docker-compose.yml's dev-jwt-keys volume)
+# -- created here, owned by argusops (the non-root USER above), so Docker
+# copies that ownership into the named volume the first time it's mounted
+# empty. Without this the volume mounts root-owned and the api process
+# (running as argusops, never root) can't write its dev JWT keypair to it.
+RUN mkdir -p /app/.dev-keys
 ENTRYPOINT ["/usr/local/bin/api"]
 
 FROM base AS ingest
