@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 
-function sessionWith(opts: { resourceAccess?: string[]; role?: string; mustChangePassword?: boolean } = {}) {
+function sessionWith(opts: { resourceAccess?: string[]; role?: string; isAdmin?: boolean; mustChangePassword?: boolean } = {}) {
   localStorage.setItem(
     "argusops.session",
     JSON.stringify({
@@ -13,7 +13,8 @@ function sessionWith(opts: { resourceAccess?: string[]; role?: string; mustChang
         id: "1",
         email: "user@test.local",
         name: "User",
-        role: opts.role ?? "analyst",
+        role: opts.role ?? "Analyst",
+        isAdmin: opts.isAdmin ?? false,
         mustChangePassword: opts.mustChangePassword ?? false,
         resourceAccess: opts.resourceAccess ?? ["alerts", "incidents", "followup"],
       },
@@ -60,13 +61,13 @@ describe("App routing guards", () => {
   });
 
   it("a non-admin visiting /settings sees the admin-only panel", async () => {
-    sessionWith({ role: "analyst" });
+    sessionWith({ role: "Analyst", isAdmin: false });
     renderApp("/settings/webhooks");
     expect(await screen.findByText(/restricted to administrators/)).toBeInTheDocument();
   });
 
   it("an admin can reach /settings", async () => {
-    sessionWith({ role: "admin" });
+    sessionWith({ role: "Admin", isAdmin: true });
     renderApp("/settings/webhooks");
     expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.queryByText(/restricted to administrators/)).not.toBeInTheDocument();

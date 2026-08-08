@@ -8,20 +8,31 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+function roleFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: "r1", tenantId: "t1", name: "Analyst", isAdmin: false,
+    resourceAccess: ["alerts"], allowedTags: [], createdAt: "2024-01-01", updatedAt: "2024-01-01", ...overrides,
+  };
+}
+
+const adminRole = roleFixture({ id: "r2", name: "Admin", isAdmin: true, resourceAccess: ["alerts", "incidents", "followup"] });
+const defaultRoles = [roleFixture(), adminRole];
+
 function userFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "u1", name: "Ana Lyst", email: "ana@test.local", authProvider: "local",
-    role: "analyst", resourceAccess: ["alerts"], allowedTags: [], isActive: true, ...overrides,
+    roleId: "r1", role: roleFixture(), isActive: true, ...overrides,
   };
 }
 
 function mappingFixture(overrides: Partial<Record<string, unknown>> = {}) {
-  return { id: "m1", provider: "ldap", externalGroup: "soc-analysts", role: "analyst", resourceAccess: ["alerts"], allowedTags: [], ...overrides };
+  return { id: "m1", provider: "ldap", externalGroup: "soc-analysts", roleId: "r1", role: roleFixture(), ...overrides };
 }
 
-function routeFetch(users: unknown[], mappings: unknown[] = []) {
+function routeFetch(users: unknown[], mappings: unknown[] = [], roles: unknown[] = defaultRoles) {
   return vi.fn().mockImplementation((url: string) => {
     if (url.includes("/group-mappings")) return Promise.resolve(jsonResponse(mappings));
+    if (url.includes("/settings/roles")) return Promise.resolve(jsonResponse(roles));
     if (url.includes("/settings/users")) return Promise.resolve(jsonResponse(users));
     return Promise.resolve(jsonResponse({}));
   });
@@ -64,11 +75,14 @@ describe("UsersPanel", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
 
     const roleSelects = screen.getAllByRole("combobox");
-    await userEvent.selectOptions(roleSelects[0], "admin");
+    await userEvent.selectOptions(roleSelects[0], "Admin");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/users/u1/access", expect.objectContaining({ method: "PUT" })),
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/settings/users/u1/access",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ roleId: "r2" }) }),
+      ),
     );
   });
 
@@ -182,6 +196,7 @@ describe("UsersPanel", () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "PUT") return Promise.resolve(jsonResponse(mappingFixture(), 200));
       if (url.includes("/group-mappings")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/settings/roles")) return Promise.resolve(jsonResponse(defaultRoles));
       return Promise.resolve(jsonResponse([]));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -208,6 +223,7 @@ describe("UsersPanel", () => {
         );
       }
       if (url.includes("/group-mappings")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/settings/roles")) return Promise.resolve(jsonResponse(defaultRoles));
       if (url.includes("/settings/users")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
@@ -234,6 +250,7 @@ describe("UsersPanel", () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/group-mappings/m1")) return Promise.resolve(new Response(null, { status: 204 }));
       if (url.includes("/group-mappings")) return Promise.resolve(jsonResponse([mappingFixture()]));
+      if (url.includes("/settings/roles")) return Promise.resolve(jsonResponse(defaultRoles));
       return Promise.resolve(jsonResponse([]));
     });
     vi.stubGlobal("fetch", fetchMock);

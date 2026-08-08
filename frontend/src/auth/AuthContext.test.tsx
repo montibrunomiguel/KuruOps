@@ -34,7 +34,7 @@ describe("AuthContext", () => {
   it("restores a previously stored session from localStorage", () => {
     localStorage.setItem(
       "argusops.session",
-      JSON.stringify({ token: "tok", user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: ["alerts"] } }),
+      JSON.stringify({ token: "tok", user: { id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] } }),
     );
     const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(true);
@@ -47,12 +47,12 @@ describe("AuthContext", () => {
     expect(result.current.isAuthenticated).toBe(false);
   });
 
-  it("loginLocal decodes resourceAccess from the JWT payload, not the response body", async () => {
-    const token = fakeToken({ must_change_password: true, resource_access: ["alerts", "followup"] });
+  it("loginLocal decodes isAdmin/resourceAccess from the JWT payload, not the response body", async () => {
+    const token = fakeToken({ must_change_password: true, is_admin: false, resource_access: ["alerts", "followup"] });
     vi.mocked(api.post).mockResolvedValue({
       token,
       refreshToken: "rt_1",
-      user: { id: "1", email: "analyst@test.local", name: "Analyst", role: "analyst", mustChangePassword: true },
+      user: { id: "1", email: "analyst@test.local", name: "Analyst", role: "Analyst", mustChangePassword: true },
     });
 
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -61,6 +61,7 @@ describe("AuthContext", () => {
     });
 
     expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.isAdmin).toBe(false);
     expect(result.current.user?.resourceAccess).toEqual(["alerts", "followup"]);
     expect(result.current.mustChangePassword).toBe(true);
     expect(result.current.hasResourceAccess("alerts")).toBe(true);

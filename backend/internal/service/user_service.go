@@ -37,7 +37,7 @@ func (s *UserService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.Us
 
 // ListSummaries backs GET /api/v1/users/directory -- see domain.UserSummary
 // for why this is a separate, non-admin-gated method rather than reusing
-// List (which returns full domain.User, including role/resourceAccess).
+// List (which returns full domain.User, including its Role).
 func (s *UserService) ListSummaries(ctx context.Context, tenantID uuid.UUID) ([]domain.UserSummary, error) {
 	var summaries []domain.UserSummary
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -70,7 +70,7 @@ func (s *UserService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.
 // the new user to set their own on first login (same flow as the seeded
 // default admin from 0013_seed_default_admin.up.sql). The plaintext
 // password is returned once here and never stored or logged anywhere else.
-func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name string, role domain.UserRole, resourceAccess domain.ResourceAccess, allowedTags []string) (*domain.User, string, error) {
+func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name string, roleID uuid.UUID) (*domain.User, string, error) {
 	email = strings.TrimSpace(email)
 	name = strings.TrimSpace(name)
 	if email == "" {
@@ -78,9 +78,6 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email
 	}
 	if name == "" {
 		return nil, "", fmt.Errorf("name is required")
-	}
-	if err := domain.ValidateResourceAccess(resourceAccess); err != nil {
-		return nil, "", err
 	}
 
 	tempPassword, err := generateTempPassword()
@@ -93,13 +90,11 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email
 	}
 
 	u := &domain.User{
-		TenantID:       tenantID,
-		Email:          email,
-		Name:           name,
-		AuthProvider:   domain.AuthProviderLocal,
-		Role:           role,
-		ResourceAccess: resourceAccess,
-		AllowedTags:    orEmptySlice(allowedTags),
+		TenantID:     tenantID,
+		Email:        email,
+		Name:         name,
+		AuthProvider: domain.AuthProviderLocal,
+		RoleID:       roleID,
 	}
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.CreateLocal(ctx, tx, u, hash)
@@ -122,17 +117,14 @@ func generateTempPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// UpdateAccess changes role, resource_access, and allowed_tags — the fields
-// editable from Settings -> Users & Roles. Email/name/auth_provider are not
-// editable here: they come from the identity source (local signup or the
-// LDAP/SAML provisioning flow in AuthGroupMapping), not from an admin
-// hand-editing a user record.
-func (s *UserService) UpdateAccess(ctx context.Context, tenantID, id uuid.UUID, in domain.UpdateUserAccessInput) error {
-	if err := domain.ValidateResourceAccess(in.ResourceAccess); err != nil {
-		return err
-	}
+// UpdateAccess changes which Role a user is assigned -- the field editable
+// from Settings -> Users & Roles. Email/name/auth_provider are not editable
+// here: they come from the identity source (local signup or the LDAP/SAML
+// provisioning flow in AuthGroupMapping), not from an admin hand-editing a
+// user record.
+func (s *UserService) UpdateAccess(ctx context.Context, tenantID, id, roleID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.UpdateAccess(ctx, tx, id, in.Role, in.ResourceAccess, orEmptySlice(in.AllowedTags))
+		return s.repo.UpdateAccess(ctx, tx, id, roleID)
 	})
 }
 
@@ -189,25 +181,20 @@ func (s *UserService) ListGroupMappings(ctx context.Context, tenantID uuid.UUID)
 	return mappings, err
 }
 
-// SaveGroupMapping creates or replaces the role/access mapping for one
-// LDAP group or SAML attribute value. Applied by AuthService.ProvisionFederated
-// every time a federated user authenticates — see architecture review,
-// "Auth: local + LDAP + SAML", for why this is just-in-time rather than a
-// one-time import.
-func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID uuid.UUID, provider domain.AuthProvider, externalGroup string, in domain.UpdateUserAccessInput) (*domain.AuthGroupMapping, error) {
+// SaveGroupMapping creates or replaces the Role mapping for one LDAP group
+// or SAML attribute value. Applied by AuthService.ProvisionFederated every
+// time a federated user authenticates — see architecture review, "Auth:
+// local + LDAP + SAML", for why this is just-in-time rather than a one-time
+// import.
+func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID uuid.UUID, provider domain.AuthProvider, externalGroup string, roleID uuid.UUID) (*domain.AuthGroupMapping, error) {
 	if provider != domain.AuthProviderLDAP && provider != domain.AuthProviderSAML {
 		return nil, fmt.Errorf("group mappings only apply to ldap or saml, got %q", provider)
 	}
-	if err := domain.ValidateResourceAccess(in.ResourceAccess); err != nil {
-		return nil, err
-	}
 	m := &domain.AuthGroupMapping{
-		TenantID:       tenantID,
-		Provider:       provider,
-		ExternalGroup:  externalGroup,
-		Role:           in.Role,
-		ResourceAccess: in.ResourceAccess,
-		AllowedTags:    orEmptySlice(in.AllowedTags), // auth_group_mappings.allowed_tags is NOT NULL
+		TenantID:      tenantID,
+		Provider:      provider,
+		ExternalGroup: externalGroup,
+		RoleID:        roleID,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.UpsertGroupMapping(ctx, tx, m)

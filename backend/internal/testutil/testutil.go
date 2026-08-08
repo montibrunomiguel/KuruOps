@@ -105,22 +105,55 @@ func NewTenant(t *testing.T) uuid.UUID {
 // one (HashPassword is intentionally slow).
 const TestPassword = testPassword
 
+// NewRole inserts a throwaway Role and returns its id -- every NewUser call
+// gets its own fresh Role row (see NewUser) rather than one shared per
+// tenant, since tests only ever assert on a role's capability content
+// (IsAdmin/ResourceAccess/AllowedTags), never on how many role rows a
+// tenant has or whether two users share one.
+func NewRole(t *testing.T, tenantID uuid.UUID, isAdmin bool, resourceAccess []string) uuid.UUID {
+	t.Helper()
+	pool := adminPool(t)
+	if resourceAccess == nil {
+		resourceAccess = []string{}
+	}
+	id := uuid.New()
+	_, err := pool.Exec(context.Background(), `
+		insert into roles (id, tenant_id, name, is_admin, resource_access, allowed_tags)
+		values ($1, $2, $3, $4, $5, '{}')`,
+		id, tenantID, "test-role-"+id.String(), isAdmin, resourceAccess,
+	)
+	if err != nil {
+		t.Fatalf("create test role: %v", err)
+	}
+	return id
+}
+
 // NewUser inserts a local, active, password-set user (auth_provider='local'
 // requires a password hash -- see the users_local_requires_password check
-// constraint in db/migrations/0003_tenants_users.up.sql). resourceAccess
+// constraint in db/migrations/0003_tenants_users.up.sql), backed by a fresh
+// Role built from role/resourceAccess -- role is "admin" (grants
+// Role.IsAdmin) or anything else (not admin, purely a label on the
+// generated Role's name, since IsAdmin is the only tier distinction that
+// still means anything -- see domain.Role's doc comment). resourceAccess
 // follows domain.ResourceAccess (e.g. []string{"alerts","incidents"}); pass
 // nil for none.
 func NewUser(t *testing.T, tenantID uuid.UUID, role string, resourceAccess []string) uuid.UUID {
 	t.Helper()
+	roleID := NewRole(t, tenantID, role == "admin", resourceAccess)
+	return NewUserWithRole(t, tenantID, roleID)
+}
+
+// NewUserWithRole is NewUser for callers that already have a specific Role
+// id to assign (e.g. testing that a role can't be deleted while a user
+// still references it) instead of wanting one generated on the fly.
+func NewUserWithRole(t *testing.T, tenantID, roleID uuid.UUID) uuid.UUID {
+	t.Helper()
 	pool := adminPool(t)
 	id := uuid.New()
-	if resourceAccess == nil {
-		resourceAccess = []string{}
-	}
 	_, err := pool.Exec(context.Background(), `
-		insert into users (id, tenant_id, email, name, auth_provider, password_hash, role, resource_access, allowed_tags, is_active)
-		values ($1, $2, $3, 'Test User', 'local', $4, $5, $6, '{}', true)`,
-		id, tenantID, fmt.Sprintf("%s@test.local", id), testPasswordHash, role, resourceAccess,
+		insert into users (id, tenant_id, email, name, auth_provider, password_hash, role_id, is_active)
+		values ($1, $2, $3, 'Test User', 'local', $4, $5, true)`,
+		id, tenantID, fmt.Sprintf("%s@test.local", id), testPasswordHash, roleID,
 	)
 	if err != nil {
 		t.Fatalf("create test user: %v", err)

@@ -18,29 +18,25 @@ func TestUserService_CreateLocal(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	svc := service.NewUserService(pool, repository.NewUserRepository())
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 
 	t.Run("rejects a missing email", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "", "Someone", domain.RoleAnalyst, domain.ResourceAccess{"alerts"}, nil)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "", "Someone", roleID)
 		assert.ErrorContains(t, err, "email is required")
 	})
 
 	t.Run("rejects a missing name", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "someone@test.local", "  ", domain.RoleAnalyst, domain.ResourceAccess{"alerts"}, nil)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "someone@test.local", "  ", roleID)
 		assert.ErrorContains(t, err, "name is required")
 	})
 
-	t.Run("rejects an invalid capability", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "someone@test.local", "Someone", domain.RoleAnalyst, domain.ResourceAccess{"bogus"}, nil)
-		assert.ErrorContains(t, err, "invalid resource access capability")
-	})
-
 	t.Run("creates a local user with a temp password that verifies against the stored hash", func(t *testing.T) {
-		user, tempPassword, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "New Hire", domain.RoleAnalyst, domain.ResourceAccess{"alerts", "incidents"}, nil)
+		user, tempPassword, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "New Hire", roleID)
 		require.NoError(t, err)
 		require.NotEmpty(t, tempPassword)
 		assert.Equal(t, domain.AuthProviderLocal, user.AuthProvider)
 		assert.True(t, user.MustChangePassword)
-		assert.Equal(t, []string{}, user.AllowedTags, "nil AllowedTags is normalized to empty, not NULL")
+		assert.Equal(t, roleID, user.RoleID)
 
 		got, err := svc.Get(t.Context(), tenantID, user.ID)
 		require.NoError(t, err)
@@ -51,7 +47,7 @@ func TestUserService_CreateLocal(t *testing.T) {
 	})
 
 	t.Run("rejects a duplicate email within the same tenant", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "Duplicate", domain.RoleViewer, domain.ResourceAccess{}, nil)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "Duplicate", roleID)
 		assert.Error(t, err)
 	})
 }
@@ -60,6 +56,7 @@ func TestUserService_ResetPassword(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	svc := service.NewUserService(pool, repository.NewUserRepository())
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 
 	t.Run("unknown user", func(t *testing.T) {
 		_, err := svc.ResetPassword(t.Context(), tenantID, uuid.New())
@@ -69,7 +66,8 @@ func TestUserService_ResetPassword(t *testing.T) {
 	t.Run("rejects a federated user", func(t *testing.T) {
 		priv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
-		authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), authn.NewIssuer(priv))
+		roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+		authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), roleSvc, authn.NewIssuer(priv))
 		fedUser, _, _, err := authSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed,dc=example,dc=com", "fed@example.com", "Fed User", nil)
 		require.NoError(t, err)
 
@@ -78,7 +76,7 @@ func TestUserService_ResetPassword(t *testing.T) {
 	})
 
 	t.Run("resets a local user's password and forces a change on next login", func(t *testing.T) {
-		user, originalPassword, err := svc.CreateLocal(t.Context(), tenantID, "reset-me@test.local", "Reset Me", domain.RoleAnalyst, domain.ResourceAccess{"alerts"}, nil)
+		user, originalPassword, err := svc.CreateLocal(t.Context(), tenantID, "reset-me@test.local", "Reset Me", roleID)
 		require.NoError(t, err)
 
 		tempPassword, err := svc.ResetPassword(t.Context(), tenantID, user.ID)
@@ -119,26 +117,15 @@ func TestUserService_UpdateAccess(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "viewer", nil)
 	svc := service.NewUserService(pool, repository.NewUserRepository())
 
-	t.Run("rejects an invalid capability before writing", func(t *testing.T) {
-		err := svc.UpdateAccess(t.Context(), tenantID, userID, domain.UpdateUserAccessInput{
-			Role: domain.RoleAnalyst, ResourceAccess: domain.ResourceAccess{"not-a-real-capability"},
-		})
-		assert.ErrorContains(t, err, "invalid resource access capability")
-	})
+	newRoleID := testutil.NewRole(t, tenantID, true, []string{"alerts", "followup"})
+	require.NoError(t, svc.UpdateAccess(t.Context(), tenantID, userID, newRoleID))
 
-	t.Run("valid access is persisted, nil AllowedTags becomes empty", func(t *testing.T) {
-		err := svc.UpdateAccess(t.Context(), tenantID, userID, domain.UpdateUserAccessInput{
-			Role: domain.RoleAdmin, ResourceAccess: domain.ResourceAccess{"alerts", "followup"},
-		})
-		require.NoError(t, err)
-
-		list, err := svc.List(t.Context(), tenantID)
-		require.NoError(t, err)
-		require.Len(t, list, 1)
-		assert.Equal(t, domain.RoleAdmin, list[0].Role)
-		assert.Equal(t, domain.ResourceAccess{"alerts", "followup"}, list[0].ResourceAccess)
-		assert.Equal(t, []string{}, list[0].AllowedTags)
-	})
+	list, err := svc.List(t.Context(), tenantID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, newRoleID, list[0].RoleID)
+	assert.True(t, list[0].Role.IsAdmin)
+	assert.Equal(t, domain.ResourceAccess{"alerts", "followup"}, list[0].Role.ResourceAccess)
 }
 
 func TestUserService_SetActive(t *testing.T) {
@@ -158,30 +145,20 @@ func TestUserService_GroupMappings(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	svc := service.NewUserService(pool, repository.NewUserRepository())
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts", "followup"})
 
 	t.Run("rejects a provider that isn't ldap or saml", func(t *testing.T) {
-		_, err := svc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLocal, "soc-analysts", domain.UpdateUserAccessInput{
-			Role: domain.RoleAnalyst, ResourceAccess: domain.ResourceAccess{"alerts"},
-		})
+		_, err := svc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLocal, "soc-analysts", roleID)
 		assert.ErrorContains(t, err, "only apply to ldap or saml")
 	})
 
-	t.Run("rejects an invalid capability", func(t *testing.T) {
-		_, err := svc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", domain.UpdateUserAccessInput{
-			Role: domain.RoleAnalyst, ResourceAccess: domain.ResourceAccess{"bogus"},
-		})
-		assert.ErrorContains(t, err, "invalid resource access capability")
-	})
-
-	m, err := svc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", domain.UpdateUserAccessInput{
-		Role: domain.RoleAnalyst, ResourceAccess: domain.ResourceAccess{"alerts", "followup"},
-	})
+	m, err := svc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", roleID)
 	require.NoError(t, err)
 
 	list, err := svc.ListGroupMappings(t.Context(), tenantID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
-	assert.Equal(t, []string{}, list[0].AllowedTags, "nil AllowedTags is normalized to empty, not NULL")
+	assert.Equal(t, roleID, list[0].RoleID)
 
 	require.NoError(t, svc.DeleteGroupMapping(t.Context(), tenantID, m.ID))
 	list, err = svc.ListGroupMappings(t.Context(), tenantID)

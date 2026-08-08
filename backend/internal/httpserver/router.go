@@ -21,6 +21,7 @@ type Options struct {
 	LLMProviderHandlers       *handlers.LLMProviderHandlers
 	MCPServerHandlers         *handlers.MCPServerHandlers
 	UserHandlers              *handlers.UserHandlers
+	RoleHandlers              *handlers.RoleHandlers
 	AuthHandlers              *handlers.AuthHandlers
 	AccountHandlers           *handlers.AccountHandlers
 	IdentityConfigHandlers    *handlers.IdentityConfigHandlers
@@ -135,11 +136,12 @@ func NewRouter(opts Options) http.Handler {
 		// configuration (webhooks, LLM/MCP integrations, user roles,
 		// identity providers) -- admin-only, regardless of resourceAccess.
 		api.Group(func(admin chi.Router) {
-			admin.Use(middleware.RequireRole("admin"))
+			admin.Use(middleware.RequireAdmin())
 			admin.Route("/settings/webhooks", opts.WebhookHandlers.Routes)
 			admin.Route("/settings/llm-providers", opts.LLMProviderHandlers.Routes)
 			admin.Route("/settings/mcp-servers", opts.MCPServerHandlers.Routes)
 			admin.Route("/settings/users", opts.UserHandlers.Routes)
+			admin.Route("/settings/roles", opts.RoleHandlers.Routes)
 			admin.Route("/settings/identity-providers", opts.IdentityConfigHandlers.Routes)
 			admin.Route("/settings/tags", opts.TagHandlers.SettingsRoutes)
 			admin.Route("/settings/storage", opts.StorageConfigHandlers.Routes)

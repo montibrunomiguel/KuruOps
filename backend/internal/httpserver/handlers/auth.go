@@ -127,7 +127,7 @@ func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 		Token:        token,
 		RefreshToken: refreshToken,
 		User: loginUser{
-			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: string(user.Role),
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
 		},
 	})
@@ -159,7 +159,7 @@ func (h *AuthHandlers) loginLDAP(w http.ResponseWriter, r *http.Request) {
 		Token:        token,
 		RefreshToken: refreshToken,
 		User: loginUser{
-			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: string(user.Role),
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
 		},
 	})

@@ -95,7 +95,7 @@ export function Sidebar() {
           <div className="sidebar-user-avatar">{initials(user?.name)}</div>
           <div className="sidebar-user-info">
             <div className="sidebar-user-name">{user?.name}</div>
-            <div className="sidebar-user-role">{user?.role === "admin" ? "Admin" : user?.role}</div>
+            <div className="sidebar-user-role">{user?.role}</div>
           </div>
         </NavLink>
         <button className="btn btn-ghost btn-sm" style={{ width: "100%", marginTop: 8 }} onClick={logout}>

@@ -27,12 +27,12 @@ func TestJWTAuth(t *testing.T) {
 	tenantID, userID := uuid.New(), uuid.New()
 
 	t.Run("valid bearer token propagates every claim into the request context", func(t *testing.T) {
-		token, err := issuer.Issue(tenantID, userID, "admin", []string{"alerts", "followup"}, []string{"CompanyA"}, true)
+		token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "followup"}, []string{"CompanyA"}, true)
 		require.NoError(t, err)
 
 		var gotTenant uuid.UUID
 		var gotUser uuid.UUID
-		var gotRole string
+		var gotIsAdmin bool
 		var gotAccess []string
 		var gotTags []string
 		var gotMustChange, gotOK bool
@@ -40,7 +40,7 @@ func TestJWTAuth(t *testing.T) {
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotTenant, _ = middleware.TenantID(r.Context())
 			gotUser, _ = middleware.UserID(r.Context())
-			gotRole, _ = middleware.Role(r.Context())
+			gotIsAdmin, _ = middleware.IsAdmin(r.Context())
 			gotAccess, _ = middleware.ResourceAccess(r.Context())
 			gotTags = middleware.AllowedTags(r.Context())
 			gotMustChange, gotOK = middleware.MustChangePassword(r.Context())
@@ -55,7 +55,7 @@ func TestJWTAuth(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, tenantID, gotTenant)
 		assert.Equal(t, userID, gotUser)
-		assert.Equal(t, "admin", gotRole)
+		assert.True(t, gotIsAdmin)
 		assert.Equal(t, []string{"alerts", "followup"}, gotAccess)
 		assert.Equal(t, []string{"CompanyA"}, gotTags)
 		assert.True(t, gotMustChange)
@@ -70,7 +70,7 @@ func TestJWTAuth(t *testing.T) {
 	})
 
 	t.Run("header without the Bearer prefix is rejected", func(t *testing.T) {
-		token, err := issuer.Issue(tenantID, userID, "admin", nil, nil, false)
+		token, err := issuer.Issue(tenantID, userID, true, nil, nil, false)
 		require.NoError(t, err)
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", token) // no "Bearer " prefix
@@ -99,7 +99,7 @@ func TestJWTAuth(t *testing.T) {
 		otherPriv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
 		otherIssuer := authn.NewIssuer(otherPriv)
-		token, err := otherIssuer.Issue(tenantID, userID, "admin", nil, nil, false)
+		token, err := otherIssuer.Issue(tenantID, userID, true, nil, nil, false)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
@@ -114,11 +114,11 @@ func TestDevHeaderAuth(t *testing.T) {
 	tenantID, userID := uuid.New(), uuid.New()
 
 	t.Run("full headers propagate exactly", func(t *testing.T) {
-		var gotRole string
+		var gotIsAdmin bool
 		var gotAccess []string
 		var gotTags []string
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotRole, _ = middleware.Role(r.Context())
+			gotIsAdmin, _ = middleware.IsAdmin(r.Context())
 			gotAccess, _ = middleware.ResourceAccess(r.Context())
 			gotTags = middleware.AllowedTags(r.Context())
 			w.WriteHeader(http.StatusOK)
@@ -127,24 +127,24 @@ func TestDevHeaderAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("X-Tenant-ID", tenantID.String())
 		req.Header.Set("X-User-ID", userID.String())
-		req.Header.Set("X-Role", "viewer")
+		req.Header.Set("X-Is-Admin", "true")
 		req.Header.Set("X-Resource-Access", "alerts,followup")
 		req.Header.Set("X-Allowed-Tags", "CompanyA,CompanyB")
 		rec := httptest.NewRecorder()
 		middleware.DevHeaderAuth(next).ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "viewer", gotRole)
+		assert.True(t, gotIsAdmin)
 		assert.Equal(t, []string{"alerts", "followup"}, gotAccess)
 		assert.Equal(t, []string{"CompanyA", "CompanyB"}, gotTags)
 	})
 
 	t.Run("defaults apply when optional headers are omitted", func(t *testing.T) {
-		var gotRole string
+		var gotIsAdmin bool
 		var gotAccess []string
 		var gotTags []string
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotRole, _ = middleware.Role(r.Context())
+			gotIsAdmin, _ = middleware.IsAdmin(r.Context())
 			gotAccess, _ = middleware.ResourceAccess(r.Context())
 			gotTags = middleware.AllowedTags(r.Context())
 			w.WriteHeader(http.StatusOK)
@@ -157,7 +157,7 @@ func TestDevHeaderAuth(t *testing.T) {
 		middleware.DevHeaderAuth(next).ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "analyst", gotRole)
+		assert.False(t, gotIsAdmin)
 		assert.Equal(t, []string{"alerts", "incidents"}, gotAccess)
 		assert.Empty(t, gotTags)
 	})
@@ -188,27 +188,27 @@ func TestDevHeaderAuth(t *testing.T) {
 	})
 }
 
-func TestRequireRole(t *testing.T) {
-	t.Run("allowed role passes through", func(t *testing.T) {
+func TestRequireAdmin(t *testing.T) {
+	t.Run("admin passes through", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		req = req.WithContext(middleware.WithClaims(req.Context(), middleware.Claims{Role: "admin"}))
+		req = req.WithContext(middleware.WithClaims(req.Context(), middleware.Claims{IsAdmin: true}))
 		rec := httptest.NewRecorder()
-		middleware.RequireRole("admin", "analyst")(okHandler()).ServeHTTP(rec, req)
+		middleware.RequireAdmin()(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	t.Run("disallowed role is forbidden", func(t *testing.T) {
+	t.Run("non-admin is forbidden", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
-		req = req.WithContext(middleware.WithClaims(req.Context(), middleware.Claims{Role: "viewer"}))
+		req = req.WithContext(middleware.WithClaims(req.Context(), middleware.Claims{IsAdmin: false}))
 		rec := httptest.NewRecorder()
-		middleware.RequireRole("admin")(okHandler()).ServeHTTP(rec, req)
+		middleware.RequireAdmin()(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
 
 	t.Run("missing auth context is unauthorized, not forbidden", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		rec := httptest.NewRecorder()
-		middleware.RequireRole("admin")(okHandler()).ServeHTTP(rec, req)
+		middleware.RequireAdmin()(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }
@@ -298,7 +298,7 @@ func TestContextAccessors_MissingValues(t *testing.T) {
 	_, ok = middleware.UserID(ctx)
 	assert.False(t, ok)
 
-	_, ok = middleware.Role(ctx)
+	_, ok = middleware.IsAdmin(ctx)
 	assert.False(t, ok)
 
 	_, ok = middleware.ResourceAccess(ctx)

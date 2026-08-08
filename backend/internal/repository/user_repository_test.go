@@ -23,8 +23,9 @@ func TestUserRepository_GetAndList(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, userID, got.ID)
-	assert.Equal(t, domain.UserRole("analyst"), got.Role)
-	assert.Equal(t, domain.ResourceAccess{"alerts"}, got.ResourceAccess)
+	require.NotNil(t, got.Role)
+	assert.False(t, got.Role.IsAdmin)
+	assert.Equal(t, domain.ResourceAccess{"alerts"}, got.Role.ResourceAccess)
 	require.NotNil(t, got.PasswordHash)
 
 	list, err := repo.List(t.Context(), tx)
@@ -91,16 +92,15 @@ func TestUserRepository_UpsertFederated(t *testing.T) {
 	repo := repository.NewUserRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts", "incidents"})
 	externalID := "cn=jdoe,dc=example,dc=com"
 	u := &domain.User{
-		TenantID:       tenantID,
-		Email:          "federated@test.local",
-		Name:           "Federated User",
-		AuthProvider:   domain.AuthProviderLDAP,
-		ExternalID:     &externalID,
-		Role:           domain.RoleAnalyst,
-		ResourceAccess: domain.ResourceAccess{"alerts", "incidents"},
-		AllowedTags:    []string{},
+		TenantID:     tenantID,
+		Email:        "federated@test.local",
+		Name:         "Federated User",
+		AuthProvider: domain.AuthProviderLDAP,
+		ExternalID:   &externalID,
+		RoleID:       roleID,
 	}
 	require.NoError(t, repo.UpsertFederated(t.Context(), tx, u))
 	require.NotEqual(t, [16]byte{}, u.ID)
@@ -108,15 +108,14 @@ func TestUserRepository_UpsertFederated(t *testing.T) {
 
 	t.Run("second call with the same tenant+email updates instead of duplicating", func(t *testing.T) {
 		firstID := u.ID
+		otherRoleID := testutil.NewRole(t, tenantID, false, []string{"followup"})
 		u2 := &domain.User{
-			TenantID:       tenantID,
-			Email:          "federated@test.local",
-			Name:           "Federated User Renamed",
-			AuthProvider:   domain.AuthProviderLDAP,
-			ExternalID:     &externalID,
-			Role:           domain.RoleViewer,
-			ResourceAccess: domain.ResourceAccess{"followup"},
-			AllowedTags:    []string{},
+			TenantID:     tenantID,
+			Email:        "federated@test.local",
+			Name:         "Federated User Renamed",
+			AuthProvider: domain.AuthProviderLDAP,
+			ExternalID:   &externalID,
+			RoleID:       otherRoleID,
 		}
 		require.NoError(t, repo.UpsertFederated(t.Context(), tx, u2))
 		assert.Equal(t, firstID, u2.ID)
@@ -124,7 +123,7 @@ func TestUserRepository_UpsertFederated(t *testing.T) {
 		got, err := repo.Get(t.Context(), tx, firstID)
 		require.NoError(t, err)
 		assert.Equal(t, "Federated User Renamed", got.Name)
-		assert.Equal(t, domain.RoleViewer, got.Role)
+		assert.Equal(t, otherRoleID, got.RoleID)
 	})
 }
 
@@ -134,13 +133,12 @@ func TestUserRepository_CreateLocal(t *testing.T) {
 	repo := repository.NewUserRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 	u := &domain.User{
-		TenantID:       tenantID,
-		Email:          "newlocal@test.local",
-		Name:           "New Local User",
-		Role:           domain.RoleAnalyst,
-		ResourceAccess: domain.ResourceAccess{"alerts"},
-		AllowedTags:    []string{},
+		TenantID: tenantID,
+		Email:    "newlocal@test.local",
+		Name:     "New Local User",
+		RoleID:   roleID,
 	}
 	require.NoError(t, repo.CreateLocal(t.Context(), tx, u, "$argon2id$fake-hash"))
 	require.NotEqual(t, [16]byte{}, u.ID)
@@ -151,18 +149,16 @@ func TestUserRepository_CreateLocal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, domain.AuthProviderLocal, got.AuthProvider)
 	assert.Equal(t, "New Local User", got.Name)
-	assert.Equal(t, domain.RoleAnalyst, got.Role)
+	assert.Equal(t, roleID, got.RoleID)
 	require.NotNil(t, got.PasswordHash)
 	assert.Equal(t, "$argon2id$fake-hash", *got.PasswordHash)
 
 	t.Run("duplicate email within the same tenant fails", func(t *testing.T) {
 		dupe := &domain.User{
-			TenantID:       tenantID,
-			Email:          "newlocal@test.local",
-			Name:           "Someone Else",
-			Role:           domain.RoleViewer,
-			ResourceAccess: domain.ResourceAccess{},
-			AllowedTags:    []string{},
+			TenantID: tenantID,
+			Email:    "newlocal@test.local",
+			Name:     "Someone Else",
+			RoleID:   roleID,
 		}
 		err := repo.CreateLocal(t.Context(), tx, dupe, "$argon2id$fake-hash-2")
 		require.Error(t, err)
@@ -176,14 +172,15 @@ func TestUserRepository_UpdateAccess(t *testing.T) {
 	repo := repository.NewUserRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
-	err := repo.UpdateAccess(t.Context(), tx, userID, domain.RoleAdmin, domain.ResourceAccess{"alerts", "incidents", "followup"}, []string{"CompanyA"})
+	newRoleID := testutil.NewRole(t, tenantID, true, []string{"alerts", "incidents", "followup"})
+	err := repo.UpdateAccess(t.Context(), tx, userID, newRoleID)
 	require.NoError(t, err)
 
 	got, err := repo.Get(t.Context(), tx, userID)
 	require.NoError(t, err)
-	assert.Equal(t, domain.RoleAdmin, got.Role)
-	assert.Equal(t, domain.ResourceAccess{"alerts", "incidents", "followup"}, got.ResourceAccess)
-	assert.Equal(t, []string{"CompanyA"}, got.AllowedTags)
+	assert.Equal(t, newRoleID, got.RoleID)
+	assert.True(t, got.Role.IsAdmin)
+	assert.Equal(t, domain.ResourceAccess{"alerts", "incidents", "followup"}, got.Role.ResourceAccess)
 }
 
 func TestUserRepository_UpdateProfile(t *testing.T) {
@@ -275,13 +272,12 @@ func TestUserRepository_GroupMappings(t *testing.T) {
 	repo := repository.NewUserRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
+	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts", "followup"})
 	m := &domain.AuthGroupMapping{
-		TenantID:       tenantID,
-		Provider:       domain.AuthProviderSAML,
-		ExternalGroup:  "soc-analysts",
-		Role:           domain.RoleAnalyst,
-		ResourceAccess: domain.ResourceAccess{"alerts", "followup"},
-		AllowedTags:    []string{},
+		TenantID:      tenantID,
+		Provider:      domain.AuthProviderSAML,
+		ExternalGroup: "soc-analysts",
+		RoleID:        roleID,
 	}
 	require.NoError(t, repo.UpsertGroupMapping(t.Context(), tx, m))
 	require.NotEqual(t, [16]byte{}, m.ID)
@@ -292,13 +288,12 @@ func TestUserRepository_GroupMappings(t *testing.T) {
 	assert.Equal(t, "soc-analysts", list[0].ExternalGroup)
 
 	t.Run("upsert on conflict updates in place", func(t *testing.T) {
+		adminRoleID := testutil.NewRole(t, tenantID, true, []string{"alerts", "incidents", "followup"})
 		m2 := &domain.AuthGroupMapping{
-			TenantID:       tenantID,
-			Provider:       domain.AuthProviderSAML,
-			ExternalGroup:  "soc-analysts",
-			Role:           domain.RoleAdmin,
-			ResourceAccess: domain.ResourceAccess{"alerts", "incidents", "followup"},
-			AllowedTags:    []string{},
+			TenantID:      tenantID,
+			Provider:      domain.AuthProviderSAML,
+			ExternalGroup: "soc-analysts",
+			RoleID:        adminRoleID,
 		}
 		require.NoError(t, repo.UpsertGroupMapping(t.Context(), tx, m2))
 		assert.Equal(t, m.ID, m2.ID)
@@ -306,7 +301,8 @@ func TestUserRepository_GroupMappings(t *testing.T) {
 		list, err := repo.ListGroupMappings(t.Context(), tx)
 		require.NoError(t, err)
 		require.Len(t, list, 1)
-		assert.Equal(t, domain.RoleAdmin, list[0].Role)
+		assert.Equal(t, adminRoleID, list[0].RoleID)
+		assert.True(t, list[0].Role.IsAdmin)
 	})
 
 	t.Run("delete removes the mapping", func(t *testing.T) {

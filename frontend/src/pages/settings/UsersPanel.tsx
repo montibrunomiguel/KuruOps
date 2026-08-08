@@ -3,36 +3,33 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
-import type { AuthGroupMapping, CreatedUser, ResourceCapability, User, UserRole } from "../../types/api";
-import { RESOURCE_CAPABILITIES } from "../../types/api";
+import type { AuthGroupMapping, CreatedUser, Role, User } from "../../types/api";
 
-const ROLES: UserRole[] = ["admin", "analyst", "viewer"];
-
-// ResourceAccessCheckboxes replaces what used to be a single "both/alerts/
-// incidents" <select> -- resourceAccess is a capability set now (see
-// domain.ResourceAccess on the backend), so a SOC analyst can be scoped to
-// just Follow-up, a CSIRT member to all three, etc.
-function ResourceAccessCheckboxes({
+// RoleSelect is the one control every user/group-mapping edit needs now --
+// picking one of the tenant's Roles (see Settings -> Roles) instead of the
+// old inline role/resourceAccess/allowedTags trio.
+function RoleSelect({
+  id,
+  roles,
   value,
   onChange,
 }: {
-  value: ResourceCapability[];
-  onChange: (next: ResourceCapability[]) => void;
+  id: string;
+  roles: Role[];
+  value: string;
+  onChange: (roleId: string) => void;
 }) {
-  const { t } = useTranslation();
-  function toggle(cap: ResourceCapability) {
-    onChange(value.includes(cap) ? value.filter((c) => c !== cap) : [...value, cap]);
-  }
-
   return (
-    <div style={{ display: "flex", gap: 10 }}>
-      {RESOURCE_CAPABILITIES.map((cap) => (
-        <label key={cap} className="checkbox-row" style={{ fontSize: 12 }}>
-          <input type="checkbox" checked={value.includes(cap)} onChange={() => toggle(cap)} />
-          {t(`settings.users.capability.${cap}`)}
-        </label>
+    <select id={id} className="select" value={value} onChange={(e) => onChange(e.target.value)} required>
+      <option value="" disabled>
+        {roles.length ? "—" : ""}
+      </option>
+      {roles.map((r) => (
+        <option key={r.id} value={r.id}>
+          {r.name}
+        </option>
       ))}
-    </div>
+    </select>
   );
 }
 
@@ -77,6 +74,7 @@ export function UsersPanel() {
   const { data: users, loading, error, reload } = useList<User>((tk) =>
     api.get<User[]>("/api/v1/settings/users", tk),
   );
+  const { data: roles } = useList<Role>((tk) => api.get<Role[]>("/api/v1/settings/roles", tk));
   const [showCreate, setShowCreate] = useState(false);
   const [created, setCreated] = useState<CreatedUser | null>(null);
   const [resetResult, setResetResult] = useState<{ name: string; temporaryPassword: string } | null>(null);
@@ -112,6 +110,7 @@ export function UsersPanel() {
 
         {showCreate && (
           <CreateUserForm
+            roles={roles ?? []}
             onCancel={() => setShowCreate(false)}
             onCreated={(result) => {
               setShowCreate(false);
@@ -126,23 +125,35 @@ export function UsersPanel() {
         {!loading &&
           users &&
           users.map((u) => (
-            <UserRow key={u.id} user={u} onChanged={reload} onReset={(result) => setResetResult(result)} />
+            <UserRow
+              key={u.id}
+              user={u}
+              roles={roles ?? []}
+              onChanged={reload}
+              onReset={(result) => setResetResult(result)}
+            />
           ))}
       </div>
 
-      <GroupMappingsPanel />
+      <GroupMappingsPanel roles={roles ?? []} />
     </>
   );
 }
 
-function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (result: CreatedUser) => void }) {
+function CreateUserForm({
+  roles,
+  onCancel,
+  onCreated,
+}: {
+  roles: Role[];
+  onCancel: () => void;
+  onCreated: (result: CreatedUser) => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
-  const [role, setRole] = useState<UserRole>("analyst");
-  const [resourceAccess, setResourceAccess] = useState<ResourceCapability[]>(["alerts", "incidents"]);
-  const [allowedTags, setAllowedTags] = useState("");
+  const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -151,15 +162,7 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
     setSubmitting(true);
     setError(null);
     try {
-      const tags = allowedTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      const result = await api.post<CreatedUser>(
-        "/api/v1/settings/users",
-        { email, name, role, resourceAccess, allowedTags: tags },
-        token,
-      );
+      const result = await api.post<CreatedUser>("/api/v1/settings/users", { email, name, roleId }, token);
       onCreated(result);
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -171,6 +174,11 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
   return (
     <form onSubmit={handleSubmit} className="panel" style={{ marginBottom: 14 }}>
       {error && <div className="error-banner">{error}</div>}
+      {roles.length === 0 && (
+        <p className="helper-text" style={{ marginBottom: 10 }}>
+          {t("settings.users.form.noRolesYet")}
+        </p>
+      )}
       <div className="form-grid">
         <div className="field">
           <label htmlFor="nu-email">{t("settings.users.form.email")}</label>
@@ -188,35 +196,12 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
           <input id="nu-name" className="input" value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div className="field">
-          <label htmlFor="nu-role">{t("settings.users.groupMappings.form.role")}</label>
-          <select id="nu-role" className="select" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>{t("settings.users.groupMappings.form.resourceAccess")}</label>
-          <ResourceAccessCheckboxes value={resourceAccess} onChange={setResourceAccess} />
-        </div>
-        <div className="field field-full">
-          <label htmlFor="nu-tags">
-            {t("settings.users.groupMappings.form.allowedTags")}{" "}
-            <span className="field-hint">{t("settings.users.groupMappings.form.allowedTagsHint")}</span>
-          </label>
-          <input
-            id="nu-tags"
-            className="input"
-            placeholder="Company: Acme Corp"
-            value={allowedTags}
-            onChange={(e) => setAllowedTags(e.target.value)}
-          />
+          <label htmlFor="nu-role">{t("settings.users.form.role")}</label>
+          <RoleSelect id="nu-role" roles={roles} value={roleId} onChange={setRoleId} />
         </div>
       </div>
       <div className="row-actions">
-        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting || roles.length === 0}>
           {submitting ? t("common.creating") : t("common.create")}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
@@ -229,18 +214,18 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
 
 function UserRow({
   user,
+  roles,
   onChanged,
   onReset,
 }: {
   user: User;
+  roles: Role[];
   onChanged: () => void;
   onReset: (result: { name: string; temporaryPassword: string }) => void;
 }) {
   const { t } = useTranslation();
   const { token, user: me } = useAuth();
-  const [role, setRole] = useState<UserRole>(user.role);
-  const [resourceAccess, setResourceAccess] = useState<ResourceCapability[]>(user.resourceAccess);
-  const [allowedTags, setAllowedTags] = useState(user.allowedTags.join(", "));
+  const [roleId, setRoleId] = useState(user.roleId);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -254,26 +239,11 @@ function UserRow({
   // confirmation at a time per row.
   const [confirming, setConfirming] = useState<"reset" | "revoke" | null>(null);
 
-  function markDirty<T>(setter: (v: T) => void) {
-    return (v: T) => {
-      setter(v);
-      setDirty(true);
-    };
-  }
-
   async function save() {
     setSaving(true);
     setError(null);
     try {
-      const tags = allowedTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      await api.put(
-        `/api/v1/settings/users/${user.id}/access`,
-        { role, resourceAccess, allowedTags: tags },
-        token,
-      );
+      await api.put(`/api/v1/settings/users/${user.id}/access`, { roleId }, token);
       setDirty(false);
       onChanged();
     } catch (err) {
@@ -347,20 +317,14 @@ function UserRow({
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <select className="select" value={role} onChange={(e) => markDirty(setRole)(e.target.value as UserRole)}>
-          {ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <ResourceAccessCheckboxes value={resourceAccess} onChange={markDirty(setResourceAccess)} />
-        <input
-          className="input"
-          style={{ width: 200 }}
-          placeholder={t("settings.users.tagsPlaceholder")}
-          value={allowedTags}
-          onChange={(e) => markDirty(setAllowedTags)(e.target.value)}
+        <RoleSelect
+          id={`user-role-${user.id}`}
+          roles={roles}
+          value={roleId}
+          onChange={(next) => {
+            setRoleId(next);
+            setDirty(true);
+          }}
         />
         {dirty && (
           <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>
@@ -421,7 +385,7 @@ function UserRow({
   );
 }
 
-function GroupMappingsPanel() {
+function GroupMappingsPanel({ roles }: { roles: Role[] }) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const { data: mappings, loading, error, reload } = useList<AuthGroupMapping>((tk) =>
@@ -465,6 +429,7 @@ function GroupMappingsPanel() {
 
       {showCreate && (
         <GroupMappingForm
+          roles={roles}
           onCancel={() => setShowCreate(false)}
           onSaved={() => {
             setShowCreate(false);
@@ -486,10 +451,10 @@ function GroupMappingsPanel() {
                 {m.externalGroup} <span className="badge badge-muted">{m.provider}</span>
               </p>
               <p className="row-sub">
-                {m.role} ·{" "}
-                {m.resourceAccess.map((c) => t(`settings.users.capability.${c}`)).join(", ") ||
+                {m.role.name} ·{" "}
+                {m.role.resourceAccess.map((c) => t(`settings.users.capability.${c}`)).join(", ") ||
                   t("settings.users.groupMappings.noAccess")}{" "}
-                · tags: {m.allowedTags.length ? m.allowedTags.join(", ") : t("settings.users.groupMappings.allTags")}
+                · tags: {m.role.allowedTags.length ? m.role.allowedTags.join(", ") : t("settings.users.groupMappings.allTags")}
               </p>
             </div>
             <div className="row-actions">
@@ -521,14 +486,20 @@ function GroupMappingsPanel() {
   );
 }
 
-function GroupMappingForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => void }) {
+function GroupMappingForm({
+  roles,
+  onCancel,
+  onSaved,
+}: {
+  roles: Role[];
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [provider, setProvider] = useState<"ldap" | "saml">("ldap");
   const [externalGroup, setExternalGroup] = useState("");
-  const [role, setRole] = useState<UserRole>("analyst");
-  const [resourceAccess, setResourceAccess] = useState<ResourceCapability[]>(["alerts", "incidents"]);
-  const [allowedTags, setAllowedTags] = useState("");
+  const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -537,13 +508,9 @@ function GroupMappingForm({ onCancel, onSaved }: { onCancel: () => void; onSaved
     setSubmitting(true);
     setError(null);
     try {
-      const tags = allowedTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
       await api.put(
         `/api/v1/settings/users/group-mappings/${provider}/${encodeURIComponent(externalGroup)}`,
-        { role, resourceAccess, allowedTags: tags },
+        { roleId },
         token,
       );
       onSaved();
@@ -557,6 +524,11 @@ function GroupMappingForm({ onCancel, onSaved }: { onCancel: () => void; onSaved
   return (
     <form onSubmit={handleSubmit} className="panel" style={{ marginBottom: 14 }}>
       {error && <div className="error-banner">{error}</div>}
+      {roles.length === 0 && (
+        <p className="helper-text" style={{ marginBottom: 10 }}>
+          {t("settings.users.form.noRolesYet")}
+        </p>
+      )}
       <div className="form-grid">
         <div className="field">
           <label htmlFor="gm-provider">{t("settings.users.groupMappings.form.provider")}</label>
@@ -587,35 +559,12 @@ function GroupMappingForm({ onCancel, onSaved }: { onCancel: () => void; onSaved
           />
         </div>
         <div className="field">
-          <label htmlFor="gm-role">{t("settings.users.groupMappings.form.role")}</label>
-          <select id="gm-role" className="select" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-            {ROLES.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>{t("settings.users.groupMappings.form.resourceAccess")}</label>
-          <ResourceAccessCheckboxes value={resourceAccess} onChange={setResourceAccess} />
-        </div>
-        <div className="field field-full">
-          <label htmlFor="gm-tags">
-            {t("settings.users.groupMappings.form.allowedTags")}{" "}
-            <span className="field-hint">{t("settings.users.groupMappings.form.allowedTagsHint")}</span>
-          </label>
-          <input
-            id="gm-tags"
-            className="input"
-            placeholder="Company: Acme Corp"
-            value={allowedTags}
-            onChange={(e) => setAllowedTags(e.target.value)}
-          />
+          <label htmlFor="gm-role">{t("settings.users.form.role")}</label>
+          <RoleSelect id="gm-role" roles={roles} value={roleId} onChange={setRoleId} />
         </div>
       </div>
       <div className="row-actions">
-        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting || roles.length === 0}>
           {submitting ? t("common.saving") : t("common.save")}
         </button>
         <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>

@@ -24,13 +24,15 @@ type Claims struct {
 	jwt.RegisteredClaims
 	TenantID uuid.UUID `json:"tenant_id"`
 	UserID   uuid.UUID `json:"user_id"`
-	Role     string    `json:"role"`
-	// ResourceAccess and AllowedTags mirror domain.User at the moment of
+	// IsAdmin mirrors the user's Role.IsAdmin at the moment of login --
+	// what gates Settings access (see middleware.RequireAdmin).
+	IsAdmin bool `json:"is_admin"`
+	// ResourceAccess and AllowedTags mirror the user's Role at the moment of
 	// login -- carrying them in the token means every request can enforce
 	// the tag-based/resource-based scoping model (see design handoff,
 	// "Tag-based + resource-based access scoping") without a DB round trip
-	// per request. Same staleness tradeoff as Role: a change in Settings ->
-	// Users & Roles takes effect on next login/token refresh, not
+	// per request. Same staleness tradeoff as IsAdmin: a change in Settings
+	// -> Users & Roles takes effect on next login/token refresh, not
 	// immediately (see tokenTTL).
 	ResourceAccess []string `json:"resource_access"`
 	AllowedTags    []string `json:"allowed_tags"`
@@ -51,7 +53,7 @@ func NewIssuer(privateKey *rsa.PrivateKey) *Issuer {
 	return &Issuer{privateKey: privateKey}
 }
 
-func (i *Issuer) Issue(tenantID, userID uuid.UUID, role string, resourceAccess []string, allowedTags []string, mustChangePassword bool) (string, error) {
+func (i *Issuer) Issue(tenantID, userID uuid.UUID, isAdmin bool, resourceAccess []string, allowedTags []string, mustChangePassword bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -61,7 +63,7 @@ func (i *Issuer) Issue(tenantID, userID uuid.UUID, role string, resourceAccess [
 		},
 		TenantID:           tenantID,
 		UserID:             userID,
-		Role:               role,
+		IsAdmin:            isAdmin,
 		ResourceAccess:     resourceAccess,
 		AllowedTags:        allowedTags,
 		MustChangePassword: mustChangePassword,
