@@ -298,13 +298,13 @@ func TestAlertService_AddCommentAndComments(t *testing.T) {
 		assert.Empty(t, comments)
 	})
 
-	imageURL := "https://example.com/screenshot.png"
-	created, err := alertSvc.AddComment(t.Context(), tenantID, alert.ID, actorID, "Marina Alves", "confirmed malicious", &imageURL)
+	attachmentURL := "https://example.com/screenshot.png"
+	created, err := alertSvc.AddComment(t.Context(), tenantID, alert.ID, actorID, "Marina Alves", "confirmed malicious", &attachmentURL)
 	require.NoError(t, err)
 	assert.Equal(t, "confirmed malicious", created.Body)
 	assert.Equal(t, "Marina Alves", created.AuthorName)
-	require.NotNil(t, created.ImageURL)
-	assert.Equal(t, imageURL, *created.ImageURL)
+	require.NotNil(t, created.AttachmentURL)
+	assert.Equal(t, attachmentURL, *created.AttachmentURL)
 
 	t.Run("the comment is returned afterward", func(t *testing.T) {
 		comments, err := alertSvc.Comments(t.Context(), tenantID, alert.ID)

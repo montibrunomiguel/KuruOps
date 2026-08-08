@@ -9,7 +9,7 @@ import type { Playbook } from "../../types/playbooks";
 import type { UserSummary } from "../../types/users";
 import { SeverityBadge, AlertStatusBadge, ClassificationBadge } from "../../components/badges";
 import { TagPicker } from "../../components/TagPicker";
-import { ImageAttachButton } from "../../components/ImageAttachButton";
+import { AttachmentButton, AttachmentPreview } from "../../components/AttachmentButton";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SparkleIcon } from "../../components/icons";
 import { formatDateTime, shortId } from "../../lib/format";
@@ -157,6 +157,7 @@ export function AlertDetailPage() {
                         <span>{formatDateTime(c.createdAt)}</span>
                       </div>
                       <p className="comment-body">{c.body}</p>
+                      {c.attachmentUrl && <AttachmentPreview url={c.attachmentUrl} />}
                     </div>
                   </div>
                 </div>
@@ -236,7 +237,7 @@ function AddAlertCommentForm({ alertId, onAdded }: { alertId: string; onAdded: (
   const { t } = useTranslation();
   const { token } = useAuth();
   const [body, setBody] = useState("");
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -246,9 +247,9 @@ function AddAlertCommentForm({ alertId, onAdded }: { alertId: string; onAdded: (
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/v1/alerts/${alertId}/comments`, { body, imageUrl }, token);
+      await api.post(`/api/v1/alerts/${alertId}/comments`, { body, attachmentUrl }, token);
       setBody("");
-      setImageUrl(null);
+      setAttachmentUrl(null);
       onAdded();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -267,7 +268,7 @@ function AddAlertCommentForm({ alertId, onAdded }: { alertId: string; onAdded: (
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-      <ImageAttachButton kind="alert" id={alertId} value={imageUrl} onChange={setImageUrl} disabled={submitting} />
+      <AttachmentButton kind="alert" id={alertId} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
       <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
         {submitting ? t("alerts.detail.posting") : t("alerts.detail.post")}
       </button>
@@ -395,7 +396,7 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
   const [open, setOpen] = useState(false);
   const [classification, setClassification] = useState<Classification>("true_positive");
   const [comment, setComment] = useState("");
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -404,7 +405,7 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/v1/alerts/${alert.id}/close`, { classification, comment, imageUrl }, token);
+      await api.post(`/api/v1/alerts/${alert.id}/close`, { classification, comment, attachmentUrl }, token);
       setOpen(false);
       onSaved();
     } catch (err) {
@@ -426,6 +427,7 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
           {alert.closeComment && (
             <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>{alert.closeComment}</p>
           )}
+          {alert.closeAttachmentUrl && <AttachmentPreview url={alert.closeAttachmentUrl} />}
         </>
       ) : !open ? (
         <>
@@ -477,7 +479,7 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
             onChange={(e) => setComment(e.target.value)}
           />
           <div className="row-actions" style={{ marginBottom: 10 }}>
-            <ImageAttachButton kind="alert" id={alert.id} value={imageUrl} onChange={setImageUrl} disabled={submitting} />
+            <AttachmentButton kind="alert" id={alert.id} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
           </div>
           <div className="row-actions">
             <button type="submit" className="btn btn-primary btn-sm" disabled={submitting} style={{ flex: 1, justifyContent: "center" }}>

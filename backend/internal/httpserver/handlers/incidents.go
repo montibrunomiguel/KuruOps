@@ -398,8 +398,8 @@ func (h *IncidentHandlers) listComments(w http.ResponseWriter, r *http.Request) 
 }
 
 type addCommentRequest struct {
-	Body     string  `json:"body"`
-	ImageURL *string `json:"imageUrl,omitempty"`
+	Body          string  `json:"body"`
+	AttachmentURL *string `json:"attachmentUrl,omitempty"`
 }
 
 func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +434,7 @@ func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.ImageURL)
+	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

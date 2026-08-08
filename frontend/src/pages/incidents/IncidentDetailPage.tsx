@@ -19,7 +19,7 @@ import type { UserSummary } from "../../types/users";
 import { SeverityBadge, PriorityBadge, AlertStatusBadge } from "../../components/badges";
 import { TagPicker } from "../../components/TagPicker";
 import { AssigneePicker } from "../../components/AssigneePicker";
-import { ImageAttachButton } from "../../components/ImageAttachButton";
+import { AttachmentButton, AttachmentPreview } from "../../components/AttachmentButton";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SparkleIcon } from "../../components/icons";
 import { formatDateTime, shortId } from "../../lib/format";
@@ -291,6 +291,7 @@ export function IncidentDetailPage() {
                         <span>{formatDateTime(c.createdAt)}</span>
                       </div>
                       <p className="comment-body">{c.body}</p>
+                      {c.attachmentUrl && <AttachmentPreview url={c.attachmentUrl} />}
                     </div>
                   </div>
                 </div>
@@ -702,7 +703,7 @@ function AddCommentForm({ incidentId, onAdded }: { incidentId: string; onAdded: 
   const { t } = useTranslation();
   const { token } = useAuth();
   const [body, setBody] = useState("");
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -712,9 +713,9 @@ function AddCommentForm({ incidentId, onAdded }: { incidentId: string; onAdded: 
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(`/api/v1/incidents/${incidentId}/comments`, { body, imageUrl }, token);
+      await api.post(`/api/v1/incidents/${incidentId}/comments`, { body, attachmentUrl }, token);
       setBody("");
-      setImageUrl(null);
+      setAttachmentUrl(null);
       onAdded();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -733,7 +734,7 @@ function AddCommentForm({ incidentId, onAdded }: { incidentId: string; onAdded: 
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-      <ImageAttachButton kind="incident" id={incidentId} value={imageUrl} onChange={setImageUrl} disabled={submitting} />
+      <AttachmentButton kind="incident" id={incidentId} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
       <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
         {submitting ? t("incidents.detail.posting") : t("incidents.detail.post")}
       </button>

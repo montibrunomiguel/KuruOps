@@ -480,14 +480,14 @@ func (s *IncidentService) Timeline(ctx context.Context, tenantID, incidentID uui
 	return events, err
 }
 
-func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, authorID uuid.UUID, authorName, body string, imageURL *string) (*domain.IncidentComment, error) {
+func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, authorID uuid.UUID, authorName, body string, attachmentURL *string) (*domain.IncidentComment, error) {
 	c := &domain.IncidentComment{
-		IncidentID: incidentID,
-		TenantID:   tenantID,
-		AuthorID:   authorID,
-		AuthorName: authorName,
-		Body:       body,
-		ImageURL:   imageURL,
+		IncidentID:    incidentID,
+		TenantID:      tenantID,
+		AuthorID:      authorID,
+		AuthorName:    authorName,
+		Body:          body,
+		AttachmentURL: attachmentURL,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.InsertComment(ctx, tx, c)
