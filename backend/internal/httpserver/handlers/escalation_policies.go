@@ -25,6 +25,7 @@ func (h *EscalationPolicyHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Put("/", h.save)
 	r.Delete("/{id}", h.delete)
+	r.Post("/test", h.test)
 }
 
 func (h *EscalationPolicyHandlers) list(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +49,9 @@ type saveEscalationPolicyRequest struct {
 	// Destination is plaintext; "" on update means keep the existing one --
 	// see EscalationPolicyService.Save.
 	Destination string `json:"destination"`
+	// WebhookPayloadTemplate only applies when ChannelType is webhook; ""
+	// means send the default fixed payload shape.
+	WebhookPayloadTemplate string `json:"webhookPayloadTemplate"`
 }
 
 func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) {
@@ -59,12 +63,37 @@ func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	policy, err := h.svc.Save(r.Context(), tenantID, req.Severity, req.UnacknowledgedAfterMinutes, req.ChannelType, req.Destination)
+	policy, err := h.svc.Save(r.Context(), tenantID, req.Severity, req.UnacknowledgedAfterMinutes, req.ChannelType, req.Destination, req.WebhookPayloadTemplate)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
+}
+
+type testEscalationPolicyRequest struct {
+	Severity domain.Severity `json:"severity"`
+}
+
+// test sends a real notification through an already-saved policy's
+// configured channel -- lets an admin confirm a destination (and, for
+// webhook, a custom payload template) actually works without waiting for a
+// real alert to go unacknowledged. Mirrors SMTPConfigHandlers' "send test
+// email" endpoint.
+func (h *EscalationPolicyHandlers) test(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+
+	var req testEscalationPolicyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.Test(r.Context(), tenantID, req.Severity); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (h *EscalationPolicyHandlers) delete(w http.ResponseWriter, r *http.Request) {

@@ -27,7 +27,14 @@ type EscalationPolicy struct {
 	ChannelType                EscalationChannelType `json:"channelType"`
 	// DestinationSecretRef is never serialized -- resolved server-side only,
 	// same discipline as every other secret ref (e.g. StorageConfig's).
-	DestinationSecretRef string    `json:"-"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	DestinationSecretRef string `json:"-"`
+	// WebhookPayloadTemplate is only meaningful when ChannelType is
+	// EscalationChannelWebhook -- nil means send notifier.WebhookSender's
+	// default fixed JSON shape, same as before this field existed. When
+	// set, {{title}}/{{description}}/{{severity}}/{{alertId}}/{{url}}
+	// placeholders are substituted in before sending (see
+	// notifier.WebhookSender.Send).
+	WebhookPayloadTemplate *string   `json:"webhookPayloadTemplate,omitempty"`
+	CreatedAt              time.Time `json:"createdAt"`
+	UpdatedAt              time.Time `json:"updatedAt"`
 }

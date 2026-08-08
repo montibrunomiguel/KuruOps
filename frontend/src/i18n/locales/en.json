@@ -697,10 +697,21 @@
     },
     "escalation": {
       "title": "On-Call Escalation",
-      "helper": "Notify whoever's on shift when an alert of a given severity stays unacknowledged (still \"open\") too long. A background job checks every minute and never re-notifies for the same alert twice.",
+      "helper": "Notify whoever's on shift when an alert of a given severity stays unacknowledged (still \"open\") too long. A background job checks every minute and never re-notifies for the same alert twice. The analyst currently on shift (Settings -> On-Call Schedule) is also emailed automatically when SMTP is configured, alongside the channel below.",
       "notConfigured": "Not configured",
+      "configured": "Configured",
       "configure": "Configure",
+      "test": "Send test",
+      "testing": "Sending...",
+      "testOk": "Test notification sent.",
+      "testFailed": "Test failed: {{error}}",
       "removeConfirm": "Stop escalating this severity?",
+      "columns": {
+        "severity": "Severity",
+        "status": "Status",
+        "channel": "Channel",
+        "minutes": "Minutes"
+      },
       "form": {
         "minutes": "Minutes unacknowledged",
         "channel": "Channel",
@@ -710,7 +721,19 @@
           "webhook": "Generic webhook"
         },
         "destination": "Destination",
-        "destinationHint": "(leave blank to keep the current one)"
+        "destinationHint": "(leave blank to keep the current one)",
+        "destinationLabel": {
+          "pagerduty": "Integration/Routing Key",
+          "slack": "Slack Webhook URL",
+          "webhook": "Destination URL"
+        },
+        "destinationHelp": {
+          "pagerduty": "The Integration Key from a PagerDuty Events API v2 integration.",
+          "slack": "An incoming webhook URL created in Slack (Apps -> Incoming Webhooks).",
+          "webhook": "Any URL that accepts an HTTP POST -- a custom on-call tool, an internal relay, etc."
+        },
+        "webhookPayloadTemplate": "Custom payload (optional)",
+        "webhookPayloadTemplateHelp": "Leave blank to send the default payload. Available placeholders:"
       }
     },
     "auditExport": {

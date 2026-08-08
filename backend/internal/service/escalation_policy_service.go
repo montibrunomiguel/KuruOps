@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/notifier"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
 )
@@ -52,7 +54,9 @@ func validEscalationChannel(channelType domain.EscalationChannelType) bool {
 // webhook URL, resolved through secrets.Store the same as every other
 // stored credential in this app; "" on update means keep the existing one
 // (same convention as StorageConfigService's SaveS3Input.SecretAccessKey).
-func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, severity domain.Severity, unacknowledgedAfterMinutes int, channelType domain.EscalationChannelType, destination string) (*domain.EscalationPolicy, error) {
+// webhookPayloadTemplate is only meaningful when channelType is webhook;
+// empty means send the default fixed payload shape (see notifier.WebhookSender).
+func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, severity domain.Severity, unacknowledgedAfterMinutes int, channelType domain.EscalationChannelType, destination string, webhookPayloadTemplate string) (*domain.EscalationPolicy, error) {
 	if unacknowledgedAfterMinutes <= 0 {
 		return nil, fmt.Errorf("unacknowledgedAfterMinutes must be greater than zero")
 	}
@@ -63,6 +67,19 @@ func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, 
 	p := &domain.EscalationPolicy{
 		TenantID: tenantID, Severity: severity,
 		UnacknowledgedAfterMinutes: unacknowledgedAfterMinutes, ChannelType: channelType,
+	}
+	if channelType == domain.EscalationChannelWebhook && webhookPayloadTemplate != "" {
+		// Catch a malformed template at save time (e.g. a stray brace)
+		// rather than the first time it's actually sent -- render it
+		// against sample values and confirm the result is valid JSON.
+		sample := notifier.RenderWebhookTemplate(webhookPayloadTemplate, notifier.Notification{
+			Title: "Sample Alert", Description: "Sample description", Severity: string(domain.SeverityHigh),
+			AlertID: uuid.New().String(), URL: "https://example.invalid/alerts/sample",
+		})
+		if !json.Valid([]byte(sample)) {
+			return nil, fmt.Errorf("webhook payload template does not produce valid JSON")
+		}
+		p.WebhookPayloadTemplate = &webhookPayloadTemplate
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		ref := ""
@@ -86,6 +103,41 @@ func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, 
 		return nil, fmt.Errorf("save escalation policy: %w", err)
 	}
 	return p, nil
+}
+
+// Test sends a real notification through the already-saved policy for
+// severity, using its resolved destination secret (and, for webhook, its
+// saved payload template) -- lets an admin confirm delivery actually works
+// without waiting for a real alert to go unacknowledged.
+func (s *EscalationPolicyService) Test(ctx context.Context, tenantID uuid.UUID, severity domain.Severity) error {
+	var p *domain.EscalationPolicy
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.GetBySeverity(ctx, tx, severity)
+		p = v
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("load escalation policy: %w", err)
+	}
+	if p == nil {
+		return fmt.Errorf("no escalation policy configured for severity %q", severity)
+	}
+
+	sender, err := notifier.NewForPolicy(string(p.ChannelType), p.WebhookPayloadTemplate)
+	if err != nil {
+		return err
+	}
+	destination, err := s.secrets.Resolve(ctx, p.DestinationSecretRef)
+	if err != nil {
+		return fmt.Errorf("resolve destination: %w", err)
+	}
+
+	return sender.Send(ctx, destination, notifier.Notification{
+		Title:       "Test escalation from ArgusOps",
+		Description: "This is a test notification triggered from Settings -> On-Call Escalation.",
+		Severity:    string(severity),
+		AlertID:     uuid.Nil.String(),
+	})
 }
 
 func (s *EscalationPolicyService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {

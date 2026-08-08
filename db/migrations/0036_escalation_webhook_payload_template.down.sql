@@ -1,0 +1,1 @@
+alter table escalation_policies drop column webhook_payload_template;
