@@ -1,0 +1,3672 @@
+openapi: 3.0.3
+info:
+  title: ArgusOps API
+  version: "0.1.0"
+  description: >
+    REST API for ArgusOps, a single-tenant SOC alert/incident-management
+    platform (Go backend, PostgreSQL, React frontend). This document covers
+    every route mounted by internal/httpserver/router.go: the unauthenticated
+    /auth/** login flows, /healthz and /metrics, and the JWT-protected
+    /api/v1/** surface (alerts, incidents, playbooks, tags, uploads,
+    dashboard, live event stream, and admin-only /settings/** configuration).
+    See the repository root README for product context, deployment, and the
+    default-admin-first-login flow; see TROUBLESHOOTING.md for operational
+    issues. This spec favors completeness of shape (paths, params, request/
+    response bodies, status codes) over exhaustive field-level validation
+    constraints.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Unauthenticated login/session flows, mounted at /auth.
+  - name: Account
+    description: Self-service account management for the calling user.
+  - name: Alerts
+    description: Alert triage, requires the "alerts" resourceAccess capability.
+  - name: Incidents
+    description: Incident response (NIST 800-61 lifecycle), requires the "incidents" resourceAccess capability.
+  - name: Playbooks
+    description: Shared reference playbooks, any authenticated user.
+  - name: Tags
+    description: Read-only tag catalog, any authenticated user.
+  - name: Uploads
+    description: Evidence image attachments for alerts/incidents.
+  - name: Users
+    description: Minimal user directory, any authenticated user.
+  - name: Dashboard
+    description: KPI/trend aggregates and the Follow-up view.
+  - name: Events
+    description: Live server-sent-event stream of alert/incident activity.
+  - name: Settings - Webhooks
+    description: Admin-only ingest webhook endpoint management.
+  - name: Settings - LLM Providers
+    description: Admin-only "Analyze with AI" provider configuration.
+  - name: Settings - MCP Servers
+    description: Admin-only MCP tool-server configuration and tool-call approvals.
+  - name: Settings - Users
+    description: Admin-only user/role/access management and IdP group mappings.
+  - name: Settings - Identity Providers
+    description: Admin-only LDAP/SAML configuration.
+  - name: Settings - Tags
+    description: Admin-only tag catalog management.
+  - name: Settings - Storage
+    description: Admin-only S3/GCS evidence-storage configuration.
+  - name: Settings - SMTP
+    description: Admin-only outbound email configuration.
+  - name: Settings - On-Call Shifts
+    description: Admin-only weekly on-call schedule.
+  - name: Settings - Incident SLA
+    description: Admin-only per-severity/priority SLA policy.
+  - name: Settings - Escalation Policies
+    description: Admin-only unacknowledged-alert escalation rules.
+  - name: Settings - Audit Export
+    description: Admin-only CEF audit log export.
+  - name: Settings - Database Migration
+    description: Admin-only one-time cutover to an externally hosted database.
+  - name: System
+    description: Unauthenticated health/metrics endpoints.
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- System
+  /healthz:
+    get:
+      tags: [System]
+      summary: Liveness check
+      description: Unauthenticated. Always returns 200 with a plain "ok" body when the process is up.
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /metrics:
+    get:
+      tags: [System]
+      summary: Prometheus metrics
+      description: Unauthenticated. Exposes process/HTTP metrics in Prometheus text exposition format.
+      security: []
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # ------------------------------------------------------------------ Auth
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Local username/password login
+      description: >
+        Unauthenticated. Rate limited per-IP (router-level) and per-email
+        (handler-level). Resolves the deployment's single tenant automatically.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: Login succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          description: Invalid credentials
+          content:
+            text/plain:
+              schema:
+                type: string
+        "429":
+          description: Too many login attempts for this account or IP
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login/ldap:
+    post:
+      tags: [Auth]
+      summary: LDAP login
+      description: Unauthenticated. Same rate limiting as local login; validates against the tenant's configured LDAP directory.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: Login succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          description: Invalid credentials
+          content:
+            text/plain:
+              schema:
+                type: string
+        "429":
+          description: Too many login attempts
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      description: Unauthenticated (the refresh token itself is the credential). Rotates the refresh token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+              required: [refreshToken]
+      responses:
+        "200":
+          description: New token pair issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  refreshToken:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          description: Invalid or expired refresh token
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/saml/metadata:
+    get:
+      tags: [Auth]
+      summary: SAML SP metadata document
+      description: Unauthenticated. Serves this tenant's SP metadata XML for IdP configuration.
+      security: []
+      responses:
+        "200":
+          description: SP metadata XML
+          content:
+            application/xml:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/saml/login:
+    get:
+      tags: [Auth]
+      summary: Initiate SAML login (redirect to IdP)
+      description: Unauthenticated. Redirects the browser to the configured IdP's SSO endpoint.
+      security: []
+      responses:
+        "302":
+          description: Redirect to the IdP
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/saml/acs:
+    post:
+      tags: [Auth]
+      summary: SAML Assertion Consumer Service callback
+      description: Unauthenticated. The IdP posts the SAML assertion here to complete login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                SAMLResponse:
+                  type: string
+      responses:
+        "200":
+          description: Login completed (response shape mirrors LoginResponse, rendered/redirected by the SAML handler)
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          description: Invalid SAML assertion
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Request a password reset email
+      description: >
+        Unauthenticated. Always returns 204 regardless of whether the email
+        matches a real, local, active account -- the response never leaks
+        account existence.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+              required: [email]
+      responses:
+        "204":
+          description: Request accepted (no content, regardless of outcome)
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "429":
+          description: Too many attempts for this account
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm a password reset with a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                newPassword:
+                  type: string
+              required: [token, newPassword]
+      responses:
+        "204":
+          description: Password reset
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "429":
+          description: Too many attempts
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # --------------------------------------------------------------- Account
+  /api/v1/account/change-password:
+    post:
+      tags: [Account]
+      summary: Change the calling user's password
+      description: >
+        The one route exempt from the "must change password" lockout (see
+        RequirePasswordChanged), since it's how that lockout gets cleared.
+        Re-issues the session token with mustChangePassword cleared.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+              required: [currentPassword, newPassword]
+      responses:
+        "200":
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/account/profile:
+    put:
+      tags: [Account]
+      summary: Update the calling user's name/email
+      description: Local-auth accounts only; changing email requires re-confirming the current password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                currentPassword:
+                  type: string
+              required: [name, email]
+      responses:
+        "200":
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------- Alerts
+  /api/v1/alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts
+      description: Requires the "alerts" resourceAccess capability. Results are further filtered to the caller's allowedTags.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - name: severity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/AlertStatus' }
+        - name: source
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: correlated
+          in: query
+          description: 'true or false; filters to alerts that are/aren''t linked to another alert.'
+          schema: { type: string }
+        - name: since
+          in: query
+          description: RFC3339 lower bound on receivedAt. Malformed values are silently ignored (treated as absent).
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Matching alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Alert' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/alerts/{id}:
+    get:
+      tags: [Alerts]
+      summary: Get an alert
+      description: Includes latestAnalysis (unlike the list endpoint).
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: The alert
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Alert' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/alerts/{id}/status:
+    post:
+      tags: [Alerts]
+      summary: Change an alert's status
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: '#/components/schemas/AlertStatus' }
+              required: [status]
+      responses:
+        "204":
+          description: Status changed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/close:
+    post:
+      tags: [Alerts]
+      summary: Close and classify an alert
+      description: Classification is only ever set through this endpoint (the "Close & Classify Alert" flow).
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                classification: { $ref: '#/components/schemas/Classification' }
+                comment: { type: string }
+                imageUrl: { type: string, nullable: true }
+              required: [classification, comment]
+      responses:
+        "204":
+          description: Alert closed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/tags:
+    put:
+      tags: [Alerts]
+      summary: Replace an alert's tags
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items: { type: string }
+              required: [tags]
+      responses:
+        "204":
+          description: Tags updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/severity:
+    put:
+      tags: [Alerts]
+      summary: Override an alert's severity
+      description: Original severity (as received) stays recorded in originalSeverity.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity: { $ref: '#/components/schemas/Severity' }
+              required: [severity]
+      responses:
+        "204":
+          description: Severity overridden
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/assignee:
+    put:
+      tags: [Alerts]
+      summary: Reassign (or unassign) an alert's analyst
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                analystId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Omit/null to unassign.
+      responses:
+        "204":
+          description: Assignee updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts linked to this alert (correlation)
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: Linked alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Alert' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/alerts/{otherId}:
+    put:
+      tags: [Alerts]
+      summary: Link two alerts together (correlation)
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - name: otherId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Linked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Alerts]
+      summary: Unlink two alerts
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - name: otherId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Unlinked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/escalate:
+    post:
+      tags: [Alerts]
+      summary: Escalate an alert into a new incident
+      description: >
+        Creates a new incident (title/severity/tags copied from the alert,
+        priority defaults to p3), links the alert to it, and marks the alert
+        'escalated'. The one endpoint that touches both the Alerts and
+        Incidents aggregates.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: Incident created from this alert
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incidentId:
+                    type: string
+                    format: uuid
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/alerts/{id}/analyze:
+    post:
+      tags: [Alerts]
+      summary: Run "Analyze with AI" on this alert
+      description: Synchronous -- blocks for the duration of the LLM call (can take several seconds).
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/alerts/{id}/comments:
+    get:
+      tags: [Alerts]
+      summary: List Team Notes comments on an alert
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: Comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertComment' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Alerts]
+      summary: Add a Team Notes comment to an alert
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body: { type: string }
+                imageUrl: { type: string, nullable: true }
+              required: [body]
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertComment' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------------------------- Incidents
+  /api/v1/incidents:
+    get:
+      tags: [Incidents]
+      summary: List incidents
+      description: Requires the "incidents" resourceAccess capability.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - name: severity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: priority
+          in: query
+          schema: { $ref: '#/components/schemas/IncidentPriority' }
+        - name: phase
+          in: query
+          schema: { $ref: '#/components/schemas/IncidentPhase' }
+        - name: tag
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          description: RFC3339 lower bound on openedAt.
+          schema: { type: string, format: date-time }
+        - name: commanderId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Matching incidents
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Incident' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Incidents]
+      summary: Create an incident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                description: { type: string }
+                severity: { $ref: '#/components/schemas/Severity' }
+                priority: { $ref: '#/components/schemas/IncidentPriority' }
+                assigneeIds:
+                  type: array
+                  items: { type: string, format: uuid }
+                tags:
+                  type: array
+                  items: { type: string }
+              required: [title, severity, priority]
+      responses:
+        "201":
+          description: Incident created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Incident' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}:
+    get:
+      tags: [Incidents]
+      summary: Get an incident
+      description: Includes roles (unlike the list endpoint).
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: The incident
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Incident' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/phase:
+    post:
+      tags: [Incidents]
+      summary: Change an incident's NIST phase
+      description: Jumping directly to any phase is allowed by design; a forward skip is logged, not rejected.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phase: { $ref: '#/components/schemas/IncidentPhase' }
+              required: [phase]
+      responses:
+        "204":
+          description: Phase changed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/close:
+    post:
+      tags: [Incidents]
+      summary: Close an incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "204":
+          description: Incident closed
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/severity-priority:
+    post:
+      tags: [Incidents]
+      summary: Set an incident's severity and priority
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity: { $ref: '#/components/schemas/Severity' }
+                priority: { $ref: '#/components/schemas/IncidentPriority' }
+              required: [severity, priority]
+      responses:
+        "204":
+          description: Updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/description:
+    put:
+      tags: [Incidents]
+      summary: Edit an incident's description
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+              required: [description]
+      responses:
+        "204":
+          description: Description updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/tags:
+    put:
+      tags: [Incidents]
+      summary: Replace an incident's tags
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tags:
+                  type: array
+                  items: { type: string }
+              required: [tags]
+      responses:
+        "204":
+          description: Tags updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/assignees:
+    put:
+      tags: [Incidents]
+      summary: Replace an incident's assignees
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assigneeIds:
+                  type: array
+                  items: { type: string, format: uuid }
+              required: [assigneeIds]
+      responses:
+        "204":
+          description: Assignees updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/roles/{role}:
+    put:
+      tags: [Incidents]
+      summary: Assign users to a NIST 800-61 team role
+      description: >
+        Role comes from the path (one of commander, incident_handler,
+        communications_lead, privacy_officer, technical_lead). commander and
+        technical_lead are single-assignee; an unknown role is a 400, not a
+        routing 404.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - name: role
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/IncidentRole' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userIds:
+                  type: array
+                  items: { type: string, format: uuid }
+              required: [userIds]
+      responses:
+        "204":
+          description: Role assignment updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/status-history:
+    get:
+      tags: [Incidents]
+      summary: List an incident's NIST phase history
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: Phase history entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IncidentStatusHistoryEntry' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/status-history/{phase}/correct:
+    post:
+      tags: [Incidents]
+      summary: Correct a phase-entry timestamp
+      description: >
+        The original enteredAt is never mutated -- this fills
+        correctedEnteredAt/correctedBy/correctionReason alongside it so the
+        original stays intact for audit.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - name: phase
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/IncidentPhase' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enteredAt:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+              required: [enteredAt, reason]
+      responses:
+        "204":
+          description: Correction recorded
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/timeline:
+    get:
+      tags: [Incidents]
+      summary: Get an incident's full audit timeline
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: Timeline events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IncidentEvent' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/comments:
+    get:
+      tags: [Incidents]
+      summary: List Team Notes comments on an incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: Comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IncidentComment' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Incidents]
+      summary: Add a Team Notes comment to an incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body: { type: string }
+                imageUrl: { type: string, nullable: true }
+              required: [body]
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentComment' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/alerts:
+    get:
+      tags: [Incidents]
+      summary: List alerts linked to this incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: Linked alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Alert' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/{id}/alerts/{alertId}:
+    put:
+      tags: [Incidents]
+      summary: Link an alert to this incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Linked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Incidents]
+      summary: Unlink an alert from this incident
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - name: alertId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Unlinked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/incidents/{id}/analyze:
+    post:
+      tags: [Incidents]
+      summary: Run "Analyze with AI" on this incident
+      description: Synchronous -- blocks for the duration of the LLM call.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------------------- Playbooks
+  /api/v1/playbooks:
+    get:
+      tags: [Playbooks]
+      summary: List playbooks
+      description: Not gated by resourceAccess -- shared reference material for both alerts and incidents.
+      responses:
+        "200":
+          description: Playbooks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Playbook' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Playbooks]
+      summary: Create a playbook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePlaybookRequest'
+      responses:
+        "201":
+          description: Playbook created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/playbooks/{id}:
+    get:
+      tags: [Playbooks]
+      summary: Get a playbook
+      parameters:
+        - $ref: '#/components/parameters/PlaybookId'
+      responses:
+        "200":
+          description: The playbook
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Playbooks]
+      summary: Update a playbook
+      parameters:
+        - $ref: '#/components/parameters/PlaybookId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePlaybookRequest'
+      responses:
+        "200":
+          description: Playbook updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Playbook' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [Playbooks]
+      summary: Delete a playbook
+      parameters:
+        - $ref: '#/components/parameters/PlaybookId'
+      responses:
+        "204":
+          description: Playbook deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/playbooks/match:
+    get:
+      tags: [Playbooks]
+      summary: Find the best-matching playbook for an alert title
+      description: Backs the "Related Playbook" auto-suggestion panel on Alert Detail.
+      parameters:
+        - name: title
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Best match, or null if no playbook's keywords match
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf:
+                  - $ref: '#/components/schemas/Playbook'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------------------------------ Tags
+  /api/v1/tags:
+    get:
+      tags: [Tags]
+      summary: List the tag catalog
+      description: Read-only, any authenticated user. Managing the catalog is admin-only, see /settings/tags.
+      responses:
+        "200":
+          description: Tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Tag' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # --------------------------------------------------------------- Uploads
+  /api/v1/uploads/images:
+    post:
+      tags: [Uploads]
+      summary: Upload an evidence image
+      description: >
+        multipart/form-data with fields kind ("alert" or "incident"), id (the
+        alert/incident UUID), and file (PNG/JPEG/GIF/WebP, sniffed
+        server-side, max 5MB). Any authenticated user.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum: [alert, incident]
+                id:
+                  type: string
+                  format: uuid
+                file:
+                  type: string
+                  format: binary
+              required: [kind, id, file]
+      responses:
+        "201":
+          description: File stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    description: Path to GET the file back, e.g. /api/v1/uploads/images/Alert/2026/08/07/<id>_<slug>/<uuid>.png
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          description: Referenced alert/incident not found or not visible to the caller's tag scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/uploads/images/{key}:
+    get:
+      tags: [Uploads]
+      summary: Fetch a stored evidence image
+      description: >
+        The path after /images/ is the full object key (multiple "/"-separated
+        segments: Alert|Incident/yyyy/mm/dd/<id>_<slug>/<uuid>.<ext>),
+        represented here as a single opaque path parameter.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Full object key, e.g. Alert/2026/08/07/3f2c.../3d9e....png
+          schema: { type: string }
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "400":
+          description: Key fails the expected shape validation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ----------------------------------------------------------------- Users
+  /api/v1/users/directory:
+    get:
+      tags: [Users]
+      summary: Minimal {id, name} user directory
+      description: >
+        Any authenticated user, deliberately not under the admin-gated
+        /settings/users -- used to resolve a display name for a userID (e.g.
+        Incident.Assignees) or populate an assignee picker, without exposing
+        role/email/resourceAccess.
+      responses:
+        "200":
+          description: User summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UserSummary' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------------------------- Dashboard
+  /api/v1/dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: KPI cards, trend charts, and breakdowns
+      description: Not gated by resourceAccess -- blends alert and incident KPIs into one summary.
+      parameters:
+        - name: alertSeverity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: alertStatus
+          in: query
+          schema: { $ref: '#/components/schemas/AlertStatus' }
+        - name: alertSource
+          in: query
+          schema: { type: string }
+        - name: alertTag
+          in: query
+          schema: { type: string }
+        - name: assignedAnalystId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: incidentSeverity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: incidentTag
+          in: query
+          schema: { type: string }
+        - name: commanderId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardStats' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      summary: Recent Activity feed
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer }
+        - name: kind
+          in: query
+          description: Filter to "alert" or "incident" activity; omit for both.
+          schema: { type: string, enum: [alert, incident] }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Activity events, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ActivityEvent' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/dashboard/followup:
+    get:
+      tags: [Dashboard]
+      summary: Follow-up view (SLA-breached incidents + escalated/investigating alerts)
+      description: Requires the "followup" resourceAccess capability, gated independently of "alerts"/"incidents".
+      parameters:
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Follow-up view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FollowupView' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------- Events
+  /api/v1/events/stream:
+    get:
+      tags: [Events]
+      summary: Live alert/incident event stream (SSE)
+      description: >
+        text/event-stream, long-lived. Not gated by resourceAccess -- same
+        reasoning as /dashboard. Each event is `event: <type>\ndata:
+        <json>\n\n`; a `: ping\n\n` comment is sent every 25s to keep the
+        connection alive through intermediate proxies.
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          description: Streaming unsupported by the response writer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ------------------------------------------------------ Settings: Webhooks
+  /api/v1/settings/webhooks:
+    get:
+      tags: [Settings - Webhooks]
+      summary: List webhook endpoints
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Webhook endpoints
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WebhookEndpoint' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - Webhooks]
+      summary: Create a webhook endpoint
+      description: The bearer token is returned once, in this response only -- never retrievable again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                source: { type: string }
+                expiresInDays:
+                  type: integer
+                  nullable: true
+                  description: Omitted/null -> default 90d; 0 or negative -> never expires.
+              required: [name, source]
+      responses:
+        "201":
+          description: Endpoint created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  endpoint: { $ref: '#/components/schemas/WebhookEndpoint' }
+                  token: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/webhooks/{id}/regenerate:
+    post:
+      tags: [Settings - Webhooks]
+      summary: Regenerate a webhook endpoint's token
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expiresInDays:
+                  type: integer
+                  nullable: true
+      responses:
+        "200":
+          description: New token (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/webhooks/{id}/disable:
+    post:
+      tags: [Settings - Webhooks]
+      summary: Disable a webhook endpoint
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        "204":
+          description: Disabled
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/webhooks/{id}/enable:
+    post:
+      tags: [Settings - Webhooks]
+      summary: Re-enable a webhook endpoint
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      responses:
+        "204":
+          description: Enabled
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # --------------------------------------------------- Settings: LLM Providers
+  /api/v1/settings/llm-providers:
+    get:
+      tags: [Settings - LLM Providers]
+      summary: List LLM providers
+      responses:
+        "200":
+          description: LLM providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LLMProvider' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - LLM Providers]
+      summary: Create an LLM provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveLLMProviderRequest'
+      responses:
+        "201":
+          description: Provider created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LLMProvider' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/llm-providers/{id}:
+    put:
+      tags: [Settings - LLM Providers]
+      summary: Update an LLM provider
+      description: Empty apiKey means "keep the existing key".
+      parameters:
+        - $ref: '#/components/parameters/LLMProviderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveLLMProviderRequest'
+      responses:
+        "200":
+          description: Provider updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LLMProvider' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - LLM Providers]
+      summary: Delete an LLM provider
+      parameters:
+        - $ref: '#/components/parameters/LLMProviderId'
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/llm-providers/{id}/default:
+    post:
+      tags: [Settings - LLM Providers]
+      summary: Set this provider as the tenant default
+      parameters:
+        - $ref: '#/components/parameters/LLMProviderId'
+      responses:
+        "204":
+          description: Default set
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ----------------------------------------------------- Settings: MCP Servers
+  /api/v1/settings/mcp-servers:
+    get:
+      tags: [Settings - MCP Servers]
+      summary: List MCP servers
+      responses:
+        "200":
+          description: MCP servers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MCPServer' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Register an MCP server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveMCPServerRequest'
+      responses:
+        "201":
+          description: Server registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServer' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/mcp-servers/{id}:
+    put:
+      tags: [Settings - MCP Servers]
+      summary: Update an MCP server
+      parameters:
+        - $ref: '#/components/parameters/MCPServerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveMCPServerRequest'
+      responses:
+        "200":
+          description: Server updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPServer' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - MCP Servers]
+      summary: Delete an MCP server
+      parameters:
+        - $ref: '#/components/parameters/MCPServerId'
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/mcp-servers/{id}/enable:
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Enable an MCP server
+      parameters:
+        - $ref: '#/components/parameters/MCPServerId'
+      responses:
+        "204":
+          description: Enabled
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/mcp-servers/{id}/disable:
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Disable an MCP server
+      parameters:
+        - $ref: '#/components/parameters/MCPServerId'
+      responses:
+        "204":
+          description: Disabled
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/mcp-servers/{id}/discover-tools:
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Connect to the server live and list its tool catalog
+      description: Backs the "Discover tools" button so an admin can pick allowedTools/sideEffectingTools from what the server actually exposes.
+      parameters:
+        - $ref: '#/components/parameters/MCPServerId'
+      responses:
+        "200":
+          description: Tools the server exposes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MCPTool' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "502":
+          description: Could not reach or negotiate with the MCP server
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/settings/mcp-servers/tool-calls:
+    get:
+      tags: [Settings - MCP Servers]
+      summary: List MCP tool calls pending analyst approval
+      responses:
+        "200":
+          description: Pending tool calls
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AIToolCall' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/mcp-servers/tool-calls/{callId}/approve:
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Approve a pending side-effecting tool call
+      parameters:
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Approved (and executed)
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/mcp-servers/tool-calls/{callId}/reject:
+    post:
+      tags: [Settings - MCP Servers]
+      summary: Reject a pending side-effecting tool call
+      parameters:
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Rejected
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ----------------------------------------------------------- Settings: Users
+  /api/v1/settings/users:
+    get:
+      tags: [Settings - Users]
+      summary: List all users (admin view)
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - Users]
+      summary: Create a local user
+      description: Response includes a one-time temporaryPassword the admin must relay to the user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                name: { type: string }
+                role: { $ref: '#/components/schemas/UserRole' }
+                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+                allowedTags:
+                  type: array
+                  items: { type: string }
+              required: [email, name, role]
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  temporaryPassword: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/access:
+    put:
+      tags: [Settings - Users]
+      summary: Update a user's role, resourceAccess, and allowedTags
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: '#/components/schemas/UserRole' }
+                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+                allowedTags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "204":
+          description: Access updated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/deactivate:
+    post:
+      tags: [Settings - Users]
+      summary: Deactivate a user
+      description: Also best-effort revokes the user's active refresh tokens.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "204":
+          description: Deactivated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/activate:
+    post:
+      tags: [Settings - Users]
+      summary: Reactivate a user
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "204":
+          description: Activated
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/reset-password:
+    post:
+      tags: [Settings - Users]
+      summary: Reset a user's password
+      description: Response includes a one-time temporaryPassword, same show-once convention as user creation.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "200":
+          description: Password reset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  temporaryPassword: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/revoke-sessions:
+    post:
+      tags: [Settings - Users]
+      summary: Revoke a user's active refresh tokens
+      description: Does not deactivate the account; the current access token still works until its own 15-minute expiry.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        "204":
+          description: Sessions revoked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/users/group-mappings:
+    get:
+      tags: [Settings - Users]
+      summary: List LDAP/SAML group-to-role mappings
+      responses:
+        "200":
+          description: Group mappings
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuthGroupMapping' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/users/group-mappings/{provider}/{group}:
+    put:
+      tags: [Settings - Users]
+      summary: Create or update a group-to-role mapping
+      description: Applied just-in-time on every federated login, so IdP group membership changes take effect without manual user edits.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/AuthProvider' }
+        - name: group
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: '#/components/schemas/UserRole' }
+                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+                allowedTags:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Mapping saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthGroupMapping' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/group-mappings/{id}:
+    delete:
+      tags: [Settings - Users]
+      summary: Delete a group-to-role mapping
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Mapping deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ---------------------------------------------- Settings: Identity Providers
+  /api/v1/settings/identity-providers/ldap:
+    get:
+      tags: [Settings - Identity Providers]
+      summary: Get the tenant's LDAP configuration
+      responses:
+        "200":
+          description: LDAP config, or null if unconfigured
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf: [{ $ref: '#/components/schemas/LDAPConfig' }]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - Identity Providers]
+      summary: Create or replace the tenant's LDAP configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                useTls: { type: boolean }
+                bindDn: { type: string }
+                bindPassword: { type: string }
+                userBaseDn: { type: string }
+                userFilter: { type: string }
+                groupBaseDn: { type: string }
+                groupAttribute: { type: string }
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - Identity Providers]
+      summary: Delete the tenant's LDAP configuration
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/identity-providers/saml:
+    get:
+      tags: [Settings - Identity Providers]
+      summary: Get the tenant's SAML configuration
+      responses:
+        "200":
+          description: SAML config, or null if unconfigured
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf: [{ $ref: '#/components/schemas/SAMLConfig' }]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - Identity Providers]
+      summary: Create or replace the tenant's SAML configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                idpMetadataUrl: { type: string, nullable: true }
+                idpMetadataXml: { type: string, nullable: true }
+                acsUrl: { type: string }
+                spEntityId: { type: string }
+                groupAttribute: { type: string, nullable: true }
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - Identity Providers]
+      summary: Delete the tenant's SAML configuration
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------------------------ Settings: Tags
+  /api/v1/settings/tags:
+    post:
+      tags: [Settings - Tags]
+      summary: Create a tag in the catalog
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                color: { type: string, nullable: true }
+              required: [name]
+      responses:
+        "201":
+          description: Tag created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tag' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/tags/{id}:
+    delete:
+      tags: [Settings - Tags]
+      summary: Delete a tag from the catalog
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # --------------------------------------------------------- Settings: Storage
+  /api/v1/settings/storage:
+    get:
+      tags: [Settings - Storage]
+      summary: Get the tenant's storage configuration
+      responses:
+        "200":
+          description: Storage config, or null if unconfigured (local disk in use)
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf: [{ $ref: '#/components/schemas/StorageConfig' }]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Settings - Storage]
+      summary: Delete the tenant's storage configuration (revert to local disk)
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/storage/s3:
+    put:
+      tags: [Settings - Storage]
+      summary: Configure S3 storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bucket: { type: string }
+                region: { type: string }
+                accessKeyId: { type: string }
+                secretAccessKey: { type: string }
+              required: [bucket, region, accessKeyId, secretAccessKey]
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/storage/gcs:
+    put:
+      tags: [Settings - Storage]
+      summary: Configure GCS storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bucket: { type: string }
+                projectId: { type: string }
+                credentialsJson: { type: string }
+              required: [bucket, projectId, credentialsJson]
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------------------ Settings: SMTP
+  /api/v1/settings/smtp:
+    get:
+      tags: [Settings - SMTP]
+      summary: Get the tenant's SMTP configuration
+      responses:
+        "200":
+          description: SMTP config, or null if unconfigured
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf: [{ $ref: '#/components/schemas/SMTPConfig' }]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - SMTP]
+      summary: Create or replace the tenant's SMTP configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host: { type: string }
+                port: { type: integer }
+                useTls: { type: boolean }
+                username: { type: string }
+                password: { type: string }
+                fromAddress: { type: string }
+                fromName: { type: string }
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - SMTP]
+      summary: Delete the tenant's SMTP configuration
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/smtp/test:
+    post:
+      tags: [Settings - SMTP]
+      summary: Send a test email using the configured SMTP settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to: { type: string }
+              required: [to]
+      responses:
+        "204":
+          description: Test email sent
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------- Settings: On-Call Shifts
+  /api/v1/settings/on-call-shifts:
+    get:
+      tags: [Settings - On-Call Shifts]
+      summary: Get the on-call schedule (timezone + shifts)
+      responses:
+        "200":
+          description: Schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  timezone: { type: string }
+                  shifts:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnCallShift' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - On-Call Shifts]
+      summary: Create a weekly recurring shift
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string, format: uuid }
+                weekday:
+                  type: integer
+                  description: 0=Sunday .. 6=Saturday
+                startMinute:
+                  type: integer
+                  description: Minutes since midnight, tenant timezone.
+                endMinute:
+                  type: integer
+              required: [userId, weekday, startMinute, endMinute]
+      responses:
+        "201":
+          description: Shift created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnCallShift' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/on-call-shifts/{id}:
+    delete:
+      tags: [Settings - On-Call Shifts]
+      summary: Delete a shift
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/on-call-shifts/timezone:
+    put:
+      tags: [Settings - On-Call Shifts]
+      summary: Set the tenant's on-call timezone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timezone: { type: string }
+              required: [timezone]
+      responses:
+        "204":
+          description: Timezone set
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------- Settings: Incident SLA
+  /api/v1/settings/incident-sla:
+    get:
+      tags: [Settings - Incident SLA]
+      summary: List incident SLA policies
+      responses:
+        "200":
+          description: SLA policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IncidentSLAPolicy' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - Incident SLA]
+      summary: Create or update the SLA policy for a (severity, priority) pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity: { $ref: '#/components/schemas/Severity' }
+                priority: { $ref: '#/components/schemas/IncidentPriority' }
+                dueWithinMinutes: { type: integer }
+              required: [severity, priority, dueWithinMinutes]
+      responses:
+        "200":
+          description: Policy saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentSLAPolicy' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/incident-sla/{id}:
+    delete:
+      tags: [Settings - Incident SLA]
+      summary: Delete an SLA policy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------- Settings: Escalation Policies
+  /api/v1/settings/escalation-policies:
+    get:
+      tags: [Settings - Escalation Policies]
+      summary: List escalation policies
+      responses:
+        "200":
+          description: Escalation policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EscalationPolicy' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - Escalation Policies]
+      summary: Create or update the escalation policy for a severity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity: { $ref: '#/components/schemas/Severity' }
+                unacknowledgedAfterMinutes: { type: integer }
+                channelType: { $ref: '#/components/schemas/EscalationChannelType' }
+                destination:
+                  type: string
+                  description: Plaintext destination (e.g. Slack webhook URL, PagerDuty routing key); empty on update keeps the existing one.
+              required: [severity, unacknowledgedAfterMinutes, channelType]
+      responses:
+        "200":
+          description: Policy saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EscalationPolicy' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/escalation-policies/{id}:
+    delete:
+      tags: [Settings - Escalation Policies]
+      summary: Delete an escalation policy
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ------------------------------------------------- Settings: Audit Export
+  /api/v1/settings/audit-export/cef:
+    get:
+      tags: [Settings - Audit Export]
+      summary: Export the tenant's alert/incident event history as CEF
+      description: >
+        Downloadable text/plain CEF log. Supports keyset pagination:
+        sinceCreatedAt/sinceEventId resume a previous pull; when more pages
+        remain, the response carries X-Next-Cursor-Created-At and
+        X-Next-Cursor-Event-Id headers for the next call.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 1000, maximum: 10000 }
+        - name: sinceCreatedAt
+          in: query
+          description: RFC3339Nano cursor timestamp from a previous page's X-Next-Cursor-Created-At header.
+          schema: { type: string, format: date-time }
+        - name: sinceEventId
+          in: query
+          description: Cursor event id from a previous page's X-Next-Cursor-Event-Id header.
+          schema: { type: string }
+      responses:
+        "200":
+          description: CEF log lines
+          headers:
+            X-Next-Cursor-Created-At:
+              description: Present only if more pages remain.
+              schema: { type: string }
+            X-Next-Cursor-Event-Id:
+              description: Present only if more pages remain.
+              schema: { type: string }
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # -------------------------------------------- Settings: Database Migration
+  /api/v1/settings/database-migration/test-connection:
+    post:
+      tags: [Settings - Database Migration]
+      summary: Test connectivity to a target external database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TargetDBConfig'
+      responses:
+        "204":
+          description: Connection succeeded
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/database-migration/migrate:
+    post:
+      tags: [Settings - Database Migration]
+      summary: One-time cutover to an externally hosted database
+      description: >
+        Synchronous: tests the connection, replays schema migrations, sets
+        up app/worker roles, and copies every row over in one blocking call
+        (seconds to minutes depending on data volume). The returned DSNs must
+        be put in DATABASE_URL for api/ingest and worker before restarting
+        the stack against the new database -- this is a manual-restart
+        cutover, not a live hot-swap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TargetDBConfig'
+      responses:
+        "200":
+          description: Migration complete
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationResult' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Required on every /api/v1/** route. /auth/** is intentionally
+        unauthenticated (that's how a session is obtained in the first
+        place), and /healthz and /metrics are unauthenticated for
+        infrastructure health checks and scraping. A caller whose
+        mustChangePassword flag is still set can reach nothing under
+        /api/v1/** except POST /api/v1/account/change-password (see
+        RequirePasswordChanged), receiving 403 on everything else until the
+        password is changed.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size, 1-200. Invalid or out-of-range values fall back to the server default (50).
+      schema: { type: integer, minimum: 1, maximum: 200 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0 }
+    AlertId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IncidentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PlaybookId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    WebhookId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    LLMProviderId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MCPServerId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ToolCallId:
+      name: callId
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Malformed request body, path, or query parameter
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, malformed, or expired bearer token
+      content:
+        text/plain:
+          schema:
+            type: string
+            description: >-
+              Plain-text error message, issued by the auth middleware via
+              http.Error -- not the handler-level JSON error shape used
+              elsewhere in this API.
+    Forbidden:
+      description: Authenticated, but the caller's role/resourceAccess doesn't permit this action (or the account still must change its password)
+      content:
+        text/plain:
+          schema:
+            type: string
+            description: >-
+              Plain-text error message, issued by the auth middleware via
+              http.Error -- not the handler-level JSON error shape used
+              elsewhere in this API.
+    NotFound:
+      description: No resource with that id (or not visible under the caller's tag scope)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Unexpected server-side failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      description: Standard handler-level error shape, written by handlers.writeError.
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    Severity:
+      type: string
+      enum: [critical, high, medium, low, informational]
+    AlertStatus:
+      type: string
+      enum: [open, investigating, escalated, closed]
+    Classification:
+      type: string
+      enum: [false_positive, true_positive, authorized_event]
+    IncidentPhase:
+      type: string
+      enum: [new, detection_analysis, containment, eradication, recovery, post_incident]
+    IncidentPriority:
+      type: string
+      enum: [p1, p2, p3, p4]
+    IncidentRole:
+      type: string
+      enum: [commander, technical_lead, incident_handler, communications_lead, privacy_officer]
+    UserRole:
+      type: string
+      enum: [admin, analyst, viewer]
+    AuthProvider:
+      type: string
+      enum: [local, ldap, saml]
+    ActorType:
+      type: string
+      enum: [user, system, ai]
+    ToolCallStatus:
+      type: string
+      enum: [proposed, approved, rejected, executed, failed]
+    EscalationChannelType:
+      type: string
+      enum: [pagerduty, slack, webhook]
+    ResourceAccess:
+      type: array
+      description: Capability set; any combination of the three values.
+      items:
+        type: string
+        enum: [alerts, incidents, followup]
+
+    UserSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+
+    User:
+      type: object
+      description: PasswordHash/MFATOTPSecret are never serialized (json:"-" in the Go struct).
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        authProvider: { $ref: '#/components/schemas/AuthProvider' }
+        externalId: { type: string, nullable: true }
+        role: { $ref: '#/components/schemas/UserRole' }
+        resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+        allowedTags:
+          type: array
+          items: { type: string }
+          description: Empty = unrestricted, sees all tags.
+        isActive: { type: boolean }
+        mustChangePassword: { type: boolean }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, tenantId, email, name, authProvider, role, resourceAccess, allowedTags, isActive, mustChangePassword, createdAt, updatedAt]
+
+    AuthGroupMapping:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        provider: { $ref: '#/components/schemas/AuthProvider' }
+        externalGroup: { type: string }
+        role: { $ref: '#/components/schemas/UserRole' }
+        resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+        allowedTags:
+          type: array
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    LoginRequest:
+      type: object
+      properties:
+        email: { type: string }
+        password: { type: string }
+      required: [email, password]
+
+    LoginResponse:
+      type: object
+      properties:
+        token: { type: string }
+        refreshToken: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: string }
+            email: { type: string }
+            name: { type: string }
+            role: { type: string }
+            mustChangePassword: { type: boolean }
+
+    Alert:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        externalId: { type: string, nullable: true }
+        webhookEndpointId: { type: string, format: uuid, nullable: true }
+        title: { type: string }
+        source: { type: string }
+        severity: { $ref: '#/components/schemas/Severity' }
+        originalSeverity: { $ref: '#/components/schemas/Severity' }
+        status: { $ref: '#/components/schemas/AlertStatus' }
+        classification:
+          type: string
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/Classification' }]
+        closeComment: { type: string, nullable: true }
+        closeImageUrl: { type: string, nullable: true }
+        ruleId: { type: string, nullable: true }
+        asset: { type: string, nullable: true }
+        srcIp: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+        payload:
+          description: Unfiltered raw webhook body -- arbitrary JSON.
+        metadata:
+          description: Sender's curated key/value list; always an object, possibly empty, never null.
+          type: object
+        incidentId: { type: string, format: uuid, nullable: true }
+        assignedAnalystId: { type: string, format: uuid, nullable: true }
+        assignedAnalystName: { type: string, nullable: true }
+        receivedAt: { type: string, format: date-time }
+        acknowledgedAt: { type: string, format: date-time, nullable: true }
+        closedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        latestAnalysis:
+          type: string
+          nullable: true
+          description: Most recent completed "Analyze with AI" result. Only populated on GET of a single alert, not on list.
+      required: [id, tenantId, title, source, severity, originalSeverity, status, tags, payload, metadata, receivedAt, createdAt, updatedAt]
+
+    AlertComment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        alertId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        authorId: { type: string, format: uuid }
+        authorName: { type: string }
+        body: { type: string }
+        imageUrl: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Incident:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        severity: { $ref: '#/components/schemas/Severity' }
+        priority: { $ref: '#/components/schemas/IncidentPriority' }
+        phase: { $ref: '#/components/schemas/IncidentPhase' }
+        assignees:
+          type: array
+          items: { $ref: '#/components/schemas/UserSummary' }
+        roles:
+          type: array
+          description: Only populated on GET of a single incident, not on list.
+          items: { $ref: '#/components/schemas/IncidentRoleAssignment' }
+        tags:
+          type: array
+          items: { type: string }
+        slaDueAt: { type: string, format: date-time, nullable: true }
+        slaBreached: { type: boolean }
+        openedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, tenantId, title, description, severity, priority, phase, assignees, roles, tags, slaBreached, openedAt, createdAt, updatedAt]
+
+    IncidentRoleAssignment:
+      type: object
+      properties:
+        role: { $ref: '#/components/schemas/IncidentRole' }
+        user: { $ref: '#/components/schemas/UserSummary' }
+
+    IncidentStatusHistoryEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        incidentId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        phase: { $ref: '#/components/schemas/IncidentPhase' }
+        enteredAt: { type: string, format: date-time }
+        correctedEnteredAt: { type: string, format: date-time, nullable: true }
+        correctedAt: { type: string, format: date-time, nullable: true }
+        correctedBy: { type: string, format: uuid, nullable: true }
+        correctionReason: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    IncidentEvent:
+      type: object
+      description: Append-only audit row; never updated after insert.
+      properties:
+        id: { type: integer, format: int64 }
+        incidentId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        eventType:
+          type: string
+          enum: [created, phase_changed, phase_skipped, closed, severity_priority_changed, description_edited, tags_changed, alert_linked, alert_unlinked, ai_analysis_run, status_timestamp_corrected, assignees_changed, role_assigned, role_unassigned]
+        actorType: { $ref: '#/components/schemas/ActorType' }
+        actorId: { type: string, format: uuid, nullable: true }
+        data:
+          description: Event-type-specific JSON payload.
+        createdAt: { type: string, format: date-time }
+
+    IncidentComment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        incidentId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        authorId: { type: string, format: uuid }
+        authorName: { type: string }
+        body: { type: string }
+        imageUrl: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    Playbook:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        title: { type: string }
+        category: { type: string }
+        description: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+        steps:
+          type: object
+          description: Map of NIST phase -> ordered action lines for that phase.
+          additionalProperties:
+            type: array
+            items: { type: string }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SavePlaybookRequest:
+      type: object
+      properties:
+        title: { type: string }
+        category: { type: string }
+        description: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
+        steps:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+      required: [title]
+
+    Tag:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string, nullable: true }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    WebhookEndpoint:
+      type: object
+      description: TokenHash is never serialized; only the last 4 characters are exposed.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        source: { type: string }
+        tokenLast4: { type: string }
+        status: { type: string }
+        rotatedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    LLMProvider:
+      type: object
+      description: APIKeySecretRef is never serialized; the key itself is never stored in this table.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string }
+        baseUrl: { type: string, nullable: true }
+        model: { type: string }
+        isDefault: { type: boolean }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SaveLLMProviderRequest:
+      type: object
+      properties:
+        name: { type: string }
+        kind: { type: string }
+        baseUrl: { type: string, nullable: true }
+        model: { type: string }
+        apiKey:
+          type: string
+          description: Write-only. Required on create; empty on update means "keep the existing key".
+      required: [name, model]
+
+    MCPServer:
+      type: object
+      description: AuthSecretRef is never serialized.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        transport: { type: string }
+        endpointOrCommand: { type: string }
+        allowedTools:
+          type: array
+          items: { type: string }
+        enabledFor:
+          type: array
+          items: { type: string }
+        sideEffectingTools:
+          type: array
+          items: { type: string }
+          description: Subset of allowedTools that always require analyst approval before executing.
+        isEnabled: { type: boolean }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SaveMCPServerRequest:
+      type: object
+      properties:
+        name: { type: string }
+        transport: { type: string }
+        endpointOrCommand: { type: string }
+        authToken:
+          type: string
+          description: Write-only.
+        allowedTools:
+          type: array
+          items: { type: string }
+        enabledFor:
+          type: array
+          items: { type: string }
+        sideEffectingTools:
+          type: array
+          items: { type: string }
+      required: [name, endpointOrCommand]
+
+    MCPTool:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        inputSchema:
+          description: JSON Schema describing the tool's arguments.
+
+    AIToolCall:
+      type: object
+      description: Forensic log row of an MCP tool the analysis agent invoked or proposed.
+      properties:
+        id: { type: integer, format: int64 }
+        tenantId: { type: string, format: uuid }
+        mcpServerId: { type: string, format: uuid }
+        toolName: { type: string }
+        contextType:
+          type: string
+          enum: [alert, incident]
+        contextId: { type: string, format: uuid }
+        args:
+          description: Arguments the agent proposed calling the tool with.
+        result:
+          description: Tool result, once executed.
+        status: { $ref: '#/components/schemas/ToolCallStatus' }
+        approvedBy: { type: string, format: uuid, nullable: true }
+        approvedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    LDAPConfig:
+      type: object
+      description: BindPasswordSecretRef is never serialized.
+      properties:
+        tenantId: { type: string, format: uuid }
+        host: { type: string }
+        port: { type: integer }
+        useTls: { type: boolean }
+        bindDn: { type: string }
+        userBaseDn: { type: string }
+        userFilter: { type: string }
+        groupBaseDn: { type: string }
+        groupAttribute: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SAMLConfig:
+      type: object
+      description: SPCertSecretRef/SPKeySecretRef are never serialized.
+      properties:
+        tenantId: { type: string, format: uuid }
+        idpMetadataUrl: { type: string, nullable: true }
+        idpMetadataXml: { type: string, nullable: true }
+        spEntityId: { type: string }
+        acsUrl: { type: string }
+        groupAttribute: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    StorageConfig:
+      type: object
+      description: Secret-reference fields (access key/service-account JSON) are never serialized.
+      properties:
+        tenantId: { type: string, format: uuid }
+        provider:
+          type: string
+          enum: [s3, gcs]
+        s3Bucket: { type: string, nullable: true }
+        s3Region: { type: string, nullable: true }
+        s3AccessKeyId: { type: string, nullable: true }
+        gcsBucket: { type: string, nullable: true }
+        gcsProjectId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SMTPConfig:
+      type: object
+      description: PasswordSecretRef is never serialized.
+      properties:
+        tenantId: { type: string, format: uuid }
+        host: { type: string }
+        port: { type: integer }
+        useTls: { type: boolean }
+        username: { type: string }
+        fromAddress: { type: string }
+        fromName: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    OnCallShift:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        userName: { type: string }
+        weekday:
+          type: integer
+          description: 0=Sunday .. 6=Saturday
+        startMinute: { type: integer }
+        endMinute: { type: integer }
+        createdAt: { type: string, format: date-time }
+
+    IncidentSLAPolicy:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        severity: { $ref: '#/components/schemas/Severity' }
+        priority: { $ref: '#/components/schemas/IncidentPriority' }
+        dueWithinMinutes: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    EscalationPolicy:
+      type: object
+      description: DestinationSecretRef is never serialized -- resolved server-side only.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        severity: { $ref: '#/components/schemas/Severity' }
+        unacknowledgedAfterMinutes: { type: integer }
+        channelType: { $ref: '#/components/schemas/EscalationChannelType' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AlertTrendPoint:
+      type: object
+      properties:
+        day: { type: string }
+        alertCount: { type: integer }
+        avgMttrSeconds: { type: number, nullable: true }
+
+    IncidentTrendPoint:
+      type: object
+      properties:
+        day: { type: string }
+        incidentCount: { type: integer }
+
+    NamedCount:
+      type: object
+      description: A breakdown row keyed by identity; a nil id is the "unassigned"/"no commander yet" bucket.
+      properties:
+        id: { type: string, format: uuid, nullable: true }
+        name: { type: string }
+        count: { type: integer }
+
+    DashboardStats:
+      type: object
+      properties:
+        openAlerts: { type: integer }
+        criticalAlerts: { type: integer }
+        highAlerts: { type: integer }
+        activeIncidents: { type: integer }
+        slaBreachedCount: { type: integer }
+        p1OpenCount: { type: integer }
+        incidentAvgMttaSeconds: { type: number, nullable: true }
+        incidentAvgMttrSeconds: { type: number, nullable: true }
+        alertAvgMttaSeconds: { type: number, nullable: true }
+        alertAvgMttrSeconds: { type: number, nullable: true }
+        alertTrend:
+          type: array
+          items: { $ref: '#/components/schemas/AlertTrendPoint' }
+        incidentTrend:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentTrendPoint' }
+        alertsBySeverity:
+          type: object
+          additionalProperties: { type: integer }
+        alertStatusDistribution:
+          type: object
+          additionalProperties: { type: integer }
+        incidentsByPriority:
+          type: object
+          additionalProperties: { type: integer }
+        incidentsByPhase:
+          type: object
+          additionalProperties: { type: integer }
+        alertsByAnalyst:
+          type: array
+          items: { $ref: '#/components/schemas/NamedCount' }
+        incidentsByCommander:
+          type: array
+          items: { $ref: '#/components/schemas/NamedCount' }
+
+    ActivityEvent:
+      type: object
+      description: One row of the Dashboard's Recent Activity feed -- a union of alert_events and incident_events, newest first.
+      properties:
+        kind:
+          type: string
+          enum: [alert, incident]
+        contextId: { type: string, format: uuid }
+        contextTitle: { type: string }
+        eventType: { type: string }
+        actorType: { $ref: '#/components/schemas/ActorType' }
+        actorId: { type: string, format: uuid, nullable: true }
+        data:
+          description: Event-type-specific JSON payload.
+        createdAt: { type: string, format: date-time }
+
+    FollowupView:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items: { $ref: '#/components/schemas/Alert' }
+        incidents:
+          type: array
+          items: { $ref: '#/components/schemas/Incident' }
+
+    TargetDBConfig:
+      type: object
+      properties:
+        host: { type: string }
+        port: { type: integer }
+        database: { type: string }
+        user: { type: string }
+        password: { type: string }
+        sslMode: { type: string }
+      required: [host, port, database, user, password]
+
+    TableRowCount:
+      type: object
+      properties:
+        source: { type: integer, format: int64 }
+        target: { type: integer, format: int64 }
+
+    MigrationResult:
+      type: object
+      properties:
+        schemaVersion: { type: integer }
+        rowCounts:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/TableRowCount' }
+        appDsn:
+          type: string
+          description: Connection string for api/ingest to use against the new database.
+        workerDsn:
+          type: string
+          description: Connection string for cmd/worker (its own BYPASSRLS role) to use against the new database.

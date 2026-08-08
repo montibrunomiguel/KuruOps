@@ -11,8 +11,9 @@
 > - **Fase 2** — loop agêntico MCP, normalizadores Wazuh/CrowdStrike/GuardDuty e SSE: feitos: porém
 >   nenhum normalizador foi validado contra tráfego real do respectivo vendor (tratar como ponto de
 >   partida).
-> - **Fase 3** — Vault/KMS, escalonamento on-call e exportação CEF: feitos; Vault/KMS só testado
->   contra backend mockado (sem servidor Vault/conta AWS reais disponíveis neste ambiente).
+> - **Fase 3** — Vault/KMS, escalonamento on-call e exportação CEF: feitos; `VaultStore` já validado
+>   contra um servidor Vault real (`task backend:test:vault`); `AWSKMSStore` ainda só testado contra
+>   backend mockado (sem conta AWS real disponível ainda).
 > - **Achado fora do escopo original**: o secret store padrão (`EnvStore`) era puramente em memória
 >   e perdia toda credencial (LDAP, SAML, LLM, webhook) a cada restart do processo — bug real
 >   descoberto durante teste ao vivo de LDAP/SAML, corrigido com `PersistentEnvStore` (criptografado,
