@@ -101,12 +101,51 @@ func main() {
 			logger.Info("shutting down")
 			return
 		case <-refreshTicker.C:
-			refreshMaterializedViews(ctx, pool, logger)
+			runLocked(ctx, pool, lockKeyRefreshMaterializedViews, "refresh_materialized_views", logger, func() {
+				refreshMaterializedViews(ctx, pool, logger)
+			})
 		case <-slaTicker.C:
-			sweepSLABreaches(ctx, pool, logger)
+			runLocked(ctx, pool, lockKeySweepSLABreaches, "sweep_sla_breaches", logger, func() {
+				sweepSLABreaches(ctx, pool, logger)
+			})
 		case <-escalationTicker.C:
-			sweepEscalations(ctx, pool, secretStore, onCallService, userRepo, smtpService, cfg.AppBaseURL, logger)
+			runLocked(ctx, pool, lockKeySweepEscalations, "sweep_escalations", logger, func() {
+				sweepEscalations(ctx, pool, secretStore, onCallService, userRepo, smtpService, cfg.AppBaseURL, logger)
+			})
 		}
+	}
+}
+
+// Arbitrary, distinct Postgres advisory-lock keys, one per periodic job --
+// see runLocked. Only required to be unique within this application (no
+// other advisory lock use exists anywhere else in the codebase as of this
+// writing); if that ever changes, keep this comment updated so a future job
+// doesn't accidentally collide with one of these.
+const (
+	lockKeyRefreshMaterializedViews int64 = 821001
+	lockKeySweepSLABreaches         int64 = 821002
+	lockKeySweepEscalations         int64 = 821003
+)
+
+// runLocked runs fn only if this process wins the Postgres advisory lock
+// for key this tick (db.Pool.WithAdvisoryLock) -- if cmd/worker is ever
+// scaled to more than one replica, every replica's ticker fires at roughly
+// the same time, but only one of them actually runs fn; the others log a
+// Debug line and wait for their next tick. Without this, sweepEscalations
+// in particular would double-send the same escalation notification (it
+// reads candidates, notifies, THEN stamps escalated_at -- two replicas
+// racing the same tick could both notify before either stamps).
+func runLocked(ctx context.Context, pool *db.Pool, key int64, job string, logger *slog.Logger, fn func()) {
+	acquired, err := pool.WithAdvisoryLock(ctx, key, func(context.Context) error {
+		fn()
+		return nil
+	})
+	if err != nil {
+		logger.Error("advisory lock failed", "job", job, "error", err)
+		return
+	}
+	if !acquired {
+		logger.Debug("skipping tick, another replica holds the lock", "job", job)
 	}
 }
 

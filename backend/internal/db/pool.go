@@ -63,3 +63,45 @@ func (p *Pool) WithTenant(ctx context.Context, tenantID uuid.UUID, fn func(tx pg
 
 	return nil
 }
+
+// WithAdvisoryLock runs fn only if it can acquire a Postgres
+// transaction-scoped advisory lock keyed by key; if another connection (a
+// concurrently running replica of the same process, most likely) already
+// holds it, fn is skipped and acquired is false. This is how a periodic job
+// (cmd/worker's ticker loop) stays safe to run from multiple replicas
+// without a separate distributed-lock service: whichever replica's tick
+// gets there first does the work, the rest just skip that tick.
+//
+// The lock lives on its own transaction/connection for fn's whole duration
+// and is released automatically on commit or rollback -- fn is free to run
+// its own independent queries against the pool as it normally would (they
+// use other connections), it doesn't need to go through the lock's own tx.
+// pg_try_advisory_xact_lock (not the session-scoped pg_try_advisory_lock)
+// is deliberate: it can never leak a held lock onto a pooled connection
+// that gets handed to unrelated work later, since Postgres releases it the
+// instant this transaction ends, with no separate unlock call to forget.
+func (p *Pool) WithAdvisoryLock(ctx context.Context, key int64, fn func(ctx context.Context) error) (acquired bool, err error) {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op if already committed
+
+	var locked bool
+	if err := tx.QueryRow(ctx, "select pg_try_advisory_xact_lock($1)", key).Scan(&locked); err != nil {
+		return false, fmt.Errorf("acquire advisory lock: %w", err)
+	}
+	if !locked {
+		return false, nil
+	}
+
+	if err := fn(ctx); err != nil {
+		return true, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return true, fmt.Errorf("commit tx: %w", err)
+	}
+
+	return true, nil
+}
