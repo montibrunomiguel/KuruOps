@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
@@ -7,6 +7,7 @@ import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { formatRelative, shortId } from "../../lib/format";
 
 export function AlertsListPage() {
@@ -16,6 +17,11 @@ export function AlertsListPage() {
   const [source, setSource] = useState("");
   const [correlated, setCorrelated] = useState<"" | "true" | "false">("");
   const [tag, setTag] = useState("");
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
+  // isn't recomputed on every render -- only when the picker's own value
+  // actually changes, same reasoning as the Dashboard tab panels.
+  const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const {
     items: alerts,
@@ -33,11 +39,13 @@ export function AlertsListPage() {
       if (source) params.set("source", source);
       if (correlated) params.set("correlated", correlated);
       if (tag) params.set("tag", tag);
+      if (range.since) params.set("since", range.since);
+      if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
       params.set("offset", String(offset));
       return api.get<Alert[]>(`/api/v1/alerts?${params.toString()}`, tk);
     },
-    [severity, status, source, correlated, tag],
+    [severity, status, source, correlated, tag, range.since, range.until],
   );
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -89,6 +97,7 @@ export function AlertsListPage() {
             <option value="false">{t("dashboard.filters.correlatedNo")}</option>
           </select>
           <input className="input" placeholder={t("dashboard.filters.allTags")} value={tag} onChange={(e) => setTag(e.target.value)} />
+          <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
         </div>
         {!loading && <span className="chart-card-sub">{t("alerts.count", { count: alerts.length })}</span>}
       </div>

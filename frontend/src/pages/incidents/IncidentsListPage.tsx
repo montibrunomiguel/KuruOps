@@ -12,6 +12,7 @@ import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges
 import { TagPicker } from "../../components/TagPicker";
 import { AssigneePicker } from "../../components/AssigneePicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { formatRelative, shortId } from "../../lib/format";
 
 type SlaFilter = "" | "breached" | "ok";
@@ -24,6 +25,11 @@ export function IncidentsListPage() {
   const [phase, setPhase] = useState<IncidentPhase | "">("");
   const [sla, setSla] = useState<SlaFilter>("");
   const [showCreate, setShowCreate] = useState(false);
+  const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
+  // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
+  // isn't recomputed on every render -- only when the picker's own value
+  // actually changes, same reasoning as the Dashboard tab panels.
+  const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const {
     items: rawIncidents,
@@ -39,11 +45,13 @@ export function IncidentsListPage() {
       if (severity) params.set("severity", severity);
       if (priority) params.set("priority", priority);
       if (phase) params.set("phase", phase);
+      if (range.since) params.set("since", range.since);
+      if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
       params.set("offset", String(offset));
       return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity, priority, phase],
+    [severity, priority, phase, range.since, range.until],
   );
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -115,6 +123,7 @@ export function IncidentsListPage() {
             <option value="breached">{t("incidents.table.slaBreached")}</option>
             <option value="ok">{t("incidents.table.slaOk")}</option>
           </select>
+          <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {!loading && <span className="chart-card-sub">{t("incidents.count", { count: incidents.length })}</span>}
