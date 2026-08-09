@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -43,11 +44,21 @@ type Options struct {
 	// login works), or middleware.DevHeaderAuth for AUTH_MODE=dev-headers
 	// (bypasses tokens, local development only) -- see cmd/api/main.go.
 	AuthMiddleware func(http.Handler) http.Handler
+	// Logger is the base logger request-scoped loggers derive from (see
+	// middleware.RequestLogger).
+	Logger *slog.Logger
+	// HealthCheck serves GET /healthz. Built by cmd/api as
+	// httpserver.HealthCheck(pool) (needs a *pgxpool.Pool, same reasoning as
+	// LoginRateLimiter above) -- a prebuilt handler rather than a raw Pool
+	// field so this package's own tests can wire a fake one without a real
+	// database connection.
+	HealthCheck http.HandlerFunc
 }
 
 func NewRouter(opts Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
+	r.Use(middleware.RequestLogger(opts.Logger))
 	// ClientIPFromHeader("X-Real-IP"), not the deprecated chimw.RealIP: RealIP
 	// also trusts X-Forwarded-For / True-Client-IP, both client-suppliable and
 	// therefore spoofable if a caller sends one directly (see GO-2026-5777 /
@@ -58,12 +69,14 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.SecurityHeaders)
+	// Not WrapWithObservability here: chi's own r.Use chain already applies
+	// RequestID/RequestLogger/MetricsMiddleware individually, interleaved
+	// with SecurityHeaders/Recoverer in a specific order -- WrapWithObservability
+	// exists for cmd/worker and cmd/ingest's non-chi routing, which has no
+	// equivalent chain to interleave with.
 	r.Use(MetricsMiddleware)
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	r.Get("/healthz", opts.HealthCheck)
 	r.Get("/metrics", MetricsHandler)
 
 	// Login endpoints are unauthenticated by definition -- rate limited to prevent brute force attacks

@@ -21,6 +21,7 @@ import (
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/events"
+	"github.com/argusops/argusops/internal/httpserver"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/ingest"
 	"github.com/argusops/argusops/internal/repository"
@@ -46,6 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	httpserver.GetMetrics().SetPool(pool.Pool)
 
 	tagRepo := repository.NewTagRepository()
 	tagService := service.NewTagService(pool, tagRepo)
@@ -115,15 +117,13 @@ func main() {
 	hookLimiter := middleware.NewRateLimiter(pool.Pool, "webhook_ip", 60, time.Minute)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	mux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
+	mux.HandleFunc("/metrics", httpserver.MetricsHandler)
 	mux.Handle("/hooks", hookLimiter(handler))
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           httpserver.WrapWithObservability(mux, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
