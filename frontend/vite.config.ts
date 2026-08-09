@@ -19,6 +19,11 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     globals: true,
     css: false,
+    // Headroom above setup.ts's asyncUtilTimeout (8000ms) -- otherwise
+    // Vitest's own default 5000ms testTimeout can fire first and report a
+    // less useful "Test timed out" instead of the actual findBy*/waitFor
+    // failure.
+    testTimeout: 15000,
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],

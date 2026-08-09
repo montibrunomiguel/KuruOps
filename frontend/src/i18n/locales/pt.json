@@ -125,6 +125,11 @@
     "adminOnly": "Esta área é restrita a administradores. Fale com um admin se precisar de acesso.",
     "noAccess": "Sua conta não tem acesso a esta área. Fale com um administrador se precisar de acesso."
   },
+  "errorBoundary": {
+    "title": "Algo deu errado",
+    "message": "Ocorreu um erro inesperado. Tente recarregar a página.",
+    "reload": "Recarregar página"
+  },
   "dashboard": {
     "title": "Dashboard de Operações de Segurança",
     "subtitle": "Visão geral em tempo real de todas as fontes conectadas",
