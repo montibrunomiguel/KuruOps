@@ -72,7 +72,9 @@
     "darkMode": "Dark mode",
     "lightMode": "Light mode",
     "language": "Language",
-    "logout": "Log out"
+    "logout": "Log out",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "login": {
     "email": "E-mail",
