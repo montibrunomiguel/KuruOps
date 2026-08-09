@@ -23,17 +23,37 @@ func requireTestDatabaseURL(t *testing.T) string {
 }
 
 func TestNewPool_InvalidURL(t *testing.T) {
-	_, err := db.NewPool(t.Context(), "not a valid connection string")
+	_, err := db.NewPool(t.Context(), "not a valid connection string", db.PoolConfig{})
 	assert.Error(t, err)
 }
 
 func TestNewPool_UnreachableHost(t *testing.T) {
-	_, err := db.NewPool(t.Context(), "postgres://user:pass@127.0.0.1:1/nonexistent?connect_timeout=1")
+	_, err := db.NewPool(t.Context(), "postgres://user:pass@127.0.0.1:1/nonexistent?connect_timeout=1", db.PoolConfig{})
 	assert.Error(t, err, "Ping during NewPool must surface an unreachable database immediately")
 }
 
+func TestNewPool_PoolConfigOverridesSizing(t *testing.T) {
+	pool, err := db.NewPool(t.Context(), requireTestDatabaseURL(t), db.PoolConfig{MaxConns: 7, MinConns: 2})
+	require.NoError(t, err)
+	defer pool.Close()
+
+	assert.EqualValues(t, 7, pool.Config().MaxConns)
+	assert.EqualValues(t, 2, pool.Config().MinConns)
+}
+
+func TestNewPool_ZeroPoolConfigLeavesDefaults(t *testing.T) {
+	pool, err := db.NewPool(t.Context(), requireTestDatabaseURL(t), db.PoolConfig{})
+	require.NoError(t, err)
+	defer pool.Close()
+
+	// pgxpool's own default (greater of 4 or runtime.NumCPU()) -- just
+	// confirm it's non-zero and wasn't forced down to 0 by an unconditional
+	// assignment.
+	assert.Positive(t, pool.Config().MaxConns)
+}
+
 func TestPool_WithTenant(t *testing.T) {
-	pool, err := db.NewPool(t.Context(), requireTestDatabaseURL(t))
+	pool, err := db.NewPool(t.Context(), requireTestDatabaseURL(t), db.PoolConfig{})
 	require.NoError(t, err)
 	defer pool.Close()
 
@@ -74,10 +94,10 @@ func TestPool_WithAdvisoryLock(t *testing.T) {
 	// single shared pool would still prove the locking works, but this is
 	// closer to what actually happens in production (cmd/worker replica A
 	// vs replica B, never the same *pgxpool.Pool).
-	poolA, err := db.NewPool(t.Context(), requireTestDatabaseURL(t))
+	poolA, err := db.NewPool(t.Context(), requireTestDatabaseURL(t), db.PoolConfig{})
 	require.NoError(t, err)
 	defer poolA.Close()
-	poolB, err := db.NewPool(t.Context(), requireTestDatabaseURL(t))
+	poolB, err := db.NewPool(t.Context(), requireTestDatabaseURL(t), db.PoolConfig{})
 	require.NoError(t, err)
 	defer poolB.Close()
 

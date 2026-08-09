@@ -37,6 +37,10 @@ func nilOptions() Options {
 		AuditExportHandlers:       &handlers.AuditExportHandlers{},
 		DatabaseMigrationHandlers: &handlers.DatabaseMigrationHandlers{},
 		EventsHandlers:            &handlers.EventsHandlers{},
+		// A pass-through, not nil -- NewRouter wires this into the /auth
+		// route chain unconditionally (see router.go), so a nil func value
+		// here would panic building the router, not just when /auth is hit.
+		LoginRateLimiter: func(next http.Handler) http.Handler { return next },
 		AuthMiddleware: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)

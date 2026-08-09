@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -35,6 +34,10 @@ type Options struct {
 	AuditExportHandlers       *handlers.AuditExportHandlers
 	DatabaseMigrationHandlers *handlers.DatabaseMigrationHandlers
 	EventsHandlers            *handlers.EventsHandlers
+	// LoginRateLimiter is built by cmd/api (needs a *pgxpool.Pool, which
+	// this package otherwise has no reason to depend on -- see
+	// middleware.NewRateLimiter) and applied to /auth below.
+	LoginRateLimiter func(http.Handler) http.Handler
 	// AuthMiddleware guards /api/v1/**. cmd/api builds this as
 	// middleware.JWTAuth(verifier) for AUTH_MODE=jwt/dev (real tokens, real
 	// login works), or middleware.DevHeaderAuth for AUTH_MODE=dev-headers
@@ -64,9 +67,8 @@ func NewRouter(opts Options) http.Handler {
 	r.Get("/metrics", MetricsHandler)
 
 	// Login endpoints are unauthenticated by definition -- rate limited to prevent brute force attacks
-	loginLimiter := middleware.NewRateLimiter(20, time.Minute)
 	r.Route("/auth", func(auth chi.Router) {
-		auth.Use(loginLimiter)
+		auth.Use(opts.LoginRateLimiter)
 		opts.AuthHandlers.Routes(auth)
 	})
 

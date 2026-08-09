@@ -2,11 +2,15 @@ package handlers_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,6 +29,18 @@ import (
 func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
+
+	// loginAttempts (scope "login_email") is backed by a shared Postgres
+	// table now, not a fresh in-memory map per test process (see
+	// KeyedLimiter) -- several tests in this file legitimately submit the
+	// real seeded admin@argusops.local address to exercise a successful
+	// login, and without this they'd accumulate against the same 10-per-
+	// 15-minute budget across every test (and every previous run within
+	// that window) instead of each test getting the clean slate the old
+	// design gave for free. Test-only hygiene, not a production concern.
+	_, err := pool.Exec(context.Background(), "delete from rate_limit_events where scope = 'login_email'")
+	require.NoError(t, err)
+
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	issuer := authn.NewIssuer(priv)
@@ -43,7 +59,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{})
 	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, smtpSvc, "http://localhost:3000")
 
-	return handlers.NewAuthHandlers(authSvc, ldapSvc, samlSvc, passwordResetSvc)
+	return handlers.NewAuthHandlers(pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc)
 }
 
 func TestAuthHandlers_LoginLocal(t *testing.T) {
@@ -91,17 +107,27 @@ func TestAuthHandlers_LoginLocal_PerAccountRateLimit(t *testing.T) {
 		return doRequest(r, req).Code
 	}
 
+	// A unique email per test run -- loginAttempts is now backed by a
+	// shared Postgres table (see KeyedLimiter), not a fresh in-memory map
+	// per process, so a literal fixed email here would collide with this
+	// same test's own prior runs (rows outlive one `go test` invocation)
+	// and with any other test in this file that also submits to
+	// /login or /password-reset/* with the same address (they all share
+	// the "login_email" scope -- see AuthHandlers' loginAttempts doc
+	// comment).
+	email := fmt.Sprintf("ratelimit-local-%s@test.local", uuid.NewString())
+
 	for i := 0; i < 10; i++ {
-		assert.Equal(t, http.StatusUnauthorized, attempt("admin@argusops.local"), "attempt %d is still within budget", i+1)
+		assert.Equal(t, http.StatusUnauthorized, attempt(email), "attempt %d is still within budget", i+1)
 	}
-	assert.Equal(t, http.StatusTooManyRequests, attempt("admin@argusops.local"), "11th attempt for this account is rate-limited")
+	assert.Equal(t, http.StatusTooManyRequests, attempt(email), "11th attempt for this account is rate-limited")
 
 	t.Run("email is normalized before keying, case/whitespace can't bypass the limit", func(t *testing.T) {
-		assert.Equal(t, http.StatusTooManyRequests, attempt(" Admin@ArgusOps.local "))
+		assert.Equal(t, http.StatusTooManyRequests, attempt(" "+strings.ToUpper(email)+" "))
 	})
 
 	t.Run("a different account has its own independent budget", func(t *testing.T) {
-		assert.Equal(t, http.StatusUnauthorized, attempt("someone-else@test.local"))
+		assert.Equal(t, http.StatusUnauthorized, attempt(fmt.Sprintf("ratelimit-other-%s@test.local", uuid.NewString())))
 	})
 }
 
@@ -127,8 +153,12 @@ func TestAuthHandlers_LoginLDAP_PerAccountRateLimit(t *testing.T) {
 	h := newAuthHandlers(t)
 	r := newRouter(h.Routes)
 
+	// Unique per run -- see TestAuthHandlers_LoginLocal_PerAccountRateLimit's
+	// comment on why a fixed literal would collide across test runs/tests
+	// now that loginAttempts is backed by a shared Postgres table.
+	email := fmt.Sprintf("ratelimit-ldap-%s@test.local", uuid.NewString())
 	attempt := func() int {
-		body, _ := json.Marshal(map[string]string{"email": "someone@example.com", "password": "x"})
+		body, _ := json.Marshal(map[string]string{"email": email, "password": "x"})
 		req := httptest.NewRequest("POST", "/login/ldap", bytes.NewReader(body))
 		return doRequest(r, req).Code
 	}
@@ -263,8 +293,12 @@ func TestAuthHandlers_PasswordReset_RateLimit(t *testing.T) {
 		h := newAuthHandlers(t)
 		r := newRouter(h.Routes)
 
+		// Unique per run -- see TestAuthHandlers_LoginLocal_PerAccountRateLimit's
+		// comment; this scope ("login_email") is also shared with the login
+		// rate-limit tests above.
+		email := fmt.Sprintf("ratelimit-reset-%s@test.local", uuid.NewString())
 		attempt := func() int {
-			body, _ := json.Marshal(map[string]string{"email": "someone@example.com"})
+			body, _ := json.Marshal(map[string]string{"email": email})
 			req := httptest.NewRequest("POST", "/password-reset/request", bytes.NewReader(body))
 			return doRequest(r, req).Code
 		}
@@ -278,8 +312,11 @@ func TestAuthHandlers_PasswordReset_RateLimit(t *testing.T) {
 		h := newAuthHandlers(t)
 		r := newRouter(h.Routes)
 
+		// Unique per run, same reasoning as the email case above -- confirm
+		// is keyed by the submitted token under the same shared scope.
+		token := "ratelimit-token-" + uuid.NewString()
 		attempt := func() int {
-			body, _ := json.Marshal(map[string]string{"token": "same-token-each-time", "newPassword": "NewPassword123!"})
+			body, _ := json.Marshal(map[string]string{"token": token, "newPassword": "NewPassword123!"})
 			req := httptest.NewRequest("POST", "/password-reset/confirm", bytes.NewReader(body))
 			return doRequest(r, req).Code
 		}

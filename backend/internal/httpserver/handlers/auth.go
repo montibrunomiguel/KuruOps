@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
@@ -35,10 +36,10 @@ type AuthHandlers struct {
 	loginAttempts *middleware.KeyedLimiter
 }
 
-func NewAuthHandlers(auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService) *AuthHandlers {
+func NewAuthHandlers(pool *pgxpool.Pool, auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService) *AuthHandlers {
 	return &AuthHandlers{
 		auth: auth, ldap: ldap, saml: saml, passwordReset: passwordReset,
-		loginAttempts: middleware.NewKeyedLimiter(10, 15*time.Minute),
+		loginAttempts: middleware.NewKeyedLimiter(pool, "login_email", 10, 15*time.Minute),
 	}
 }
 

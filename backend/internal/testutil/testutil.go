@@ -58,7 +58,7 @@ func RequireTestDB(t *testing.T) *db.Pool {
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL not set -- run via `task backend:test:integration`")
 	}
-	pool, err := db.NewPool(context.Background(), url)
+	pool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
 	if err != nil {
 		t.Fatalf("connect to test database (app role): %v", err)
 	}
@@ -75,7 +75,7 @@ func adminPool(t *testing.T) *db.Pool {
 	if url == "" {
 		t.Skip("TEST_DATABASE_ADMIN_URL not set -- run via `task backend:test:integration`")
 	}
-	pool, err := db.NewPool(context.Background(), url)
+	pool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
 	if err != nil {
 		t.Fatalf("connect to test database (admin role): %v", err)
 	}

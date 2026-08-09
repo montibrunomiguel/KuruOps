@@ -19,10 +19,31 @@ type Pool struct {
 	*pgxpool.Pool
 }
 
-func NewPool(ctx context.Context, databaseURL string) (*Pool, error) {
+// PoolConfig overrides pgxpool's own sizing defaults -- the zero value
+// (PoolConfig{}) leaves pgxpool's defaults in effect (see MaxConns/MinConns
+// below), which is exactly what every test/tooling call site that doesn't
+// care about pool sizing passes. See config.Config's DBPoolMaxConns/
+// DBPoolMinConns doc comment for why a deployment running more than one
+// replica of a binary would set these explicitly.
+type PoolConfig struct {
+	// MaxConns 0 leaves pgxpool's own default (the greater of 4 or
+	// runtime.NumCPU()) in effect.
+	MaxConns int32
+	// MinConns 0 leaves pgxpool's own default (0) in effect.
+	MinConns int32
+}
+
+func NewPool(ctx context.Context, databaseURL string, poolCfg PoolConfig) (*Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+
+	if poolCfg.MaxConns > 0 {
+		cfg.MaxConns = poolCfg.MaxConns
+	}
+	if poolCfg.MinConns > 0 {
+		cfg.MinConns = poolCfg.MinConns
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
