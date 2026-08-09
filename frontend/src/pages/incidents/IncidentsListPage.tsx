@@ -95,7 +95,12 @@ export function IncidentsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select className="select" value={severity} onChange={(e) => setSeverity(e.target.value as Severity | "")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.severityFilterLabel")}
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value as Severity | "")}
+          >
             <option value="">{t("dashboard.filters.allSeverities")}</option>
             <option value="critical">{t("common.severity.critical")}</option>
             <option value="high">{t("common.severity.high")}</option>
@@ -103,14 +108,24 @@ export function IncidentsListPage() {
             <option value="low">{t("common.severity.low")}</option>
             <option value="informational">{t("common.severity.informational")}</option>
           </select>
-          <select className="select" value={priority} onChange={(e) => setPriority(e.target.value as IncidentPriority | "")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.priorityFilterLabel")}
+            value={priority}
+            onChange={(e) => setPriority(e.target.value as IncidentPriority | "")}
+          >
             <option value="">{t("dashboard.filters.allPriorities")}</option>
             <option value="p1">P1</option>
             <option value="p2">P2</option>
             <option value="p3">P3</option>
             <option value="p4">P4</option>
           </select>
-          <select className="select" value={phase} onChange={(e) => setPhase(e.target.value as IncidentPhase | "")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.statusFilterLabel")}
+            value={phase}
+            onChange={(e) => setPhase(e.target.value as IncidentPhase | "")}
+          >
             <option value="">{t("dashboard.filters.allStatuses")}</option>
             {NIST_PHASE_ORDER.map((p) => (
               <option key={p} value={p}>
@@ -118,7 +133,12 @@ export function IncidentsListPage() {
               </option>
             ))}
           </select>
-          <select className="select" value={sla} onChange={(e) => setSla(e.target.value as SlaFilter)}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.slaFilterLabel")}
+            value={sla}
+            onChange={(e) => setSla(e.target.value as SlaFilter)}
+          >
             <option value="">{t("dashboard.filters.slaAny")}</option>
             <option value="breached">{t("incidents.table.slaBreached")}</option>
             <option value="ok">{t("incidents.table.slaOk")}</option>

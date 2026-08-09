@@ -76,6 +76,7 @@
   border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .sidebar-link:hover .sidebar-link-inner {
@@ -332,6 +333,7 @@
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s ease, filter 0.15s ease;
 }
 
 .btn:hover {
@@ -401,6 +403,7 @@
   padding: 8px 10px;
   color: var(--text);
   font-size: 13px;
+  transition: border-color 0.15s ease;
 }
 
 .input:focus,
@@ -680,6 +683,11 @@
   padding: 0;
   font-size: 13px;
   line-height: 1;
+  transition: color 0.15s ease;
+}
+
+.tag-chip button:hover {
+  color: var(--critical);
 }
 
 .token-reveal {
@@ -1176,6 +1184,7 @@
 
 .table tbody tr {
   position: relative;
+  transition: background 0.12s ease;
 }
 
 .table tbody tr:hover {

@@ -70,7 +70,12 @@ export function AlertsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select className="select" value={severity} onChange={(e) => setSeverity(e.target.value as Severity | "")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.severityFilterLabel")}
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value as Severity | "")}
+          >
             <option value="">{t("dashboard.filters.allSeverities")}</option>
             <option value="critical">{t("common.severity.critical")}</option>
             <option value="high">{t("common.severity.high")}</option>
@@ -78,7 +83,12 @@ export function AlertsListPage() {
             <option value="low">{t("common.severity.low")}</option>
             <option value="informational">{t("common.severity.informational")}</option>
           </select>
-          <select className="select" value={status} onChange={(e) => setStatus(e.target.value as AlertStatus | "")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.statusFilterLabel")}
+            value={status}
+            onChange={(e) => setStatus(e.target.value as AlertStatus | "")}
+          >
             <option value="">{t("dashboard.filters.allStatuses")}</option>
             <option value="open">{t("common.alertStatus.open")}</option>
             <option value="investigating">{t("common.alertStatus.investigating")}</option>
@@ -87,16 +97,28 @@ export function AlertsListPage() {
           </select>
           <input
             className="input"
+            aria-label={t("dashboard.filters.sourceFilterLabel")}
             placeholder={t("dashboard.filters.allSources")}
             value={source}
             onChange={(e) => setSource(e.target.value)}
           />
-          <select className="select" value={correlated} onChange={(e) => setCorrelated(e.target.value as "" | "true" | "false")}>
+          <select
+            className="select"
+            aria-label={t("dashboard.filters.correlatedFilterLabel")}
+            value={correlated}
+            onChange={(e) => setCorrelated(e.target.value as "" | "true" | "false")}
+          >
             <option value="">{t("dashboard.filters.correlatedAny")}</option>
             <option value="true">{t("dashboard.filters.correlatedYes")}</option>
             <option value="false">{t("dashboard.filters.correlatedNo")}</option>
           </select>
-          <input className="input" placeholder={t("dashboard.filters.allTags")} value={tag} onChange={(e) => setTag(e.target.value)} />
+          <input
+            className="input"
+            aria-label={t("dashboard.filters.tagsFilterLabel")}
+            placeholder={t("dashboard.filters.allTags")}
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+          />
           <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
         </div>
         {!loading && <span className="chart-card-sub">{t("alerts.count", { count: alerts.length })}</span>}

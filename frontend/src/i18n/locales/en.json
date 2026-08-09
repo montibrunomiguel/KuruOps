@@ -153,7 +153,14 @@
       "slaAny": "SLA: any",
       "correlatedAny": "Correlated: any",
       "correlatedYes": "Correlated: yes",
-      "correlatedNo": "Correlated: no"
+      "correlatedNo": "Correlated: no",
+      "severityFilterLabel": "Severity filter",
+      "statusFilterLabel": "Status filter",
+      "sourceFilterLabel": "Source filter",
+      "tagsFilterLabel": "Tags filter",
+      "priorityFilterLabel": "Priority filter",
+      "slaFilterLabel": "SLA filter",
+      "correlatedFilterLabel": "Correlated filter"
     },
     "alertsTab": {
       "openAlerts": "Open Alerts",

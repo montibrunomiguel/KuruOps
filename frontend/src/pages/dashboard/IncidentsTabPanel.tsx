@@ -69,7 +69,12 @@ export function IncidentsTabPanel() {
   return (
     <div>
       <div className="filter-bar">
-        <select className="select" value={severity} onChange={(e) => setSeverity(e.target.value as Severity | "")}>
+        <select
+          className="select"
+          aria-label={t("dashboard.filters.severityFilterLabel")}
+          value={severity}
+          onChange={(e) => setSeverity(e.target.value as Severity | "")}
+        >
           <option value="">{t("dashboard.filters.allSeverities")}</option>
           <option value="critical">{t("common.severity.critical")}</option>
           <option value="high">{t("common.severity.high")}</option>
@@ -77,7 +82,13 @@ export function IncidentsTabPanel() {
           <option value="low">{t("common.severity.low")}</option>
           <option value="informational">{t("common.severity.informational")}</option>
         </select>
-        <input className="input" placeholder={t("dashboard.filters.allTags")} value={tag} onChange={(e) => setTag(e.target.value)} />
+        <input
+          className="input"
+          aria-label={t("dashboard.filters.tagsFilterLabel")}
+          placeholder={t("dashboard.filters.allTags")}
+          value={tag}
+          onChange={(e) => setTag(e.target.value)}
+        />
         <PersonFilter value={commanderId} onChange={setCommanderId} allLabel={t("dashboard.filters.allCommanders")} />
         <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
       </div>
