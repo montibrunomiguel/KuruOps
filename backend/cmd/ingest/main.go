@@ -87,11 +87,17 @@ func main() {
 	)
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
 	alertService.EnableAutoAnalysis(func(tenantID, alertID uuid.UUID) {
-		// actorID nil: no human triggered this, see AnalyzeAlert's doc
+		// actorID nil: no human triggered this, see StartAlertAnalysis's doc
 		// comment. allowedTags nil: the tag-visibility guard is for a
 		// specific analyst's view: this is the system analyzing an alert
 		// the instant it exists, before any access-scoping question applies.
-		if _, err := aiAnalysisService.AnalyzeAlert(context.Background(), tenantID, alertID, nil, nil); err != nil {
+		// StartAlertAnalysis itself only blocks for the quick synchronous
+		// validation (alert exists, LLM provider configured, nothing else
+		// already running) -- the actual LLM call already runs in its own
+		// goroutine, so this closure (itself already run via `go
+		// s.autoAnalyze(...)`, see AlertService.Ingest) returns quickly
+		// either way.
+		if err := aiAnalysisService.StartAlertAnalysis(context.Background(), tenantID, alertID, nil, nil); err != nil {
 			// "no LLM provider configured" is the expected, common case for
 			// a tenant that hasn't set up Settings -> AI Integration -- not
 			// worth error-level noise on every single ingested alert.

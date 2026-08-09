@@ -136,18 +136,22 @@ func TestAIAnalysisRunRepository_SetFailed(t *testing.T) {
 	assert.Equal(t, "llm provider timed out", *got.Error)
 	assert.Nil(t, got.PendingToolCallID)
 
-	// LatestCompletedResult only ever considers status='completed' -- a
-	// failed run must not surface as if it produced a usable result.
-	latest, err := repo.LatestCompletedResult(t.Context(), tx, run.ContextType, run.ContextID)
+	// LatestRun must surface the failed status/error, not pretend nothing
+	// happened.
+	latest, err := repo.LatestRun(t.Context(), tx, run.ContextType, run.ContextID)
 	require.NoError(t, err)
-	assert.Nil(t, latest)
+	require.NotNil(t, latest)
+	assert.Equal(t, domain.AIAnalysisRunFailed, latest.Status)
+	require.NotNil(t, latest.Error)
+	assert.Equal(t, "llm provider timed out", *latest.Error)
 }
 
-// TestAIAnalysisRunRepository_LatestCompletedResult guards the query
-// AlertService.Get uses to surface the latest AI analysis automatically
-// (see domain.Alert.LatestAnalysis) -- only a 'completed' run's result
-// counts, and the most recent one wins when more than one exists.
-func TestAIAnalysisRunRepository_LatestCompletedResult(t *testing.T) {
+// TestAIAnalysisRunRepository_LatestRun guards the query AlertService/
+// IncidentService's Get use to surface the latest AI analysis automatically
+// (see domain.Alert/Incident's LatestAnalysis/LatestAnalysisStatus) --
+// unlike a "completed only" query, a still-running or failed run must be
+// visible too, and the most recent run of any status wins.
+func TestAIAnalysisRunRepository_LatestRun(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	alertRepo := repository.NewAlertRepository()
@@ -158,13 +162,12 @@ func TestAIAnalysisRunRepository_LatestCompletedResult(t *testing.T) {
 	require.NoError(t, alertRepo.Insert(t.Context(), tx, a))
 
 	t.Run("no runs yet -- nil, not an error", func(t *testing.T) {
-		result, err := runsRepo.LatestCompletedResult(t.Context(), tx, "alert", a.ID)
+		latest, err := runsRepo.LatestRun(t.Context(), tx, "alert", a.ID)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		assert.Nil(t, latest)
 	})
 
-	// A system-triggered run (nil ActorID -- see AlertService.EnableAutoAnalysis)
-	// that never completed (still running) must not count.
+	// A system-triggered run (nil ActorID -- see AlertService.EnableAutoAnalysis).
 	running := &domain.AIAnalysisRun{
 		TenantID: tenantID, ContextType: "alert", ContextID: a.ID, ActorID: nil,
 		Status: domain.AIAnalysisRunRunning, Messages: json.RawMessage(`[]`),
@@ -172,19 +175,23 @@ func TestAIAnalysisRunRepository_LatestCompletedResult(t *testing.T) {
 	}
 	require.NoError(t, runsRepo.Insert(t.Context(), tx, running))
 
-	t.Run("a running (not completed) run doesn't count", func(t *testing.T) {
-		result, err := runsRepo.LatestCompletedResult(t.Context(), tx, "alert", a.ID)
+	t.Run("a still-running run is surfaced as running, not nil", func(t *testing.T) {
+		latest, err := runsRepo.LatestRun(t.Context(), tx, "alert", a.ID)
 		require.NoError(t, err)
-		assert.Nil(t, result)
+		require.NotNil(t, latest)
+		assert.Equal(t, domain.AIAnalysisRunRunning, latest.Status)
+		assert.Nil(t, latest.Result)
 	})
 
 	require.NoError(t, runsRepo.SetCompleted(t.Context(), tx, running.ID, json.RawMessage(`[]`), "first analysis"))
 
 	t.Run("a completed run's result is returned", func(t *testing.T) {
-		result, err := runsRepo.LatestCompletedResult(t.Context(), tx, "alert", a.ID)
+		latest, err := runsRepo.LatestRun(t.Context(), tx, "alert", a.ID)
 		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "first analysis", *result)
+		require.NotNil(t, latest)
+		assert.Equal(t, domain.AIAnalysisRunCompleted, latest.Status)
+		require.NotNil(t, latest.Result)
+		assert.Equal(t, "first analysis", *latest.Result)
 	})
 
 	second := &domain.AIAnalysisRun{
@@ -200,10 +207,11 @@ func TestAIAnalysisRunRepository_LatestCompletedResult(t *testing.T) {
 	_, err := tx.Exec(t.Context(), `update ai_analysis_runs set created_at = $1 where id = $2`, time.Now().Add(time.Hour), second.ID)
 	require.NoError(t, err)
 
-	t.Run("the most recently completed run wins", func(t *testing.T) {
-		result, err := runsRepo.LatestCompletedResult(t.Context(), tx, "alert", a.ID)
+	t.Run("the most recent run wins regardless of status", func(t *testing.T) {
+		latest, err := runsRepo.LatestRun(t.Context(), tx, "alert", a.ID)
 		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, "second analysis", *result)
+		require.NotNil(t, latest)
+		require.NotNil(t, latest.Result)
+		assert.Equal(t, "second analysis", *latest.Result)
 	})
 }

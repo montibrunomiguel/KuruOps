@@ -80,6 +80,14 @@ type Incident struct {
 	ClosedAt    *time.Time               `json:"closedAt,omitempty"`
 	CreatedAt   time.Time                `json:"createdAt"`
 	UpdatedAt   time.Time                `json:"updatedAt"`
+
+	// LatestAnalysis/LatestAnalysisStatus/LatestAnalysisError -- see
+	// domain.Alert's fields of the same name for the full doc comment; same
+	// mechanism, resolved via IncidentService's own optional
+	// EnableAnalysisLookup dependency.
+	LatestAnalysis       *string `json:"latestAnalysis,omitempty"`
+	LatestAnalysisStatus *string `json:"latestAnalysisStatus,omitempty"`
+	LatestAnalysisError  *string `json:"latestAnalysisError,omitempty"`
 }
 
 // IncidentRole is one of the NIST 800-61 incident-response team roles.

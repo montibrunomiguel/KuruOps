@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -358,13 +359,15 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, escalateResponse{IncidentID: incident.ID})
 }
 
-type analyzeResponse struct {
-	Result string `json:"result"`
+type analyzeStartedResponse struct {
+	Status string `json:"status"`
 }
 
-// analyze is synchronous -- an LLM call can take several seconds, so the
-// frontend shows a loading state while this blocks, rather than polling a
-// background job (see AIAnalysisService's doc comment).
+// analyze kicks off analysis in the background and returns immediately --
+// the eventual result (or failure) shows up on the alert itself (see
+// domain.Alert's LatestAnalysis* fields) once a live-update event tells a
+// connected AlertDetailPage to reload (see AIAnalysisService's doc
+// comment). 409 if one's already running/paused for this alert.
 func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
 	userID, _ := middleware.UserID(r.Context())
@@ -374,12 +377,16 @@ func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ai.AnalyzeAlert(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
+	err = h.ai.StartAlertAnalysis(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
 	if err != nil {
+		if errors.Is(err, service.ErrAnalysisInProgress) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, analyzeResponse{Result: result})
+	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
 }
 
 func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {

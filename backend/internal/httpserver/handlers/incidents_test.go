@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -54,6 +55,72 @@ func TestIncidentHandlers_Analyze_NoProviderConfigured(t *testing.T) {
 	rec := doRequest(r, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "no LLM provider configured")
+}
+
+// TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground
+// mirrors TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground
+// -- confirms IncidentService's own (new) LatestAnalysis*/EnableAnalysisLookup
+// wiring works the same way AlertService's already did.
+func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	secretStore := secrets.NewEnvStore()
+
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	incidentRepo := repository.NewIncidentRepository()
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc.EnableAnalysisLookup(repository.NewAIAnalysisRunRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	mcpServerRepo := repository.NewMCPServerRepository()
+	aiToolCallRepo := repository.NewAIToolCallRepository()
+	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	aiSvc := service.NewAIAnalysisService(
+		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), incidentRepo, secretStore,
+		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+	)
+	analyzed := make(chan struct{}, 1)
+	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
+	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc)
+
+	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
+	})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"recommend containment"}}]}`))
+	}))
+	defer srv.Close()
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+
+	r := newRouter(h.Routes)
+	req := withClaims(httptest.NewRequest("POST", "/"+inc.ID.String()+"/analyze", nil), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "running", body["status"])
+
+	select {
+	case <-analyzed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background analysis did not complete in time")
+	}
+
+	got, err := incSvc.Get(t.Context(), tenantID, inc.ID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.LatestAnalysisStatus)
+	assert.Equal(t, "completed", *got.LatestAnalysisStatus)
+	require.NotNil(t, got.LatestAnalysis)
+	assert.Equal(t, "recommend containment", *got.LatestAnalysis)
 }
 
 func TestIncidentHandlers_ListAndCreate(t *testing.T) {

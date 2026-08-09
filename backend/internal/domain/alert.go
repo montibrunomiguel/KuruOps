@@ -78,13 +78,28 @@ type Alert struct {
 	ClosedAt            *time.Time `json:"closedAt,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
-	// LatestAnalysis is the most recent completed "Analyze with AI" run's
-	// result text (see AIAnalysisRunRepository.LatestCompletedResult), nil
-	// if none has completed yet -- resolved live at Get time (AlertService.Get,
-	// via the optional EnableAnalysisLookup dependency), same "not
-	// denormalized" reasoning as AssignedAnalystName. Only populated on a
-	// single-alert Get, not List, matching Incident.Roles' precedent.
-	LatestAnalysis *string `json:"latestAnalysis,omitempty"`
+	// LatestAnalysis/LatestAnalysisStatus/LatestAnalysisError describe the
+	// single most recent "Analyze with AI" run (see
+	// AIAnalysisRunRepository.LatestRun), resolved live at Get time
+	// (AlertService.Get, via the optional EnableAnalysisLookup dependency),
+	// same "not denormalized" reasoning as AssignedAnalystName. Only
+	// populated on a single-alert Get, not List, matching Incident.Roles'
+	// precedent.
+	//
+	// Analysis runs in the background (see AIAnalysisService.
+	// StartAlertAnalysis) -- the frontend has no other way to learn a
+	// requested analysis finished than reloading and reading these fields,
+	// which is why AlertDetailPage refetches on the SSE "alert" event
+	// AIAnalysisService fires when a run completes or fails, instead of
+	// waiting on the POST /analyze response the way it used to.
+	//
+	// LatestAnalysisStatus is "running" | "paused" | "completed" | "failed",
+	// nil if no analysis has ever been requested. LatestAnalysis (the result
+	// text) is only ever set when status is "completed"; LatestAnalysisError
+	// only when status is "failed".
+	LatestAnalysis       *string `json:"latestAnalysis,omitempty"`
+	LatestAnalysisStatus *string `json:"latestAnalysisStatus,omitempty"`
+	LatestAnalysisError  *string `json:"latestAnalysisError,omitempty"`
 }
 
 // CloseAlert is the only way classification gets set — matches the

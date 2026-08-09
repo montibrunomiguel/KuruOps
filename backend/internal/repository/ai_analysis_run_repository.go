@@ -68,26 +68,24 @@ func (r *AIAnalysisRunRepository) ListByContext(ctx context.Context, tx pgx.Tx, 
 	return runs, rows.Err()
 }
 
-// LatestCompletedResult returns the most recent completed analysis's result
-// text for one alert/incident, or nil if none exists yet -- backs "show the
-// latest AI analysis automatically" on the alert detail page (see
-// AlertService.Get), without fetching the full conversation history
-// ListByContext would.
-func (r *AIAnalysisRunRepository) LatestCompletedResult(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID) (*string, error) {
-	var result string
-	err := tx.QueryRow(ctx, `
-		select result from ai_analysis_runs
-		where context_type = $1 and context_id = $2 and status = 'completed'
+// LatestRun returns the single most recent analysis run for one
+// alert/incident, regardless of status, or nil if none exists yet -- backs
+// AlertService/IncidentService's Get (see domain.Alert/Incident's
+// LatestAnalysis/LatestAnalysisStatus/LatestAnalysisError), so a caller can
+// tell "still running", "the last one failed", and "here's the completed
+// result" apart instead of only ever seeing a result or nothing.
+func (r *AIAnalysisRunRepository) LatestRun(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID) (*domain.AIAnalysisRun, error) {
+	row := tx.QueryRow(ctx, `
+		select `+aiAnalysisRunColumns+` from ai_analysis_runs
+		where context_type = $1 and context_id = $2
 		order by created_at desc limit 1`,
 		contextType, contextID,
-	).Scan(&result)
+	)
+	run, err := scanAIAnalysisRun(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("query latest analysis result: %w", err)
+		return nil, fmt.Errorf("query latest analysis run: %w", err)
 	}
-	return &result, nil
+	return run, nil
 }
 
 // GetPausedByToolCall finds the run (if any) waiting on callID -- how a

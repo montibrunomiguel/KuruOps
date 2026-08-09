@@ -105,11 +105,11 @@ func (s *AlertService) Get(ctx context.Context, tenantID, id uuid.UUID, allowedT
 			return nil
 		}
 		if s.runs != nil {
-			result, err := s.runs.LatestCompletedResult(ctx, tx, "alert", a.ID)
+			run, err := s.runs.LatestRun(ctx, tx, "alert", a.ID)
 			if err != nil {
 				return fmt.Errorf("load latest analysis: %w", err)
 			}
-			a.LatestAnalysis = result
+			a.LatestAnalysis, a.LatestAnalysisStatus, a.LatestAnalysisError = latestAnalysisFields(run)
 		}
 		alert = a
 		return nil

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -17,18 +18,33 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
+// ErrAnalysisInProgress is what StartAlertAnalysis/StartIncidentAnalysis
+// return when a prior analysis for the same alert/incident is still
+// running or paused awaiting tool-call approval -- the handler turns this
+// into 409 Conflict rather than starting a second, overlapping run.
+var ErrAnalysisInProgress = errors.New("an analysis is already in progress for this item")
+
 // AIAnalysisService runs an "Analyze with AI" request against the tenant's
 // default LLM provider (see Settings -> AI Integration) and logs the result
 // as an alert_events/incident_events row so it shows up in the timeline
-// alongside every other change. It's synchronous -- the frontend shows a
-// loading state while the request (which can take several seconds, longer
-// if it uses MCP tools) is in flight, rather than polling a background job.
+// alongside every other change. StartAlertAnalysis/StartIncidentAnalysis
+// validate the request synchronously (alert/incident exists, an LLM
+// provider is configured, nothing else is already running) and return as
+// soon as that's confirmed -- the actual LLM call (which can take several
+// seconds, longer if it uses MCP tools) runs in its own goroutine. Callers
+// learn the outcome by reloading the alert/incident (see
+// domain.Alert/Incident's LatestAnalysis* fields) once notified via the
+// live-update event this fires on completion or failure (see publish/
+// notifyAnalyzed) -- not from a return value, since there isn't one to wait
+// for anymore.
 //
 // When the tenant has an MCP server enabled for this analysis type (see
 // domain.MCPServer.EnabledFor), analysis runs as an agentic tool-use loop
 // instead of a single LLM call -- see runAgentAnalysis. A tenant with no
 // MCP servers configured (the common case) gets the exact same single-call
-// behavior this had before the loop existed.
+// behavior this had before the loop existed, just also now tracked as an
+// ai_analysis_runs row (see analyzeSimple) so its in-progress/failed status
+// is visible the same way an agentic run's is.
 type AIAnalysisService struct {
 	pool         *db.Pool
 	llmProviders *repository.LLMProviderRepository
@@ -39,6 +55,7 @@ type AIAnalysisService struct {
 	mcpTools     *MCPToolService
 	runs         *repository.AIAnalysisRunRepository
 	toolCalls    *repository.AIToolCallRepository
+	publish      func(tenantID uuid.UUID, eventType string, payload any)
 }
 
 func NewAIAnalysisService(
@@ -58,6 +75,28 @@ func NewAIAnalysisService(
 	}
 }
 
+// EnableEventPublishing wires a live-update notifier (events.Broadcaster.Publish
+// in practice) -- see AlertService.EnableEventPublishing for the same
+// post-construction-setter reasoning. Fired (via notifyAnalyzed) whenever a
+// background analysis started by StartAlertAnalysis/StartIncidentAnalysis
+// finishes, so a connected AlertDetailPage/IncidentDetailPage knows to
+// reload and pick up the result.
+func (s *AIAnalysisService) EnableEventPublishing(publish func(tenantID uuid.UUID, eventType string, payload any)) {
+	s.publish = publish
+}
+
+// notifyAnalyzed reuses the same "alert"/"incident" SSE event type
+// AlertService/IncidentService already publish on every other change --
+// AlertDetailPage/IncidentDetailPage don't need to special-case analysis
+// completion, they just refetch on any event matching the id they have
+// open, the same way they already do for a status/severity change made in
+// another tab.
+func (s *AIAnalysisService) notifyAnalyzed(tenantID uuid.UUID, contextType string, contextID uuid.UUID) {
+	if s.publish != nil {
+		s.publish(tenantID, contextType, map[string]any{"id": contextID, "action": "analyzed"})
+	}
+}
+
 const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst assistant. Given the details of a security alert or incident, provide a concise triage analysis: likely nature of the activity, whether it appears to be a true or false positive, and recommended next steps. Keep the response focused and actionable, a few short paragraphs at most. You may have tools available to look up additional context (e.g. threat intel, asset info) before answering -- use them when they would materially improve your analysis, but you don't have to use every tool offered.`
 
 // maxAgenticTurns bounds an agentic run's total LLM round-trips, so a model
@@ -65,24 +104,29 @@ const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst
 // unbounded cost/latency (or, worse, loop forever across resumes).
 const maxAgenticTurns = 5
 
-// pausedForApprovalMessage is what AnalyzeAlert/AnalyzeIncident return (as
-// a normal, non-error result -- see analyzeResponse{Result: ...} in the
-// alerts/incidents handlers) when a side-effecting tool call pauses the
-// run. The final analysis text isn't available yet; it lands as a fresh
-// ai_analysis_run event once ResumeAnalysisRun completes the run after
-// approval.
+// pausedForApprovalMessage is driveAgentLoop's placeholder "result" when a
+// side-effecting tool call pauses the run -- the real analysis text isn't
+// available yet. Only actually reaches the timeline in the (rare) case a
+// resumed run pauses again: ResumeAnalysisRun records whatever
+// driveAgentLoop returns as the run's event once it stops looping, paused
+// or not. The normal case (an alert/incident detail page open at the time)
+// learns "paused" from LatestAnalysisStatus, not from this text -- see
+// domain.Alert/Incident's LatestAnalysisStatus doc comment.
 const pausedForApprovalMessage = "Analysis paused: a tool call requires analyst approval before continuing (Settings -> MCP Servers -> Pending Approvals). The final result will be logged to this %s's timeline once it's approved and the analysis resumes."
 
-// AnalyzeAlert loads alert (subject to allowedTags, same visibility rule as
-// every other AlertService method), then either sends its details straight
-// to the tenant's default LLM provider (no MCP servers enabled for
-// "alert_analysis") or drives an agentic tool-use loop (see
-// runAgentAnalysis). Either way the final result is recorded as an
-// ai_analysis_run event once available.
+// StartAlertAnalysis loads alert (subject to allowedTags, same visibility
+// rule as every other AlertService method), validates there's an LLM
+// provider configured and no analysis already running/paused for it,
+// synchronously creates the 'running' ai_analysis_runs row (see startRun),
+// then kicks off the actual LLM work in a background goroutine and
+// returns. Either the single-LLM-call path (no MCP servers enabled for
+// "alert_analysis") or the agentic tool-use loop (see driveAgentLoop)
+// records its final result as an ai_analysis_run event once available, and
+// fires notifyAnalyzed so a connected client learns to reload.
 // actorID is nil for a system-triggered analysis (see
 // AlertService.EnableAutoAnalysis) -- a human clicking "Analyze with AI"
 // always passes their own id.
-func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID uuid.UUID, actorID *uuid.UUID, allowedTags []string) (string, error) {
+func (s *AIAnalysisService) StartAlertAnalysis(ctx context.Context, tenantID, alertID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
 	var alert *domain.Alert
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -95,6 +139,10 @@ func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID 
 		}
 		alert = a
 
+		if err := s.checkNotAlreadyRunning(ctx, tx, "alert", alertID); err != nil {
+			return err
+		}
+
 		c, err := s.buildClient(ctx, tx)
 		if err != nil {
 			return err
@@ -103,24 +151,36 @@ func (s *AIAnalysisService) AnalyzeAlert(ctx context.Context, tenantID, alertID 
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	tools, routes, err := s.resolveAgentTools(ctx, tenantID, "alert_analysis")
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	if len(tools) == 0 {
-		return s.analyzeSimple(ctx, tenantID, actorID, "alert", alertID, client, alertPrompt(alert))
+	prompt := alertPrompt(alert)
+	run, messages, err := s.startRun(ctx, tenantID, actorID, "alert", alertID, tools, routes, prompt)
+	if err != nil {
+		return err
 	}
-	return s.runAgentAnalysis(ctx, tenantID, actorID, "alert", alertID, client, tools, routes, alertPrompt(alert))
+
+	go func() {
+		bgCtx := context.Background()
+		if len(tools) == 0 {
+			s.finishSimpleRun(bgCtx, run, client, prompt)
+		} else {
+			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
+		}
+		s.notifyAnalyzed(tenantID, "alert", alertID)
+	}()
+	return nil
 }
 
-// AnalyzeIncident is AnalyzeAlert's counterpart for incidents. Incidents
-// have no tag-visibility guard on Get elsewhere in this codebase (see
-// IncidentService.Get), so this doesn't apply one either.
-func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incidentID uuid.UUID, actorID *uuid.UUID, allowedTags []string) (string, error) {
+// StartIncidentAnalysis is StartAlertAnalysis's counterpart for incidents.
+// Incidents have no tag-visibility guard on Get elsewhere in this codebase
+// (see IncidentService.Get), so this doesn't apply one either.
+func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID, incidentID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
 	var incident *domain.Incident
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -133,6 +193,10 @@ func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incid
 		}
 		incident = inc
 
+		if err := s.checkNotAlreadyRunning(ctx, tx, "incident", incidentID); err != nil {
+			return err
+		}
+
 		c, err := s.buildClient(ctx, tx)
 		if err != nil {
 			return err
@@ -141,33 +205,108 @@ func (s *AIAnalysisService) AnalyzeIncident(ctx context.Context, tenantID, incid
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	tools, routes, err := s.resolveAgentTools(ctx, tenantID, "incident_analysis")
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	if len(tools) == 0 {
-		return s.analyzeSimple(ctx, tenantID, actorID, "incident", incidentID, client, incidentPrompt(incident))
+	prompt := incidentPrompt(incident)
+	run, messages, err := s.startRun(ctx, tenantID, actorID, "incident", incidentID, tools, routes, prompt)
+	if err != nil {
+		return err
 	}
-	return s.runAgentAnalysis(ctx, tenantID, actorID, "incident", incidentID, client, tools, routes, incidentPrompt(incident))
+
+	go func() {
+		bgCtx := context.Background()
+		if len(tools) == 0 {
+			s.finishSimpleRun(bgCtx, run, client, prompt)
+		} else {
+			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
+		}
+		s.notifyAnalyzed(tenantID, "incident", incidentID)
+	}()
+	return nil
 }
 
-// analyzeSimple is the original, pre-agentic-loop behavior: one LLM call,
-// no tools. Kept as its own path (rather than routing everything through
-// the agentic loop with zero tools) so the common case -- no MCP servers
-// configured -- has exactly the same shape it always did.
-func (s *AIAnalysisService) analyzeSimple(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, userPrompt string) (string, error) {
+// startRun inserts the initial 'running' ai_analysis_runs row synchronously
+// -- StartAlertAnalysis/StartIncidentAnalysis both call this from their
+// synchronous validation path, before returning. This is what makes
+// checkNotAlreadyRunning meaningful against a rapid second call: by the
+// time Start*Analysis returns, the row a concurrent call would need to see
+// already exists, rather than only appearing once the background goroutine
+// gets around to creating it.
+func (s *AIAnalysisService) startRun(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, tools []llmclient.Tool, routes map[string]agentToolRoute, userPrompt string) (*domain.AIAnalysisRun, []llmclient.Message, error) {
+	messages := []llmclient.Message{{Role: llmclient.RoleUser, Content: userPrompt}}
+
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode initial messages: %w", err)
+	}
+	toolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode tools: %w", err)
+	}
+	routesJSON, err := json.Marshal(routes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encode tool routes: %w", err)
+	}
+
+	run := &domain.AIAnalysisRun{
+		TenantID: tenantID, ContextType: contextType, ContextID: contextID, ActorID: actorID,
+		Status: domain.AIAnalysisRunRunning, Messages: messagesJSON, Tools: toolsJSON, ToolRoutes: routesJSON,
+	}
+	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.runs.Insert(ctx, tx, run)
+	}); err != nil {
+		return nil, nil, fmt.Errorf("create analysis run: %w", err)
+	}
+	return run, messages, nil
+}
+
+// checkNotAlreadyRunning returns ErrAnalysisInProgress if contextID's most
+// recent analysis run hasn't reached a terminal state yet -- prevents a
+// second click of "Analyze with AI" (or a race between auto-analysis and a
+// manual click) from starting an overlapping run against the same
+// conversation history.
+func (s *AIAnalysisService) checkNotAlreadyRunning(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID) error {
+	run, err := s.runs.LatestRun(ctx, tx, contextType, contextID)
+	if err != nil {
+		return fmt.Errorf("check existing analysis: %w", err)
+	}
+	if run != nil && (run.Status == domain.AIAnalysisRunRunning || run.Status == domain.AIAnalysisRunPaused) {
+		return ErrAnalysisInProgress
+	}
+	return nil
+}
+
+// finishSimpleRun is the background-goroutine continuation of the
+// pre-agentic-loop behavior: one LLM call, no tools. Kept as its own path
+// (rather than routing everything through the agentic loop with zero
+// tools) so the common case -- no MCP servers configured -- has exactly
+// the same shape it always did. run already exists (see startRun, called
+// synchronously before this goroutine was spawned) -- this only ever
+// updates it to completed/failed, never creates it.
+func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, userPrompt string) {
 	text, err := client.Complete(ctx, analysisSystemPrompt, userPrompt)
 	if err != nil {
-		return "", fmt.Errorf("llm analysis: %w", err)
+		s.failRun(ctx, run.TenantID, run.ID, err)
+		return
 	}
-	if err := s.recordEvent(ctx, tenantID, actorID, contextType, contextID, text); err != nil {
-		return "", err
+
+	finalMessages, _ := json.Marshal([]llmclient.Message{
+		{Role: llmclient.RoleUser, Content: userPrompt},
+		{Role: llmclient.RoleAssistant, Content: text},
+	})
+	if err := s.pool.WithTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
+		return s.runs.SetCompleted(ctx, tx, run.ID, finalMessages, text)
+	}); err != nil {
+		return
 	}
-	return text, nil
+
+	_ = s.recordEvent(ctx, run.TenantID, run.ActorID, run.ContextType, run.ContextID, text)
 }
 
 // agentToolRoute is resolveAgentTools' answer to "if the model calls tool
@@ -227,38 +366,6 @@ func (s *AIAnalysisService) resolveAgentTools(ctx context.Context, tenantID uuid
 	return tools, routes, nil
 }
 
-// runAgentAnalysis starts a fresh agentic run: persists an ai_analysis_runs
-// row up front (so even a first-turn pause has something ResumeAnalysisRun
-// can find), then drives turns via driveAgentLoop.
-func (s *AIAnalysisService) runAgentAnalysis(ctx context.Context, tenantID uuid.UUID, actorID *uuid.UUID, contextType string, contextID uuid.UUID, client llmclient.Client, tools []llmclient.Tool, routes map[string]agentToolRoute, userPrompt string) (string, error) {
-	messages := []llmclient.Message{{Role: llmclient.RoleUser, Content: userPrompt}}
-
-	messagesJSON, err := json.Marshal(messages)
-	if err != nil {
-		return "", fmt.Errorf("encode initial messages: %w", err)
-	}
-	toolsJSON, err := json.Marshal(tools)
-	if err != nil {
-		return "", fmt.Errorf("encode tools: %w", err)
-	}
-	routesJSON, err := json.Marshal(routes)
-	if err != nil {
-		return "", fmt.Errorf("encode tool routes: %w", err)
-	}
-
-	run := &domain.AIAnalysisRun{
-		TenantID: tenantID, ContextType: contextType, ContextID: contextID, ActorID: actorID,
-		Status: domain.AIAnalysisRunRunning, Messages: messagesJSON, Tools: toolsJSON, ToolRoutes: routesJSON,
-	}
-	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.runs.Insert(ctx, tx, run)
-	}); err != nil {
-		return "", fmt.Errorf("create analysis run: %w", err)
-	}
-
-	return s.driveAgentLoop(ctx, run, client, tools, routes, messages, 0)
-}
-
 // ResumeAnalysisRun picks a paused run back up after its pending tool call
 // was approved (and executed) or rejected -- see
 // MCPToolService.onToolCallResolved. It's a no-op (not an error) when
@@ -290,6 +397,12 @@ func (s *AIAnalysisService) ResumeAnalysisRun(ctx context.Context, tenantID uuid
 	if err != nil || run == nil {
 		return
 	}
+	// Fires on every return path below (decode failure, client-build
+	// failure, or driveAgentLoop finishing/failing/pausing again) -- a
+	// connected AlertDetailPage/IncidentDetailPage should refresh no matter
+	// how this resume turned out, the same as StartAlertAnalysis/
+	// StartIncidentAnalysis's background goroutine does.
+	defer s.notifyAnalyzed(tenantID, run.ContextType, run.ContextID)
 
 	var messages []llmclient.Message
 	if err := json.Unmarshal(run.Messages, &messages); err != nil {

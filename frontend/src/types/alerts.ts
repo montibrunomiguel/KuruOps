@@ -35,10 +35,16 @@ export interface Alert {
   closedAt?: string;
   createdAt: string;
   updatedAt: string;
-  // Most recent completed "Analyze with AI" result -- resolved live at Get
-  // time (see backend AlertService.Get / domain.Alert.LatestAnalysis),
-  // undefined if no analysis has completed yet for this alert.
+  // Most recent "Analyze with AI" run -- resolved live at Get time (see
+  // backend AlertService.Get / domain.Alert's fields of the same name).
+  // Analysis runs in the background on the server (POST /analyze returns
+  // 202 immediately): latestAnalysisStatus is undefined if none has ever
+  // been requested, else "running" | "paused" | "completed" | "failed".
+  // latestAnalysis (the result text) is only set once status is
+  // "completed"; latestAnalysisError only once it's "failed".
   latestAnalysis?: string;
+  latestAnalysisStatus?: "running" | "paused" | "completed" | "failed";
+  latestAnalysisError?: string;
 }
 
 export type AlertEventType =

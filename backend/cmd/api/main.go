@@ -153,10 +153,18 @@ func main() {
 	aiAnalysisRunRepo := repository.NewAIAnalysisRunRepository()
 	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo)
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
-	// So GET /alerts/{id} surfaces the latest completed analysis automatically
-	// (see AlertService.Get) -- the auto-trigger itself lives in cmd/ingest,
-	// not here; cmd/api only needs to be able to *show* the result.
+	// StartAlertAnalysis/StartIncidentAnalysis run the actual LLM call in
+	// their own goroutine (see AIAnalysisService's doc comment) -- this is
+	// what tells a connected AlertDetailPage/IncidentDetailPage to reload
+	// once it's done, the same live-update mechanism every other change
+	// already uses.
+	aiAnalysisService.EnableEventPublishing(eventBroadcaster.Publish)
+	// So GET /alerts/{id} and GET /incidents/{id} surface the latest
+	// analysis (completed, running, or failed -- see LatestAnalysisStatus)
+	// automatically. The auto-trigger itself lives in cmd/ingest, not here;
+	// cmd/api only needs to be able to *show* the result.
 	alertService.EnableAnalysisLookup(aiAnalysisRunRepo)
+	incidentService.EnableAnalysisLookup(aiAnalysisRunRepo)
 
 	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService)
 
