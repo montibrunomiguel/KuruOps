@@ -261,9 +261,22 @@ describe("IncidentDetailPage", () => {
     );
   });
 
-  it("clicking Analyze with AI posts to the analyze endpoint and shows the result", async () => {
+  it("clicking Analyze with AI posts to the analyze endpoint (202) and shows the eventual result", async () => {
+    let incidentCalls = 0;
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (url.includes("/api/v1/incidents/i1/analyze")) return Promise.resolve(jsonResponse({ result: "recommend immediate containment" }));
+      if (url.includes("/api/v1/incidents/i1/analyze")) return Promise.resolve(jsonResponse({ status: "running" }, 202));
+      if (url.includes("/api/v1/incidents/i1") && !url.includes("/incidents/i1/")) {
+        incidentCalls++;
+        // 1st fetch (initial mount): no analysis yet. 2nd fetch (the
+        // reload() analyze() triggers right after the 202): stands in for
+        // the real flow's SSE-driven reload once the background LLM call
+        // finishes.
+        const fixture =
+          incidentCalls === 1
+            ? incidentFixture()
+            : incidentFixture({ latestAnalysisStatus: "completed", latestAnalysis: "recommend immediate containment" });
+        return Promise.resolve(jsonResponse(fixture));
+      }
       return routeFetch(incidentFixture())(url, init);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -272,6 +285,26 @@ describe("IncidentDetailPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
 
     expect(await screen.findByText("recommend immediate containment")).toBeInTheDocument();
+  });
+
+  it("shows a running-analysis message while a background analysis is in progress", async () => {
+    vi.stubGlobal("fetch", routeFetch(incidentFixture({ latestAnalysisStatus: "running" })));
+    renderDetail();
+
+    expect(await screen.findByText(/Analysis in progress/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analyzing..." })).toBeDisabled();
+  });
+
+  it("shows a failed-analysis message with a retry button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(incidentFixture({ latestAnalysisStatus: "failed", latestAnalysisError: "no LLM provider configured" })),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("AI Analysis Failed")).toBeInTheDocument();
+    expect(screen.getByText("no LLM provider configured")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("highlights the incident's own severity/priority cell in the NIST matrix", async () => {

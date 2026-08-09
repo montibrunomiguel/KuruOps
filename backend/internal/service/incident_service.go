@@ -22,6 +22,7 @@ type IncidentService struct {
 	users   *repository.UserRepository
 	sla     *IncidentSLAService
 	publish func(tenantID uuid.UUID, eventType string, payload any)
+	runs    *repository.AIAnalysisRunRepository
 }
 
 func NewIncidentService(pool *db.Pool, repo *repository.IncidentRepository, tags *TagService, users *repository.UserRepository, sla *IncidentSLAService) *IncidentService {
@@ -33,6 +34,14 @@ func NewIncidentService(pool *db.Pool, repo *repository.IncidentRepository, tags
 // post-construction-setter reasoning.
 func (s *IncidentService) EnableEventPublishing(publish func(tenantID uuid.UUID, eventType string, payload any)) {
 	s.publish = publish
+}
+
+// EnableAnalysisLookup wires the repository Get uses to populate
+// domain.Incident.LatestAnalysis/LatestAnalysisStatus/LatestAnalysisError --
+// see AlertService.EnableAnalysisLookup for the same post-construction-setter
+// reasoning.
+func (s *IncidentService) EnableAnalysisLookup(runs *repository.AIAnalysisRunRepository) {
+	s.runs = runs
 }
 
 func (s *IncidentService) publishEvent(tenantID, incidentID uuid.UUID, action string) {
@@ -76,6 +85,13 @@ func (s *IncidentService) Get(ctx context.Context, tenantID, id uuid.UUID, allow
 		}
 		if !tagsVisible(allowedTags, v.Tags) {
 			return nil
+		}
+		if s.runs != nil {
+			run, err := s.runs.LatestRun(ctx, tx, "incident", v.ID)
+			if err != nil {
+				return fmt.Errorf("load latest analysis: %w", err)
+			}
+			v.LatestAnalysis, v.LatestAnalysisStatus, v.LatestAnalysisError = latestAnalysisFields(run)
 		}
 		inc = v
 		return nil

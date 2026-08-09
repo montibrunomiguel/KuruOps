@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -22,17 +24,54 @@ import (
 // single-LLM-call path (resolveAgentTools finds nothing to offer). The
 // agentic loop itself (tool proposal, pause-for-approval, resume) is
 // covered in ai_analysis_agentic_test.go against a real MCP server fixture.
-func newAIAnalysisService(pool *db.Pool, store secrets.Store) *service.AIAnalysisService {
+//
+// StartAlertAnalysis/StartIncidentAnalysis only block for the quick
+// synchronous validation -- the actual LLM call runs in its own goroutine
+// (see AIAnalysisService's doc comment), so a test asserting on the
+// eventual result needs to wait for it to finish first; wiring
+// EnableEventPublishing here gives tests exactly that signal (the same
+// live-update event a real Broadcaster would fan out to SSE clients).
+func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalysisService, <-chan struct{}) {
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, store)
-	return service.NewAIAnalysisService(
+	svc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
+	analyzed := make(chan struct{}, 8)
+	svc.EnableEventPublishing(func(uuid.UUID, string, any) {
+		analyzed <- struct{}{}
+	})
+	return svc, analyzed
 }
 
-func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
+// waitAnalyzed blocks until the background analysis started by
+// StartAlertAnalysis/StartIncidentAnalysis fires its completion event, or
+// fails the test after 2s -- generous for a test LLM double that responds
+// instantly, tight enough to fail fast if notifyAnalyzed regresses.
+func waitAnalyzed(t *testing.T, analyzed <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-analyzed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background analysis did not complete in time")
+	}
+}
+
+// latestRun fetches the most recent analysis run for contextID directly
+// from the repository -- what tests use to inspect the outcome of a
+// background analysis, now that Start*Analysis has nothing to return.
+func latestRun(t *testing.T, pool *db.Pool, tenantID uuid.UUID, contextType string, contextID uuid.UUID) *domain.AIAnalysisRun {
+	t.Helper()
+	runs := repository.NewAIAnalysisRunRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+	run, err := runs.LatestRun(t.Context(), tx, contextType, contextID)
+	require.NoError(t, err)
+	return run
+}
+
+func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
@@ -40,7 +79,7 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
-	aiSvc := newAIAnalysisService(pool, store)
+	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	t.Run("no provider configured", func(t *testing.T) {
 		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
@@ -48,7 +87,7 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
+		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil)
 		assert.ErrorContains(t, err, "no LLM provider configured")
 	})
 
@@ -66,15 +105,20 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	t.Run("analyzes the alert and logs an ai_analysis_run event", func(t *testing.T) {
+	t.Run("analyzes the alert in the background and logs an ai_analysis_run event", func(t *testing.T) {
 		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
 		})
 		require.NoError(t, err)
 
-		result, err := aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, nil)
-		require.NoError(t, err)
-		assert.Equal(t, "likely a brute-force login attempt", result)
+		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
+		waitAnalyzed(t, analyzed)
+
+		run := latestRun(t, pool, tenantID, "alert", alert.ID)
+		require.NotNil(t, run)
+		assert.Equal(t, domain.AIAnalysisRunCompleted, run.Status)
+		require.NotNil(t, run.Result)
+		assert.Equal(t, "likely a brute-force login attempt", *run.Result)
 	})
 
 	t.Run("an out-of-scope alert reads as not found", func(t *testing.T) {
@@ -83,12 +127,43 @@ func TestAIAnalysisService_AnalyzeAlert(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = aiSvc.AnalyzeAlert(t.Context(), tenantID, alert.ID, &actorID, []string{"unrelated-tag"})
+		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
+	})
+
+	t.Run("a second start while one is already running is rejected", func(t *testing.T) {
+		// A slow LLM double this time -- long enough that the first
+		// analysis is still 'running' when the second StartAlertAnalysis
+		// call's synchronous checkNotAlreadyRunning check runs.
+		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(300 * time.Millisecond)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"..."}}]}`))
+		}))
+		defer slow.Close()
+		slowProvider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "Slow Provider", Kind: "openai_compatible", BaseURL: &slow.URL, Model: "gpt-4o", APIKey: "sk-test",
+		})
+		require.NoError(t, err)
+		require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, slowProvider.ID))
+		defer func() {
+			require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+		}()
+
+		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
+		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil)
+		assert.ErrorIs(t, err, service.ErrAnalysisInProgress)
+
+		waitAnalyzed(t, analyzed) // drain the first (slow) analysis's completion before the next subtest
 	})
 }
 
-func TestAIAnalysisService_AnalyzeIncident(t *testing.T) {
+func TestAIAnalysisService_StartIncidentAnalysis(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
@@ -96,7 +171,7 @@ func TestAIAnalysisService_AnalyzeIncident(t *testing.T) {
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
 	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	aiSvc := newAIAnalysisService(pool, store)
+	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -115,12 +190,17 @@ func TestAIAnalysisService_AnalyzeIncident(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, &actorID, nil)
-	require.NoError(t, err)
-	assert.Equal(t, "recommend immediate containment", result)
+	require.NoError(t, aiSvc.StartIncidentAnalysis(t.Context(), tenantID, inc.ID, &actorID, nil))
+	waitAnalyzed(t, analyzed)
 
-	t.Run("an unknown incident id fails", func(t *testing.T) {
-		_, err := aiSvc.AnalyzeIncident(t.Context(), tenantID, inc.ID, &actorID, []string{"unrelated-tag"})
+	run := latestRun(t, pool, tenantID, "incident", inc.ID)
+	require.NotNil(t, run)
+	assert.Equal(t, domain.AIAnalysisRunCompleted, run.Status)
+	require.NotNil(t, run.Result)
+	assert.Equal(t, "recommend immediate containment", *run.Result)
+
+	t.Run("an out-of-scope incident reads as not found", func(t *testing.T) {
+		err := aiSvc.StartIncidentAnalysis(t.Context(), tenantID, inc.ID, &actorID, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
 	})
 }

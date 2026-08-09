@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -87,6 +88,135 @@ func TestAlertHandlers_Analyze_NoProviderConfigured(t *testing.T) {
 	rec := doRequest(r, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "no LLM provider configured")
+}
+
+// TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground is
+// the handler-level regression test for the whole point of this frente:
+// POST /analyze responds 202 right away (not after the LLM call finishes),
+// and the eventual result only shows up via a later GET (see
+// domain.Alert.LatestAnalysis*), driven by the same completion signal a
+// real SSE Broadcaster would fan out.
+func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	secretStore := secrets.NewEnvStore()
+
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertRepo := repository.NewAlertRepository()
+	incidentRepo := repository.NewIncidentRepository()
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	alertSvc.EnableAnalysisLookup(repository.NewAIAnalysisRunRepository())
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	mcpServerRepo := repository.NewMCPServerRepository()
+	aiToolCallRepo := repository.NewAIToolCallRepository()
+	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	aiSvc := service.NewAIAnalysisService(
+		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
+		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+	)
+	analyzed := make(chan struct{}, 1)
+	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, service.NewUserService(pool, repository.NewUserRepository()))
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"likely benign"}}]}`))
+	}))
+	defer srv.Close()
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+
+	r := newRouter(h.Routes)
+	req := withClaims(httptest.NewRequest("POST", "/"+alert.ID.String()+"/analyze", nil), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "running", body["status"])
+
+	select {
+	case <-analyzed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background analysis did not complete in time")
+	}
+
+	got, err := alertSvc.Get(t.Context(), tenantID, alert.ID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.LatestAnalysisStatus)
+	assert.Equal(t, "completed", *got.LatestAnalysisStatus)
+	require.NotNil(t, got.LatestAnalysis)
+	assert.Equal(t, "likely benign", *got.LatestAnalysis)
+}
+
+// TestAlertHandlers_Analyze_AlreadyInProgress confirms the handler surfaces
+// service.ErrAnalysisInProgress as 409, not the generic 400 every other
+// validation failure gets.
+func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	secretStore := secrets.NewEnvStore()
+
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertRepo := repository.NewAlertRepository()
+	incidentRepo := repository.NewIncidentRepository()
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	mcpServerRepo := repository.NewMCPServerRepository()
+	aiToolCallRepo := repository.NewAIToolCallRepository()
+	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	aiSvc := service.NewAIAnalysisService(
+		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
+		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+	)
+	analyzed := make(chan struct{}, 1)
+	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, service.NewUserService(pool, repository.NewUserRepository()))
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	// A slow LLM double -- long enough that the first analysis is still
+	// running when the second /analyze request arrives.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"..."}}]}`))
+	}))
+	defer srv.Close()
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+
+	r := newRouter(h.Routes)
+	first := withClaims(httptest.NewRequest("POST", "/"+alert.ID.String()+"/analyze", nil), tenantID, actorID, nil)
+	require.Equal(t, http.StatusAccepted, doRequest(r, first).Code)
+
+	second := withClaims(httptest.NewRequest("POST", "/"+alert.ID.String()+"/analyze", nil), tenantID, actorID, nil)
+	rec := doRequest(r, second)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+
+	select {
+	case <-analyzed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("background analysis did not complete in time")
+	}
 }
 
 func TestAlertHandlers_List_CorrelatedFilter(t *testing.T) {

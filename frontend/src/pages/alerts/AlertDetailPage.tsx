@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertComment, AlertStatus, Classification, Severity } from "../../types/alerts";
 import type { Playbook } from "../../types/playbooks";
 import type { UserSummary } from "../../types/users";
@@ -29,6 +30,17 @@ export function AlertDetailPage() {
   );
   const current = alert?.[0];
 
+  // Analysis runs in the background on the server (POST /analyze returns
+  // 202 immediately, see AIAnalysisService's doc comment) -- this is what
+  // tells the page to refetch once it's done, instead of waiting on the
+  // POST response the way it used to. Filtered to this alert's id: other
+  // alerts changing shouldn't reload this page.
+  useEventStream((event) => {
+    if (event.type !== "alert") return;
+    const payload = event.data as { id?: string } | null;
+    if (payload?.id === id) reload();
+  });
+
   const { data: comments, reload: reloadComments } = useList<AlertComment>(
     (tk) => api.get<AlertComment[]>(`/api/v1/alerts/${id}/comments`, tk),
     [id],
@@ -47,21 +59,22 @@ export function AlertDetailPage() {
   );
 
   const [actionError, setActionError] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
   const [escalating, setEscalating] = useState(false);
 
+  // No local "analyzing" flag -- current.latestAnalysisStatus (from the
+  // most recent GET) already reflects "running" the instant the POST
+  // below returns, since the server creates the run row synchronously
+  // before responding 202. reload() picks that up immediately; the
+  // eventual completed/failed transition arrives via the SSE subscription
+  // above.
   async function analyze() {
     if (!id) return;
-    setAnalyzing(true);
     setActionError(null);
     try {
-      const res = await api.post<{ result: string }>(`/api/v1/alerts/${id}/analyze`, {}, token);
-      setAiResult(res.result);
+      await api.post<{ status: string }>(`/api/v1/alerts/${id}/analyze`, {}, token);
+      reload();
     } catch (err) {
       setActionError(mutationErrorMessage(err));
-    } finally {
-      setAnalyzing(false);
     }
   }
 
@@ -109,9 +122,15 @@ export function AlertDetailPage() {
           </p>
         </div>
         <div className="toolbar-actions">
-          <button className="btn btn-primary btn-sm" disabled={analyzing} onClick={analyze}>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused"}
+            onClick={analyze}
+          >
             <SparkleIcon width={14} height={14} />
-            {analyzing ? t("alerts.detail.analyzing") : t("alerts.detail.analyzeWithAI")}
+            {current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused"
+              ? t("alerts.detail.analyzing")
+              : t("alerts.detail.analyzeWithAI")}
           </button>
           {current.status !== "escalated" && current.status !== "closed" && (
             <button className="btn btn-danger btn-sm" disabled={escalating} onClick={escalate}>
@@ -125,12 +144,33 @@ export function AlertDetailPage() {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
-      {(aiResult ?? current.latestAnalysis) && (
+      {(current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused") && (
         <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
           <h2 className="panel-title" style={{ marginBottom: 10 }}>
             {t("alerts.detail.aiResultTitle")}
           </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{aiResult ?? current.latestAnalysis}</p>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>{t("alerts.detail.aiRunningMessage")}</p>
+        </div>
+      )}
+
+      {current.latestAnalysisStatus === "failed" && (
+        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--critical)" }}>
+          <h2 className="panel-title" style={{ marginBottom: 10 }}>
+            {t("alerts.detail.aiFailedTitle")}
+          </h2>
+          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{current.latestAnalysisError}</p>
+          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={analyze}>
+            {t("alerts.detail.aiRetry")}
+          </button>
+        </div>
+      )}
+
+      {current.latestAnalysisStatus === "completed" && current.latestAnalysis && (
+        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
+          <h2 className="panel-title" style={{ marginBottom: 10 }}>
+            {t("alerts.detail.aiResultTitle")}
+          </h2>
+          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{current.latestAnalysis}</p>
         </div>
       )}
 

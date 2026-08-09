@@ -67,6 +67,11 @@ export interface Incident {
   closedAt?: string;
   createdAt: string;
   updatedAt: string;
+  // Most recent "Analyze with AI" run -- see Alert's fields of the same
+  // name in types/alerts.ts for the full doc comment; same mechanism.
+  latestAnalysis?: string;
+  latestAnalysisStatus?: "running" | "paused" | "completed" | "failed";
+  latestAnalysisError?: string;
 }
 
 // IncidentSLAPolicy mirrors backend/internal/domain.IncidentSLAPolicy --

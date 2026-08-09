@@ -171,12 +171,25 @@ describe("AlertDetailPage", () => {
     expect(await screen.findByRole("button", { name: "View linked incident" })).toBeInTheDocument();
   });
 
-  it("clicking Analyze with AI posts to the analyze endpoint and shows the result", async () => {
+  it("clicking Analyze with AI posts to the analyze endpoint (202) and shows the eventual result", async () => {
+    let alertCalls = 0;
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/api/v1/alerts/a1/alerts")) return Promise.resolve(jsonResponse([]));
       if (url.includes("/api/v1/alerts/a1/comments")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/v1/alerts/a1/analyze")) return Promise.resolve(jsonResponse({ result: "looks like a brute-force attempt" }));
-      if (url.includes("/api/v1/alerts/a1")) return Promise.resolve(jsonResponse(alertFixture()));
+      if (url.includes("/api/v1/alerts/a1/analyze")) return Promise.resolve(jsonResponse({ status: "running" }, 202));
+      if (url.includes("/api/v1/alerts/a1")) {
+        alertCalls++;
+        // 1st fetch (initial mount): no analysis yet. 2nd fetch (the
+        // reload() analyze() triggers right after the 202): the server
+        // already flipped the run to 'running' synchronously before
+        // responding, then -- in this test -- straight to 'completed',
+        // standing in for the real flow's SSE-driven reload once the
+        // background LLM call finishes.
+        if (alertCalls === 1) return Promise.resolve(jsonResponse(alertFixture()));
+        return Promise.resolve(
+          jsonResponse(alertFixture({ latestAnalysisStatus: "completed", latestAnalysis: "looks like a brute-force attempt" })),
+        );
+      }
       if (url.includes("/api/v1/alerts?")) return Promise.resolve(jsonResponse([]));
       if (url.includes("/api/v1/playbooks/match")) return Promise.resolve(jsonResponse(null));
       if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
@@ -192,11 +205,34 @@ describe("AlertDetailPage", () => {
   });
 
   it("shows a previously completed AI analysis automatically, without clicking Analyze", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ latestAnalysis: "auto-triggered analysis from ingest" })));
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(alertFixture({ latestAnalysisStatus: "completed", latestAnalysis: "auto-triggered analysis from ingest" })),
+    );
     renderDetail();
 
     expect(await screen.findByText("auto-triggered analysis from ingest")).toBeInTheDocument();
     expect(screen.getByText("AI Analysis")).toBeInTheDocument();
+  });
+
+  it("shows a running-analysis message while a background analysis is in progress", async () => {
+    vi.stubGlobal("fetch", routeFetch(alertFixture({ latestAnalysisStatus: "running" })));
+    renderDetail();
+
+    expect(await screen.findByText(/Analysis in progress/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analyzing..." })).toBeDisabled();
+  });
+
+  it("shows a failed-analysis message with a retry button", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(alertFixture({ latestAnalysisStatus: "failed", latestAnalysisError: "no LLM provider configured" })),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("AI Analysis Failed")).toBeInTheDocument();
+    expect(screen.getByText("no LLM provider configured")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("shows the Metadata panel with a clickable link for URL-shaped values", async () => {

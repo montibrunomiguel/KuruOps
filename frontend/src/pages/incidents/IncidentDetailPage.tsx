@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useEventStream } from "../../api/eventStream";
 import type { Alert, Severity } from "../../types/alerts";
 import type {
   Incident,
@@ -56,10 +57,23 @@ export function IncidentDetailPage() {
     [id],
   );
 
+  // Analysis runs in the background on the server (POST /analyze returns
+  // 202 immediately, see AIAnalysisService's doc comment) -- this is what
+  // tells the page to refetch once it's done, instead of waiting on the
+  // POST response the way it used to. Filtered to this incident's id:
+  // other incidents changing shouldn't reload this page. Also refreshes
+  // the timeline, since a finished analysis appends an ai_analysis_run
+  // entry to it.
+  useEventStream((event) => {
+    if (event.type !== "incident") return;
+    const payload = event.data as { id?: string } | null;
+    if (payload?.id !== id) return;
+    reload();
+    reloadTimeline();
+  });
+
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
 
   // Every mutation below can append a row to the incident_events timeline
   // (phase_changed, closed, severity_priority_changed, description_edited,
@@ -112,17 +126,19 @@ export function IncidentDetailPage() {
     }
   }
 
+  // No local "analyzing" flag -- incident.latestAnalysisStatus (from the
+  // most recent GET) already reflects "running" the instant the POST below
+  // returns, since the server creates the run row synchronously before
+  // responding 202. reload() picks that up immediately; the eventual
+  // completed/failed transition arrives via the SSE subscription above.
   async function analyze() {
     if (!id) return;
-    setAnalyzing(true);
     setActionError(null);
     try {
-      const res = await api.post<{ result: string }>(`/api/v1/incidents/${id}/analyze`, {}, token);
-      setAiResult(res.result);
+      await api.post<{ status: string }>(`/api/v1/incidents/${id}/analyze`, {}, token);
+      reload();
     } catch (err) {
       setActionError(mutationErrorMessage(err));
-    } finally {
-      setAnalyzing(false);
     }
   }
 
@@ -158,9 +174,15 @@ export function IncidentDetailPage() {
           </p>
         </div>
         <div className="toolbar-actions">
-          <button className="btn btn-primary btn-sm" disabled={analyzing} onClick={analyze}>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused"}
+            onClick={analyze}
+          >
             <SparkleIcon width={14} height={14} />
-            {analyzing ? t("incidents.detail.analyzing") : t("incidents.detail.analyzeWithAI")}
+            {incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused"
+              ? t("incidents.detail.analyzing")
+              : t("incidents.detail.analyzeWithAI")}
           </button>
           {!incident.closedAt && (
             <button
@@ -179,12 +201,33 @@ export function IncidentDetailPage() {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
-      {aiResult && (
+      {(incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused") && (
         <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
           <h2 className="panel-title" style={{ marginBottom: 10 }}>
             {t("alerts.detail.aiResultTitle")}
           </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{aiResult}</p>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>{t("alerts.detail.aiRunningMessage")}</p>
+        </div>
+      )}
+
+      {incident.latestAnalysisStatus === "failed" && (
+        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--critical)" }}>
+          <h2 className="panel-title" style={{ marginBottom: 10 }}>
+            {t("alerts.detail.aiFailedTitle")}
+          </h2>
+          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{incident.latestAnalysisError}</p>
+          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={analyze}>
+            {t("alerts.detail.aiRetry")}
+          </button>
+        </div>
+      )}
+
+      {incident.latestAnalysisStatus === "completed" && incident.latestAnalysis && (
+        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
+          <h2 className="panel-title" style={{ marginBottom: 10 }}>
+            {t("alerts.detail.aiResultTitle")}
+          </h2>
+          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{incident.latestAnalysis}</p>
         </div>
       )}
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -501,9 +502,8 @@ func (h *IncidentHandlers) unlinkAlert(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// analyze is synchronous -- an LLM call can take several seconds, so the
-// frontend shows a loading state while this blocks, rather than polling a
-// background job (see AIAnalysisService's doc comment).
+// analyze kicks off analysis in the background and returns immediately --
+// see AlertHandlers.analyze's doc comment, same design.
 func (h *IncidentHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
 	userID, _ := middleware.UserID(r.Context())
@@ -513,10 +513,14 @@ func (h *IncidentHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.ai.AnalyzeIncident(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
+	err = h.ai.StartIncidentAnalysis(r.Context(), tenantID, id, &userID, middleware.AllowedTags(r.Context()))
 	if err != nil {
+		if errors.Is(err, service.ErrAnalysisInProgress) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, analyzeResponse{Result: result})
+	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
 }
