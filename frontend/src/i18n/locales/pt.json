@@ -72,7 +72,9 @@
     "darkMode": "Modo escuro",
     "lightMode": "Modo claro",
     "language": "Idioma",
-    "logout": "Sair"
+    "logout": "Sair",
+    "openMenu": "Abrir menu",
+    "closeMenu": "Fechar menu"
   },
   "login": {
     "email": "E-mail",
