@@ -13,6 +13,7 @@ import (
 
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/service"
 )
@@ -77,9 +78,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenHash := hashToken(token)
 
+	logger := middleware.LoggerFromContext(r.Context(), h.logger)
+
 	endpoint, err := h.webhooks.ResolveToken(r.Context(), h.pool, tokenHash)
 	if err != nil {
-		h.logger.Error("resolve webhook token failed", "error", err)
+		logger.Error("resolve webhook token failed", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -120,7 +123,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(normalized.Tags) > 0 {
 		tags, err = h.tags.FilterKnown(r.Context(), endpoint.TenantID, normalized.Tags)
 		if err != nil {
-			h.logger.Error("filter tags failed", "error", err, "tenant_id", endpoint.TenantID)
+			logger.Error("filter tags failed", "error", err, "tenant_id", endpoint.TenantID)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -139,7 +142,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Metadata:   extractMetadata(body),
 	})
 	if err != nil {
-		h.logger.Error("ingest alert failed", "error", err, "tenant_id", endpoint.TenantID)
+		logger.Error("ingest alert failed", "error", err, "tenant_id", endpoint.TenantID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

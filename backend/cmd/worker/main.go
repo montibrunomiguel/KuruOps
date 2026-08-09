@@ -7,8 +7,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/httpserver"
 	"github.com/argusops/argusops/internal/mailer"
 	"github.com/argusops/argusops/internal/notifier"
 	"github.com/argusops/argusops/internal/repository"
@@ -44,6 +47,28 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	httpserver.GetMetrics().SetPool(pool.Pool)
+
+	// Unlike cmd/api/cmd/ingest, this process has no request traffic of its
+	// own to serve -- /healthz and /metrics exist purely so the same
+	// container-orchestration probes (docker-compose healthcheck, a future
+	// Kubernetes readinessProbe) that already work against api/ingest also
+	// work here, instead of a worker replica silently wedged with no way to
+	// detect it externally.
+	healthMux := http.NewServeMux()
+	healthMux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
+	healthMux.HandleFunc("/metrics", httpserver.MetricsHandler)
+	healthSrv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           httpserver.WrapWithObservability(healthMux, logger),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		logger.Info("worker health/metrics listening", "addr", cfg.HTTPAddr)
+		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("health server failed", "error", err)
+		}
+	}()
 
 	// Only needed to resolve an escalation policy's destination
 	// (PagerDuty routing key / Slack webhook URL / generic webhook URL) --
@@ -99,6 +124,11 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+			if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+				logger.Error("health server graceful shutdown failed", "error", err)
+			}
+			cancel()
 			return
 		case <-refreshTicker.C:
 			runLocked(ctx, pool, lockKeyRefreshMaterializedViews, "refresh_materialized_views", logger, func() {

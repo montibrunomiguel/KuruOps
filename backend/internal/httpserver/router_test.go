@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -45,6 +47,11 @@ func nilOptions() Options {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)
 			})
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		HealthCheck: func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
 		},
 	}
 }

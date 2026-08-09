@@ -78,6 +78,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	httpserver.GetMetrics().SetPool(pool.Pool)
 
 	// TagService is a dependency of AlertService/IncidentService (tag
 	// catalog validation for UpdateTags), so it's constructed first.
@@ -255,6 +256,8 @@ func main() {
 		DatabaseMigrationHandlers: dbMigrationHandlers,
 		EventsHandlers:            eventsHandlers,
 		AuthMiddleware:            authMiddleware,
+		Logger:                    logger,
+		HealthCheck:               httpserver.HealthCheck(pool.Pool),
 	})
 
 	srv := &http.Server{
