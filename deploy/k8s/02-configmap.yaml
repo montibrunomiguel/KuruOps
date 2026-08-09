@@ -1,0 +1,31 @@
+# Non-sensitive config shared by api/ingest/worker -- see
+# backend/.env.example for the full set this mirrors. Anything
+# credential-shaped lives in 01-secret.example.yaml instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argusops-config
+  namespace: argusops
+data:
+  HTTP_ADDR: ":8080"
+  SHUTDOWN_TIMEOUT: "15s"
+  # "jwt": real session tokens, requires JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH
+  # (see 04-api.yaml's secret volume mount) -- never "dev"/"dev-headers"
+  # outside a developer's own machine, see config.Config's AuthMode doc.
+  AUTH_MODE: "jwt"
+  UPLOAD_DIR: "/data/uploads"
+  # The frontend Service's externally-reachable URL -- used in escalation
+  # notification links and password-reset emails. Adjust to your real
+  # ingress/domain; there is no ingress manifest here (see README.md).
+  APP_BASE_URL: "https://argusops.example.com"
+  # "env" (default) needs only SECRETS_ENCRYPTION_KEY (see the Secret) --
+  # switch to "vault" or "kms" and add the matching VAULT_*/KMS_* keys here
+  # (non-sensitive) plus VAULT_TOKEN/KMS_SECRET_ACCESS_KEY in the Secret if
+  # your deployment needs one of those instead. See backend/.env.example.
+  SECRETS_BACKEND: "env"
+  # Starting point only -- see backend/.env.example's DB_POOL_MAX_CONNS doc
+  # for the sizing formula (divide the Postgres max_connections by replica
+  # count across every binary sharing that database).
+  DB_POOL_MAX_CONNS: "10"
+  DB_POOL_MIN_CONNS: "0"
+  MIGRATIONS_PATH: "/app/db/migrations"

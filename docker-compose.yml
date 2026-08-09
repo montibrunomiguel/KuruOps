@@ -1,8 +1,17 @@
 name: argusops
 
+# mem_limit/cpus below are conservative defaults sized for running the whole
+# stack on a single laptop, not a production sizing recommendation -- raise
+# them (or drop them entirely) for a real deployment based on actual
+# observed usage (see the new argusops_db_pool_* /
+# argusops_http_request_duration_seconds metrics on /metrics). Without any
+# limit, a single runaway container (e.g. a stuck query, a memory leak) can
+# starve every other service on the same host.
 services:
   postgres:
     image: postgres:16-alpine
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       POSTGRES_DB: argusops
       POSTGRES_USER: postgres
@@ -83,6 +92,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: api
+    mem_limit: 256m
+    cpus: 1.0
     environment:
       # argusops_app has no table ownership / BYPASSRLS -- see
       # db/init/argusops_app_role.sql and db/README.md for why that's the
@@ -136,6 +147,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: ingest
+    mem_limit: 256m
+    cpus: 1.0
     environment:
       DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
       HTTP_ADDR: :8081
@@ -160,6 +173,8 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: worker
+    mem_limit: 256m
+    cpus: 0.5
     environment:
       # argusops_worker (not argusops_app) -- it owns and refreshes
       # mv_alert_daily_stats/mv_incident_kpis, which needs BYPASSRLS to see
@@ -181,13 +196,15 @@ services:
   frontend:
     build:
       context: ./frontend
+    mem_limit: 128m
+    cpus: 0.5
     ports:
-      - "3000:80"
+      - "3000:8080"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/"]
       interval: 3s
       timeout: 3s
       retries: 15

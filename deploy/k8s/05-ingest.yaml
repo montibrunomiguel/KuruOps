@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest
+  namespace: argusops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingest
+  template:
+    metadata:
+      labels:
+        app: ingest
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: ingest
+          image: argusops-ingest:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: argusops-config
+          env:
+            # argusops_app, same role/secret key api uses -- see
+            # db/init/argusops_app_role.sql, ingest's own webhook-ingest
+            # path is RLS-scoped exactly like api's.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: DATABASE_URL_APP
+            - name: SECRETS_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: SECRETS_ENCRYPTION_KEY
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 250m, memory: 128Mi }
+            limits: { cpu: "1", memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest
+  namespace: argusops
+spec:
+  selector:
+    app: ingest
+  ports:
+    - port: 8080
+      targetPort: 8080

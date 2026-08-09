@@ -10,6 +10,12 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine
+# nginx-unprivileged, not plain nginx:1.27-alpine: runs as a non-root user
+# (uid 101) out of the box -- cache/pid dirs are already owned by it and it
+# listens on 8080 (>1024, unprivileged ports only) instead of 80, both
+# handled by the image itself with no nginx.conf changes beyond the listen
+# port below. Same tag suffix as the image we're replacing.
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
+EXPOSE 8080
