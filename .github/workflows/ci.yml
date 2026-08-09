@@ -41,10 +41,18 @@ jobs:
           cd backend
           go vet ./...
 
+      # install-mode: goinstall builds golangci-lint with the Go toolchain
+      # set up above (1.25) instead of downloading golangci-lint's official
+      # prebuilt binary, which is still built with go1.24 as of the latest
+      # v1.x release (v1.64.8, the last one before the v2 config-schema
+      # rewrite) -- that older binary refuses to lint a `go 1.25` module
+      # ("the Go language version used to build golangci-lint is lower than
+      # the targeted Go version").
       - name: Lint (golangci-lint)
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
+          install-mode: goinstall
           working-directory: backend
           args: --timeout=5m
 
