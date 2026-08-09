@@ -56,21 +56,33 @@ var imageContentTypes = map[string]string{
 	"image/webp": ".webp",
 }
 
-// allowedAttachmentExtensions is the allow-list for every non-image
-// attachment, matched against the client's original filename (lowercased).
-// Deliberately a positive list rather than a denial list of dangerous
-// extensions (.exe/.bat/.sh/.js/...) -- an allow-list can't be bypassed by
-// a extension nobody thought to deny. Office formats are included even
-// though their sniffed Content-Type is ambiguous (legacy .doc/.xls/.ppt
-// sniff as application/octet-stream; .docx/.xlsx/.pptx as application/zip,
-// since OOXML is a zip container) -- the extension is the only reliable
-// signal for those, and it's safe to trust because non-image attachments
-// are never rendered inline (see serve).
-var allowedAttachmentExtensions = map[string]bool{
-	".pdf": true, ".txt": true, ".csv": true, ".log": true, ".json": true,
-	".yaml": true, ".yml": true, ".zip": true, ".gz": true, ".tar": true,
-	".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".ppt": true, ".pptx": true,
-	".eml": true, ".msg": true, ".pcap": true, ".pcapng": true, ".mp4": true,
+// deniedAttachmentExtensions is a denial list of executable/installer/script
+// types, matched against the client's original filename (lowercased) --
+// every other non-image extension is allowed (evidence attachments are
+// arbitrary: PDFs, packet captures, office docs, config dumps, anything an
+// analyst or a source system produces). This used to be a positive
+// allow-list instead, but SOC evidence genuinely includes file types no
+// fixed list can anticipate (a malware sample's own installer format, a
+// vendor-specific log/export extension, etc.) -- an analyst who needs to
+// attach an executable (e.g. an actual malware sample) is expected to zip
+// it first, which keeps it out of this list (.zip/.gz/.tar remain
+// unrestricted) and matches standard malware-handling practice of never
+// sharing a raw executable. Safe to be permissive here regardless: non-image
+// attachments are never rendered/executed inline, only ever served as a
+// forced download (see serve/isInlineContentType) -- this list exists to
+// stop an analyst from accidentally double-clicking a downloaded executable
+// straight out of their browser's downloads folder, not to prevent XSS.
+var deniedAttachmentExtensions = map[string]bool{
+	".exe": true, ".msi": true, ".msp": true, ".msix": true, ".msixbundle": true,
+	".dll": true, ".com": true, ".scr": true, ".cpl": true, ".sys": true, ".drv": true,
+	".bat": true, ".cmd": true, ".ps1": true, ".psm1": true, ".psd1": true,
+	".vb": true, ".vbs": true, ".vbe": true, ".js": true, ".jse": true,
+	".wsf": true, ".wsh": true, ".wsc": true, ".hta": true, ".scf": true,
+	".sh": true, ".bash": true, ".command": true, ".run": true,
+	".apk": true, ".ipa": true, ".jar": true, ".appx": true, ".appxbundle": true,
+	".app": true, ".gadget": true, ".lnk": true, ".reg": true, ".mst": true,
+	".pif": true, ".ws": true, ".action": true, ".workflow": true,
+	".ade": true, ".adp": true, ".chm": true, ".ins": true, ".isp": true, ".sct": true, ".shb": true, ".vxd": true,
 }
 
 // keyRE validates the wildcard portion of a GET before it's handed to any
@@ -79,6 +91,29 @@ var allowedAttachmentExtensions = map[string]bool{
 // S3/GCS have no traversal risk of their own, but validating unconditionally
 // keeps one rule for all three backends instead of a local-disk special case.
 var keyRE = regexp.MustCompile(`^(Alert|Incident)/\d{4}/\d{2}/\d{2}/[A-Za-z0-9._-]{1,80}/[0-9a-f-]{36}_[A-Za-z0-9._-]{1,80}\.[a-z0-9]{1,8}$`)
+
+// attachmentExtRE constrains a non-image extension to the same shape keyRE
+// requires of the trailing extension segment of a stored key (1-8 lowercase
+// alphanumerics) -- checked at upload time so a since-broadened deny-list
+// policy (see deniedAttachmentExtensions) can't accept a file whose
+// extension would then fail keyRE on every future GET, and so a filename
+// with no extension at all (nothing for keyRE's required ".ext" suffix to
+// match) is rejected up front instead of storing something impossible to
+// serve back.
+var attachmentExtRE = regexp.MustCompile(`^[a-z0-9]{1,8}$`)
+
+// imageOnlyExtensions mirrors the extensions frontend's isImageAttachment
+// treats as images -- rejected in resolveAttachmentExt's non-image branch
+// (reached only when the sniffed bytes did NOT match one of
+// imageContentTypes), so a file whose actual bytes aren't a real image
+// can't slip in disguised with an image extension. Without this,
+// blobstore.LocalStore.Get recomputes the served Content-Type from the
+// extension alone (Go's mime.TypeByExtension), which would serve non-image
+// bytes as image/png/etc and skip the forced-download/nosniff treatment
+// every other non-image attachment gets.
+var imageOnlyExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+}
 
 // slugRE keeps a title's or filename's path segment to characters that are
 // safe (and readable) across local filesystems, S3 keys, and GCS object
@@ -177,16 +212,25 @@ func (h *UploadHandlers) upload(w http.ResponseWriter, r *http.Request) {
 // its actual sniffed bytes and returns the extension it should be stored
 // under. Images are resolved purely from the sniff (never trusting the
 // client's filename), matching the original 4-type behavior of this
-// endpoint. Everything else is matched against allowedAttachmentExtensions
-// using the client's original filename -- safe to trust because non-image
-// attachments are always served as a forced download (see serve), never
-// rendered/executed inline regardless of what they actually contain.
+// endpoint. Everything else is allowed as long as its extension has a
+// storable shape (attachmentExtRE) and isn't in deniedAttachmentExtensions,
+// matched against the client's original filename -- safe to trust because
+// non-image attachments are always served as a forced download (see
+// serve), never rendered/executed inline regardless of what they actually
+// contain.
 func resolveAttachmentExt(contentType, originalFilename string) (ext string, allowed bool) {
 	if imgExt, isImage := imageContentTypes[contentType]; isImage {
 		return imgExt, true
 	}
 	ext = strings.ToLower(path.Ext(originalFilename))
-	return ext, allowedAttachmentExtensions[ext]
+	if imageOnlyExtensions[ext] {
+		return ext, false
+	}
+	trimmed := strings.TrimPrefix(ext, ".")
+	if !attachmentExtRE.MatchString(trimmed) {
+		return ext, false
+	}
+	return ext, !deniedAttachmentExtensions[ext]
 }
 
 // isInlineContentType reports whether contentType is one of the original

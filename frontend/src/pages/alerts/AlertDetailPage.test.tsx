@@ -86,6 +86,31 @@ describe("AlertDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Escalate to Incident" })).not.toBeInTheDocument();
   });
 
+  it("an already closed and classified alert shows no Close & Classify button, only the read-only summary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(alertFixture({ status: "closed", classification: "true_positive", closeComment: "Confirmed benign" })),
+    );
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Suspicious login" });
+    expect(screen.queryByRole("button", { name: "Close & Classify Alert" })).not.toBeInTheDocument();
+    expect(screen.getByText("Confirmed benign")).toBeInTheDocument();
+  });
+
+  it("Close & Classify Alert opens a modal that can be dismissed without submitting", async () => {
+    const fetchMock = routeFetch(alertFixture());
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Close & Classify Alert" }));
+    expect(screen.getByPlaceholderText("Add a closing comment...")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByPlaceholderText("Add a closing comment...")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/alerts/a1/close", expect.anything());
+  });
+
   it("clicking Escalate to Incident posts to the escalate endpoint and navigates", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/api/v1/alerts/a1/alerts")) return Promise.resolve(jsonResponse([]));

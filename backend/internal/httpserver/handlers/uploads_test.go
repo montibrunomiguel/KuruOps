@@ -140,7 +140,51 @@ func TestUploadHandlers_RejectsExecutableExtension(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "totally-safe.exe", []byte("MZ fake binary"))
+	for _, filename := range []string{"totally-safe.exe", "installer.msi", "script.ps1", "run-me.sh", "payload.jar"} {
+		req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, filename, []byte("MZ fake binary"))
+		req = withClaims(req, tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "filename %q must be rejected", filename)
+	}
+}
+
+// TestUploadHandlers_AllowsArbitraryNonExecutableExtension confirms the
+// deny-list (see deniedAttachmentExtensions) is permissive by default --
+// only executables/installers/scripts are blocked, everything else (even
+// an extension no fixed allow-list would have anticipated) is accepted, as
+// long as it's zip-shaped enough to satisfy attachmentExtRE.
+func TestUploadHandlers_AllowsArbitraryNonExecutableExtension(t *testing.T) {
+	h, alertSvc, tenantID := setupUploadHandlers(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	for _, filename := range []string{"evidence.rar", "notes.md", "capture.7z", "export.parquet", "dump.sqlite"} {
+		req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, filename, []byte("arbitrary evidence bytes"))
+		req = withClaims(req, tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusCreated, rec.Code, "filename %q must be accepted, got %s", filename, rec.Body.String())
+	}
+}
+
+// TestUploadHandlers_RejectsFakeImageExtension confirms a file whose bytes
+// don't actually sniff as an image can't slip in disguised with an image
+// extension -- see imageOnlyExtensions' doc comment for why this matters
+// beyond just "the label is wrong" (LocalStore recomputes Content-Type from
+// the extension alone on every GET).
+func TestUploadHandlers_RejectsFakeImageExtension(t *testing.T) {
+	h, alertSvc, tenantID := setupUploadHandlers(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "not-really-a.png", []byte("plain text, not a real png"))
 	req = withClaims(req, tenantID, uuid.New(), nil)
 	rec := doRequest(r, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
