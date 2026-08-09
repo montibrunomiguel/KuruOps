@@ -366,3 +366,43 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	assert.Contains(t, fake.sent[0].Body, alertID.String())
 	assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
 }
+
+// TestRunLocked_OnlyOneReplicaExecutesConcurrently is the regression test
+// for the bug this advisory-lock wrapper exists to close: without it, two
+// cmd/worker replicas whose tickers fire the same tick would both run
+// sweepEscalations' body concurrently, and since it notifies the
+// destination BEFORE stamping escalated_at, both would send the same
+// escalation. Here two independent pools (standing in for two replicas)
+// race to run runLocked for the same key; only the one that gets there
+// first must actually execute fn, the other must skip that tick entirely.
+func TestRunLocked_OnlyOneReplicaExecutesConcurrently(t *testing.T) {
+	replicaA := sweepWorkerPool(t)
+	replicaB := sweepWorkerPool(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	key := int64(-990002) // test-only key, distinct from the real job keys
+
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+
+	var firstRan, secondRan bool
+
+	go func() {
+		defer close(done)
+		runLocked(context.Background(), replicaA, key, "test-job", logger, func() {
+			firstRan = true
+			close(holding)
+			<-release
+		})
+	}()
+
+	<-holding
+	runLocked(context.Background(), replicaB, key, "test-job", logger, func() {
+		secondRan = true
+	})
+	close(release)
+	<-done
+
+	assert.True(t, firstRan, "the replica that wins the lock must run the job")
+	assert.False(t, secondRan, "the replica that loses the lock must skip this tick, not run the job again")
+}

@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -64,5 +65,92 @@ func TestPool_WithTenant(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, otherTenant.String(), got)
 		assert.NotEqual(t, tenantID.String(), got)
+	})
+}
+
+func TestPool_WithAdvisoryLock(t *testing.T) {
+	// Two independent pools against the same database, standing in for two
+	// separate process replicas each holding their own connections -- a
+	// single shared pool would still prove the locking works, but this is
+	// closer to what actually happens in production (cmd/worker replica A
+	// vs replica B, never the same *pgxpool.Pool).
+	poolA, err := db.NewPool(t.Context(), requireTestDatabaseURL(t))
+	require.NoError(t, err)
+	defer poolA.Close()
+	poolB, err := db.NewPool(t.Context(), requireTestDatabaseURL(t))
+	require.NoError(t, err)
+	defer poolB.Close()
+
+	key := int64(-990001) // test-only key, distinct from cmd/worker's real ones
+
+	t.Run("acquires when free and runs fn", func(t *testing.T) {
+		var ran bool
+		acquired, err := poolA.WithAdvisoryLock(t.Context(), key, func(context.Context) error {
+			ran = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, acquired)
+		assert.True(t, ran)
+	})
+
+	t.Run("a second acquirer skips the same key while the first still holds it, then can acquire once released", func(t *testing.T) {
+		holding := make(chan struct{})
+		release := make(chan struct{})
+		done := make(chan struct{})
+
+		var firstRan bool
+		go func() {
+			defer close(done)
+			acquired, err := poolA.WithAdvisoryLock(context.Background(), key, func(context.Context) error {
+				firstRan = true
+				close(holding)
+				<-release
+				return nil
+			})
+			assert.NoError(t, err)
+			assert.True(t, acquired)
+		}()
+
+		<-holding
+		var secondRan bool
+		acquired, err := poolB.WithAdvisoryLock(t.Context(), key, func(context.Context) error {
+			secondRan = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.False(t, acquired, "a concurrent holder of the same key must block a second acquirer")
+		assert.False(t, secondRan)
+
+		close(release)
+		<-done
+		assert.True(t, firstRan)
+
+		var thirdRan bool
+		acquired, err = poolB.WithAdvisoryLock(t.Context(), key, func(context.Context) error {
+			thirdRan = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, acquired, "once the holder's transaction ends the lock must be free again")
+		assert.True(t, thirdRan)
+	})
+
+	t.Run("an error from fn still releases the lock (rollback ends the transaction)", func(t *testing.T) {
+		sentinel := assert.AnError
+		acquired, err := poolA.WithAdvisoryLock(t.Context(), key, func(context.Context) error {
+			return sentinel
+		})
+		assert.True(t, acquired)
+		assert.ErrorIs(t, err, sentinel)
+
+		var ran bool
+		acquired, err = poolB.WithAdvisoryLock(t.Context(), key, func(context.Context) error {
+			ran = true
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, acquired, "a failed fn must not leave the lock stuck held")
+		assert.True(t, ran)
 	})
 }
