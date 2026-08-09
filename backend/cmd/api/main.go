@@ -86,17 +86,15 @@ func main() {
 	tagHandlers := handlers.NewTagHandlers(tagService)
 
 	// eventBroadcaster fans out live alert/incident updates over SSE (see
-	// internal/events, EventsHandlers.Stream). In-process only -- it never
-	// sees events from cmd/ingest (a separate container/process that also
-	// constructs its own AlertService, see cmd/ingest/main.go), so ingest's
-	// AlertService.Ingest doesn't get EnableEventPublishing wired here.
-	// A connected browser tab still shows a new alert on its next dashboard
-	// poll/manual reload, it just doesn't get an instant live push for that
-	// specific moment -- everything an analyst does interactively through
-	// cmd/api (status/severity changes, incident create/phase changes) does
-	// push live. Bridging cmd/ingest's events too would need a cross-process
-	// mechanism (Postgres LISTEN/NOTIFY, most likely) -- not attempted here.
-	eventBroadcaster := events.NewBroadcaster()
+	// internal/events, EventsHandlers.Stream). Publish sends a Postgres
+	// NOTIFY and Start's LISTEN connection feeds it back to this process's
+	// subscribers -- that's what makes it work across multiple cmd/api
+	// replicas AND across processes: cmd/ingest wires its own Broadcaster
+	// the same way (see cmd/ingest/main.go), so an alert created there
+	// reaches a browser tab connected to any api replica, not just its own
+	// process.
+	eventBroadcaster := events.NewBroadcaster(pool.Pool, logger)
+	go eventBroadcaster.Start(ctx)
 	eventsHandlers := handlers.NewEventsHandlers(eventBroadcaster)
 
 	alertRepo := repository.NewAlertRepository()

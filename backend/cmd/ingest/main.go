@@ -20,6 +20,7 @@ import (
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/events"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/ingest"
 	"github.com/argusops/argusops/internal/repository"
@@ -50,6 +51,15 @@ func main() {
 	tagService := service.NewTagService(pool, tagRepo)
 	alertRepo := repository.NewAlertRepository()
 	alertService := service.NewAlertService(pool, alertRepo, tagService)
+
+	// eventBroadcaster publishes to the same Postgres NOTIFY channel
+	// cmd/api's own Broadcaster listens on -- an alert ingested here reaches
+	// any connected browser tab (which is only ever talking to cmd/api),
+	// even though this is a different process. See internal/events'
+	// package doc comment.
+	eventBroadcaster := events.NewBroadcaster(pool.Pool, logger)
+	go eventBroadcaster.Start(ctx)
+	alertService.EnableEventPublishing(eventBroadcaster.Publish)
 
 	// On-call auto-assign is enabled only here, not in cmd/api -- it's a
 	// property of the ingest path (see AlertService.Ingest), not something
