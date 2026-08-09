@@ -1,0 +1,68 @@
+# Exactly one replica -- worker's periodic sweeps are already made safe
+# under more than one replica via Postgres advisory locks (see
+# db.Pool.WithAdvisoryLock, cmd/worker/main.go's runLocked), but nothing in
+# this manifest set NEEDS more than one; scale up only if a single
+# replica's sweep latency becomes an actual bottleneck.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: argusops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: worker
+          image: argusops-worker:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: argusops-config
+          env:
+            # argusops_worker: BYPASSRLS, owns the materialized views --
+            # see db/init/argusops_worker_role.sql. Never argusops_app here.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: DATABASE_URL_WORKER
+            - name: SECRETS_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: SECRETS_ENCRYPTION_KEY
+          # worker's only HTTP surface is /healthz + /metrics (see
+          # cmd/worker/main.go) -- it serves no application traffic.
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: argusops
+spec:
+  selector:
+    app: worker
+  ports:
+    - port: 8080
+      targetPort: 8080

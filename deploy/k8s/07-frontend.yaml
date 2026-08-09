@@ -1,0 +1,59 @@
+# No env vars: nginx.conf's proxy_pass targets are hardcoded to
+# http://api:8080 (see frontend/nginx.conf) -- which is exactly why 04-api.yaml's
+# Service is named plain "api", not "argusops-api": it must resolve via
+# in-cluster DNS under that literal name for this container's reverse proxy
+# to work unchanged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: argusops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      # nginxinc/nginx-unprivileged already runs as uid 101 out of the box
+      # (see frontend/Dockerfile) -- runAsNonRoot here is the same
+      # belt-and-suspenders check as the backend Deployments.
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: frontend
+          image: argusops-frontend:latest
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: argusops
+spec:
+  # ClusterIP is deliberate -- there's no ingress manifest here (see
+  # README.md's scope note), so reaching this from outside the cluster is
+  # left to whatever the operator already uses (a cloud LB Service, an
+  # ingress controller, port-forward for a quick look). Swap type: LoadBalancer
+  # here if that's all you need.
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - port: 8080
+      targetPort: 8080

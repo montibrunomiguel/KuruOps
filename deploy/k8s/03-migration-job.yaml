@@ -1,0 +1,48 @@
+# One-off schema migration, same tool/command as `docker compose run --rm
+# migrate up` (docker-compose.yml's migrate service) -- must complete
+# successfully before the first api/ingest/worker rollout (see README.md's
+# apply order). Re-running this Job after every deploy that changes
+# db/migrations is idempotent: golang-migrate only applies versions it
+# hasn't recorded yet.
+#
+# The initContainer copies db/migrations out of the api image (already
+# baked in at /app/db/migrations -- see backend/Dockerfile) into a shared
+# emptyDir, instead of adding a second migration-only image to the build
+# just for this Job or trying to fit ~30+ .sql files into a ConfigMap
+# (1MiB size limit, awkward to keep in sync by hand).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: argusops-migrate
+  namespace: argusops
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: copy-migrations
+          image: argusops-api:latest
+          command: ["sh", "-c", "cp -r /app/db/migrations/. /migrations/"]
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.17.1
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: DATABASE_URL_MIGRATE
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+      volumes:
+        - name: migrations
+          emptyDir: {}
