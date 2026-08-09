@@ -60,6 +60,7 @@ export function AlertDetailPage() {
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [escalating, setEscalating] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
 
   // No local "analyzing" flag -- current.latestAnalysisStatus (from the
   // most recent GET) already reflects "running" the instant the POST
@@ -132,6 +133,11 @@ export function AlertDetailPage() {
               ? t("alerts.detail.analyzing")
               : t("alerts.detail.analyzeWithAI")}
           </button>
+          {!(current.status === "closed" && current.classification) && (
+            <button className="btn btn-sm" onClick={() => setShowCloseModal(true)}>
+              {t("alerts.detail.closeAndClassify")}
+            </button>
+          )}
           {current.status !== "escalated" && current.status !== "closed" && (
             <button className="btn btn-danger btn-sm" disabled={escalating} onClick={escalate}>
               {escalating ? t("alerts.detail.escalating") : t("alerts.detail.escalateToIncident")}
@@ -139,6 +145,17 @@ export function AlertDetailPage() {
           )}
         </div>
       </div>
+
+      {showCloseModal && (
+        <CloseAlertModal
+          alert={current}
+          onClose={() => setShowCloseModal(false)}
+          onSaved={() => {
+            setShowCloseModal(false);
+            reload();
+          }}
+        />
+      )}
 
       <AlertTagsRow current={current} onSaved={reload} />
 
@@ -178,7 +195,7 @@ export function AlertDetailPage() {
         <div className="detail-main">
           <MetadataPanel metadata={current.metadata} />
           <PayloadPanel payload={current.payload} />
-          <ClassificationPanel alert={current} onSaved={reload} />
+          <ClassificationPanel alert={current} />
           <LinkedAlertsPanel alertId={current.id} />
 
           <div className="panel">
@@ -430,10 +447,37 @@ function PayloadPanel({ payload }: { payload: unknown }) {
   );
 }
 
-function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => void }) {
+// ClassificationPanel is purely informational now -- the trigger to close
+// and classify an alert lives in the header toolbar (see the
+// "Fechar e Classificar" button in AlertDetailPage, next to Analisar com
+// IA) and opens CloseAlertModal below, rather than an inline form here.
+// Renders nothing until the alert is actually closed and classified, so
+// .detail-main doesn't show an empty panel shell in the meantime.
+function ClassificationPanel({ alert }: { alert: Alert }) {
+  const { t } = useTranslation();
+  if (!(alert.status === "closed" && alert.classification)) return null;
+
+  return (
+    <div className="panel">
+      <h2 className="panel-title" style={{ marginBottom: 10 }}>
+        {t("alerts.detail.classificationTitle")}
+      </h2>
+      <ClassificationBadge classification={alert.classification} />
+      {alert.closeComment && (
+        <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>{alert.closeComment}</p>
+      )}
+      {alert.closeAttachmentUrl && <AttachmentPreview url={alert.closeAttachmentUrl} />}
+    </div>
+  );
+}
+
+// The "Fechar e Classificar" form, as a modal (same modal-overlay/modal
+// pattern as IncidentsListPage's CreateIncidentForm) -- triggered by the
+// header button next to Analisar com IA instead of an always-mounted panel
+// in the main content column.
+function CloseAlertModal({ alert, onClose, onSaved }: { alert: Alert; onClose: () => void; onSaved: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [open, setOpen] = useState(false);
   const [classification, setClassification] = useState<Classification>("true_positive");
   const [comment, setComment] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
@@ -446,7 +490,6 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
     setError(null);
     try {
       await api.post(`/api/v1/alerts/${alert.id}/close`, { classification, comment, attachmentUrl }, token);
-      setOpen(false);
       onSaved();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -456,81 +499,66 @@ function ClassificationPanel({ alert, onSaved }: { alert: Alert; onSaved: () => 
   }
 
   return (
-    <div className="panel">
-      <h2 className="panel-title" style={{ marginBottom: 10 }}>
-        {t("alerts.detail.classificationTitle")}
-      </h2>
-
-      {alert.status === "closed" && alert.classification ? (
-        <>
-          <ClassificationBadge classification={alert.classification} />
-          {alert.closeComment && (
-            <p style={{ margin: "10px 0 0", fontSize: 13, color: "var(--text-secondary)" }}>{alert.closeComment}</p>
-          )}
-          {alert.closeAttachmentUrl && <AttachmentPreview url={alert.closeAttachmentUrl} />}
-        </>
-      ) : !open ? (
-        <>
-          <p className="helper-text" style={{ marginBottom: 12 }}>
-            {t("alerts.detail.onlyOnClose")}
-          </p>
-          <button className="btn btn-primary btn-sm" style={{ width: "100%" }} onClick={() => setOpen(true)}>
+    <div className="modal-overlay" onClick={onClose}>
+      <form onSubmit={handleSubmit} className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-header">
+          <h2 className="modal-title" style={{ marginBottom: 0 }}>
             {t("alerts.detail.closeAndClassify")}
+          </h2>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}>
+            ×
           </button>
-        </>
-      ) : (
-        <form onSubmit={handleSubmit}>
-          {error && <div className="error-banner">{error}</div>}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-            {(["false_positive", "true_positive", "authorized_event"] as Classification[]).map((c) => (
-              <label
-                key={c}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  padding: "8px 10px",
-                  borderRadius: 7,
-                  border: "1px solid var(--border-strong)",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="radio"
-                  name="classification"
-                  checked={classification === c}
-                  onChange={() => setClassification(c)}
-                  style={{ marginTop: 3 }}
-                />
-                <span>
-                  <span style={{ display: "block", fontWeight: 600, fontSize: 12.5 }}>{t(`common.classification.${c}`)}</span>
-                  <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-                    {t(`common.classificationHint.${c}`)}
-                  </span>
+        </div>
+        {error && <div className="error-banner">{error}</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {(["false_positive", "true_positive", "authorized_event"] as Classification[]).map((c) => (
+            <label
+              key={c}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "8px 10px",
+                borderRadius: 7,
+                border: "1px solid var(--border-strong)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="radio"
+                name="classification"
+                checked={classification === c}
+                onChange={() => setClassification(c)}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <span style={{ display: "block", fontWeight: 600, fontSize: 12.5 }}>{t(`common.classification.${c}`)}</span>
+                <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
+                  {t(`common.classificationHint.${c}`)}
                 </span>
-              </label>
-            ))}
-          </div>
-          <textarea
-            className="textarea"
-            style={{ width: "100%", marginBottom: 10 }}
-            placeholder={t("alerts.detail.closingComment")}
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-          />
-          <div className="row-actions" style={{ marginBottom: 10 }}>
-            <AttachmentButton kind="alert" id={alert.id} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
-          </div>
-          <div className="row-actions">
-            <button type="submit" className="btn btn-primary btn-sm" disabled={submitting} style={{ flex: 1, justifyContent: "center" }}>
-              {submitting ? t("common.saving") : t("alerts.detail.confirmClose")}
-            </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>
-              {t("common.cancel")}
-            </button>
-          </div>
-        </form>
-      )}
+              </span>
+            </label>
+          ))}
+        </div>
+        <textarea
+          className="textarea"
+          style={{ width: "100%", marginBottom: 10 }}
+          placeholder={t("alerts.detail.closingComment")}
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+        />
+        <div className="row-actions" style={{ marginBottom: 10 }}>
+          <AttachmentButton kind="alert" id={alert.id} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
+        </div>
+        <div className="row-actions">
+          <button type="submit" className="btn btn-primary btn-sm" disabled={submitting} style={{ flex: 1, justifyContent: "center" }}>
+            {submitting ? t("common.saving") : t("alerts.detail.confirmClose")}
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

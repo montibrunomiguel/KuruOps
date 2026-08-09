@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { AttachmentButton, attachmentDisplayName, isImageAttachment } from "./AttachmentButton";
+import { AttachmentButton, AttachmentPreview, attachmentDisplayName, isImageAttachment } from "./AttachmentButton";
 import { AuthProvider } from "../auth/AuthContext";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -11,6 +11,16 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+// api.downloadFile (used by both AttachmentPreview and AttachmentButton's
+// staged-image preview, see useAttachmentBlob) reads the response body via
+// .blob() -- constructing the Response with jsdom's own Blob polyfill as
+// the body fails (undici's Response internals expect a stream()-capable
+// Blob), so this passes a plain string body instead and lets Response's
+// own .blob() build the Blob internally.
+function fileResponse(bytes: string, contentType = "image/png") {
+  return new Response(bytes, { status: 200, headers: { "content-type": contentType } });
 }
 
 describe("attachmentDisplayName/isImageAttachment", () => {
@@ -62,11 +72,19 @@ describe("AttachmentButton", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("renders an image preview and a Remove button once an image value is set", async () => {
+  it("renders an authenticated image preview and a Remove button once an image value is set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fileResponse("fake-png-bytes"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:fake-object-url"), revokeObjectURL: vi.fn() });
     const onChange = vi.fn();
     render(<AttachmentButton value="/api/v1/uploads/images/abc.png" onChange={onChange} kind="alert" id="a1" />, { wrapper });
 
-    expect(screen.getByRole("img")).toHaveAttribute("src", "/api/v1/uploads/images/abc.png");
+    // Fetched via an authenticated GET (see useAttachmentBlob), not a plain
+    // <img src> pointed straight at the backend URL -- that would 401 (see
+    // router.go, every /api/v1 route requires Authorization).
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", "blob:fake-object-url"));
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/uploads/images/abc.png", expect.anything());
+
     await userEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onChange).toHaveBeenCalledWith(null);
   });
@@ -83,5 +101,39 @@ describe("AttachmentButton", () => {
   it("when disabled with a value set, no Remove button is shown", () => {
     render(<AttachmentButton value="/api/v1/uploads/images/abc.png" onChange={vi.fn()} kind="alert" id="a1" disabled />, { wrapper });
     expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AttachmentPreview", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches an image attachment with the auth token and renders it as a blob: URL thumbnail", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fileResponse("fake-png-bytes"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:fake-thumb"), revokeObjectURL: vi.fn() });
+
+    render(<AttachmentPreview url="/api/v1/uploads/images/Alert/2026/08/08/x/abc-123_screenshot.png" />, { wrapper });
+
+    await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", "blob:fake-thumb"));
+  });
+
+  it("does not eagerly fetch a non-image attachment, only on click", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fileResponse("pdf bytes", "application/pdf"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:fake-download"), revokeObjectURL: vi.fn() });
+
+    render(<AttachmentPreview url="/api/v1/uploads/images/Alert/2026/08/08/x/abc-123_report.pdf" />, { wrapper });
+
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /report\.pdf/ }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/uploads/images/Alert/2026/08/08/x/abc-123_report.pdf", expect.anything()));
   });
 });
