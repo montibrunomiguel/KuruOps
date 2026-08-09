@@ -7,6 +7,7 @@ import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { formatRelative, shortId } from "../../lib/format";
 
@@ -70,19 +71,7 @@ export function AlertsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select
-            className="select"
-            aria-label={t("dashboard.filters.severityFilterLabel")}
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value as Severity | "")}
-          >
-            <option value="">{t("dashboard.filters.allSeverities")}</option>
-            <option value="critical">{t("common.severity.critical")}</option>
-            <option value="high">{t("common.severity.high")}</option>
-            <option value="medium">{t("common.severity.medium")}</option>
-            <option value="low">{t("common.severity.low")}</option>
-            <option value="informational">{t("common.severity.informational")}</option>
-          </select>
+          <SeverityFilter value={severity} onChange={setSeverity} />
           <select
             className="select"
             aria-label={t("dashboard.filters.statusFilterLabel")}

@@ -125,6 +125,11 @@
     "adminOnly": "This area is restricted to administrators. Talk to an admin if you need access.",
     "noAccess": "Your account doesn't have access to this area. Talk to an administrator if you need access."
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. Try reloading the page.",
+    "reload": "Reload page"
+  },
   "dashboard": {
     "title": "Security Operations Dashboard",
     "subtitle": "Real-time overview across all connected sources",

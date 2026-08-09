@@ -12,6 +12,7 @@ import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges
 import { TagPicker } from "../../components/TagPicker";
 import { AssigneePicker } from "../../components/AssigneePicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { formatRelative, shortId } from "../../lib/format";
 
@@ -95,19 +96,7 @@ export function IncidentsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <select
-            className="select"
-            aria-label={t("dashboard.filters.severityFilterLabel")}
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value as Severity | "")}
-          >
-            <option value="">{t("dashboard.filters.allSeverities")}</option>
-            <option value="critical">{t("common.severity.critical")}</option>
-            <option value="high">{t("common.severity.high")}</option>
-            <option value="medium">{t("common.severity.medium")}</option>
-            <option value="low">{t("common.severity.low")}</option>
-            <option value="informational">{t("common.severity.informational")}</option>
-          </select>
+          <SeverityFilter value={severity} onChange={setSeverity} />
           <select
             className="select"
             aria-label={t("dashboard.filters.priorityFilterLabel")}
