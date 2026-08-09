@@ -191,6 +191,42 @@ describe("AlertsListPage", () => {
     });
   });
 
+  it("choosing a time-range preset re-fetches with a since query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const selects = screen.getAllByRole("combobox");
+    await userEvent.selectOptions(selects[3], "7d");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("since=");
+    });
+  });
+
+  it("a custom time range sends both since and until", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const selects = screen.getAllByRole("combobox");
+    await userEvent.selectOptions(selects[3], "custom");
+
+    await userEvent.type(screen.getByLabelText("From"), "2026-01-01T00:00");
+    await userEvent.type(screen.getByLabelText("To"), "2026-01-31T00:00");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("since=");
+      expect(lastCall).toContain("until=");
+    });
+  });
+
   it("reloads the list when a live alert event comes in over the event stream", async () => {
     localStorage.setItem(
       "argusops.session",

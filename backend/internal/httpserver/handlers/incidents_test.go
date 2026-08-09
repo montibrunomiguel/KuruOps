@@ -349,6 +349,24 @@ func TestIncidentHandlers_List_Filters(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
 		assert.Len(t, incidents, 1)
 	})
+
+	t.Run("until filter excludes an incident opened before it", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?until=2000-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Empty(t, incidents)
+	})
+
+	t.Run("until filter includes an incident opened before it", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?until=2999-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
 }
 
 func TestIncidentHandlers_MalformedID_Returns400(t *testing.T) {

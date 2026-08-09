@@ -75,6 +75,7 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 		f.Correlated = &b
 	}
 	f.ReceivedSince = parseSince(r)
+	f.ReceivedUntil = parseUntil(r)
 	f.Limit, f.Offset = parsePaging(r)
 	f.AllowedTags = middleware.AllowedTags(r.Context())
 

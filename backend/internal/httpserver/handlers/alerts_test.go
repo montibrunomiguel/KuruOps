@@ -388,6 +388,24 @@ func TestAlertHandlers_List_Filters(t *testing.T) {
 		assert.Len(t, alerts, 1)
 	})
 
+	t.Run("until filter excludes an alert received before it", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?until=2000-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Empty(t, alerts)
+	})
+
+	t.Run("until filter includes an alert received before it", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?until=2999-01-01T00:00:00Z", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
 	_ = alertID
 }
 

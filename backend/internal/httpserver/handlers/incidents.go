@@ -72,6 +72,7 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 		f.Tag = &v
 	}
 	f.OpenedSince = parseSince(r)
+	f.OpenedUntil = parseUntil(r)
 	f.CommanderID = parseUUIDQueryParam(r, "commanderId")
 	f.Limit, f.Offset = parsePaging(r)
 	f.AllowedTags = middleware.AllowedTags(r.Context())
