@@ -95,9 +95,9 @@ describe("AlertsTabPanel", () => {
 
     renderDashboard("/dashboard/alerts");
     expect(await screen.findByText("Open Alerts")).toBeInTheDocument();
-    expect(screen.getAllByText("5").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("5")).length).toBeGreaterThan(0);
     expect(screen.getByText("High Severity")).toBeInTheDocument();
-    expect(screen.getAllByText("7").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("7")).length).toBeGreaterThan(0);
     expect(screen.getByText("Alerts by Severity")).toBeInTheDocument();
     expect(screen.queryByText("Active Incidents")).not.toBeInTheDocument();
   });
