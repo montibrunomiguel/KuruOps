@@ -21,6 +21,11 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      - name: Setup Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
       - name: Check Formatting (gofmt)
         run: |
           cd backend
@@ -36,6 +41,21 @@ jobs:
           cd backend
           go vet ./...
 
+      # install-mode: goinstall builds golangci-lint with the Go toolchain
+      # set up above (1.25) instead of downloading golangci-lint's official
+      # prebuilt binary, which is still built with go1.24 as of the latest
+      # v1.x release (v1.64.8, the last one before the v2 config-schema
+      # rewrite) -- that older binary refuses to lint a `go 1.25` module
+      # ("the Go language version used to build golangci-lint is lower than
+      # the targeted Go version").
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.8
+          install-mode: goinstall
+          working-directory: backend
+          args: --timeout=5m
+
       - name: Build Binaries
         run: |
           cd backend
@@ -43,10 +63,16 @@ jobs:
           go build -v ./cmd/ingest
           go build -v ./cmd/worker
 
-      - name: Run Backend Unit Tests
-        run: |
-          cd backend
-          go test -v ./...
+      # Runs the exact same Taskfile target a developer runs locally: brings
+      # up Postgres via docker compose, creates+migrates a dedicated
+      # argusops_test database with the real least-privilege app/worker
+      # roles, runs the full unit+integration suite with coverage, then
+      # fails the build if coverage dropped below backend/coverage-baseline.txt.
+      # Previously this job only ran `go test ./...` with no Postgres
+      # service, so every integration test self-skipped and CI silently
+      # gated on ~18% coverage instead of the ~77% the full suite reaches.
+      - name: Integration Tests + Coverage Gate
+        run: task backend:test:coverage-gate
 
   frontend-ci:
     name: Frontend (React / Vite)
@@ -72,10 +98,15 @@ jobs:
           cd frontend
           npx tsc --noEmit
 
+      - name: Lint (ESLint)
+        run: |
+          cd frontend
+          npm run lint
+
       - name: Run Frontend Tests (Vitest)
         run: |
           cd frontend
-          npm test -- --run
+          npm test -- --run --coverage
 
       - name: Build Frontend
         run: |
