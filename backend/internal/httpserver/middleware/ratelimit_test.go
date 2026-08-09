@@ -6,14 +6,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/argusops/argusops/internal/testutil"
 )
 
+// uniqueScope returns a scope string that's unique to this call -- Allow is
+// now backed by a shared Postgres table (see KeyedLimiter), not a fresh
+// in-memory map per test process, so a fixed literal scope would collide
+// with this same test's own rows from a previous run within the window
+// (the table isn't reset between individual `go test` invocations, only by
+// `task db:test:reset`).
+func uniqueScope(prefix string) string {
+	return prefix + "-" + uuid.NewString()
+}
+
 func TestKeyedLimiter_Allow(t *testing.T) {
-	limiter := middleware.NewKeyedLimiter(2, time.Minute)
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_keyed_limiter_allow"), 2, time.Minute)
 
 	assert.True(t, limiter.Allow("a@test.local"), "1st request for this key is allowed")
 	assert.True(t, limiter.Allow("a@test.local"), "2nd request for this key is allowed")
@@ -26,8 +39,39 @@ func TestKeyedLimiter_Allow(t *testing.T) {
 	})
 }
 
+func TestKeyedLimiter_ScopesAreIndependent(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	// Same key, two different limiter scopes -- proves an IP string used by
+	// one limiter (e.g. login-by-ip) can never collide with the same string
+	// used as a key by a different limiter (e.g. webhook-by-ip).
+	limiterA := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_scope_a"), 1, time.Minute)
+	limiterB := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_scope_b"), 1, time.Minute)
+
+	assert.True(t, limiterA.Allow("shared-key"))
+	assert.False(t, limiterA.Allow("shared-key"), "scope A's own budget is now exhausted")
+	assert.True(t, limiterB.Allow("shared-key"), "scope B has its own independent budget for the same key string")
+}
+
+// TestKeyedLimiter_SharedAcrossReplicas is the regression test for the
+// whole point of this rewrite: two independent *KeyedLimiter instances
+// against the same database (standing in for two process replicas, each
+// with their own in-memory state under the old design) must enforce ONE
+// combined budget for the same key, not double it.
+func TestKeyedLimiter_SharedAcrossReplicas(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	scope := uniqueScope("test_shared_across_replicas")
+	replicaA := middleware.NewKeyedLimiter(pool.Pool, scope, 2, time.Minute)
+	replicaB := middleware.NewKeyedLimiter(pool.Pool, scope, 2, time.Minute)
+
+	assert.True(t, replicaA.Allow("10.0.0.9"), "1st request, seen by replica A")
+	assert.True(t, replicaB.Allow("10.0.0.9"), "2nd request, seen by replica B -- still within the combined limit of 2")
+	assert.False(t, replicaA.Allow("10.0.0.9"), "3rd request, back on replica A -- the limit is shared, not per-replica")
+	assert.False(t, replicaB.Allow("10.0.0.9"), "4th request, on replica B -- still rejected")
+}
+
 func TestNewRateLimiter_PerIP(t *testing.T) {
-	limiter := middleware.NewRateLimiter(2, time.Minute)
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_per_ip"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	newReq := func(ip string) *httptest.ResponseRecorder {
@@ -46,7 +90,8 @@ func TestNewRateLimiter_PerIP(t *testing.T) {
 }
 
 func TestNewRateLimiter_IgnoresSpoofedXForwardedFor(t *testing.T) {
-	limiter := middleware.NewRateLimiter(2, time.Minute)
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_ignores_xff"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	// Same RemoteAddr (as if a single client connected to nginx once), but a
@@ -68,7 +113,8 @@ func TestNewRateLimiter_IgnoresSpoofedXForwardedFor(t *testing.T) {
 }
 
 func TestNewRateLimiter_TrustsXRealIPFromProxy(t *testing.T) {
-	limiter := middleware.NewRateLimiter(2, time.Minute)
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_trusts_x_real_ip"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	// nginx.conf sets X-Real-IP unconditionally, so it's the trusted signal

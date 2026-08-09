@@ -38,7 +38,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns})
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)

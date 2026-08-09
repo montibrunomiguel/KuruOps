@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -81,6 +82,19 @@ type Config struct {
 	// backend/Dockerfile). Only cmd/api needs this (internal/dbmigrate, the
 	// external-database-migration Settings feature).
 	MigrationsPath string
+
+	// DBPoolMaxConns/DBPoolMinConns override pgxpool's own defaults (see
+	// db.NewPool) -- 0 (unset) leaves pgxpool's default in effect (the
+	// greater of 4 or runtime.NumCPU() for MaxConns). Worth setting
+	// explicitly once running more than one replica of a binary: pgxpool's
+	// per-process default was sized for a single instance talking to
+	// Postgres, and N replicas each defaulting independently can add up to
+	// more total connections than Postgres' own max_connections allows.
+	// Recommended starting point: Postgres max_connections divided by the
+	// number of replicas of this binary, leaving headroom for the other two
+	// binaries and any direct/admin connections.
+	DBPoolMaxConns int32
+	DBPoolMinConns int32
 }
 
 func Load() (Config, error) {
@@ -107,6 +121,9 @@ func Load() (Config, error) {
 		KMSKeyID:           os.Getenv("KMS_KEY_ID"),
 
 		MigrationsPath: getEnvDefault("MIGRATIONS_PATH", "/app/db/migrations"),
+
+		DBPoolMaxConns: getEnvInt32Default("DB_POOL_MAX_CONNS", 0),
+		DBPoolMinConns: getEnvInt32Default("DB_POOL_MIN_CONNS", 0),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -133,4 +150,16 @@ func getEnvDurationDefault(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func getEnvInt32Default(key string, def int32) int32 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		return def
+	}
+	return int32(n)
 }

@@ -54,7 +54,7 @@ func sweepAdminPool(t *testing.T) *db.Pool {
 	if url == "" {
 		t.Skip("TEST_DATABASE_ADMIN_URL not set -- run via `task backend:test:integration`")
 	}
-	pool, err := db.NewPool(context.Background(), url)
+	pool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return pool
@@ -75,7 +75,7 @@ func sweepWorkerPool(t *testing.T) *db.Pool {
 	if url == "" {
 		t.Skip("TEST_DATABASE_WORKER_URL not set -- run via `task backend:test:integration`")
 	}
-	pool, err := db.NewPool(context.Background(), url)
+	pool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return pool

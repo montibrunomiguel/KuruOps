@@ -40,7 +40,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns})
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
@@ -106,7 +106,7 @@ func main() {
 	webhookRepo := repository.NewWebhookRepository()
 	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, logger)
 
-	hookLimiter := middleware.NewRateLimiter(60, time.Minute)
+	hookLimiter := middleware.NewRateLimiter(pool.Pool, "webhook_ip", 60, time.Minute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

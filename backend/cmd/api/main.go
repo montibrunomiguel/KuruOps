@@ -72,7 +72,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns})
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
@@ -209,13 +209,18 @@ func main() {
 	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
-	authHandlers := handlers.NewAuthHandlers(authService, ldapAuthService, samlAuthService, passwordResetService)
+	authHandlers := handlers.NewAuthHandlers(pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
 	accountHandlers := handlers.NewAccountHandlers(authService)
 
 	authMiddleware := middleware.JWTAuth(verifier)
 	if useDevHeaderAuth {
 		authMiddleware = middleware.DevHeaderAuth
 	}
+
+	// Login endpoints are unauthenticated by definition -- rate limited to
+	// prevent brute force attacks. Built here (not inside httpserver.NewRouter)
+	// because it needs pool -- see middleware.NewRateLimiter.
+	loginRateLimiter := middleware.NewRateLimiter(pool.Pool, "login_ip", 20, time.Minute)
 
 	router := httpserver.NewRouter(httpserver.Options{
 		AlertHandlers:             alertHandlers,
@@ -229,6 +234,7 @@ func main() {
 		UserHandlers:              userHandlers,
 		RoleHandlers:              roleHandlers,
 		AuthHandlers:              authHandlers,
+		LoginRateLimiter:          loginRateLimiter,
 		AccountHandlers:           accountHandlers,
 		IdentityConfigHandlers:    identityCfgHandlers,
 		UploadHandlers:            uploadHandlers,
