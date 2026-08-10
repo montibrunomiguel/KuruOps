@@ -469,4 +469,23 @@ func TestSweepStaleAIRuns(t *testing.T) {
 		status, _ := aiRunStatus(t, adminPool, id)
 		assert.Equal(t, "completed", status)
 	})
+
+	// A closed pool's Exec always errors, exercising the same "log and
+	// return" failure path every other sweep* function in this file takes
+	// on a DB error -- without this, that branch has no coverage. A
+	// standalone pool (not sweepWorkerPool's, which registers its own
+	// t.Cleanup) so closing it here doesn't risk a double-close.
+	t.Run("a database error is logged, not panicked on", func(t *testing.T) {
+		url := os.Getenv("TEST_DATABASE_WORKER_URL")
+		if url == "" {
+			t.Skip("TEST_DATABASE_WORKER_URL not set -- run via `task backend:test:integration`")
+		}
+		brokenPool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
+		require.NoError(t, err)
+		brokenPool.Close()
+
+		assert.NotPanics(t, func() {
+			sweepStaleAIRuns(context.Background(), brokenPool, logger)
+		})
+	})
 }
