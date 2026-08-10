@@ -54,6 +54,23 @@ func (l *KeyedLimiter) Allow(key string) bool {
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op if already committed
 
+	// pg_advisory_xact_lock, held for this transaction's lifetime, serializes
+	// every Allow() call for this exact (scope, key) across concurrent
+	// requests and replicas -- without it, the count-then-insert below is a
+	// classic TOCTOU race under Postgres's default READ COMMITTED isolation:
+	// N concurrent transactions can all read "count < limit" before any of
+	// them commits its insert, letting the limit be exceeded by up to N.
+	// Same advisory-lock idiom already used for worker sweep coordination
+	// (see db.Pool.WithAdvisoryLock), just inline here since KeyedLimiter
+	// only holds a raw *pgxpool.Pool, not the wrapped db.Pool. hashtext
+	// collapses (scope, key) into a single lock key -- an occasional hash
+	// collision between two different (scope, key) pairs only costs a
+	// harmless bit of serialization between otherwise-unrelated keys, never
+	// a correctness problem.
+	if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtext($1 || ':' || $2))", l.scope, key); err != nil {
+		return true
+	}
+
 	// Deletes this key's own stale rows first -- keeps the common case
 	// self-cleaning without waiting on cleanupLoop's periodic sweep, which
 	// only needs to catch keys that stop being checked entirely (e.g. an IP

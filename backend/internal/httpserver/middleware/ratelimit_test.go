@@ -3,6 +3,8 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +69,42 @@ func TestKeyedLimiter_SharedAcrossReplicas(t *testing.T) {
 	assert.True(t, replicaB.Allow("10.0.0.9"), "2nd request, seen by replica B -- still within the combined limit of 2")
 	assert.False(t, replicaA.Allow("10.0.0.9"), "3rd request, back on replica A -- the limit is shared, not per-replica")
 	assert.False(t, replicaB.Allow("10.0.0.9"), "4th request, on replica B -- still rejected")
+}
+
+// TestKeyedLimiter_Allow_ConcurrentRequestsNeverExceedLimit is the
+// regression test for the TOCTOU race the pg_advisory_xact_lock in Allow
+// closes: without it, count-then-insert isn't atomic under Postgres's
+// default READ COMMITTED isolation -- N concurrent transactions for the
+// same key can all read "count < limit" before any of them commits its
+// insert, letting more than `limit` requests through in the same window.
+// Fires many goroutines at once (via a start-gate channel to maximize the
+// race window, same technique as
+// cmd/worker.TestRunLocked_OnlyOneReplicaExecutesConcurrently) against a
+// small limit and asserts the total number of allowed requests never
+// exceeds it.
+func TestKeyedLimiter_Allow_ConcurrentRequestsNeverExceedLimit(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_concurrent_allow"), 3, time.Minute)
+
+	const concurrency = 20
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var allowed atomic.Int64
+
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if limiter.Allow("10.0.0.99") {
+				allowed.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.LessOrEqual(t, allowed.Load(), int64(3), "no more than the configured limit may be allowed even under concurrent requests for the same key")
 }
 
 func TestNewRateLimiter_PerIP(t *testing.T) {
