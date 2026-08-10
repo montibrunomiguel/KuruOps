@@ -8,10 +8,20 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/argusops/argusops/internal/db"
 )
+
+// refreshInterval is how often a running PersistentEnvStore reloads its
+// entire in-memory map from Postgres -- see the periodic-refresh goroutine
+// started in NewPersistentEnvStore. Bounds how long a secret rotated on one
+// replica can stay stale on another. A var, not a const, only so
+// persistent_store_internal_test.go can shrink it to keep the cross-replica
+// propagation test fast -- production code never reassigns it.
+var refreshInterval = 60 * time.Second
 
 // PersistentEnvStore is the production-safe default "env" backend: the same
 // Put/Resolve contract as EnvStore, but every Put also writes an
@@ -27,6 +37,18 @@ import (
 // until an admin happens to notice and re-enter the secret. The encryption
 // key (SECRETS_ENCRYPTION_KEY) never touches Postgres, so a database
 // dump/backup alone still doesn't hand out a tenant's secrets.
+//
+// Resolve only ever reads the local in-memory map, never Postgres directly
+// -- fine for a single replica (Put keeps its own cache current), but with
+// more than one api/ingest replica, a secret rotated via Put on replica A
+// was previously invisible to replica B until B happened to restart: no
+// error, just a stale or missing value used for the next LLM call/LDAP
+// bind/webhook send. The periodic refresh below (see refreshInterval)
+// bounds that staleness window instead of leaving it open indefinitely;
+// Vault/KMS backends don't have this problem at all since they hit their
+// backend on every Resolve call rather than caching -- a full re-fetch
+// every call was judged not worth the added latency here, given Resolve is
+// on paths like every LLM call and every escalation send.
 type PersistentEnvStore struct {
 	mu     sync.RWMutex
 	values map[string]string
@@ -35,8 +57,14 @@ type PersistentEnvStore struct {
 }
 
 // NewPersistentEnvStore decodes encryptionKeyB64 (must be the base64 of
-// exactly 32 raw bytes -- AES-256), then loads every currently-stored ref
-// into memory so Resolve never needs a round-trip after startup.
+// exactly 32 raw bytes -- AES-256), loads every currently-stored ref into
+// memory so Resolve never needs a round-trip after startup, then starts a
+// background goroutine that reloads the whole map every refreshInterval
+// (see PersistentEnvStore's doc comment) until ctx is cancelled -- callers
+// already pass the process's root shutdown context here (see
+// secrets.NewFromConfig's callers in cmd/api, cmd/ingest, cmd/worker), so
+// this ties the refresh loop's lifetime to normal process shutdown with no
+// separate Close() method to wire through three different main()s.
 func NewPersistentEnvStore(ctx context.Context, pool *db.Pool, encryptionKeyB64 string) (*PersistentEnvStore, error) {
 	key, err := base64.StdEncoding.DecodeString(encryptionKeyB64)
 	if err != nil {
@@ -55,32 +83,70 @@ func NewPersistentEnvStore(ctx context.Context, pool *db.Pool, encryptionKeyB64 
 	}
 
 	s := &PersistentEnvStore{values: map[string]string{}, pool: pool, aead: aead}
-	if err := s.load(ctx); err != nil {
+	values, err := s.fetchAll(ctx)
+	if err != nil {
 		return nil, err
 	}
+	s.values = values
+
+	go s.refreshLoop(ctx)
 	return s, nil
 }
 
-func (s *PersistentEnvStore) load(ctx context.Context) error {
+// refreshLoop reloads the whole map every refreshInterval until ctx is
+// cancelled. A fetch error is logged and skipped rather than fatal -- a
+// transient DB hiccup here shouldn't crash a long-running process; Resolve
+// just keeps serving whatever it last successfully loaded until the next
+// tick succeeds.
+func (s *PersistentEnvStore) refreshLoop(ctx context.Context) {
+	ticker := time.NewTicker(refreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			values, err := s.fetchAll(ctx)
+			if err != nil {
+				slog.Error("secrets: periodic refresh failed, keeping previous values", "error", err)
+				continue
+			}
+			s.mu.Lock()
+			s.values = values
+			s.mu.Unlock()
+		}
+	}
+}
+
+// fetchAll reads and decrypts every row in secret_store into a fresh map --
+// built separately and swapped in wholesale (see refreshLoop/
+// NewPersistentEnvStore) rather than mutated in place, so a ref deleted
+// server-side since the last load also disappears here instead of lingering
+// forever in a merge.
+func (s *PersistentEnvStore) fetchAll(ctx context.Context) (map[string]string, error) {
 	rows, err := s.pool.Query(ctx, `select ref, nonce, ciphertext from secret_store`)
 	if err != nil {
-		return fmt.Errorf("load secret store: %w", err)
+		return nil, fmt.Errorf("load secret store: %w", err)
 	}
 	defer rows.Close()
 
+	values := map[string]string{}
 	for rows.Next() {
 		var ref string
 		var nonce, ciphertext []byte
 		if err := rows.Scan(&ref, &nonce, &ciphertext); err != nil {
-			return fmt.Errorf("scan secret store row: %w", err)
+			return nil, fmt.Errorf("scan secret store row: %w", err)
 		}
 		plaintext, err := s.aead.Open(nil, nonce, ciphertext, nil)
 		if err != nil {
-			return fmt.Errorf("decrypt secret %q: %w", ref, err)
+			return nil, fmt.Errorf("decrypt secret %q: %w", ref, err)
 		}
-		s.values[ref] = string(plaintext)
+		values[ref] = string(plaintext)
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (s *PersistentEnvStore) Put(ctx context.Context, tenantID, purpose, value string) (string, error) {
