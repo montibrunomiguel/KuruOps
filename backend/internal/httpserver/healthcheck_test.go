@@ -37,6 +37,20 @@ func TestHealthCheck_UnreachableDatabaseReturns503(t *testing.T) {
 	}
 }
 
+// TestLivez_AlwaysReturns200 confirms /livez has no downstream dependency
+// (unlike HealthCheck) -- a nil pool would panic HealthCheck, but Livez
+// doesn't take one at all, so there's nothing to fail regardless of
+// database state.
+func TestLivez_AlwaysReturns200(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
+	rec := httptest.NewRecorder()
+	Livez(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 func TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics(t *testing.T) {
 	m := &MetricsCollector{}
 	orig := globalMetrics

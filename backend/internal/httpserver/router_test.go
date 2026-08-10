@@ -71,6 +71,18 @@ func TestNewRouter_Healthz(t *testing.T) {
 	}
 }
 
+func TestNewRouter_Livez(t *testing.T) {
+	r := NewRouter(nilOptions())
+
+	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 func TestNewRouter_Metrics(t *testing.T) {
 	r := NewRouter(nilOptions())
 
