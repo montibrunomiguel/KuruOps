@@ -57,6 +57,12 @@ grant update (sla_breached, updated_at) on incidents to argusops_worker;
 -- column-scoped-UPDATE reasoning as the incidents grant above.
 grant update (escalated_at) on alerts to argusops_worker;
 
+-- cmd/worker's fourth job, sweepStaleAIRuns, fails any ai_analysis_runs row
+-- still stuck 'running'/'paused' long past when it should have finished (a
+-- pod killed mid-analysis leaves nothing else to ever transition it) --
+-- same column-scoped-UPDATE reasoning as the grants above.
+grant update (status, error, updated_at) on ai_analysis_runs to argusops_worker;
+
 alter materialized view mv_alert_daily_stats owner to argusops_worker;
 alter materialized view mv_incident_kpis owner to argusops_worker;
 alter materialized view mv_incident_daily_stats owner to argusops_worker;

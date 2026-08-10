@@ -101,6 +101,9 @@ func main() {
 	escalationTicker := time.NewTicker(1 * time.Minute)
 	defer escalationTicker.Stop()
 
+	staleAIRunTicker := time.NewTicker(1 * time.Minute)
+	defer staleAIRunTicker.Stop()
+
 	// Análise por IA na ingestão NÃO passa por este worker -- ficou resolvida
 	// de um jeito mais simples do que a fila via `ai_analysis_jobs` que este
 	// comentário cogitava originalmente: AlertService.Ingest (cmd/ingest)
@@ -143,6 +146,10 @@ func main() {
 			runLocked(ctx, pool, lockKeySweepEscalations, "sweep_escalations", logger, func() {
 				sweepEscalations(ctx, pool, secretStore, onCallService, userRepo, smtpService, cfg.AppBaseURL, logger)
 			})
+		case <-staleAIRunTicker.C:
+			runLocked(ctx, pool, lockKeySweepStaleAIRuns, "sweep_stale_ai_runs", logger, func() {
+				sweepStaleAIRuns(ctx, pool, logger)
+			})
 		}
 	}
 }
@@ -156,6 +163,7 @@ const (
 	lockKeyRefreshMaterializedViews int64 = 821001
 	lockKeySweepSLABreaches         int64 = 821002
 	lockKeySweepEscalations         int64 = 821003
+	lockKeySweepStaleAIRuns         int64 = 821004
 )
 
 // runLocked runs fn only if this process wins the Postgres advisory lock
@@ -232,6 +240,48 @@ func sweepSLABreaches(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
 	}
 	if tag.RowsAffected() > 0 {
 		logger.Info("sla breaches flipped", "count", tag.RowsAffected())
+	}
+}
+
+// staleAIRunTimeout is how long an ai_analysis_runs row is allowed to sit at
+// 'running'/'paused' before sweepStaleAIRuns reaps it -- generous enough for
+// a real LLM round-trip (including the agentic tool-use loop's wait for a
+// human to approve/reject a tool call) but short enough that an analyst
+// isn't stuck behind a permanently "in progress" state for long.
+const staleAIRunTimeout = 15 * time.Minute
+
+// sweepStaleAIRuns fails any ai_analysis_runs row still 'running'/'paused'
+// well past when it should have finished -- StartAlertAnalysis/
+// StartIncidentAnalysis (see AIAnalysisService) do the actual LLM work in a
+// goroutine started with context.Background(), fully decoupled from both
+// the originating HTTP request and process shutdown. If the pod is killed
+// mid-goroutine (a routine deploy, OOM, a node eviction), that goroutine
+// just dies -- nothing else ever transitions the row again, and
+// checkNotAlreadyRunning then permanently blocks any future "Analyze with
+// AI" click for that alert/incident. Runs cross-tenant (no Pool.WithTenant),
+// same BYPASSRLS reasoning as sweepSLABreaches/sweepEscalations -- see
+// db/init/argusops_worker_role.sql. updated_at is already bumped by every
+// real status transition (SetRunning/SetPaused/SetCompleted/SetFailed, see
+// AIAnalysisRunRepository), so no schema change is needed to detect
+// staleness from it.
+func sweepStaleAIRuns(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
+	// $1 * interval '1 second', not $1::interval -- pgx has no direct
+	// encoding for Go's time.Duration as a Postgres interval, and
+	// Duration.String()'s Go-style format ("15m0s") isn't valid interval
+	// input anyway. Seconds-as-float multiplied by a one-second interval is
+	// the standard way to pass a Go duration through as a bind parameter.
+	tag, err := pool.Exec(ctx, `
+		update ai_analysis_runs
+		set status = 'failed', error = 'reaped: run exceeded timeout', updated_at = now()
+		where status in ('running', 'paused') and updated_at < now() - ($1 * interval '1 second')`,
+		staleAIRunTimeout.Seconds(),
+	)
+	if err != nil {
+		logger.Error("sweep stale ai runs failed", "error", err)
+		return
+	}
+	if tag.RowsAffected() > 0 {
+		logger.Warn("reaped stale ai analysis runs", "count", tag.RowsAffected())
 	}
 }
 

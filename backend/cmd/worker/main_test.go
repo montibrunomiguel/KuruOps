@@ -406,3 +406,86 @@ func TestRunLocked_OnlyOneReplicaExecutesConcurrently(t *testing.T) {
 	assert.True(t, firstRan, "the replica that wins the lock must run the job")
 	assert.False(t, secondRan, "the replica that loses the lock must skip this tick, not run the job again")
 }
+
+// insertAIRunFixture inserts an ai_analysis_runs row with an explicit
+// status/updated_at, standing in for a run that got stuck at some point in
+// the past (a real stuck run's updated_at is old because nothing ever
+// transitioned it again after the goroutine that owned it died -- see
+// sweepStaleAIRuns' doc comment).
+func insertAIRunFixture(t *testing.T, pool *db.Pool, tenantID, actorID uuid.UUID, status string, updatedAt time.Time) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		insert into ai_analysis_runs (tenant_id, context_type, context_id, actor_id, status, updated_at)
+		values ($1, 'alert', $2, $3, $4, $5)
+		returning id`,
+		tenantID, uuid.New(), actorID, status, updatedAt,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+func aiRunStatus(t *testing.T, pool *db.Pool, id int64) (status string, errMsg *string) {
+	t.Helper()
+	err := pool.QueryRow(context.Background(), `select status, error from ai_analysis_runs where id = $1`, id).Scan(&status, &errMsg)
+	require.NoError(t, err)
+	return status, errMsg
+}
+
+func TestSweepStaleAIRuns(t *testing.T) {
+	adminPool := sweepAdminPool(t)
+	workerPool := sweepWorkerPool(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	t.Run("a running run stuck past the timeout is reaped as failed", func(t *testing.T) {
+		id := insertAIRunFixture(t, adminPool, tenantID, actorID, "running", time.Now().Add(-2*staleAIRunTimeout))
+		sweepStaleAIRuns(context.Background(), workerPool, logger)
+		status, errMsg := aiRunStatus(t, adminPool, id)
+		assert.Equal(t, "failed", status)
+		require.NotNil(t, errMsg)
+		assert.Contains(t, *errMsg, "reaped")
+	})
+
+	t.Run("a paused run stuck past the timeout is reaped as failed", func(t *testing.T) {
+		id := insertAIRunFixture(t, adminPool, tenantID, actorID, "paused", time.Now().Add(-2*staleAIRunTimeout))
+		sweepStaleAIRuns(context.Background(), workerPool, logger)
+		status, _ := aiRunStatus(t, adminPool, id)
+		assert.Equal(t, "failed", status)
+	})
+
+	t.Run("a recently-started running run is left alone", func(t *testing.T) {
+		id := insertAIRunFixture(t, adminPool, tenantID, actorID, "running", time.Now())
+		sweepStaleAIRuns(context.Background(), workerPool, logger)
+		status, _ := aiRunStatus(t, adminPool, id)
+		assert.Equal(t, "running", status)
+	})
+
+	t.Run("a completed run is never touched regardless of age", func(t *testing.T) {
+		id := insertAIRunFixture(t, adminPool, tenantID, actorID, "completed", time.Now().Add(-24*time.Hour))
+		sweepStaleAIRuns(context.Background(), workerPool, logger)
+		status, _ := aiRunStatus(t, adminPool, id)
+		assert.Equal(t, "completed", status)
+	})
+
+	// A closed pool's Exec always errors, exercising the same "log and
+	// return" failure path every other sweep* function in this file takes
+	// on a DB error -- without this, that branch has no coverage. A
+	// standalone pool (not sweepWorkerPool's, which registers its own
+	// t.Cleanup) so closing it here doesn't risk a double-close.
+	t.Run("a database error is logged, not panicked on", func(t *testing.T) {
+		url := os.Getenv("TEST_DATABASE_WORKER_URL")
+		if url == "" {
+			t.Skip("TEST_DATABASE_WORKER_URL not set -- run via `task backend:test:integration`")
+		}
+		brokenPool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
+		require.NoError(t, err)
+		brokenPool.Close()
+
+		assert.NotPanics(t, func() {
+			sweepStaleAIRuns(context.Background(), brokenPool, logger)
+		})
+	})
+}
