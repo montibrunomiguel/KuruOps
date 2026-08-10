@@ -30,6 +30,19 @@ func HealthCheck(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// Livez returns a handler for GET /livez that unconditionally reports 200 --
+// a pure "this process is alive" check with no downstream dependency,
+// unlike HealthCheck. Meant for the liveness probe specifically:
+// HealthCheck's DB check is correct for readiness (pull the pod from the
+// Service until it can serve a real request) but wrong for liveness -- a
+// transient Postgres blip would otherwise make kubelet kill and restart
+// every api/ingest/worker replica at once, turning a brief DB hiccup into a
+// synchronized restart storm instead of just routing around it.
+func Livez(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
 // WrapWithObservability applies the same request-id / correlated-logging /
 // metrics middleware chain NewRouter wires into the chi router (see
 // router.go), for a binary whose own routing isn't chi-based (cmd/worker,

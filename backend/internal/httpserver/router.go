@@ -77,6 +77,7 @@ func NewRouter(opts Options) http.Handler {
 	r.Use(MetricsMiddleware)
 
 	r.Get("/healthz", opts.HealthCheck)
+	r.Get("/livez", Livez)
 	r.Get("/metrics", MetricsHandler)
 
 	// Login endpoints are unauthenticated by definition -- rate limited to prevent brute force attacks

@@ -65,15 +65,23 @@ spec:
               readOnly: true
             - name: uploads
               mountPath: /data/uploads
-          # /healthz pings the database with a short timeout and returns 503
-          # if it's unreachable (see internal/httpserver.HealthCheck) -- a
-          # real check, not just "the process is up".
+          # readinessProbe: /healthz pings the database with a short timeout
+          # and returns 503 if it's unreachable (see
+          # internal/httpserver.HealthCheck) -- pulls the pod out of the
+          # Service until it can actually serve a real request.
+          # livenessProbe: deliberately NOT the same DB-dependent check --
+          # /livez (internal/httpserver.Livez) is an unconditional 200 with
+          # no downstream dependency. A liveness probe that also depends on
+          # Postgres would make kubelet kill and restart every replica at
+          # once on a brief DB blip, turning a transient outage into a
+          # synchronized restart storm instead of just letting readiness
+          # route around it.
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:
-            httpGet: { path: /healthz, port: 8080 }
+            httpGet: { path: /livez, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

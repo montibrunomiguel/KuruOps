@@ -118,6 +118,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
+	mux.HandleFunc("/livez", httpserver.Livez)
 	mux.HandleFunc("/metrics", httpserver.MetricsHandler)
 	mux.Handle("/hooks", hookLimiter(handler))
 

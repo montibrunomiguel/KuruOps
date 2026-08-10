@@ -69,10 +69,16 @@ reference the same untagged local names `docker compose build` produces
 
 ## Health checks and resource limits
 
-`api`/`ingest`/`worker` all expose a real `/healthz` (pings the database,
-503 on failure — see `internal/httpserver.HealthCheck`) and `/metrics`
-(Prometheus text format, see `internal/httpserver/metrics.go`) used here as
-readiness/liveness probes. `resources.requests`/`limits` mirror
+`api`/`ingest`/`worker` all expose `/healthz` (pings the database, 503 on
+failure — see `internal/httpserver.HealthCheck`), `/livez` (unconditional
+200, no downstream dependency — see `internal/httpserver.Livez`), and
+`/metrics` (Prometheus text format, see `internal/httpserver/metrics.go`).
+`readinessProbe` uses `/healthz` and `livenessProbe` uses `/livez` —
+deliberately different: a liveness probe backed by the same DB check as
+readiness would make kubelet kill and restart every replica at once on a
+transient Postgres blip, turning a brief DB hiccup into a synchronized
+restart storm instead of just letting readiness route around it.
+`resources.requests`/`limits` mirror
 `docker-compose.yml`'s `mem_limit`/`cpus` for the same services — same
 caveat applies: sized for trying this out, not a production sizing
 recommendation. Watch the real `argusops_db_pool_*` /

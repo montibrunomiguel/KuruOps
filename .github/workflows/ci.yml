@@ -112,3 +112,26 @@ jobs:
         run: |
           cd frontend
           npm run build
+
+  k8s-manifests-ci:
+    name: Kubernetes Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # kubeconform is a static validator: it checks each manifest against
+      # the real Kubernetes OpenAPI schema for its apiVersion/kind without
+      # needing a live cluster or even a kubeconfig at all (unlike `kubectl
+      # apply --dry-run=client`, which still tries to reach an API server
+      # for resource discovery and fails outright with no cluster
+      # configured). Cheap enough to run on every PR, and it's the only
+      # thing standing between a typo in deploy/k8s/*.yaml and it only being
+      # discovered at actual deploy time.
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate manifests
+        run: kubeconform -strict -summary deploy/k8s/*.yaml

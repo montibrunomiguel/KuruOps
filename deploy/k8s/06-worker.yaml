@@ -41,14 +41,16 @@ spec:
                 secretKeyRef:
                   name: argusops-secrets
                   key: SECRETS_ENCRYPTION_KEY
-          # worker's only HTTP surface is /healthz + /metrics (see
+          # worker's only HTTP surface is /healthz + /livez + /metrics (see
           # cmd/worker/main.go) -- it serves no application traffic.
+          # readinessProbe is DB-dependent (/healthz), livenessProbe
+          # deliberately isn't (/livez) -- see 04-api.yaml's comment for why.
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:
-            httpGet: { path: /healthz, port: 8080 }
+            httpGet: { path: /livez, port: 8080 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

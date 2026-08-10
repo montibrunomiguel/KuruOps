@@ -57,6 +57,7 @@ func main() {
 	// detect it externally.
 	healthMux := http.NewServeMux()
 	healthMux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
+	healthMux.HandleFunc("/livez", httpserver.Livez)
 	healthMux.HandleFunc("/metrics", httpserver.MetricsHandler)
 	healthSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
