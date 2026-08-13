@@ -31,10 +31,15 @@ import (
 // leaf segment (not the folder) is what actually guarantees no two uploads
 // ever collide; the slugified filename alongside it exists purely so a
 // download looks like the file the analyst attached, not a bare hex string.
+// Since the key can't be reverse-parsed back into a real alert/incident
+// UUID (see upload_keys' migration comment), upload also records
+// key -> (context type, context id) in upload_keys, which serve looks up to
+// reapply the same allowedTags check upload's own resolveEntity performs.
 type UploadHandlers struct {
 	storageConfig *service.StorageConfigService
 	alerts        *service.AlertService
 	incidents     *service.IncidentService
+	uploadKeys    *service.UploadKeyService
 	maxBytes      int64
 }
 
@@ -120,8 +125,8 @@ var imageOnlyExtensions = map[string]bool{
 // names alike.
 var slugRE = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-func NewUploadHandlers(storageConfig *service.StorageConfigService, alerts *service.AlertService, incidents *service.IncidentService) *UploadHandlers {
-	return &UploadHandlers{storageConfig: storageConfig, alerts: alerts, incidents: incidents, maxBytes: defaultMaxUploadBytes}
+func NewUploadHandlers(storageConfig *service.StorageConfigService, alerts *service.AlertService, incidents *service.IncidentService, uploadKeys *service.UploadKeyService) *UploadHandlers {
+	return &UploadHandlers{storageConfig: storageConfig, alerts: alerts, incidents: incidents, uploadKeys: uploadKeys, maxBytes: defaultMaxUploadBytes}
 }
 
 // Routes is mounted at /api/v1/uploads/images -- POST / uploads a new file
@@ -205,6 +210,11 @@ func (h *UploadHandlers) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.uploadKeys.Record(r.Context(), tenantID, key, kind, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not record upload metadata")
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]string{"url": "/api/v1/uploads/images/" + key})
 }
 
@@ -270,6 +280,26 @@ func (h *UploadHandlers) resolveEntity(r *http.Request, tenantID uuid.UUID, kind
 	}
 }
 
+// checkTagAccess re-applies the same allowedTags visibility rule upload
+// (POST, via resolveEntity) already enforces, for a GET against an
+// already-stored key. Looks the key's owning alert/incident up via
+// uploadKeys and re-runs resolveEntity's own tag check against it -- a key
+// with no upload_keys row (every key uploaded before that table existed)
+// has nothing to check against, so it's let through unchanged rather than
+// breaking pre-existing attachments retroactively.
+func (h *UploadHandlers) checkTagAccess(r *http.Request, tenantID uuid.UUID, key string) error {
+	contextType, contextID, found, err := h.uploadKeys.Lookup(r.Context(), tenantID, key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	allowedTags := middleware.AllowedTags(r.Context())
+	_, _, err = h.resolveEntity(r, tenantID, contextType, contextID, allowedTags)
+	return err
+}
+
 func slugify(title string) string {
 	slug := slugRE.ReplaceAllString(strings.TrimSpace(title), "-")
 	slug = strings.Trim(slug, "-")
@@ -301,6 +331,11 @@ func (h *UploadHandlers) serve(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "*")
 	if !keyRE.MatchString(key) {
 		writeError(w, http.StatusBadRequest, "invalid key")
+		return
+	}
+
+	if err := h.checkTagAccess(r, tenantID, key); err != nil {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
