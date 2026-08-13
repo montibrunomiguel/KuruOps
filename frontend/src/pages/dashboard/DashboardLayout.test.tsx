@@ -265,6 +265,7 @@ describe("AlertsTabPanel", () => {
   it("changing the status, source, and tag filters re-fetches stats with the new query params", async () => {
     sessionWith(["alerts"]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([{ id: "t1", name: "ransomware" }]));
       if (url.includes("/dashboard/stats")) {
         return Promise.resolve(
           jsonResponse({
@@ -280,6 +281,9 @@ describe("AlertsTabPanel", () => {
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
 
+    // Severity/status are now MultiSelectFilter's own <select>s (still one
+    // <select> each, same "select an option" interaction as before) --
+    // severity's is first, status's second.
     const selects = screen.getAllByRole("combobox");
     await userEvent.selectOptions(selects[1], "escalated");
     await waitFor(() => {
@@ -293,7 +297,10 @@ describe("AlertsTabPanel", () => {
       expect(calls.some((u) => u.includes("alertSource=wazuh"))).toBe(true);
     });
 
-    await userEvent.type(screen.getByPlaceholderText("All tags"), "ransomware");
+    // Tag is now TagPicker (catalog-backed multi-select, same idiom as the
+    // analyst filter above) instead of a free-text input.
+    const tagOption = await screen.findByText("ransomware");
+    await userEvent.selectOptions(tagOption.closest("select") as HTMLSelectElement, "ransomware");
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map((c) => c[0] as string);
       expect(calls.some((u) => u.includes("alertTag=ransomware"))).toBe(true);
@@ -495,9 +502,10 @@ describe("IncidentsTabPanel", () => {
     });
   });
 
-  it("typing in the tag filter re-fetches stats and the incident list with the tag query params", async () => {
+  it("selecting a tag filter re-fetches stats and the incident list with the tag query params", async () => {
     sessionWith(["incidents"]);
     const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([{ id: "t1", name: "ransomware" }]));
       if (url.includes("/dashboard/stats")) {
         return Promise.resolve(
           jsonResponse({
@@ -513,7 +521,8 @@ describe("IncidentsTabPanel", () => {
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
 
-    await userEvent.type(screen.getByPlaceholderText("All tags"), "ransomware");
+    const tagOption = await screen.findByText("ransomware");
+    await userEvent.selectOptions(tagOption.closest("select") as HTMLSelectElement, "ransomware");
 
     await waitFor(() => {
       const calls = fetchMock.mock.calls.map((c: unknown[]) => c[0] as string);

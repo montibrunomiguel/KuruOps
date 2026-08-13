@@ -23,6 +23,8 @@
     "webhookOnline": "Webhook online",
     "removeTag": "Remover tag {{name}}",
     "addTagOption": "+ Adicionar tag...",
+    "removeFilterValue": "Remover {{value}}",
+    "addFilterOption": "+ Adicionar...",
     "noTagsCatalog": "Nenhuma tag cadastrada ainda -- crie em Settings > Tags.",
     "removeAssignee": "Remover responsável {{name}}",
     "addAssigneeOption": "+ Adicionar responsável...",

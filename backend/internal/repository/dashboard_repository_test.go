@@ -148,6 +148,58 @@ func TestDashboardRepository_Stats_AllowedTagsScoping(t *testing.T) {
 	})
 }
 
+// TestDashboardRepository_Stats_MultiSelectFilters covers the Dashboard's
+// multi-select filter bar (severity/status/tag/analyst/commander each go
+// from "one value" to "any of these values") -- AlertTag/IncidentTag in
+// particular switched from `$n = any(tags)` (one tag) to `tags && $n`
+// (array overlap, same technique AllowedTags scoping already used), so
+// this is the one operator change not already covered by an existing
+// single-value test continuing to pass.
+func TestDashboardRepository_Stats_MultiSelectFilters(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	analystA := testutil.NewUser(t, tenantID, "analyst", nil)
+	analystB := testutil.NewUser(t, tenantID, "analyst", nil)
+	alertRepo := repository.NewAlertRepository()
+	dashboardRepo := repository.NewDashboardRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	mustInsert := func(tag string, analyst uuid.UUID) {
+		require.NoError(t, alertRepo.Insert(t.Context(), tx, &domain.Alert{
+			TenantID: tenantID, Title: tag, Source: "test",
+			Severity: domain.SeverityCritical, OriginalSeverity: domain.SeverityCritical, Status: domain.AlertStatusOpen,
+			Tags: []string{tag}, AssignedAnalystID: &analyst, Payload: json.RawMessage(`{}`), ReceivedAt: time.Now(),
+		}))
+	}
+	mustInsert("prod", analystA)
+	mustInsert("staging", analystB)
+	mustInsert("dev", analystA)
+
+	t.Run("AlertTag with two values matches either, via array overlap", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AlertTag: []string{"prod", "staging"}})
+		require.NoError(t, err)
+		assert.Equal(t, 2, stats.OpenAlerts)
+	})
+
+	t.Run("AlertTag with an unrelated value matches nothing", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AlertTag: []string{"unrelated"}})
+		require.NoError(t, err)
+		assert.Zero(t, stats.OpenAlerts)
+	})
+
+	t.Run("AssignedAnalystID with two values matches either analyst's alerts", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AssignedAnalystID: []uuid.UUID{analystA, analystB}})
+		require.NoError(t, err)
+		assert.Equal(t, 3, stats.OpenAlerts)
+	})
+
+	t.Run("AssignedAnalystID with one value matches only that analyst's alerts", func(t *testing.T) {
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AssignedAnalystID: []uuid.UUID{analystB}})
+		require.NoError(t, err)
+		assert.Equal(t, 1, stats.OpenAlerts)
+	})
+}
+
 // TestDashboardRepository_Stats_IncidentCountsAreLive guards against a
 // regression to mv_incident_kpis-backed counts: cmd/worker only refreshes
 // that view once a minute, so a newly created/closed incident would not
@@ -571,7 +623,7 @@ func TestDashboardRepository_Stats_AlertsByAnalyst(t *testing.T) {
 	})
 
 	t.Run("AssignedAnalystID narrows every other alert-derived figure too", func(t *testing.T) {
-		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AssignedAnalystID: &analystA})
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{AssignedAnalystID: []uuid.UUID{analystA}})
 		require.NoError(t, err)
 		assert.Equal(t, 2, stats.OpenAlerts)
 	})
@@ -623,7 +675,7 @@ func TestDashboardRepository_Stats_IncidentsByCommander(t *testing.T) {
 	})
 
 	t.Run("CommanderID narrows every other incident-derived figure too", func(t *testing.T) {
-		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{CommanderID: &commanderB})
+		stats, err := dashboardRepo.Stats(t.Context(), tx, tenantID, repository.StatsFilter{CommanderID: []uuid.UUID{commanderB}})
 		require.NoError(t, err)
 		assert.Equal(t, 1, stats.ActiveIncidents)
 	})

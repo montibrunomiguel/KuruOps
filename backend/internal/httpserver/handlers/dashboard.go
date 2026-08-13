@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,7 +45,7 @@ func parseTimeQueryParam(r *http.Request, name string) *time.Time {
 }
 
 // parseUUIDQueryParam is the same "malformed = absent, not an error" leniency
-// as parseSince, for the assignedAnalystId/commanderId dashboard filters.
+// as parseSince, for single-value uuid dashboard filters.
 func parseUUIDQueryParam(r *http.Request, name string) *uuid.UUID {
 	v := r.URL.Query().Get(name)
 	if v == "" {
@@ -55,6 +56,46 @@ func parseUUIDQueryParam(r *http.Request, name string) *uuid.UUID {
 		return nil
 	}
 	return &id
+}
+
+// parseUUIDListQueryParam is parseUUIDQueryParam's multi-select
+// counterpart, for the assignedAnalystId/commanderId dashboard filters --
+// the frontend joins a multi-select's chosen values with a comma (see
+// AlertsTabPanel/IncidentsTabPanel), matching the single-param-not-
+// repeated-key convention every other dashboard filter here already uses.
+// A malformed individual value is dropped, not treated as an error, same
+// "this is a filter, not a required input" leniency as the rest of this
+// file.
+func parseUUIDListQueryParam(r *http.Request, name string) []uuid.UUID {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil
+	}
+	var ids []uuid.UUID
+	for _, part := range strings.Split(v, ",") {
+		if id, err := uuid.Parse(part); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// parseStringListQueryParam splits a comma-separated query param into a
+// []T of a named string type (domain.Severity, domain.AlertStatus) --
+// blank segments (e.g. a stray trailing comma) are dropped rather than
+// producing an empty-string filter value that could never match a row.
+func parseStringListQueryParam[T ~string](r *http.Request, name string) []T {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil
+	}
+	var out []T
+	for _, part := range strings.Split(v, ",") {
+		if part != "" {
+			out = append(out, T(part))
+		}
+	}
+	return out
 }
 
 type DashboardHandlers struct {
@@ -81,7 +122,9 @@ func (h *DashboardHandlers) FollowupRoutes(r chi.Router) {
 // alertSeverity/alertStatus/alertSource/alertTag for the Alerts tab's
 // filter bar, incidentSeverity/incidentTag for the Incidents tab's -- see
 // repository.StatsFilter for why they're independent rather than shared
-// severity/tag params.
+// severity/tag params. Every filter except alertSource is multi-select: the
+// frontend sends a comma-separated list of chosen values in one param
+// (e.g. "alertSeverity=critical,high") rather than a repeated query key.
 func (h *DashboardHandlers) stats(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantID(r.Context())
 	if !ok {
@@ -91,29 +134,16 @@ func (h *DashboardHandlers) stats(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	f := repository.StatsFilter{}
-	if v := q.Get("alertSeverity"); v != "" {
-		s := domain.Severity(v)
-		f.AlertSeverity = &s
-	}
-	if v := q.Get("alertStatus"); v != "" {
-		s := domain.AlertStatus(v)
-		f.AlertStatus = &s
-	}
+	f.AlertSeverity = parseStringListQueryParam[domain.Severity](r, "alertSeverity")
+	f.AlertStatus = parseStringListQueryParam[domain.AlertStatus](r, "alertStatus")
 	if v := q.Get("alertSource"); v != "" {
 		f.AlertSource = &v
 	}
-	if v := q.Get("alertTag"); v != "" {
-		f.AlertTag = &v
-	}
-	f.AssignedAnalystID = parseUUIDQueryParam(r, "assignedAnalystId")
-	if v := q.Get("incidentSeverity"); v != "" {
-		s := domain.Severity(v)
-		f.IncidentSeverity = &s
-	}
-	if v := q.Get("incidentTag"); v != "" {
-		f.IncidentTag = &v
-	}
-	f.CommanderID = parseUUIDQueryParam(r, "commanderId")
+	f.AlertTag = parseStringListQueryParam[string](r, "alertTag")
+	f.AssignedAnalystID = parseUUIDListQueryParam(r, "assignedAnalystId")
+	f.IncidentSeverity = parseStringListQueryParam[domain.Severity](r, "incidentSeverity")
+	f.IncidentTag = parseStringListQueryParam[string](r, "incidentTag")
+	f.CommanderID = parseUUIDListQueryParam(r, "commanderId")
 	f.Since = parseSince(r)
 	f.Until = parseUntil(r)
 	f.AllowedTags = middleware.AllowedTags(r.Context())

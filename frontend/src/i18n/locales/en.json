@@ -23,6 +23,8 @@
     "webhookOnline": "Webhook listener online",
     "removeTag": "Remove tag {{name}}",
     "addTagOption": "+ Add tag...",
+    "removeFilterValue": "Remove {{value}}",
+    "addFilterOption": "+ Add...",
     "noTagsCatalog": "No tags registered yet -- create one in Settings > Tags.",
     "removeAssignee": "Remove assignee {{name}}",
     "addAssigneeOption": "+ Add assignee...",
