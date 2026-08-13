@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/authn"
 	"github.com/argusops/argusops/internal/httpserver/handlers"
@@ -26,8 +27,8 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
-	patSvc := service.NewPersonalAccessTokenService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewPersonalAccessTokenRepository())
-	h := handlers.NewAccountHandlers(authSvc, patSvc)
+	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
 
 	t.Run("wrong current password -- 400", func(t *testing.T) {
@@ -62,8 +63,8 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
-	patSvc := service.NewPersonalAccessTokenService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewPersonalAccessTokenRepository())
-	h := handlers.NewAccountHandlers(authSvc, patSvc)
+	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
 
 	t.Run("missing name -- 400", func(t *testing.T) {
@@ -95,89 +96,66 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	})
 }
 
-func TestAccountHandlers_Tokens(t *testing.T) {
+func TestAccountHandlers_APITokens(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	// PersonalAccessTokenService.Resolve authenticates a bearer token before
-	// any tenant is known (see its doc comment), so it always resolves
-	// against TenantRepository.GetDefault -- "the oldest tenant row" --
-	// same as every other login path. A tenant testutil.NewTenant(t) just
-	// created is never that row in this long-lived shared test database
-	// (plenty of older tenants already exist from other tests), so the
-	// subtests here that exercise Resolve() need the user under the *real*
-	// default tenant, not an ad-hoc one, or Resolve looks the token up in
-	// the wrong tenant's RLS scope and always reports not-found.
-	tenant, err := repository.NewTenantRepository().GetDefault(t.Context(), pool)
-	if err != nil || tenant == nil {
-		t.Fatalf("resolve default tenant: %v (tenant=%v)", err, tenant)
-	}
-	tenantID := tenant.ID
+	tenantID := testutil.NewTenant(t)
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 	priv, err := authn.GenerateEphemeralKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
-	patSvc := service.NewPersonalAccessTokenService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewPersonalAccessTokenRepository())
-	h := handlers.NewAccountHandlers(authSvc, patSvc)
+	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
 
 	t.Run("missing name -- 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"name": ""})
-		req := withClaims(httptest.NewRequest("POST", "/tokens", bytes.NewReader(body)), tenantID, userID, nil)
+		body, _ := json.Marshal(map[string]string{"name": ""})
+		req := withClaims(httptest.NewRequest("POST", "/api-tokens", bytes.NewReader(body)), tenantID, userID, nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
-	t.Run("create returns the plaintext token once, list never includes it", func(t *testing.T) {
+	var tokenID string
+	t.Run("create -- 201 with the plaintext token, shown once", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"name": "CI script"})
-		createReq := withClaims(httptest.NewRequest("POST", "/tokens", bytes.NewReader(body)), tenantID, userID, nil)
-		createRec := doRequest(r, createReq)
-		assert.Equal(t, http.StatusCreated, createRec.Code)
+		req := withClaims(httptest.NewRequest("POST", "/api-tokens", bytes.NewReader(body)), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
-		var createResp map[string]json.RawMessage
-		assert.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &createResp))
-		var plaintext string
-		assert.NoError(t, json.Unmarshal(createResp["plaintext"], &plaintext))
-		assert.Contains(t, plaintext, "pat_")
-
-		listReq := withClaims(httptest.NewRequest("GET", "/tokens", nil), tenantID, userID, nil)
-		listRec := doRequest(r, listReq)
-		assert.Equal(t, http.StatusOK, listRec.Code)
-		assert.Contains(t, listRec.Body.String(), "CI script")
-		assert.NotContains(t, listRec.Body.String(), plaintext)
-
-		// The token actually authenticates -- confirms Resolve() round-trips
-		// correctly against what Create() just persisted.
-		resolvedTenant, resolvedUser, _, _, _, ok, err := patSvc.Resolve(t.Context(), plaintext)
-		assert.NoError(t, err)
-		assert.True(t, ok)
-		assert.Equal(t, tenantID, resolvedTenant)
-		assert.Equal(t, userID, resolvedUser)
-	})
-
-	t.Run("revoking a token makes it stop authenticating", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]any{"name": "to be revoked"})
-		createReq := withClaims(httptest.NewRequest("POST", "/tokens", bytes.NewReader(body)), tenantID, userID, nil)
-		createRec := doRequest(r, createReq)
-
-		var createResp map[string]json.RawMessage
-		assert.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &createResp))
-		var plaintext string
-		assert.NoError(t, json.Unmarshal(createResp["plaintext"], &plaintext))
-		var tokenBody struct {
-			ID string `json:"id"`
+		var resp struct {
+			Token struct {
+				ID         string `json:"id"`
+				Name       string `json:"name"`
+				TokenLast4 string `json:"tokenLast4"`
+			} `json:"token"`
+			Plaintext string `json:"plaintext"`
 		}
-		assert.NoError(t, json.Unmarshal(createResp["token"], &tokenBody))
-
-		delReq := withClaims(httptest.NewRequest("DELETE", "/tokens/"+tokenBody.ID, nil), tenantID, userID, nil)
-		assert.Equal(t, http.StatusNoContent, doRequest(r, delReq).Code)
-
-		_, _, _, _, _, ok, err := patSvc.Resolve(t.Context(), plaintext)
-		assert.NoError(t, err)
-		assert.False(t, ok)
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Equal(t, "CI script", resp.Token.Name)
+		assert.True(t, strings.HasPrefix(resp.Plaintext, "pat_"))
+		assert.Equal(t, resp.Plaintext[len(resp.Plaintext)-4:], resp.Token.TokenLast4)
+		tokenID = resp.Token.ID
 	})
 
-	t.Run("revoking an unknown token id -- 400", func(t *testing.T) {
-		req := withClaims(httptest.NewRequest("DELETE", "/tokens/"+uuid.NewString(), nil), tenantID, userID, nil)
+	t.Run("list -- includes the created token, never the plaintext", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/api-tokens", nil), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "CI script")
+		assert.NotContains(t, rec.Body.String(), "pat_")
+	})
+
+	t.Run("revoke -- 204, then it disappears from an active-only view but stays listed", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/api-tokens/"+tokenID, nil), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/api-tokens", nil), tenantID, userID, nil)
+		listRec := doRequest(r, listReq)
+		require.Equal(t, http.StatusOK, listRec.Code)
+		assert.Contains(t, listRec.Body.String(), `"revokedAt"`, "the revoked token stays in the list, just marked revoked")
+	})
+
+	t.Run("malformed id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/api-tokens/not-a-uuid", nil), tenantID, userID, nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 }

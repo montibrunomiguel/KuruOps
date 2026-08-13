@@ -1,8 +1,6 @@
 package middleware_test
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +11,9 @@ import (
 
 	"github.com/argusops/argusops/internal/authn"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/argusops/argusops/internal/repository"
+	"github.com/argusops/argusops/internal/service"
+	"github.com/argusops/argusops/internal/testutil"
 )
 
 func okHandler() http.Handler {
@@ -52,7 +53,7 @@ func TestJWTAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(next).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(next).ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, tenantID, gotTenant)
@@ -67,7 +68,7 @@ func TestJWTAuth(t *testing.T) {
 	t.Run("missing Authorization header is rejected", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(okHandler()).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
@@ -77,7 +78,7 @@ func TestJWTAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", token) // no "Bearer " prefix
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(okHandler()).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
@@ -85,7 +86,7 @@ func TestJWTAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", "Bearer ")
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(okHandler()).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
@@ -93,7 +94,7 @@ func TestJWTAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", "Bearer not-a-real-token")
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(okHandler()).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
@@ -107,123 +108,57 @@ func TestJWTAuth(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		middleware.JWTAuth(verifier)(okHandler()).ServeHTTP(rec, req)
+		middleware.JWTAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }
 
-// fakePATResolver stands in for service.PersonalAccessTokenService --
-// APIAuth only depends on the PATResolver interface, so this avoids
-// needing a real database for these tests.
-type fakePATResolver struct {
-	tenantID, userID            uuid.UUID
-	isAdmin                     bool
-	resourceAccess, allowedTags []string
-	found                       bool
-	err                         error
-	gotToken                    string
-}
-
-func (f *fakePATResolver) Resolve(_ context.Context, token string) (uuid.UUID, uuid.UUID, bool, []string, []string, bool, error) {
-	f.gotToken = token
-	return f.tenantID, f.userID, f.isAdmin, f.resourceAccess, f.allowedTags, f.found, f.err
-}
-
-func TestAPIAuth(t *testing.T) {
+// TestJWTAuth_PersonalAPIToken is the end-to-end regression test for
+// personal API tokens: a pat_-prefixed bearer token authenticates through
+// the SAME middleware as a JWT, without ever reaching verifier.Verify (a
+// pat_ token isn't a JWT at all). Claims come from the token owner's
+// CURRENT Role, resolved fresh on every request -- so a role change takes
+// effect on an already-issued token immediately, and revoking it rejects
+// the very next request.
+func TestJWTAuth_PersonalAPIToken(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", []string{"alerts"})
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	issuer := authn.NewIssuer(priv)
 	verifier := authn.NewVerifier(&priv.PublicKey)
-	tenantID, userID := uuid.New(), uuid.New()
+	apiTokens := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 
-	t.Run("a session JWT still authenticates, same as JWTAuth", func(t *testing.T) {
-		token, err := issuer.Issue(tenantID, userID, true, []string{"alerts"}, nil, false)
-		require.NoError(t, err)
+	result, err := apiTokens.Create(t.Context(), tenantID, userID, "CI script", nil)
+	require.NoError(t, err)
 
-		var gotTenant uuid.UUID
-		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotTenant, _ = middleware.TenantID(r.Context())
-			w.WriteHeader(http.StatusOK)
-		})
-
+	doRequest := func(token string) (*httptest.ResponseRecorder, []string) {
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, &fakePATResolver{})(next).ServeHTTP(rec, req)
-
-		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, tenantID, gotTenant)
-	})
-
-	t.Run("a pat_-prefixed token resolves through patResolver instead of the JWT verifier", func(t *testing.T) {
-		resolver := &fakePATResolver{
-			tenantID: tenantID, userID: userID, isAdmin: true,
-			resourceAccess: []string{"incidents"}, allowedTags: []string{"CompanyA"}, found: true,
-		}
-
-		var gotClaims middleware.Claims
-		var gotOK bool
+		var gotAccess []string
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotTenant, _ := middleware.TenantID(r.Context())
-			gotUser, _ := middleware.UserID(r.Context())
-			gotIsAdmin, _ := middleware.IsAdmin(r.Context())
-			gotAccess, _ := middleware.ResourceAccess(r.Context())
-			gotTags := middleware.AllowedTags(r.Context())
-			gotMustChange, ok := middleware.MustChangePassword(r.Context())
-			gotClaims = middleware.Claims{
-				TenantID: gotTenant, UserID: gotUser, IsAdmin: gotIsAdmin,
-				ResourceAccess: gotAccess, AllowedTags: gotTags, MustChangePassword: gotMustChange,
-			}
-			gotOK = ok
+			gotAccess, _ = middleware.ResourceAccess(r.Context())
 			w.WriteHeader(http.StatusOK)
 		})
+		middleware.JWTAuth(verifier, apiTokens)(next).ServeHTTP(rec, req)
+		return rec, gotAccess
+	}
 
-		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
-		req.Header.Set("Authorization", "Bearer pat_abc123")
-		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, resolver)(next).ServeHTTP(rec, req)
-
+	t.Run("a valid personal API token authenticates with the owner's current resource access", func(t *testing.T) {
+		rec, gotAccess := doRequest(result.Plaintext)
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "pat_abc123", resolver.gotToken)
-		assert.Equal(t, tenantID, gotClaims.TenantID)
-		assert.Equal(t, userID, gotClaims.UserID)
-		assert.True(t, gotClaims.IsAdmin)
-		assert.Equal(t, []string{"incidents"}, gotClaims.ResourceAccess)
-		assert.Equal(t, []string{"CompanyA"}, gotClaims.AllowedTags)
-		assert.True(t, gotOK)
-		assert.False(t, gotClaims.MustChangePassword, "a PAT holder is never mid-forced-password-change")
+		assert.Equal(t, []string{"alerts"}, gotAccess)
 	})
 
-	t.Run("an unknown/expired/revoked pat_ token is rejected without falling back to JWT verification", func(t *testing.T) {
-		resolver := &fakePATResolver{found: false}
-		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
-		req.Header.Set("Authorization", "Bearer pat_no-such-token")
-		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, resolver)(okHandler()).ServeHTTP(rec, req)
+	t.Run("garbage pat_-prefixed token is rejected without touching the JWT verifier", func(t *testing.T) {
+		rec, _ := doRequest("pat_this-does-not-exist")
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
-	t.Run("patResolver returning an error is a 500, not a 401", func(t *testing.T) {
-		resolver := &fakePATResolver{err: errors.New("db unreachable")}
-		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
-		req.Header.Set("Authorization", "Bearer pat_whatever")
-		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, resolver)(okHandler()).ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	})
-
-	t.Run("a nil patResolver falls through to JWT verification even for a pat_-prefixed token", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
-		req.Header.Set("Authorization", "Bearer pat_whatever")
-		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, nil)(okHandler()).ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-	})
-
-	t.Run("missing Authorization header is rejected", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
-		rec := httptest.NewRecorder()
-		middleware.APIAuth(verifier, &fakePATResolver{})(okHandler()).ServeHTTP(rec, req)
+	t.Run("a revoked token is rejected on the very next request", func(t *testing.T) {
+		require.NoError(t, apiTokens.Revoke(t.Context(), tenantID, userID, result.Token.ID))
+		rec, _ := doRequest(result.Plaintext)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 }

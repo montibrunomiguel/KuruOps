@@ -70,6 +70,53 @@ describe("AlertDetailPage", () => {
     expect(await screen.findByText("alert not found")).toBeInTheDocument();
   });
 
+  it("Start Investigating only appears while the alert is open", async () => {
+    vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "investigating" })));
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Suspicious login" });
+    expect(screen.queryByRole("button", { name: "Start Investigating" })).not.toBeInTheDocument();
+  });
+
+  it("clicking Start Investigating assigns the alert to the logged-in analyst and marks it investigating", async () => {
+    localStorage.setItem(
+      "argusops.session",
+      JSON.stringify({
+        token: "tok",
+        refreshToken: "rt",
+        user: { id: "analyst-1", email: "a@b.com", name: "Analyst One", role: "Analyst", mustChangePassword: false, isAdmin: false, resourceAccess: [] },
+      }),
+    );
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/api/v1/alerts/a1/assignee")) return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.includes("/api/v1/alerts/a1/status")) return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.includes("/api/v1/alerts/a1/alerts")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/v1/alerts/a1/comments")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/v1/alerts/a1")) return Promise.resolve(jsonResponse(alertFixture()));
+      if (url.includes("/api/v1/alerts?")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/v1/playbooks/match")) return Promise.resolve(jsonResponse(null));
+      if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
+      if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
+      void init;
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Start Investigating" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/alerts/a1/assignee",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ analystId: "analyst-1" }) }),
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/alerts/a1/status",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ status: "investigating" }) }),
+    );
+  });
+
   it("shows Escalate to Incident unless the alert is already escalated", async () => {
     vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "escalated" })));
     renderDetail();

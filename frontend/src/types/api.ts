@@ -76,18 +76,17 @@ export interface WebhookEndpoint {
   createdAt: string;
 }
 
-// PersonalAccessToken mirrors backend/internal/domain.PersonalAccessToken --
-// Settings -> My Account -- API Tokens. Never carries the plaintext token
-// itself; that's only ever returned once, inline in the create response.
-export interface PersonalAccessToken {
+export interface UserAPIToken {
   id: string;
+  tenantId: string;
+  userId: string;
   name: string;
   tokenLast4: string;
-  // undefined = never expires.
+  // undefined = the user explicitly opted this token out of expiring.
   expiresAt?: string;
-  lastUsedAt?: string;
-  revokedAt?: string;
   createdAt: string;
+  // undefined = still active.
+  revokedAt?: string;
 }
 
 export type LLMProviderKind = "anthropic" | "openai_compatible" | "azure_openai" | "self_hosted";

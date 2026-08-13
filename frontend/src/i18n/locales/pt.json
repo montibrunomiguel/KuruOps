@@ -120,28 +120,17 @@
     "currentPasswordHint": "(necessária para alterar seu e-mail)",
     "passwordTitle": "Alterar Senha",
     "saved": "Salvo.",
-    "tokens": {
+    "apiTokens": {
       "title": "Tokens de API",
+      "hint": "Tokens pessoais para autenticar suas próprias requisições à API, como alternativa a fazer login -- eles carregam suas permissões atuais e param de funcionar assim que revogados.",
       "newToken": "+ Novo Token",
-      "helper": "Use um token de API para chamar a API do ArgusOps a partir de scripts ou integrações, com as mesmas permissões da sua conta.",
-      "tokenGenerated": "Token \"{{name}}\" gerado. Copie agora — ele não será mostrado de novo.",
-      "empty": "Nenhum token de API criado ainda.",
-      "revoke": "Revogar",
-      "revokedBadge": "revogado",
+      "noTokens": "Nenhum token de API ainda.",
+      "tokenGenerated": "Token \"{{name}}\" criado. Copie agora -- ele não será mostrado novamente.",
       "expiresOn": "expira em {{date}}",
-      "neverExpires": "nunca expira",
-      "lastUsed": "usado pela última vez em {{date}}",
-      "neverUsed": "nunca usado",
+      "revoke": "Revogar",
       "form": {
-        "name": "Nome do token",
-        "namePlaceholder": "Script de CI, integração X...",
-        "expiry": "Expiração"
-      },
-      "expiry": {
-        "never": "Nunca expira",
-        "30": "30 dias",
-        "90": "90 dias",
-        "365": "365 dias"
+        "name": "Nome do Token",
+        "namePlaceholder": "ex: script de CI"
       }
     }
   },
@@ -303,9 +292,9 @@
       "backToAlerts": "Voltar para Alertas",
       "analyzeWithAI": "Analisar com IA",
       "analyzing": "Analisando...",
-      "escalateToIncident": "Escalar para Incidente",
-      "startInvestigation": "Iniciar Investigação",
+      "startInvestigating": "Iniciar Investigação",
       "startingInvestigation": "Iniciando...",
+      "escalateToIncident": "Escalar para Incidente",
       "escalating": "Escalando...",
       "receivedLine": "Origem: {{source}} · Recebido em {{date}}",
       "customMetadataTitle": "Metadados Personalizados",

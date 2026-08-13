@@ -138,6 +138,72 @@ func TestAlertRepository_List_Filters(t *testing.T) {
 	})
 }
 
+// TestAlertRepository_Correlated_ReflectsIncidentAlertLinks is the
+// regression test for the "Correlated Alerts" bug: incident_id used to be
+// read straight off the alerts table, but nothing ever wrote it (escalating
+// an alert, and manually linking one via an incident's "Correlated Alerts"
+// panel, both only ever insert into incident_alert_links) -- so the filter
+// and the per-alert IncidentID field always looked empty even for alerts
+// that were genuinely linked. Both are now computed from
+// incident_alert_links at read time (see alertColumnsQualified's doc
+// comment), so this links an alert the same way the real app does (via
+// IncidentRepository.LinkAlert, never by writing alerts.incident_id
+// directly) and asserts both the filter and Get reflect it.
+func TestAlertRepository_Correlated_ReflectsIncidentAlertLinks(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	alerts := repository.NewAlertRepository()
+	incidents := repository.NewIncidentRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	linked := newTestAlert(tenantID, domain.SeverityHigh, domain.AlertStatusOpen, nil)
+	require.NoError(t, alerts.Insert(t.Context(), tx, linked))
+	unlinked := newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusOpen, nil)
+	require.NoError(t, alerts.Insert(t.Context(), tx, unlinked))
+
+	inc := &domain.Incident{TenantID: tenantID, Title: "Suspicious login incident", Severity: domain.SeverityHigh, Priority: domain.PriorityP2, Phase: domain.PhaseNew, Tags: []string{}}
+	require.NoError(t, incidents.Insert(t.Context(), tx, inc))
+	require.NoError(t, incidents.LinkAlert(t.Context(), tx, inc.ID, linked.ID, tenantID))
+
+	t.Run("Get returns the linked incident's id", func(t *testing.T) {
+		got, err := alerts.Get(t.Context(), tx, linked.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.IncidentID)
+		assert.Equal(t, inc.ID, *got.IncidentID)
+	})
+
+	t.Run("Get returns nil for an unlinked alert", func(t *testing.T) {
+		got, err := alerts.Get(t.Context(), tx, unlinked.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.IncidentID)
+	})
+
+	t.Run("Correlated=true returns only the linked alert", func(t *testing.T) {
+		correlated := true
+		list, err := alerts.List(t.Context(), tx, repository.ListAlertsFilter{Correlated: &correlated})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, linked.ID, list[0].ID)
+	})
+
+	t.Run("Correlated=false excludes the linked alert", func(t *testing.T) {
+		correlated := false
+		list, err := alerts.List(t.Context(), tx, repository.ListAlertsFilter{Correlated: &correlated})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, unlinked.ID, list[0].ID)
+	})
+
+	t.Run("unlinking clears it back out of Correlated=true", func(t *testing.T) {
+		require.NoError(t, incidents.UnlinkAlert(t.Context(), tx, inc.ID, linked.ID))
+
+		correlated := true
+		list, err := alerts.List(t.Context(), tx, repository.ListAlertsFilter{Correlated: &correlated})
+		require.NoError(t, err)
+		assert.Empty(t, list)
+	})
+}
+
 func TestAlertRepository_UpdateStatus(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

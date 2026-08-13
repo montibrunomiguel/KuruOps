@@ -25,7 +25,7 @@ import { SeverityOverridePanel } from "./AlertDetailPage/SeverityOverridePanel";
 export function AlertDetailPage() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
 
   const { data: alert, loading, error, reload } = useList<Alert>(
@@ -71,15 +71,16 @@ export function AlertDetailPage() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showAnalysisChat, setShowAnalysisChat] = useState(false);
 
-  // open -> investigating. The status endpoint also stamps acknowledged_at
-  // the first time an alert leaves "open" (see AlertService.ChangeStatus),
-  // which feeds the dashboard's MTTA figure -- so this button isn't just a
-  // label change, it's the real "an analyst picked this up" signal.
-  async function startInvestigation() {
-    if (!id) return;
+  // Marks the alert as being actively worked before it's closed, and claims
+  // it for whoever clicked -- two independent calls (assignee, then status),
+  // same non-atomic two-step pattern SeverityOverridePanel's own save()
+  // already uses for a similar bundled update.
+  async function startInvestigating() {
+    if (!id || !user) return;
     setStartingInvestigation(true);
     setActionError(null);
     try {
+      await api.put(`/api/v1/alerts/${id}/assignee`, { analystId: user.id }, token);
       await api.post(`/api/v1/alerts/${id}/status`, { status: "investigating" }, token);
       reload();
     } catch (err) {
@@ -140,8 +141,8 @@ export function AlertDetailPage() {
               : t("alerts.detail.analyzeWithAI")}
           </button>
           {current.status === "open" && (
-            <button className="btn btn-sm" disabled={startingInvestigation} onClick={startInvestigation}>
-              {startingInvestigation ? t("alerts.detail.startingInvestigation") : t("alerts.detail.startInvestigation")}
+            <button className="btn btn-sm" disabled={startingInvestigation} onClick={startInvestigating}>
+              {startingInvestigation ? t("alerts.detail.startingInvestigation") : t("alerts.detail.startInvestigating")}
             </button>
           )}
           {!(current.status === "closed" && current.classification) && (

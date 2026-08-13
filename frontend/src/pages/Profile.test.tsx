@@ -56,7 +56,10 @@ describe("ProfilePage", () => {
   });
 
   it("a name-only change PUTs the profile without requiring a password", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, {}));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(200, {}));
+    });
     vi.stubGlobal("fetch", fetchMock);
     renderWithSession();
 
@@ -71,7 +74,13 @@ describe("ProfilePage", () => {
   });
 
   it("shows the server's error message when the profile update fails", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { error: "current password is incorrect" })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.resolve(jsonResponse(400, { error: "current password is incorrect" }));
+      }),
+    );
     renderWithSession();
 
     await userEvent.clear(screen.getByLabelText("Email"));
@@ -82,8 +91,8 @@ describe("ProfilePage", () => {
     expect(await screen.findByText("current password is incorrect")).toBeInTheDocument();
   });
 
-  it("password section rejects mismatched passwords without calling the change-password endpoint", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, []));
+  it("password section rejects mismatched passwords without calling the API", async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     renderWithSession();
 
@@ -93,13 +102,17 @@ describe("ProfilePage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
 
     expect(await screen.findByText("The new passwords don't match.")).toBeInTheDocument();
-    // The API Tokens section's own GET on mount is unrelated to this form --
-    // only the change-password POST itself must never fire.
+    // Not a blanket "fetch was never called" -- the API Tokens section
+    // fetches its own list on mount, unrelated to this form. Only the
+    // change-password endpoint itself must stay untouched.
     expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/account/change-password", expect.anything());
   });
 
   it("password section submits the change to the change-password endpoint", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { token: "new.token.here" }));
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(200, { token: "new.token.here" }));
+    });
     vi.stubGlobal("fetch", fetchMock);
     renderWithSession();
 
@@ -113,53 +126,69 @@ describe("ProfilePage", () => {
     );
   });
 
-  it("API Tokens: shows the empty state, then creates a token and reveals it once", async () => {
+  it("API Tokens: shows an empty state when there are none yet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.resolve(jsonResponse(200, {}));
+      }),
+    );
+    renderWithSession();
+
+    expect(await screen.findByText("No API tokens yet.")).toBeInTheDocument();
+  });
+
+  it("API Tokens: creating one shows the plaintext once, then lists it", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (url === "/api/v1/account/tokens" && init?.method === "POST") {
+      if (url.includes("/api-tokens") && init?.method === "POST") {
         return Promise.resolve(
           jsonResponse(201, {
-            token: { id: "t1", name: "CI script", tokenLast4: "wxyz", createdAt: "2026-01-01T00:00:00Z" },
-            plaintext: "pat_supersecret",
+            token: { id: "t1", tenantId: "tn1", userId: "1", name: "CI script", tokenLast4: "abcd", createdAt: "2026-01-01T00:00:00Z" },
+            plaintext: "pat_abcdefghijklmnopqrstuvwxabcd",
           }),
         );
       }
-      return Promise.resolve(jsonResponse(200, []));
+      if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(200, {}));
     });
     vi.stubGlobal("fetch", fetchMock);
     renderWithSession();
 
-    expect(await screen.findByText("No API tokens created yet.")).toBeInTheDocument();
-
+    await screen.findByText("No API tokens yet.");
     await userEvent.click(screen.getByRole("button", { name: "+ New Token" }));
-    await userEvent.type(screen.getByLabelText("Token name"), "CI script");
+    await userEvent.type(screen.getByLabelText("Token Name"), "CI script");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    expect(await screen.findByText("pat_supersecret")).toBeInTheDocument();
+    expect(await screen.findByText("pat_abcdefghijklmnopqrstuvwxabcd")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/account/tokens",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "CI script", expiresInDays: 0 }) }),
+      "/api/v1/account/api-tokens",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "CI script", expiresInDays: 90 }) }),
     );
   });
 
-  it("API Tokens: revoking a token calls the delete endpoint", async () => {
+  it("API Tokens: revoke calls DELETE and removes it from the active list", async () => {
+    let revoked = false;
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (url === "/api/v1/account/tokens/t1" && init?.method === "DELETE") {
+      if (url.includes("/api-tokens/t1") && init?.method === "DELETE") {
+        revoked = true;
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url === "/api/v1/account/tokens") {
-        return Promise.resolve(
-          jsonResponse(200, [{ id: "t1", name: "CI script", tokenLast4: "wxyz", createdAt: "2026-01-01T00:00:00Z" }]),
-        );
+      if (url.includes("/api-tokens")) {
+        const tok = { id: "t1", tenantId: "tn1", userId: "1", name: "CI script", tokenLast4: "abcd", createdAt: "2026-01-01T00:00:00Z" };
+        return Promise.resolve(jsonResponse(200, revoked ? [{ ...tok, revokedAt: "2026-01-02T00:00:00Z" }] : [tok]));
       }
-      return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(200, {}));
     });
     vi.stubGlobal("fetch", fetchMock);
     renderWithSession();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    expect(await screen.findByText("CI script")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/v1/account/tokens/t1", expect.objectContaining({ method: "DELETE" })),
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/account/api-tokens/t1", expect.objectContaining({ method: "DELETE" })),
     );
+    expect(await screen.findByText("No API tokens yet.")).toBeInTheDocument();
   });
 });

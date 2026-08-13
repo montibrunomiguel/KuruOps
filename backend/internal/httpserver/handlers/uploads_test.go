@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -83,6 +85,43 @@ func setupUploadHandlersWithPool(t *testing.T) (h *handlers.UploadHandlers, aler
 	h = handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
 	tenantID = testutil.NewTenant(t)
 	return h, alertSvc, tenantID, pool
+}
+
+// TestUploadHandlers_UploadFailure_LocalStoreError is the regression test
+// for the generic "could not store uploaded file" message: it used to fire
+// for every store.Put failure alike, even though "configure storage in
+// Settings" (the user's original assumption) is never actually the cause --
+// BuildStore always falls back to a working LocalStore when nothing is
+// configured. This forces a real LocalStore.Put failure (UPLOAD_DIR points
+// at a plain file, so os.MkdirAll can't create anything under it) and
+// confirms the response steers toward "contact your administrator" instead
+// of a Settings page that wouldn't help.
+func TestUploadHandlers_UploadFailure_LocalStoreError(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	blockedDir := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blockedDir, []byte("i'm a file, not a directory"), 0o644))
+
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir)
+	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
+	h := handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
+	tenantID := testutil.NewTenant(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
+	req = withClaims(req, tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "contact your administrator")
+	assert.NotContains(t, rec.Body.String(), "Settings", "no storage integration is configured here, so the message must not send the caller looking for one")
 }
 
 func TestUploadHandlers_UploadAndServe(t *testing.T) {
