@@ -11,9 +11,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/handlers"
 	"github.com/argusops/argusops/internal/repository"
@@ -59,18 +61,28 @@ func multipartUploadRequestNamed(t *testing.T, fields map[string]string, filenam
 // tenant_storage_config row means BuildStore falls back to a temp-dir
 // LocalStore, so these tests never touch S3/GCS.
 func setupUploadHandlers(t *testing.T) (h *handlers.UploadHandlers, alertSvc *service.AlertService, tenantID uuid.UUID) {
+	h, alertSvc, tenantID, _ = setupUploadHandlersWithPool(t)
+	return h, alertSvc, tenantID
+}
+
+// setupUploadHandlersWithPool is setupUploadHandlers plus the raw pool, for
+// the handful of tests that need to reach into upload_keys directly (e.g.
+// simulating a pre-migration key with no row) rather than through
+// UploadHandlers' own routes.
+func setupUploadHandlersWithPool(t *testing.T) (h *handlers.UploadHandlers, alertSvc *service.AlertService, tenantID uuid.UUID, pool *db.Pool) {
 	t.Helper()
-	pool := testutil.RequireTestDB(t)
+	pool = testutil.RequireTestDB(t)
 	dir := t.TempDir()
 
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc = service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir)
+	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
 
-	h = handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc)
+	h = handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
 	tenantID = testutil.NewTenant(t)
-	return h, alertSvc, tenantID
+	return h, alertSvc, tenantID, pool
 }
 
 func TestUploadHandlers_UploadAndServe(t *testing.T) {
@@ -100,6 +112,81 @@ func TestUploadHandlers_UploadAndServe(t *testing.T) {
 	assert.Equal(t, http.StatusOK, getRec.Code)
 	assert.Equal(t, tinyPNG(t), getRec.Body.Bytes())
 	assert.Empty(t, getRec.Header().Get("Content-Disposition"), "images must stay inline")
+}
+
+// TestUploadHandlers_ServeEnforcesAllowedTags is the regression test for
+// Frente 5: GET used to only check tenantID and the key's shape, never
+// re-applying the allowedTags visibility rule POST already enforces via
+// resolveEntity -- an analyst without access to a tag-restricted alert
+// could still fetch its attachments directly by URL. The alert here is
+// untagged, so a caller with any non-empty allowedTags scope has nothing in
+// common with it (see service.tagsVisible) and must be refused.
+func TestUploadHandlers_ServeEnforcesAllowedTags(t *testing.T) {
+	h, alertSvc, tenantID := setupUploadHandlers(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Tag-Restricted Evidence", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
+	req = withClaims(req, tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	var resp struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	key := resp.URL[len("/api/v1/uploads/images/"):]
+
+	t.Run("caller without access to the alert's tags -- 404", func(t *testing.T) {
+		getReq := withClaims(httptest.NewRequest("GET", "/"+key, nil), tenantID, uuid.New(), []string{"unrelated-tag"})
+		getRec := doRequest(r, getReq)
+		assert.Equal(t, http.StatusNotFound, getRec.Code)
+	})
+
+	t.Run("caller with unrestricted access -- still served", func(t *testing.T) {
+		getReq := withClaims(httptest.NewRequest("GET", "/"+key, nil), tenantID, uuid.New(), nil)
+		getRec := doRequest(r, getReq)
+		assert.Equal(t, http.StatusOK, getRec.Code)
+	})
+}
+
+// TestUploadHandlers_ServePreMigrationKeyIgnoresTags confirms a key with no
+// upload_keys row (every key uploaded before that table existed) still
+// serves normally regardless of the caller's tag scope, instead of
+// retroactively breaking every attachment uploaded before this feature
+// shipped.
+func TestUploadHandlers_ServePreMigrationKeyIgnoresTags(t *testing.T) {
+	h, alertSvc, tenantID, pool := setupUploadHandlersWithPool(t)
+	r := newRouter(h.Routes)
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Pre-Migration Evidence", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
+	req = withClaims(req, tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	var resp struct {
+		URL string `json:"url"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	key := resp.URL[len("/api/v1/uploads/images/"):]
+
+	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(t.Context(), "delete from upload_keys where key = $1", key)
+		return err
+	}))
+
+	getReq := withClaims(httptest.NewRequest("GET", "/"+key, nil), tenantID, uuid.New(), []string{"unrelated-tag"})
+	getRec := doRequest(r, getReq)
+	assert.Equal(t, http.StatusOK, getRec.Code, "a key with no upload_keys row has nothing to check against, so it must still be served")
 }
 
 func TestUploadHandlers_UploadAndServeNonImageAttachment(t *testing.T) {
@@ -238,7 +325,7 @@ func TestUploadHandlers_ServeRejectsInvalidKey(t *testing.T) {
 }
 
 func TestUploadHandlers_MissingTenantContext(t *testing.T) {
-	h := handlers.NewUploadHandlers(nil, nil, nil)
+	h := handlers.NewUploadHandlers(nil, nil, nil, nil)
 	r := newRouter(h.Routes)
 
 	for _, tc := range []struct{ method, path string }{

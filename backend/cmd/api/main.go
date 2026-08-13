@@ -195,7 +195,9 @@ func main() {
 	storageConfigRepo := repository.NewStorageConfigRepository()
 	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir)
 	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
-	uploadHandlers := handlers.NewUploadHandlers(storageConfigService, alertService, incidentService)
+	uploadKeyRepo := repository.NewUploadKeyRepository()
+	uploadKeyService := service.NewUploadKeyService(pool, uploadKeyRepo)
+	uploadHandlers := handlers.NewUploadHandlers(storageConfigService, alertService, incidentService, uploadKeyService)
 
 	smtpConfigRepo := repository.NewSMTPConfigRepository()
 	smtpConfigService := service.NewSMTPConfigService(pool, smtpConfigRepo, secretStore, mailer.SMTPSender{})
