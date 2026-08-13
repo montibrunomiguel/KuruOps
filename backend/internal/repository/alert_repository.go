@@ -30,10 +30,22 @@ func NewAlertRepository() *AlertRepository {
 // tenant_id column (e.g. incident_alert_links, users), since an unqualified
 // "tenant_id" in the select list is ambiguous the moment two tables in the
 // FROM clause share that column name, regardless of which one was intended.
+//
+// The incident_id slot is NOT the raw a.incident_id column -- that column is
+// never written by any code path (escalating an alert, or linking one to an
+// incident from its "Correlated Alerts" panel, both only ever insert into
+// incident_alert_links; nothing does `update alerts set incident_id = ...`).
+// Keeping a stored column in sync across every place a link can be created
+// or removed is exactly the kind of denormalization bug this ended up
+// being -- so instead this computes it at read time from the link table
+// itself: the most recently linked incident, if any. scanAlert (below)
+// scans by position, not by column name, so this slots into
+// domain.Alert.IncidentID exactly like a real column would.
 const alertColumnsQualified = `
 	a.id, a.tenant_id, a.external_id, a.webhook_endpoint_id, a.title, a.source,
 	a.severity, a.original_severity, a.status, a.classification, a.close_comment,
-	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.incident_id,
+	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata,
+	(select l.incident_id from incident_alert_links l where l.alert_id = a.id order by l.linked_at desc limit 1),
 	a.assigned_analyst_id, a.received_at, a.acknowledged_at, a.closed_at, a.created_at, a.updated_at`
 
 // alertColumnsWithAssignee/alertsWithAssigneeFrom resolve
@@ -110,9 +122,9 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 	}
 	if f.Correlated != nil {
 		if *f.Correlated {
-			query += " and a.incident_id is not null"
+			query += " and exists (select 1 from incident_alert_links l where l.alert_id = a.id)"
 		} else {
-			query += " and a.incident_id is null"
+			query += " and not exists (select 1 from incident_alert_links l where l.alert_id = a.id)"
 		}
 	}
 	if f.ReceivedSince != nil {
