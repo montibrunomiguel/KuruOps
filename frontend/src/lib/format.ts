@@ -57,3 +57,13 @@ export function formatDuration(seconds?: number | null): string {
 export function shortId(id: string): string {
   return id.slice(0, 8);
 }
+
+// initials renders a comment author's avatar letters -- first + last name
+// initial, or "?" when there's no name at all.
+export function initials(name?: string): string {
+  if (!name) return "?";
+  const parts = name.trim().split(/\s+/);
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (first + last).toUpperCase();
+}
