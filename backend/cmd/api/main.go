@@ -167,7 +167,8 @@ func main() {
 	alertService.EnableAnalysisLookup(aiAnalysisRunRepo)
 	incidentService.EnableAnalysisLookup(aiAnalysisRunRepo)
 
-	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService)
+	postmortemService := service.NewPostmortemService(incidentService, aiAnalysisService)
+	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService)
 
 	// AlertHandlers needs IncidentService for the escalate-to-incident route
 	// (see AlertHandlers.escalate), so it's constructed after incidentService.

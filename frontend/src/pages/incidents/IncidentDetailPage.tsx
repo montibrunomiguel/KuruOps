@@ -67,6 +67,7 @@ export function IncidentDetailPage() {
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [generatingPostmortem, setGeneratingPostmortem] = useState(false);
 
   // Every mutation below can append a row to the incident_events timeline
   // (phase_changed, closed, severity_priority_changed, description_edited,
@@ -135,6 +136,27 @@ export function IncidentDetailPage() {
     }
   }
 
+  async function downloadPostmortem() {
+    if (!id) return;
+    setGeneratingPostmortem(true);
+    setActionError(null);
+    try {
+      const { blob, filename } = await api.downloadFile(`/api/v1/incidents/${id}/postmortem`, token);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionError(mutationErrorMessage(err));
+    } finally {
+      setGeneratingPostmortem(false);
+    }
+  }
+
   if (loading) return <div className="empty-state">{t("common.loading")}</div>;
   if (error) return <div className="error-banner">{error}</div>;
   if (!incident) return <div className="empty-state">{t("incidents.detail.notFound")}</div>;
@@ -177,6 +199,11 @@ export function IncidentDetailPage() {
               ? t("incidents.detail.analyzing")
               : t("incidents.detail.analyzeWithAI")}
           </button>
+          {incident.phase === "post_incident" && (
+            <button className="btn btn-sm" disabled={generatingPostmortem} onClick={downloadPostmortem}>
+              {generatingPostmortem ? t("incidents.detail.generatingPostmortem") : t("incidents.detail.generatePostmortem")}
+            </button>
+          )}
           {!incident.closedAt && (
             <button
               className="btn btn-sm"

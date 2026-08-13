@@ -352,6 +352,8 @@
       "closedEvent": "Incident closed",
       "closing": "Closing...",
       "closeRequiresPostIncident": "Move to Post-Incident before closing",
+      "generatePostmortem": "Generate Postmortem",
+      "generatingPostmortem": "Generating...",
       "openedLine": "Opened {{date}}",
       "closedBadge": "Closed",
       "slaBreachedBadge": "SLA Breached",

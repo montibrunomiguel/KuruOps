@@ -38,7 +38,8 @@ func newIncidentHandlerFixture(t *testing.T) (h *handlers.IncidentHandlers, tena
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
-	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc)
+	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
+	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -81,7 +82,8 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc)
+	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
+	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -254,6 +256,30 @@ func TestIncidentHandlers_Get(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/"+uuid.New().String(), nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
+func TestIncidentHandlers_Postmortem(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("GET", "/"+incidentID.String()+"/postmortem", nil), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "text/markdown; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.Equal(t, `attachment; filename="postmortem-`+incidentID.String()+`.md"`, rec.Header().Get("Content-Disposition"))
+	assert.Contains(t, rec.Body.String(), "# Postmortem: Ransomware suspected")
+
+	t.Run("unknown -- 404", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/"+uuid.New().String()+"/postmortem", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("malformed id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/not-a-uuid/postmortem", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 
