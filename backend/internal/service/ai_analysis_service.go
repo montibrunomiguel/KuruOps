@@ -97,6 +97,141 @@ func (s *AIAnalysisService) notifyAnalyzed(tenantID uuid.UUID, contextType strin
 	}
 }
 
+// publishTurn fires a per-turn event as soon as the model's reply for this
+// turn is appended to the conversation -- what lets the AnalysisChat
+// frontend component show a new message incrementally instead of only
+// finding out once the whole run finishes (see notifyAnalyzed, which still
+// fires once at the very end, unchanged). Only the assistant's own turn is
+// published here (not the tool-result message driveAgentLoop appends
+// afterward) -- one event per model reply is enough for the chat to render
+// live; the AlertDetailPage/IncidentDetailPage "alert"/"incident" event
+// notifyAnalyzed already fires still covers final status transitions.
+func (s *AIAnalysisService) publishTurn(run *domain.AIAnalysisRun, msg llmclient.Message) {
+	if s.publish == nil {
+		return
+	}
+	s.publish(run.TenantID, "ai_analysis_turn", map[string]any{
+		"contextType": run.ContextType,
+		"contextId":   run.ContextID,
+		"runId":       run.ID,
+		"message":     toChatMessage(msg),
+	})
+}
+
+// ChatToolCall/ChatMessage/ChatTranscript are the JSON-friendly wire shape
+// for AnalysisChat's GET/streamed messages -- llmclient.Message itself has
+// no json tags (it was never meant to leave the backend, see its doc
+// comment), so handlers never marshal it directly; everything crossing the
+// HTTP boundary goes through these instead.
+type ChatToolCall struct {
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+type ChatMessage struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []ChatToolCall `json:"toolCalls,omitempty"`
+	ToolCallID string         `json:"toolCallId,omitempty"`
+}
+
+// ChatTranscript is GetAlertTranscript/GetIncidentTranscript's response --
+// the run's full conversation (minus the synthetic seed prompt, see
+// buildTranscript) plus enough status to drive the chat UI: whether it's
+// mid-turn, paused on a tool-call approval, or done.
+type ChatTranscript struct {
+	RunID             int64         `json:"runId,omitempty"`
+	Status            string        `json:"status,omitempty"`
+	Messages          []ChatMessage `json:"messages"`
+	PendingToolCallID *int64        `json:"pendingToolCallId,omitempty"`
+	Error             *string       `json:"error,omitempty"`
+}
+
+func toChatMessage(m llmclient.Message) ChatMessage {
+	cm := ChatMessage{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
+	for _, tc := range m.ToolCalls {
+		cm.ToolCalls = append(cm.ToolCalls, ChatToolCall{ID: tc.ID, Name: tc.Name, Args: tc.Args})
+	}
+	return cm
+}
+
+// buildTranscript always drops the conversation's first message -- every
+// run (Start*Analysis or continueRun's fresh-run branch) seeds messages[0]
+// with the auto-generated alert/incident context dump (see alertPrompt/
+// incidentPrompt), never something an analyst actually typed. Showing that
+// as a "user" chat bubble would surface internal prompt plumbing the old
+// static result view never did either (it only ever rendered the final
+// assistant text) -- stripping it keeps the chat's first visible message
+// the same thing the analyst has always seen: either their own question, or
+// (for a run auto-triggered on ingest, never continued yet) the model's
+// answer.
+func buildTranscript(run *domain.AIAnalysisRun) (*ChatTranscript, error) {
+	if run == nil {
+		return &ChatTranscript{Messages: []ChatMessage{}}, nil
+	}
+	var messages []llmclient.Message
+	if err := json.Unmarshal(run.Messages, &messages); err != nil {
+		return nil, fmt.Errorf("decode conversation: %w", err)
+	}
+	if len(messages) > 0 {
+		messages = messages[1:]
+	}
+	wire := make([]ChatMessage, 0, len(messages))
+	for _, m := range messages {
+		wire = append(wire, toChatMessage(m))
+	}
+	return &ChatTranscript{
+		RunID: run.ID, Status: string(run.Status), Messages: wire,
+		PendingToolCallID: run.PendingToolCallID, Error: run.Error,
+	}, nil
+}
+
+// GetAlertTranscript backs AnalysisChat's initial load and its
+// refetch-on-SSE-event -- same visibility rule as StartAlertAnalysis (must
+// exist, must be tag-visible).
+func (s *AIAnalysisService) GetAlertTranscript(ctx context.Context, tenantID, alertID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
+	var transcript *ChatTranscript
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		a, err := s.alerts.Get(ctx, tx, alertID)
+		if err != nil {
+			return fmt.Errorf("load alert: %w", err)
+		}
+		if a == nil || !tagsVisible(allowedTags, a.Tags) {
+			return fmt.Errorf("alert %s not found", alertID)
+		}
+		run, err := s.runs.LatestRun(ctx, tx, "alert", alertID)
+		if err != nil {
+			return fmt.Errorf("load latest analysis: %w", err)
+		}
+		transcript, err = buildTranscript(run)
+		return err
+	})
+	return transcript, err
+}
+
+// GetIncidentTranscript is GetAlertTranscript's counterpart for incidents
+// -- no tag-visibility guard, same asymmetry as StartIncidentAnalysis.
+func (s *AIAnalysisService) GetIncidentTranscript(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
+	var transcript *ChatTranscript
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.incidents.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		run, err := s.runs.LatestRun(ctx, tx, "incident", incidentID)
+		if err != nil {
+			return fmt.Errorf("load latest analysis: %w", err)
+		}
+		transcript, err = buildTranscript(run)
+		return err
+	})
+	return transcript, err
+}
+
 const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst assistant. Given the details of a security alert or incident, provide a concise triage analysis: likely nature of the activity, whether it appears to be a true or false positive, and recommended next steps. Keep the response focused and actionable, a few short paragraphs at most. You may have tools available to look up additional context (e.g. threat intel, asset info) before answering -- use them when they would materially improve your analysis, but you don't have to use every tool offered.`
 
 // maxAgenticTurns bounds an agentic run's total LLM round-trips, so a model
@@ -231,6 +366,176 @@ func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID,
 	return nil
 }
 
+// ContinueAlertAnalysis is what the "Analyze with AI" chat's message box
+// calls -- unlike StartAlertAnalysis (always a fresh run), this continues
+// whatever conversation is already there: appends to a completed run's
+// existing messages, or seeds a fresh one (same as Start*Analysis) if none
+// exists yet or the last one failed. Still rejects outright if the latest
+// run is running/paused -- never two loop instances driving the same run.
+func (s *AIAnalysisService) ContinueAlertAnalysis(ctx context.Context, tenantID, alertID, actorID uuid.UUID, allowedTags []string, text string) error {
+	var alert *domain.Alert
+	var client llmclient.Client
+	var latest *domain.AIAnalysisRun
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		a, err := s.alerts.Get(ctx, tx, alertID)
+		if err != nil {
+			return fmt.Errorf("load alert: %w", err)
+		}
+		if a == nil || !tagsVisible(allowedTags, a.Tags) {
+			return fmt.Errorf("alert %s not found", alertID)
+		}
+		alert = a
+
+		r, err := s.runs.LatestRun(ctx, tx, "alert", alertID)
+		if err != nil {
+			return fmt.Errorf("check existing analysis: %w", err)
+		}
+		if err := blockIfRunning(r); err != nil {
+			return err
+		}
+		latest = r
+
+		c, err := s.buildClient(ctx, tx)
+		if err != nil {
+			return err
+		}
+		client = c
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	run, messages, tools, routes, err := s.continueRun(ctx, tenantID, actorID, "alert", alertID, latest, alertPrompt(alert), text)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		bgCtx := context.Background()
+		_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
+		s.notifyAnalyzed(tenantID, "alert", alertID)
+	}()
+	return nil
+}
+
+// ContinueIncidentAnalysis is ContinueAlertAnalysis's counterpart for
+// incidents -- see that method's doc comment. No tag-visibility guard, same
+// asymmetry as StartIncidentAnalysis vs StartAlertAnalysis.
+func (s *AIAnalysisService) ContinueIncidentAnalysis(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, allowedTags []string, text string) error {
+	var incident *domain.Incident
+	var client llmclient.Client
+	var latest *domain.AIAnalysisRun
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.incidents.Get(ctx, tx, incidentID)
+		if err != nil {
+			return fmt.Errorf("load incident: %w", err)
+		}
+		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
+		incident = inc
+
+		r, err := s.runs.LatestRun(ctx, tx, "incident", incidentID)
+		if err != nil {
+			return fmt.Errorf("check existing analysis: %w", err)
+		}
+		if err := blockIfRunning(r); err != nil {
+			return err
+		}
+		latest = r
+
+		c, err := s.buildClient(ctx, tx)
+		if err != nil {
+			return err
+		}
+		client = c
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	run, messages, tools, routes, err := s.continueRun(ctx, tenantID, actorID, "incident", incidentID, latest, incidentPrompt(incident), text)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		bgCtx := context.Background()
+		_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
+		s.notifyAnalyzed(tenantID, "incident", incidentID)
+	}()
+	return nil
+}
+
+// continueRun is ContinueAlertAnalysis/ContinueIncidentAnalysis's shared
+// core, once the caller has already confirmed latest isn't running/paused.
+// Two cases: latest is 'completed' -- load its saved messages/tools/routes
+// (same tools the conversation already used, not a re-resolve, mirroring
+// ResumeAnalysisRun) and append text as the next user turn; otherwise (no
+// run yet, or the last one failed) -- a fresh run, seeded the same way
+// startRun does but with the analyst's text as an immediate second user
+// turn rather than waiting for the model to ask for one.
+func (s *AIAnalysisService) continueRun(ctx context.Context, tenantID, actorID uuid.UUID, contextType string, contextID uuid.UUID, latest *domain.AIAnalysisRun, prompt, text string) (*domain.AIAnalysisRun, []llmclient.Message, []llmclient.Tool, map[string]agentToolRoute, error) {
+	if latest != nil && latest.Status == domain.AIAnalysisRunCompleted {
+		var messages []llmclient.Message
+		var tools []llmclient.Tool
+		var routes map[string]agentToolRoute
+		if err := json.Unmarshal(latest.Messages, &messages); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("decode saved conversation: %w", err)
+		}
+		if err := json.Unmarshal(latest.Tools, &tools); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("decode saved tools: %w", err)
+		}
+		if err := json.Unmarshal(latest.ToolRoutes, &routes); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("decode saved tool routes: %w", err)
+		}
+		messages = append(messages, llmclient.Message{Role: llmclient.RoleUser, Content: text})
+		messagesJSON, err := json.Marshal(messages)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("encode messages: %w", err)
+		}
+		if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+			return s.runs.AppendUserMessage(ctx, tx, latest.ID, messagesJSON)
+		}); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("append user message: %w", err)
+		}
+		latest.Messages = messagesJSON
+		latest.Status = domain.AIAnalysisRunRunning
+		return latest, messages, tools, routes, nil
+	}
+
+	tools, routes, err := s.resolveAgentTools(ctx, tenantID, contextType+"_analysis")
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	messages := []llmclient.Message{{Role: llmclient.RoleUser, Content: prompt}, {Role: llmclient.RoleUser, Content: text}}
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("encode initial messages: %w", err)
+	}
+	toolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("encode tools: %w", err)
+	}
+	routesJSON, err := json.Marshal(routes)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("encode tool routes: %w", err)
+	}
+	run := &domain.AIAnalysisRun{
+		TenantID: tenantID, ContextType: contextType, ContextID: contextID, ActorID: &actorID,
+		Status: domain.AIAnalysisRunRunning, Messages: messagesJSON, Tools: toolsJSON, ToolRoutes: routesJSON,
+	}
+	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.runs.Insert(ctx, tx, run)
+	}); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("create analysis run: %w", err)
+	}
+	return run, messages, tools, routes, nil
+}
+
 // startRun inserts the initial 'running' ai_analysis_runs row synchronously
 // -- StartAlertAnalysis/StartIncidentAnalysis both call this from their
 // synchronous validation path, before returning. This is what makes
@@ -276,6 +581,14 @@ func (s *AIAnalysisService) checkNotAlreadyRunning(ctx context.Context, tx pgx.T
 	if err != nil {
 		return fmt.Errorf("check existing analysis: %w", err)
 	}
+	return blockIfRunning(run)
+}
+
+// blockIfRunning is checkNotAlreadyRunning's pure check, split out so
+// Continue*Analysis can reuse it against a run it already loaded (to also
+// branch on "is the latest run completed" -- see continueRun) instead of
+// querying LatestRun a second time.
+func blockIfRunning(run *domain.AIAnalysisRun) error {
 	if run != nil && (run.Status == domain.AIAnalysisRunRunning || run.Status == domain.AIAnalysisRunPaused) {
 		return ErrAnalysisInProgress
 	}
@@ -490,6 +803,7 @@ func (s *AIAnalysisService) driveAgentLoop(ctx context.Context, run *domain.AIAn
 		}
 
 		messages = append(messages, llmclient.Message{Role: llmclient.RoleAssistant, Content: result.Text, ToolCalls: result.ToolCalls})
+		s.publishTurn(run, messages[len(messages)-1])
 
 		if len(result.ToolCalls) == 0 {
 			messagesJSON, _ := json.Marshal(messages)

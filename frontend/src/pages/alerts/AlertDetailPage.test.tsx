@@ -20,6 +20,7 @@ function alertFixture(overrides: Partial<Record<string, unknown>> = {}) {
 // substring, so the more specific routes must be checked first.
 function routeFetch(alert: Record<string, unknown>) {
   return vi.fn().mockImplementation((url: string) => {
+    if (url.includes("/api/v1/alerts/a1/analyze/messages")) return Promise.resolve(jsonResponse({ messages: [] }));
     if (url.includes("/api/v1/alerts/a1/alerts")) return Promise.resolve(jsonResponse([]));
     if (url.includes("/api/v1/alerts/a1/comments")) return Promise.resolve(jsonResponse([]));
     if (url.includes("/api/v1/alerts/a1")) return Promise.resolve(jsonResponse(alert));
@@ -196,68 +197,27 @@ describe("AlertDetailPage", () => {
     expect(await screen.findByRole("button", { name: "View linked incident" })).toBeInTheDocument();
   });
 
-  it("clicking Analyze with AI posts to the analyze endpoint (202) and shows the eventual result", async () => {
-    let alertCalls = 0;
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/api/v1/alerts/a1/alerts")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/v1/alerts/a1/comments")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/v1/alerts/a1/analyze")) return Promise.resolve(jsonResponse({ status: "running" }, 202));
-      if (url.includes("/api/v1/alerts/a1")) {
-        alertCalls++;
-        // 1st fetch (initial mount): no analysis yet. 2nd fetch (the
-        // reload() analyze() triggers right after the 202): the server
-        // already flipped the run to 'running' synchronously before
-        // responding, then -- in this test -- straight to 'completed',
-        // standing in for the real flow's SSE-driven reload once the
-        // background LLM call finishes.
-        if (alertCalls === 1) return Promise.resolve(jsonResponse(alertFixture()));
-        return Promise.resolve(
-          jsonResponse(alertFixture({ latestAnalysisStatus: "completed", latestAnalysis: "looks like a brute-force attempt" })),
-        );
-      }
-      if (url.includes("/api/v1/alerts?")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/v1/playbooks/match")) return Promise.resolve(jsonResponse(null));
-      if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
-      if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
-      return Promise.resolve(jsonResponse({}));
-    });
+  it("clicking Analyze with AI opens the analysis chat instead of triggering a one-shot analysis", async () => {
+    const fetchMock = routeFetch(alertFixture());
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
 
-    expect(await screen.findByText("looks like a brute-force attempt")).toBeInTheDocument();
-  });
-
-  it("shows a previously completed AI analysis automatically, without clicking Analyze", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(alertFixture({ latestAnalysisStatus: "completed", latestAnalysis: "auto-triggered analysis from ingest" })),
+    expect(await screen.findByRole("heading", { name: "Analyze with AI" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/alerts/a1/analyze/messages", expect.anything()),
     );
-    renderDetail();
-
-    expect(await screen.findByText("auto-triggered analysis from ingest")).toBeInTheDocument();
-    expect(screen.getByText("AI Analysis")).toBeInTheDocument();
+    // The old one-shot endpoint is never hit anymore -- opening the chat
+    // only GETs the transcript, it doesn't itself start an analysis.
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/alerts/a1/analyze", expect.anything());
   });
 
-  it("shows a running-analysis message while a background analysis is in progress", async () => {
+  it("shows Analyzing... on the button while a background analysis is in progress", async () => {
     vi.stubGlobal("fetch", routeFetch(alertFixture({ latestAnalysisStatus: "running" })));
     renderDetail();
 
-    expect(await screen.findByText(/Analysis in progress/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Analyzing..." })).toBeDisabled();
-  });
-
-  it("shows a failed-analysis message with a retry button", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(alertFixture({ latestAnalysisStatus: "failed", latestAnalysisError: "no LLM provider configured" })),
-    );
-    renderDetail();
-
-    expect(await screen.findByText("AI Analysis Failed")).toBeInTheDocument();
-    expect(screen.getByText("no LLM provider configured")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Analyzing..." })).toBeInTheDocument();
   });
 
   it("shows the Metadata panel with a clickable link for URL-shaped values", async () => {
@@ -313,7 +273,9 @@ describe("AlertDetailPage", () => {
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
-    expect(screen.getByLabelText("Status")).toBeDisabled();
+    const selects = screen.getAllByRole("combobox");
+    const severitySelect = selects.find((s) => !s.hasAttribute("id") && !s.hasAttribute("aria-label"))!;
+    expect(severitySelect).toBeDisabled();
   });
 
   it("linking an alert from the search results PUTs the link endpoint", async () => {

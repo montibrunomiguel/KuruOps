@@ -19,9 +19,19 @@ function incidentFixture(overrides: Partial<Record<string, unknown>> = {}) {
 
 function routeFetch(
   incident: Record<string, unknown>,
-  opts: { events?: unknown[]; statusHistory?: unknown[]; linkedAlerts?: unknown[]; comments?: unknown[] } = {},
+  opts: {
+    events?: unknown[];
+    statusHistory?: unknown[];
+    linkedAlerts?: unknown[];
+    // Candidate pool the search-by-title/id box (LinkAlertForm) matches
+    // against -- GET /api/v1/alerts?limit=50, distinct from the incident's
+    // own already-linked list (GET /api/v1/incidents/i1/alerts).
+    alertCandidates?: unknown[];
+    comments?: unknown[];
+  } = {},
 ) {
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    if (url.includes("/analyze/messages")) return Promise.resolve(jsonResponse({ messages: [] }));
     if (url.includes("/status-history")) {
       if (init?.method === "POST") return Promise.resolve(new Response(null, { status: 204 }));
       return Promise.resolve(jsonResponse(opts.statusHistory ?? []));
@@ -43,7 +53,8 @@ function routeFetch(
       return Promise.resolve(jsonResponse(opts.comments ?? []));
     }
     if (url.match(/\/incidents\/i1\/alerts\/[^/]+$/)) return Promise.resolve(new Response(null, { status: 204 }));
-    if (url.includes("/alerts")) return Promise.resolve(jsonResponse(opts.linkedAlerts ?? []));
+    if (url.includes("/incidents/i1/alerts")) return Promise.resolve(jsonResponse(opts.linkedAlerts ?? []));
+    if (url.includes("/api/v1/alerts")) return Promise.resolve(jsonResponse(opts.alertCandidates ?? []));
     if (url.includes("/api/v1/incidents/i1")) return Promise.resolve(jsonResponse(incident));
     if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
     if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
@@ -205,18 +216,40 @@ describe("IncidentDetailPage", () => {
     expect(screen.queryByLabelText("Priority")).not.toBeInTheDocument();
   });
 
-  it("linking an alert by ID PUTs to the link endpoint and renders the linked row", async () => {
+  it("searching finds a matching alert and clicking it PUTs to the link endpoint", async () => {
     const fetchMock = routeFetch(incidentFixture(), {
-      linkedAlerts: [{ id: "a1", title: "Suspicious login", source: "wazuh", status: "open", severity: "high" }],
+      alertCandidates: [{ id: "a1", title: "Suspicious login", source: "wazuh", status: "open", severity: "high" }],
     });
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
-    await userEvent.type(await screen.findByPlaceholderText("Alert ID to link"), "a1");
-    await userEvent.click(screen.getByRole("button", { name: "Link" }));
+    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID or title..."), "suspicious");
+    await userEvent.click(await screen.findByText(/Suspicious login/));
 
-    expect(await screen.findByText("Suspicious login")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/alerts/a1", expect.objectContaining({ method: "PUT" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/alerts/a1", expect.objectContaining({ method: "PUT" })),
+    );
+  });
+
+  it("an already-linked alert is filtered out of search results", async () => {
+    const fetchMock = routeFetch(incidentFixture(), {
+      linkedAlerts: [{ id: "a1", title: "Suspicious login", source: "wazuh", status: "open", severity: "high" }],
+      alertCandidates: [
+        { id: "a1", title: "Suspicious login", source: "wazuh", status: "open", severity: "high" },
+        { id: "a2", title: "Suspicious download", source: "wazuh", status: "open", severity: "high" },
+      ],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail();
+
+    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID or title..."), "suspicious");
+
+    const match = await screen.findByText(/Suspicious download/);
+    const resultsList = match.closest(".search-result-list") as HTMLElement;
+    expect(within(resultsList).getByText(/Suspicious download/)).toBeInTheDocument();
+    // a1 ("Suspicious login") is already linked -- the search dropdown must
+    // not offer it a second time alongside its existing linked-alert row.
+    expect(within(resultsList).queryByText(/Suspicious login/)).not.toBeInTheDocument();
   });
 
   it("unlinking a linked alert calls the delete endpoint", async () => {
@@ -306,50 +339,25 @@ describe("IncidentDetailPage", () => {
     );
   });
 
-  it("clicking Analyze with AI posts to the analyze endpoint (202) and shows the eventual result", async () => {
-    let incidentCalls = 0;
-    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (url.includes("/api/v1/incidents/i1/analyze")) return Promise.resolve(jsonResponse({ status: "running" }, 202));
-      if (url.includes("/api/v1/incidents/i1") && !url.includes("/incidents/i1/")) {
-        incidentCalls++;
-        // 1st fetch (initial mount): no analysis yet. 2nd fetch (the
-        // reload() analyze() triggers right after the 202): stands in for
-        // the real flow's SSE-driven reload once the background LLM call
-        // finishes.
-        const fixture =
-          incidentCalls === 1
-            ? incidentFixture()
-            : incidentFixture({ latestAnalysisStatus: "completed", latestAnalysis: "recommend immediate containment" });
-        return Promise.resolve(jsonResponse(fixture));
-      }
-      return routeFetch(incidentFixture())(url, init);
-    });
+  it("clicking Analyze with AI opens the analysis chat instead of triggering a one-shot analysis", async () => {
+    const fetchMock = routeFetch(incidentFixture());
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
 
-    expect(await screen.findByText("recommend immediate containment")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Analyze with AI" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/analyze/messages", expect.anything()),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/incidents/i1/analyze", expect.anything());
   });
 
-  it("shows a running-analysis message while a background analysis is in progress", async () => {
+  it("shows Analyzing... on the button while a background analysis is in progress", async () => {
     vi.stubGlobal("fetch", routeFetch(incidentFixture({ latestAnalysisStatus: "running" })));
     renderDetail();
 
-    expect(await screen.findByText(/Analysis in progress/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Analyzing..." })).toBeDisabled();
-  });
-
-  it("shows a failed-analysis message with a retry button", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(incidentFixture({ latestAnalysisStatus: "failed", latestAnalysisError: "no LLM provider configured" })),
-    );
-    renderDetail();
-
-    expect(await screen.findByText("AI Analysis Failed")).toBeInTheDocument();
-    expect(screen.getByText("no LLM provider configured")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Analyzing..." })).toBeInTheDocument();
   });
 
   it("highlights the incident's own severity/priority cell in the NIST matrix", async () => {

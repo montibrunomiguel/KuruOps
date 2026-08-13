@@ -11,6 +11,7 @@ import { SeverityBadge, AlertStatusBadge, ClassificationBadge } from "../../comp
 import { TagPicker } from "../../components/TagPicker";
 import { AttachmentButton, AttachmentPreview } from "../../components/AttachmentButton";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
 import { formatDateTime, initials, shortId } from "../../lib/format";
 import { MetadataPanel } from "./AlertDetailPage/MetadataPanel";
@@ -66,22 +67,25 @@ export function AlertDetailPage() {
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [escalating, setEscalating] = useState(false);
+  const [startingInvestigation, setStartingInvestigation] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [showAnalysisChat, setShowAnalysisChat] = useState(false);
 
-  // No local "analyzing" flag -- current.latestAnalysisStatus (from the
-  // most recent GET) already reflects "running" the instant the POST
-  // below returns, since the server creates the run row synchronously
-  // before responding 202. reload() picks that up immediately; the
-  // eventual completed/failed transition arrives via the SSE subscription
-  // above.
-  async function analyze() {
+  // open -> investigating. The status endpoint also stamps acknowledged_at
+  // the first time an alert leaves "open" (see AlertService.ChangeStatus),
+  // which feeds the dashboard's MTTA figure -- so this button isn't just a
+  // label change, it's the real "an analyst picked this up" signal.
+  async function startInvestigation() {
     if (!id) return;
+    setStartingInvestigation(true);
     setActionError(null);
     try {
-      await api.post<{ status: string }>(`/api/v1/alerts/${id}/analyze`, {}, token);
+      await api.post(`/api/v1/alerts/${id}/status`, { status: "investigating" }, token);
       reload();
     } catch (err) {
       setActionError(mutationErrorMessage(err));
+    } finally {
+      setStartingInvestigation(false);
     }
   }
 
@@ -129,16 +133,17 @@ export function AlertDetailPage() {
           </p>
         </div>
         <div className="toolbar-actions">
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused"}
-            onClick={analyze}
-          >
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAnalysisChat(true)}>
             <SparkleIcon width={14} height={14} />
             {current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused"
               ? t("alerts.detail.analyzing")
               : t("alerts.detail.analyzeWithAI")}
           </button>
+          {current.status === "open" && (
+            <button className="btn btn-sm" disabled={startingInvestigation} onClick={startInvestigation}>
+              {startingInvestigation ? t("alerts.detail.startingInvestigation") : t("alerts.detail.startInvestigation")}
+            </button>
+          )}
           {!(current.status === "closed" && current.classification) && (
             <button className="btn btn-sm" onClick={() => setShowCloseModal(true)}>
               {t("alerts.detail.closeAndClassify")}
@@ -167,34 +172,8 @@ export function AlertDetailPage() {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
-      {(current.latestAnalysisStatus === "running" || current.latestAnalysisStatus === "paused") && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiResultTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>{t("alerts.detail.aiRunningMessage")}</p>
-        </div>
-      )}
-
-      {current.latestAnalysisStatus === "failed" && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--critical)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiFailedTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{current.latestAnalysisError}</p>
-          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={analyze}>
-            {t("alerts.detail.aiRetry")}
-          </button>
-        </div>
-      )}
-
-      {current.latestAnalysisStatus === "completed" && current.latestAnalysis && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiResultTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{current.latestAnalysis}</p>
-        </div>
+      {showAnalysisChat && (
+        <AnalysisChat contextType="alert" contextId={current.id} onClose={() => setShowAnalysisChat(false)} />
       )}
 
       <div className="detail-layout">

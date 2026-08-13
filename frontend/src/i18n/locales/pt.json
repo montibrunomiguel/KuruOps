@@ -119,7 +119,31 @@
     "currentPassword": "Senha atual",
     "currentPasswordHint": "(necessária para alterar seu e-mail)",
     "passwordTitle": "Alterar Senha",
-    "saved": "Salvo."
+    "saved": "Salvo.",
+    "tokens": {
+      "title": "Tokens de API",
+      "newToken": "+ Novo Token",
+      "helper": "Use um token de API para chamar a API do ArgusOps a partir de scripts ou integrações, com as mesmas permissões da sua conta.",
+      "tokenGenerated": "Token \"{{name}}\" gerado. Copie agora — ele não será mostrado de novo.",
+      "empty": "Nenhum token de API criado ainda.",
+      "revoke": "Revogar",
+      "revokedBadge": "revogado",
+      "expiresOn": "expira em {{date}}",
+      "neverExpires": "nunca expira",
+      "lastUsed": "usado pela última vez em {{date}}",
+      "neverUsed": "nunca usado",
+      "form": {
+        "name": "Nome do token",
+        "namePlaceholder": "Script de CI, integração X...",
+        "expiry": "Expiração"
+      },
+      "expiry": {
+        "never": "Nunca expira",
+        "30": "30 dias",
+        "90": "90 dias",
+        "365": "365 dias"
+      }
+    }
   },
   "access": {
     "adminOnly": "Esta área é restrita a administradores. Fale com um admin se precisar de acesso.",
@@ -246,6 +270,16 @@
       }
     }
   },
+  "analysisChat": {
+    "title": "Analisar com IA",
+    "empty": "Pergunte qualquer coisa ao assistente sobre este item -- ele tem acesso às mesmas ferramentas que a análise automática usa.",
+    "thinking": "Pensando...",
+    "approvalNeeded": "O assistente quer executar uma ferramenta que precisa da sua aprovação para continuar.",
+    "requestingTool": "Solicitando ferramenta: {{tool}}",
+    "placeholder": "Faça uma pergunta de acompanhamento...",
+    "send": "Enviar",
+    "sending": "Enviando..."
+  },
   "alerts": {
     "title": "Alertas",
     "subtitle": "Todos os alertas de segurança recebidos via webhook",
@@ -270,6 +304,8 @@
       "analyzeWithAI": "Analisar com IA",
       "analyzing": "Analisando...",
       "escalateToIncident": "Escalar para Incidente",
+      "startInvestigation": "Iniciar Investigação",
+      "startingInvestigation": "Iniciando...",
       "escalating": "Escalando...",
       "receivedLine": "Origem: {{source}} · Recebido em {{date}}",
       "customMetadataTitle": "Metadados Personalizados",
@@ -362,7 +398,7 @@
       "timelineTitle": "Linha do Tempo",
       "timelineEmpty": "Sem eventos ainda.",
       "correlatedAlertsTitle": "Alertas Correlacionados",
-      "linkAlertPlaceholder": "ID do alerta a vincular",
+      "linkAlertPlaceholder": "Buscar por ID ou título do alerta...",
       "link": "Vincular",
       "unlink": "Desvincular",
       "noCorrelatedAlerts": "Nenhum alerta correlacionado ainda.",

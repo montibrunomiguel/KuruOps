@@ -41,7 +41,7 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
 	userSvc := service.NewUserService(pool, repository.NewUserRepository())
-	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, userSvc)
+	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc)
 
 	alert, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh,
@@ -117,7 +117,7 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, service.NewUserService(pool, repository.NewUserRepository()))
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
 
 	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
@@ -182,7 +182,7 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, service.NewUserService(pool, repository.NewUserRepository()))
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
 
 	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),

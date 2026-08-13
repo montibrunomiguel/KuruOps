@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -23,13 +25,18 @@ type AlertHandlers struct {
 	// rather than adding cross-service coupling into AlertService/IncidentService.
 	incidents *service.IncidentService
 	ai        *service.AIAnalysisService
+	// mcpTools backs the AnalysisChat's inline tool-call approve/reject --
+	// same underlying service Settings -> MCP Servers' pending-approvals
+	// panel already calls, just also reachable from here so an analyst
+	// without admin access can resolve a call from inside the chat itself.
+	mcpTools *service.MCPToolService
 	// users resolves the acting user's display name for addComment -- same
 	// reasoning as IncidentHandlers.users (see domain.AlertComment.AuthorName).
 	users *service.UserService
 }
 
-func NewAlertHandlers(svc *service.AlertService, incidents *service.IncidentService, ai *service.AIAnalysisService, users *service.UserService) *AlertHandlers {
-	return &AlertHandlers{svc: svc, incidents: incidents, ai: ai, users: users}
+func NewAlertHandlers(svc *service.AlertService, incidents *service.IncidentService, ai *service.AIAnalysisService, mcpTools *service.MCPToolService, users *service.UserService) *AlertHandlers {
+	return &AlertHandlers{svc: svc, incidents: incidents, ai: ai, mcpTools: mcpTools, users: users}
 }
 
 func (h *AlertHandlers) Routes(r chi.Router) {
@@ -45,6 +52,10 @@ func (h *AlertHandlers) Routes(r chi.Router) {
 	r.Delete("/{id}/alerts/{otherId}", h.unlinkAlert)
 	r.Post("/{id}/escalate", h.escalate)
 	r.Post("/{id}/analyze", h.analyze)
+	r.Get("/{id}/analyze/messages", h.getAnalysisChat)
+	r.Post("/{id}/analyze/messages", h.continueAnalysisChat)
+	r.Post("/{id}/analyze/tool-calls/{callId}/approve", h.approveAnalysisToolCall)
+	r.Post("/{id}/analyze/tool-calls/{callId}/reject", h.rejectAnalysisToolCall)
 	r.Get("/{id}/comments", h.listComments)
 	r.Post("/{id}/comments", h.addComment)
 }
@@ -387,6 +398,115 @@ func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
+}
+
+// continueMessageRequest is the body POST .../analyze/messages takes on
+// both alerts and incidents -- kept here (not duplicated in incidents.go),
+// same sharing as analyzeStartedResponse above.
+type continueMessageRequest struct {
+	Text string `json:"text"`
+}
+
+// getAnalysisChat backs AnalysisChat's initial load and its
+// refetch-on-SSE-event -- see AIAnalysisService.GetAlertTranscript.
+func (h *AlertHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid alert id")
+		return
+	}
+	transcript, err := h.ai.GetAlertTranscript(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, transcript)
+}
+
+// continueAnalysisChat is what the chat's message box posts to -- kicks off
+// the next turn in the background and returns immediately, same 202 shape
+// as analyze (see AIAnalysisService.ContinueAlertAnalysis's doc comment for
+// why the analyst's own message is already persisted by the time this
+// returns, even though the LLM's reply isn't yet).
+func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid alert id")
+		return
+	}
+
+	var req continueMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		writeError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+
+	err = h.ai.ContinueAlertAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
+	if err != nil {
+		if errors.Is(err, service.ErrAnalysisInProgress) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
+}
+
+// approveAnalysisToolCall/rejectAnalysisToolCall let the chat itself resolve
+// a paused tool-call approval, without needing admin access to Settings ->
+// MCP Servers -- same underlying MCPToolService calls that panel's
+// PendingApprovalRow already makes (see mcp_servers.go), gated here by
+// confirming the call actually belongs to this alert before touching it.
+func (h *AlertHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveAnalysisToolCall(w, r, true)
+}
+
+func (h *AlertHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveAnalysisToolCall(w, r, false)
+}
+
+func (h *AlertHandlers) resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, approve bool) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid alert id")
+		return
+	}
+	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tool call id")
+		return
+	}
+
+	call, err := h.mcpTools.GetToolCall(r.Context(), tenantID, callID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if call == nil || call.ContextType != "alert" || call.ContextID != id {
+		writeError(w, http.StatusNotFound, "tool call not found for this alert")
+		return
+	}
+
+	if approve {
+		err = h.mcpTools.ApproveToolCall(r.Context(), tenantID, callID, userID)
+	} else {
+		err = h.mcpTools.RejectToolCall(r.Context(), tenantID, callID, userID)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
