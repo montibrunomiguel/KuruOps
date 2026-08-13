@@ -269,6 +269,8 @@
       "backToAlerts": "Voltar para Alertas",
       "analyzeWithAI": "Analisar com IA",
       "analyzing": "Analisando...",
+      "startInvestigating": "Iniciar Investigação",
+      "startingInvestigation": "Iniciando...",
       "escalateToIncident": "Escalar para Incidente",
       "escalating": "Escalando...",
       "receivedLine": "Origem: {{source}} · Recebido em {{date}}",
