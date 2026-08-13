@@ -98,6 +98,60 @@ func TestWebhookHandlers_ValidationErrors(t *testing.T) {
 	})
 }
 
+func TestWebhookHandlers_SetFieldMappingTemplate(t *testing.T) {
+	h, tenantID, actorID := newWebhookHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	body, _ := json.Marshal(map[string]string{"name": "Wazuh Prod", "source": "wazuh"})
+	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	id := created["endpoint"].(map[string]any)["id"].(string)
+
+	pool := testutil.RequireTestDB(t)
+	templateSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	template, err := templateSvc.Create(t.Context(), tenantID, actorID, "Wazuh fields", nil)
+	require.NoError(t, err)
+
+	t.Run("invalid endpoint id -- 400", func(t *testing.T) {
+		setBody, _ := json.Marshal(map[string]string{"templateId": template.ID.String()})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid/field-mapping-template", bytes.NewReader(setBody)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/field-mapping-template", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("assigns the template", func(t *testing.T) {
+		setBody, _ := json.Marshal(map[string]string{"templateId": template.ID.String()})
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/field-mapping-template", bytes.NewReader(setBody)), tenantID, actorID, nil)
+		require.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		listRec := doRequest(r, listReq)
+		var endpoints []map[string]any
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &endpoints))
+		require.Len(t, endpoints, 1)
+		assert.Equal(t, template.ID.String(), endpoints[0]["fieldMappingTemplateId"])
+	})
+
+	t.Run("clears the template when templateId is null", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/field-mapping-template", bytes.NewReader([]byte(`{"templateId":null}`))), tenantID, actorID, nil)
+		require.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		listRec := doRequest(r, listReq)
+		var endpoints []map[string]any
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &endpoints))
+		require.Len(t, endpoints, 1)
+		assert.Nil(t, endpoints[0]["fieldMappingTemplateId"])
+	})
+}
+
 func TestWebhookHandlers_List_MissingTenantContext(t *testing.T) {
 	h := handlers.NewWebhookHandlers(nil)
 	r := newRouter(h.Routes)

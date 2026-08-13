@@ -25,6 +25,7 @@ func (h *WebhookHandlers) Routes(r chi.Router) {
 	r.Post("/{id}/regenerate", h.regenerate)
 	r.Post("/{id}/disable", h.disable)
 	r.Post("/{id}/enable", h.enable)
+	r.Put("/{id}/field-mapping-template", h.setFieldMappingTemplate)
 }
 
 func (h *WebhookHandlers) list(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +48,9 @@ type createWebhookRequest struct {
 	// ExpiresInDays: omitted/null -> service default (90d); 0 or negative ->
 	// endpoint never expires. See service.resolveExpiry.
 	ExpiresInDays *int `json:"expiresInDays,omitempty"`
+	// FieldMappingTemplateID is optional; unlike Name/Source it can be
+	// changed later via setFieldMappingTemplate below.
+	FieldMappingTemplateID *uuid.UUID `json:"fieldMappingTemplateId,omitempty"`
 }
 
 func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +67,7 @@ func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.Create(r.Context(), tenantID, userID, req.Name, req.Source, req.ExpiresInDays)
+	result, err := h.svc.Create(r.Context(), tenantID, userID, req.Name, req.Source, req.ExpiresInDays, req.FieldMappingTemplateID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -107,6 +111,33 @@ func (h *WebhookHandlers) disable(w http.ResponseWriter, r *http.Request) {
 
 func (h *WebhookHandlers) enable(w http.ResponseWriter, r *http.Request) {
 	h.setStatus(w, r, "active")
+}
+
+type setFieldMappingTemplateRequest struct {
+	// TemplateID null/omitted clears the association -- the endpoint goes
+	// back to only the sender's own top-level "metadata" object.
+	TemplateID *uuid.UUID `json:"templateId"`
+}
+
+func (h *WebhookHandlers) setFieldMappingTemplate(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid endpoint id")
+		return
+	}
+
+	var req setFieldMappingTemplateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.SetFieldMappingTemplate(r.Context(), tenantID, id, req.TemplateID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *WebhookHandlers) setStatus(w http.ResponseWriter, r *http.Request, status string) {

@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { WebhooksPanel } from "./WebhooksPanel";
+import { FieldMappingTemplatesPanel } from "./FieldMappingTemplatesPanel";
 import { LLMProvidersPanel } from "./LLMProvidersPanel";
 import { MCPServersPanel } from "./MCPServersPanel";
 import { UsersPanel } from "./UsersPanel";
@@ -31,6 +32,7 @@ const NAV_GROUPS = [
     labelKey: "settings.navGroups.integrations",
     items: [
       { to: "/settings/webhooks", labelKey: "settings.nav.webhooks" },
+      { to: "/settings/field-mapping-templates", labelKey: "settings.nav.fieldMappingTemplates" },
       { to: "/settings/ai-integration", labelKey: "settings.nav.aiIntegration" },
       { to: "/settings/mcp-servers", labelKey: "settings.nav.mcpServers" },
       { to: "/settings/storage", labelKey: "settings.nav.storage" },
@@ -87,6 +89,7 @@ export function SettingsLayout() {
         <div className="settings-panel">
           <Routes>
             <Route path="webhooks" element={<WebhooksPanel />} />
+            <Route path="field-mapping-templates" element={<FieldMappingTemplatesPanel />} />
             <Route path="ai-integration" element={<LLMProvidersPanel />} />
             <Route path="mcp-servers" element={<MCPServersPanel />} />
             <Route path="tags" element={<TagsPanel />} />

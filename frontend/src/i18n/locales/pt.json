@@ -431,6 +431,7 @@
     },
     "nav": {
       "webhooks": "Webhook Endpoints",
+      "fieldMappingTemplates": "Templates de Mapeamento de Campos",
       "aiIntegration": "Integração de IA",
       "mcpServers": "Servidores MCP",
       "tags": "Tags",
@@ -471,7 +472,34 @@
       },
       "newTokenLabel": "novo token: {{token}} (copie agora)",
       "regenExpiryTitle": "Expiração do novo token",
-      "regenerate": "Regenerar"
+      "regenerate": "Regenerar",
+      "fieldMappingTemplate": "Template de mapeamento",
+      "noFieldMappingTemplate": "Nenhum",
+      "changeTemplate": "Salvar"
+    },
+    "fieldMappingTemplates": {
+      "title": "Templates de Mapeamento de Campos",
+      "helper": "Extrai campos extras do JSON bruto do webhook (além do próprio objeto \"metadata\") para o painel de metadados do alerta. Associe um template a um ou mais endpoints em Webhook Endpoints acima.",
+      "newTemplate": "+ Novo Template",
+      "noTemplates": "Nenhum template de mapeamento ainda.",
+      "form": {
+        "name": "Nome",
+        "namePlaceholder": "Campos Wazuh, Campos CrowdStrike...",
+        "rules": "Regras",
+        "jsonPath": "Caminho JSON",
+        "jsonPathPlaceholder": "rule.level, data.user.name...",
+        "label": "Rótulo de exibição",
+        "labelPlaceholder": "Nível da Regra, Usuário...",
+        "addRule": "+ Adicionar regra",
+        "removeRule": "Remover regra",
+        "noRulesHint": "Adicione pelo menos uma regra abaixo."
+      },
+      "rulesCount_one": "{{count}} regra",
+      "rulesCount_other": "{{count}} regras",
+      "edit": "Editar",
+      "delete": "Excluir",
+      "deleteConfirm": "Excluir este template? Endpoints que o usam voltam a mostrar só o \"metadata\" que o próprio remetente enviar.",
+      "conflictHint": "Se o rótulo de uma regra coincidir com uma chave que o remetente já colocou no próprio \"metadata\", o valor do remetente vence."
     },
     "llm": {
       "title": "Integração de IA",

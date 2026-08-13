@@ -47,21 +47,23 @@ type CreateResult struct {
 // Create issues a new webhook endpoint + token. expiresInDays follows the
 // same convention as Regenerate (see resolveExpiry): nil defaults to the
 // standard 90-day rotation policy, 0/negative means the admin explicitly
-// opted this endpoint out of expiring.
-func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, name, source string, expiresInDays *int) (*CreateResult, error) {
+// opted this endpoint out of expiring. fieldMappingTemplateID is optional
+// and, unlike name/source, can be changed later via SetFieldMappingTemplate.
+func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, name, source string, expiresInDays *int, fieldMappingTemplateID *uuid.UUID) (*CreateResult, error) {
 	token, err := generateToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 
 	ep := &domain.WebhookEndpoint{
-		TenantID:   tenantID,
-		Name:       name,
-		Source:     source,
-		TokenHash:  hashToken(token),
-		TokenLast4: lastN(token, 4),
-		ExpiresAt:  resolveExpiry(expiresInDays),
-		CreatedBy:  &actorID,
+		TenantID:               tenantID,
+		Name:                   name,
+		Source:                 source,
+		TokenHash:              hashToken(token),
+		TokenLast4:             lastN(token, 4),
+		ExpiresAt:              resolveExpiry(expiresInDays),
+		CreatedBy:              &actorID,
+		FieldMappingTemplateID: fieldMappingTemplateID,
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -118,6 +120,15 @@ func (s *WebhookService) SetStatus(ctx context.Context, tenantID, id uuid.UUID, 
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.SetStatus(ctx, tx, id, status)
+	})
+}
+
+// SetFieldMappingTemplate assigns or clears (templateID == nil) which
+// field mapping template applies to alerts this endpoint ingests from now
+// on -- see Settings -> Webhook Endpoints' "change template" action.
+func (s *WebhookService) SetFieldMappingTemplate(ctx context.Context, tenantID, id uuid.UUID, templateID *uuid.UUID) error {
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.SetFieldMappingTemplate(ctx, tx, id, templateID)
 	})
 }
 

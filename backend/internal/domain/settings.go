@@ -26,6 +26,12 @@ type WebhookEndpoint struct {
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 	CreatedBy *uuid.UUID `json:"createdBy,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
+	// FieldMappingTemplateID is optional and, unlike Name/Source, changeable
+	// after creation (see WebhookHandlers' PUT /{id}/field-mapping-template)
+	// -- cmd/ingest applies the referenced FieldMappingTemplate's rules on
+	// top of the automatic metadata extraction for every alert this endpoint
+	// receives (see internal/ingest/field_mapping.go).
+	FieldMappingTemplateID *uuid.UUID `json:"fieldMappingTemplateId,omitempty"`
 }
 
 // LLMProvider mirrors `llm_providers`. Kind "openai_compatible" with a

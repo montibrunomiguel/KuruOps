@@ -1,0 +1,2 @@
+drop index if exists webhook_endpoints_field_mapping_template_id_idx;
+alter table webhook_endpoints drop column if exists field_mapping_template_id;

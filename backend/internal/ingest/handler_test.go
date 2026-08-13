@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/ingest"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/service"
@@ -34,14 +35,15 @@ func newIngestHandlerFixture(t *testing.T) (h *ingest.Handler, token string) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil, nil)
 	require.NoError(t, err)
 
 	_, err = tagSvc.Create(t.Context(), tenantID, actorID, "phishing", nil)
 	require.NoError(t, err)
 
+	fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h = ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, logger)
+	h = ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, fieldMappingSvc, logger)
 	return h, result.Token
 }
 
@@ -106,11 +108,11 @@ func TestIngestHandler_UnknownSourceFallsBackToGeneric(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "Suspicious login", "severity": "high"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
@@ -136,10 +138,10 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	alertRepo := repository.NewAlertRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
 	t.Run("a metadata object is stored verbatim", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM A", "siem-a", nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM A", "siem-a", nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{
@@ -170,7 +172,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	})
 
 	t.Run("no metadata field -- stored as an empty object, not null", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM B", "siem-b", nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM B", "siem-b", nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{"title": "No metadata here", "severity": "low"})
@@ -195,7 +197,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	})
 
 	t.Run("metadata sent as a non-object is dropped, not a hard failure", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM C", "siem-c", nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM C", "siem-c", nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{"title": "Weird metadata", "severity": "low", "metadata": []string{"not", "an", "object"}})
@@ -204,6 +206,46 @@ func TestIngestHandler_Metadata(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusCreated, rec.Code, "malformed metadata must not fail the whole ingest")
+	})
+
+	t.Run("field mapping template adds extra fields, auto metadata wins on label conflict", func(t *testing.T) {
+		fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+		template, err := fieldMappingSvc.Create(t.Context(), tenantID, actorID, "SIEM D fields", []domain.FieldMappingRule{
+			{JSONPath: "rule.level", Label: "Rule Level"},
+			{JSONPath: "environment", Label: "environment"}, // collides with the sender's own metadata.environment below
+		})
+		require.NoError(t, err)
+
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM D", "siem-d", nil, &template.ID)
+		require.NoError(t, err)
+
+		body, _ := json.Marshal(map[string]any{
+			"title": "Templated fields", "severity": "medium",
+			"metadata":    map[string]any{"environment": "production"},
+			"rule":        map[string]any{"level": 7},
+			"environment": "staging", // shadowed by the metadata.environment above once merged
+		})
+		req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
+		req.Header.Set("X-Webhook-Token", result.Token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		alertID, err := uuid.Parse(resp["id"])
+		require.NoError(t, err)
+
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			alert, err := alertRepo.Get(t.Context(), tx, alertID)
+			require.NoError(t, err)
+			require.NotNil(t, alert)
+			var meta map[string]any
+			require.NoError(t, json.Unmarshal(alert.Metadata, &meta))
+			assert.Equal(t, float64(7), meta["Rule Level"], "rule.level should be pulled in under its configured label")
+			assert.Equal(t, "production", meta["environment"], "the sender's own metadata.environment must win over the template's conflicting rule")
+			return nil
+		}))
 	})
 }
 
@@ -236,12 +278,12 @@ func TestIngestHandler_DisabledEndpoint(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, webhookSvc.SetStatus(t.Context(), tenantID, result.Endpoint.ID, "disabled"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "t", "severity": "low"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
@@ -261,7 +303,7 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil, nil)
 	require.NoError(t, err)
 
 	// RotateToken keeps the same plaintext token's hash but overwrites
@@ -275,7 +317,7 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	}))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "t", "severity": "low"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
