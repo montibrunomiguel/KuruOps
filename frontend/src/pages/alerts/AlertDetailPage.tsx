@@ -24,7 +24,7 @@ import { SeverityOverridePanel } from "./AlertDetailPage/SeverityOverridePanel";
 export function AlertDetailPage() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
 
   const { data: alert, loading, error, reload } = useList<Alert>(
@@ -67,6 +67,7 @@ export function AlertDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [escalating, setEscalating] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [startingInvestigation, setStartingInvestigation] = useState(false);
 
   // No local "analyzing" flag -- current.latestAnalysisStatus (from the
   // most recent GET) already reflects "running" the instant the POST
@@ -82,6 +83,25 @@ export function AlertDetailPage() {
       reload();
     } catch (err) {
       setActionError(mutationErrorMessage(err));
+    }
+  }
+
+  // Marks the alert as being actively worked before it's closed, and claims
+  // it for whoever clicked -- two independent calls (assignee, then status),
+  // same non-atomic two-step pattern SeverityOverridePanel's own save()
+  // already uses for a similar bundled update.
+  async function startInvestigating() {
+    if (!id || !user) return;
+    setStartingInvestigation(true);
+    setActionError(null);
+    try {
+      await api.put(`/api/v1/alerts/${id}/assignee`, { analystId: user.id }, token);
+      await api.post(`/api/v1/alerts/${id}/status`, { status: "investigating" }, token);
+      reload();
+    } catch (err) {
+      setActionError(mutationErrorMessage(err));
+    } finally {
+      setStartingInvestigation(false);
     }
   }
 
@@ -139,6 +159,11 @@ export function AlertDetailPage() {
               ? t("alerts.detail.analyzing")
               : t("alerts.detail.analyzeWithAI")}
           </button>
+          {current.status === "open" && (
+            <button className="btn btn-sm" disabled={startingInvestigation} onClick={startInvestigating}>
+              {startingInvestigation ? t("alerts.detail.startingInvestigation") : t("alerts.detail.startInvestigating")}
+            </button>
+          )}
           {!(current.status === "closed" && current.classification) && (
             <button className="btn btn-sm" onClick={() => setShowCloseModal(true)}>
               {t("alerts.detail.closeAndClassify")}
