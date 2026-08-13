@@ -13,13 +13,15 @@ import { IncidentTrendChart } from "../../components/charts/IncidentTrendChart";
 import { PRIORITY_ORDER, PHASE_ORDER, PHASE_COLOR } from "../../lib/chartColors";
 import { formatDuration, shortId } from "../../lib/format";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
-import { PersonFilter } from "../../components/PersonFilter";
+import { MultiSelectFilter } from "../../components/MultiSelectFilter";
+import { TagPicker } from "../../components/TagPicker";
+import { AssigneePicker } from "../../components/AssigneePicker";
 
 export function IncidentsTabPanel() {
   const { t } = useTranslation();
-  const [severity, setSeverity] = useState<Severity | "">("");
-  const [tag, setTag] = useState("");
-  const [commanderId, setCommanderId] = useState("");
+  const [severity, setSeverity] = useState<Severity[]>([]);
+  const [tag, setTag] = useState<string[]>([]);
+  const [commanderIds, setCommanderIds] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized -- see AlertsTabPanel's identical comment (timeRangeParams()
   // calling Date.now() on every render would otherwise loop useList forever).
@@ -28,29 +30,35 @@ export function IncidentsTabPanel() {
   const { data: statsData, loading: statsLoading, error: statsError, reload: reloadStats } = useList<DashboardStats>(
     async (tk) => {
       const params = new URLSearchParams();
-      if (severity) params.set("incidentSeverity", severity);
-      if (tag) params.set("incidentTag", tag);
-      if (commanderId) params.set("commanderId", commanderId);
+      if (severity.length > 0) params.set("incidentSeverity", severity.join(","));
+      if (tag.length > 0) params.set("incidentTag", tag.join(","));
+      if (commanderIds.length > 0) params.set("commanderId", commanderIds.join(","));
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       return [await api.get<DashboardStats>(`/api/v1/dashboard/stats?${params.toString()}`, tk)];
     },
-    [severity, tag, commanderId, range.since, range.until],
+    [severity.join(","), tag.join(","), commanderIds.join(","), range.since, range.until],
   );
   const stats = statsData?.[0];
 
+  // GET /api/v1/incidents (unlike /dashboard/stats above) is the same
+  // single-select ListIncidentsFilter IncidentsListPage uses -- narrowing
+  // it to multi-select is out of scope here, so this small "Recent
+  // Incidents" preview table best-effort narrows by just the first chosen
+  // value of each filter rather than dropping the filter (and diverging
+  // from the KPI cards above) entirely.
   const { data: incidents, loading: incidentsLoading, reload: reloadIncidents } = useList<Incident>(
     (tk) => {
       const params = new URLSearchParams();
-      if (severity) params.set("severity", severity);
-      if (tag) params.set("tag", tag);
-      if (commanderId) params.set("commanderId", commanderId);
+      if (severity[0]) params.set("severity", severity[0]);
+      if (tag[0]) params.set("tag", tag[0]);
+      if (commanderIds[0]) params.set("commanderId", commanderIds[0]);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", "5");
       return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity, tag, commanderId, range.since, range.until],
+    [severity[0], tag[0], commanderIds[0], range.since, range.until],
   );
 
   // Live updates -- see AlertsTabPanel's identical wiring for the reasoning.
@@ -69,27 +77,21 @@ export function IncidentsTabPanel() {
   return (
     <div>
       <div className="filter-bar">
-        <select
-          className="select"
-          aria-label={t("dashboard.filters.severityFilterLabel")}
+        <MultiSelectFilter
+          ariaLabel={t("dashboard.filters.severityFilterLabel")}
+          placeholder={t("dashboard.filters.allSeverities")}
           value={severity}
-          onChange={(e) => setSeverity(e.target.value as Severity | "")}
-        >
-          <option value="">{t("dashboard.filters.allSeverities")}</option>
-          <option value="critical">{t("common.severity.critical")}</option>
-          <option value="high">{t("common.severity.high")}</option>
-          <option value="medium">{t("common.severity.medium")}</option>
-          <option value="low">{t("common.severity.low")}</option>
-          <option value="informational">{t("common.severity.informational")}</option>
-        </select>
-        <input
-          className="input"
-          aria-label={t("dashboard.filters.tagsFilterLabel")}
-          placeholder={t("dashboard.filters.allTags")}
-          value={tag}
-          onChange={(e) => setTag(e.target.value)}
+          onChange={(next) => setSeverity(next as Severity[])}
+          options={[
+            { value: "critical", label: t("common.severity.critical") },
+            { value: "high", label: t("common.severity.high") },
+            { value: "medium", label: t("common.severity.medium") },
+            { value: "low", label: t("common.severity.low") },
+            { value: "informational", label: t("common.severity.informational") },
+          ]}
         />
-        <PersonFilter value={commanderId} onChange={setCommanderId} allLabel={t("dashboard.filters.allCommanders")} />
+        <TagPicker value={tag} onChange={setTag} />
+        <AssigneePicker value={commanderIds} onChange={setCommanderIds} />
         <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
       </div>
 

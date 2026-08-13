@@ -12,15 +12,17 @@ import { SEVERITY_ORDER, SEVERITY_COLOR, ALERT_STATUS_ORDER, ALERT_STATUS_COLOR 
 import { describeActivity } from "../../lib/activityText";
 import { formatDuration, formatRelative } from "../../lib/format";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
-import { PersonFilter } from "../../components/PersonFilter";
+import { MultiSelectFilter } from "../../components/MultiSelectFilter";
+import { TagPicker } from "../../components/TagPicker";
+import { AssigneePicker } from "../../components/AssigneePicker";
 
 export function AlertsTabPanel() {
   const { t } = useTranslation();
-  const [severity, setSeverity] = useState<Severity | "">("");
-  const [status, setStatus] = useState<AlertStatus | "">("");
+  const [severity, setSeverity] = useState<Severity[]>([]);
+  const [status, setStatus] = useState<AlertStatus[]>([]);
   const [source, setSource] = useState("");
-  const [tag, setTag] = useState("");
-  const [analystId, setAnalystId] = useState("");
+  const [tag, setTag] = useState<string[]>([]);
+  const [analystIds, setAnalystIds] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized -- timeRangeParams() calls Date.now() for preset ranges, so
   // recomputing it on every render would produce a new object each time even
@@ -31,16 +33,16 @@ export function AlertsTabPanel() {
   const { data: statsData, loading: statsLoading, error: statsError, reload: reloadStats } = useList<DashboardStats>(
     async (tk) => {
       const params = new URLSearchParams();
-      if (severity) params.set("alertSeverity", severity);
-      if (status) params.set("alertStatus", status);
+      if (severity.length > 0) params.set("alertSeverity", severity.join(","));
+      if (status.length > 0) params.set("alertStatus", status.join(","));
       if (source) params.set("alertSource", source);
-      if (tag) params.set("alertTag", tag);
-      if (analystId) params.set("assignedAnalystId", analystId);
+      if (tag.length > 0) params.set("alertTag", tag.join(","));
+      if (analystIds.length > 0) params.set("assignedAnalystId", analystIds.join(","));
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       return [await api.get<DashboardStats>(`/api/v1/dashboard/stats?${params.toString()}`, tk)];
     },
-    [severity, status, source, tag, analystId, range.since, range.until],
+    [severity.join(","), status.join(","), source, tag.join(","), analystIds.join(","), range.since, range.until],
   );
   const stats = statsData?.[0];
 
@@ -74,31 +76,31 @@ export function AlertsTabPanel() {
   return (
     <div>
       <div className="filter-bar">
-        <select
-          className="select"
-          aria-label={t("dashboard.filters.severityFilterLabel")}
+        <MultiSelectFilter
+          ariaLabel={t("dashboard.filters.severityFilterLabel")}
+          placeholder={t("dashboard.filters.allSeverities")}
           value={severity}
-          onChange={(e) => setSeverity(e.target.value as Severity | "")}
-        >
-          <option value="">{t("dashboard.filters.allSeverities")}</option>
-          <option value="critical">{t("common.severity.critical")}</option>
-          <option value="high">{t("common.severity.high")}</option>
-          <option value="medium">{t("common.severity.medium")}</option>
-          <option value="low">{t("common.severity.low")}</option>
-          <option value="informational">{t("common.severity.informational")}</option>
-        </select>
-        <select
-          className="select"
-          aria-label={t("dashboard.filters.statusFilterLabel")}
+          onChange={(next) => setSeverity(next as Severity[])}
+          options={[
+            { value: "critical", label: t("common.severity.critical") },
+            { value: "high", label: t("common.severity.high") },
+            { value: "medium", label: t("common.severity.medium") },
+            { value: "low", label: t("common.severity.low") },
+            { value: "informational", label: t("common.severity.informational") },
+          ]}
+        />
+        <MultiSelectFilter
+          ariaLabel={t("dashboard.filters.statusFilterLabel")}
+          placeholder={t("dashboard.filters.allStatuses")}
           value={status}
-          onChange={(e) => setStatus(e.target.value as AlertStatus | "")}
-        >
-          <option value="">{t("dashboard.filters.allStatuses")}</option>
-          <option value="open">{t("common.alertStatus.open")}</option>
-          <option value="investigating">{t("common.alertStatus.investigating")}</option>
-          <option value="escalated">{t("common.alertStatus.escalated")}</option>
-          <option value="closed">{t("common.alertStatus.closed")}</option>
-        </select>
+          onChange={(next) => setStatus(next as AlertStatus[])}
+          options={[
+            { value: "open", label: t("common.alertStatus.open") },
+            { value: "investigating", label: t("common.alertStatus.investigating") },
+            { value: "escalated", label: t("common.alertStatus.escalated") },
+            { value: "closed", label: t("common.alertStatus.closed") },
+          ]}
+        />
         <input
           className="input"
           aria-label={t("dashboard.filters.sourceFilterLabel")}
@@ -106,14 +108,8 @@ export function AlertsTabPanel() {
           value={source}
           onChange={(e) => setSource(e.target.value)}
         />
-        <input
-          className="input"
-          aria-label={t("dashboard.filters.tagsFilterLabel")}
-          placeholder={t("dashboard.filters.allTags")}
-          value={tag}
-          onChange={(e) => setTag(e.target.value)}
-        />
-        <PersonFilter value={analystId} onChange={setAnalystId} allLabel={t("dashboard.filters.allAnalysts")} />
+        <TagPicker value={tag} onChange={setTag} />
+        <AssigneePicker value={analystIds} onChange={setAnalystIds} />
         <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
       </div>
 

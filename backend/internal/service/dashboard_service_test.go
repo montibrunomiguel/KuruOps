@@ -52,8 +52,7 @@ func TestDashboardService_Stats_Filtered(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	critical := domain.SeverityCritical
-	stats, err := dashSvc.Stats(t.Context(), tenantID, repository.StatsFilter{AlertSeverity: &critical})
+	stats, err := dashSvc.Stats(t.Context(), tenantID, repository.StatsFilter{AlertSeverity: []domain.Severity{domain.SeverityCritical}})
 	require.NoError(t, err)
 	assert.Equal(t, 1, stats.OpenAlerts, "only the critical alert matches the filter")
 	assert.Equal(t, 1, stats.CriticalAlerts)

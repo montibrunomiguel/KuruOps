@@ -84,6 +84,35 @@ func TestDashboardHandlers_StatsAndFollowup(t *testing.T) {
 		assert.Equal(t, 1, stats.OpenAlerts, "only the critical alert matches alertSeverity=critical")
 	})
 
+	t.Run("stats parses a comma-separated alertSeverity into a multi-select OR filter", func(t *testing.T) {
+		endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+		_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "critical two", Source: "s", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
+		})
+		require.NoError(t, err)
+		_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "high one", Source: "s", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
+		})
+		require.NoError(t, err)
+		_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "medium one", Source: "s", Severity: domain.SeverityMedium, Payload: json.RawMessage(`{}`),
+		})
+		require.NoError(t, err)
+
+		r := newRouter(h.Routes)
+		req := withClaims(httptest.NewRequest("GET", "/stats?alertSeverity=critical,high", nil), tenantID, uuid.New(), nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var stats struct {
+			AlertsBySeverity map[string]int `json:"alertsBySeverity"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stats))
+		assert.Equal(t, 2, stats.AlertsBySeverity["critical"], "both critical alerts ingested in this test file match")
+		assert.Equal(t, 1, stats.AlertsBySeverity["high"])
+		assert.Zero(t, stats.AlertsBySeverity["medium"], "medium must be excluded -- it wasn't in the comma-separated list")
+	})
+
 	t.Run("activity parses kind query param to scope the feed", func(t *testing.T) {
 		actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 		_, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{

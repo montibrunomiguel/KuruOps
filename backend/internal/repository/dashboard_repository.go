@@ -27,21 +27,26 @@ func NewDashboardRepository() *DashboardRepository {
 // one /dashboard/stats endpoint but filter different aggregates. AlertTrend
 // is never filtered -- mv_alert_daily_stats is pre-aggregated by day only,
 // with no severity/status/source/tag dimension to filter on.
+// Every user-facing filter field below is a slice, not a single pointer --
+// an empty/nil slice means "no filter" (same convention AllowedTags already
+// used), one or more values means "any of these" (OR within the field, same
+// "= any($n)"/array-overlap technique AllowedTags already applied server-
+// side, now also driving the Dashboard's own multi-select filter bar).
 type StatsFilter struct {
-	AlertSeverity *domain.Severity
-	AlertStatus   *domain.AlertStatus
+	AlertSeverity []domain.Severity
+	AlertStatus   []domain.AlertStatus
 	AlertSource   *string
-	AlertTag      *string
-	// AssignedAnalystID narrows every alert-derived figure to one analyst's
-	// alerts -- the Alerts tab's new analyst filter.
-	AssignedAnalystID *uuid.UUID
+	AlertTag      []string
+	// AssignedAnalystID narrows every alert-derived figure to any of these
+	// analysts' alerts -- the Alerts tab's analyst filter.
+	AssignedAnalystID []uuid.UUID
 
-	IncidentSeverity *domain.Severity
-	IncidentTag      *string
+	IncidentSeverity []domain.Severity
+	IncidentTag      []string
 	// CommanderID narrows every incident-derived figure to incidents where
-	// this user holds the 'commander' role (see incident_role_assignments) --
-	// the Incidents tab's new commander filter.
-	CommanderID *uuid.UUID
+	// one of these users holds the 'commander' role (see
+	// incident_role_assignments) -- the Incidents tab's commander filter.
+	CommanderID []uuid.UUID
 
 	// Since/Until restrict every count/breakdown below to alerts received (or
 	// incidents opened) within [Since, Until] -- the Dashboard's time-range
@@ -239,21 +244,26 @@ func (r *DashboardRepository) incidentsByCommander(ctx context.Context, tx pgx.T
 func alertFilterClause(f StatsFilter) (string, []any) {
 	var clauses []string
 	var args []any
-	if f.AlertSeverity != nil {
-		args = append(args, *f.AlertSeverity)
-		clauses = append(clauses, fmt.Sprintf("severity = $%d", len(args)))
+	if len(f.AlertSeverity) > 0 {
+		args = append(args, toStrings(f.AlertSeverity))
+		// severity is severity_enum (see 0002_enums.up.sql), not text --
+		// casting both sides to text sidesteps Postgres needing to resolve
+		// $n's element type against the enum on its own, which it can't do
+		// implicitly for an any(array) comparison the way it can for a
+		// plain `severity = 'critical'` scalar comparison.
+		clauses = append(clauses, fmt.Sprintf("severity::text = any($%d::text[])", len(args)))
 	}
-	if f.AlertStatus != nil {
-		args = append(args, *f.AlertStatus)
-		clauses = append(clauses, fmt.Sprintf("status = $%d", len(args)))
+	if len(f.AlertStatus) > 0 {
+		args = append(args, toStrings(f.AlertStatus))
+		clauses = append(clauses, fmt.Sprintf("status::text = any($%d::text[])", len(args)))
 	}
 	if f.AlertSource != nil {
 		args = append(args, *f.AlertSource)
 		clauses = append(clauses, fmt.Sprintf("source = $%d", len(args)))
 	}
-	if f.AlertTag != nil {
-		args = append(args, *f.AlertTag)
-		clauses = append(clauses, fmt.Sprintf("$%d = any(tags)", len(args)))
+	if len(f.AlertTag) > 0 {
+		args = append(args, f.AlertTag)
+		clauses = append(clauses, fmt.Sprintf("tags && $%d", len(args)))
 	}
 	if f.Since != nil {
 		args = append(args, *f.Since)
@@ -263,9 +273,9 @@ func alertFilterClause(f StatsFilter) (string, []any) {
 		args = append(args, *f.Until)
 		clauses = append(clauses, fmt.Sprintf("received_at <= $%d", len(args)))
 	}
-	if f.AssignedAnalystID != nil {
-		args = append(args, *f.AssignedAnalystID)
-		clauses = append(clauses, fmt.Sprintf("assigned_analyst_id = $%d", len(args)))
+	if len(f.AssignedAnalystID) > 0 {
+		args = append(args, f.AssignedAnalystID)
+		clauses = append(clauses, fmt.Sprintf("assigned_analyst_id = any($%d)", len(args)))
 	}
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
@@ -277,13 +287,13 @@ func alertFilterClause(f StatsFilter) (string, []any) {
 func incidentFilterClause(f StatsFilter) (string, []any) {
 	var clauses []string
 	var args []any
-	if f.IncidentSeverity != nil {
-		args = append(args, *f.IncidentSeverity)
-		clauses = append(clauses, fmt.Sprintf("severity = $%d", len(args)))
+	if len(f.IncidentSeverity) > 0 {
+		args = append(args, toStrings(f.IncidentSeverity))
+		clauses = append(clauses, fmt.Sprintf("severity::text = any($%d::text[])", len(args)))
 	}
-	if f.IncidentTag != nil {
-		args = append(args, *f.IncidentTag)
-		clauses = append(clauses, fmt.Sprintf("$%d = any(tags)", len(args)))
+	if len(f.IncidentTag) > 0 {
+		args = append(args, f.IncidentTag)
+		clauses = append(clauses, fmt.Sprintf("tags && $%d", len(args)))
 	}
 	if f.Since != nil {
 		args = append(args, *f.Since)
@@ -293,15 +303,15 @@ func incidentFilterClause(f StatsFilter) (string, []any) {
 		args = append(args, *f.Until)
 		clauses = append(clauses, fmt.Sprintf("opened_at <= $%d", len(args)))
 	}
-	if f.CommanderID != nil {
-		args = append(args, *f.CommanderID)
+	if len(f.CommanderID) > 0 {
+		args = append(args, f.CommanderID)
 		// incidents.id (table-qualified, not "id" bare) so this stays valid
 		// both against plain `from incidents` call sites and against
 		// incidentsByCommander's own incidents-plus-incident_role_assignments
 		// join, where a bare "id" would be ambiguous the moment users (which
 		// also has an id column) enters the same query scope.
 		clauses = append(clauses, fmt.Sprintf(
-			"incidents.id in (select incident_id from incident_role_assignments where role = 'commander' and user_id = $%d)",
+			"incidents.id in (select incident_id from incident_role_assignments where role = 'commander' and user_id = any($%d))",
 			len(args),
 		))
 	}
@@ -310,6 +320,19 @@ func incidentFilterClause(f StatsFilter) (string, []any) {
 		clauses = append(clauses, fmt.Sprintf("tags && $%d", len(args)))
 	}
 	return whereClause(clauses), args
+}
+
+// toStrings converts a slice of a named string type (domain.Severity,
+// domain.AlertStatus) to plain []string before it's passed as a query arg
+// -- pgx's array codec resolves cleanly for []string (same type
+// AllowedTags already uses), so this sidesteps needing to confirm it
+// handles an arbitrary named-string element type as reliably.
+func toStrings[T ~string](vals []T) []string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = string(v)
+	}
+	return out
 }
 
 func whereClause(clauses []string) string {
