@@ -220,7 +220,7 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 }
 
 func TestAlertHandlers_List_CorrelatedFilter(t *testing.T) {
-	h, tenantID, actorID, _ := newAlertHandlerFixture(t)
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
 	r := newRouter(h.Routes)
 
 	t.Run("correlated=false includes the not-yet-escalated fixture alert", func(t *testing.T) {
@@ -239,6 +239,27 @@ func TestAlertHandlers_List_CorrelatedFilter(t *testing.T) {
 		var alerts []domain.Alert
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
 		assert.Empty(t, alerts)
+	})
+
+	// Regression test for the "Correlated Alerts" bug: escalate already
+	// links the alert via IncidentService.LinkAlert (incident_alert_links),
+	// but the Correlated filter used to read a separate, never-written
+	// alerts.incident_id column -- so it never picked this up. Now that the
+	// filter queries incident_alert_links directly, escalating alone (no
+	// other code change) must be enough to flip it.
+	t.Run("correlated=true includes it once escalated, with no changes needed to the escalate flow itself", func(t *testing.T) {
+		escalateReq := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/escalate", nil), tenantID, actorID, nil)
+		escalateRec := doRequest(r, escalateReq)
+		require.Equal(t, http.StatusOK, escalateRec.Code, escalateRec.Body.String())
+
+		req := withClaims(httptest.NewRequest("GET", "/?correlated=true", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		require.Len(t, alerts, 1)
+		assert.Equal(t, alertID, alerts[0].ID)
+		require.NotNil(t, alerts[0].IncidentID)
 	})
 }
 
