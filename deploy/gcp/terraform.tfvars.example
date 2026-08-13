@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored on
+# purpose -- never commit real values, especially db_master_password.
+
+project_id  = "my-gcp-project-id"
+name        = "argusops"
+environment = "sample"
+region      = "us-central1"
+zone        = "us-central1-a"
+
+node_machine_type = "e2-standard-2"
+node_count        = 2
+
+db_tier    = "db-custom-1-3840"
+db_version = "POSTGRES_16"
+# Leave unset to have Terraform generate one (see cloudsql.tf) -- it'll show
+# up in `terraform output -raw db_master_password`.
+# db_master_password = ""
+
+create_uploads_bucket = true

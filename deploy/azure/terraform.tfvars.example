@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored on
+# purpose -- never commit real values, especially db_master_password.
+
+name        = "argusops"
+environment = "sample"
+location    = "eastus"
+
+node_vm_size = "Standard_D2s_v5"
+node_count   = 2
+
+db_sku_name   = "B_Standard_B1ms"
+db_storage_mb = 32768
+db_version    = "16"
+# Leave unset to have Terraform generate one (see postgres.tf) -- it'll show
+# up in `terraform output -raw db_master_password`.
+# db_master_password = ""

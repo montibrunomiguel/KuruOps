@@ -74,6 +74,79 @@ func JWTAuth(verifier *authn.Verifier) func(http.Handler) http.Handler {
 	}
 }
 
+// PATResolver looks up a personal access token by its plaintext value and
+// returns the permissions it currently grants. ok=false (not an error)
+// means the token is unknown, expired, or revoked -- an expected input on
+// this path, not a failure. Implemented by
+// service.PersonalAccessTokenService (see cmd/api/main.go's wiring) --
+// deliberately primitives, not a shared struct, so internal/service never
+// needs to import this package (business logic staying transport-agnostic).
+type PATResolver interface {
+	Resolve(ctx context.Context, token string) (tenantID, userID uuid.UUID, isAdmin bool, resourceAccess, allowedTags []string, ok bool, err error)
+}
+
+// APIAuth is JWTAuth extended to also accept a personal access token
+// (prefixed "pat_", see PersonalAccessTokenService's generateToken) as a
+// bearer credential alongside a session JWT -- both authenticate
+// /api/v1/**, resolving to the exact same Claims shape either way, so
+// nothing downstream (RequireAdmin, RequireResourceAccess, AllowedTags)
+// needs to know or care which kind of token a given request used. Pass a
+// nil patResolver to only accept JWTs (e.g. in a context that never issues
+// PATs) -- behaves exactly like JWTAuth then.
+func APIAuth(verifier *authn.Verifier, patResolver PATResolver) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			tokenString, ok := strings.CutPrefix(header, "Bearer ")
+			if !ok || tokenString == "" {
+				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				return
+			}
+
+			if patResolver != nil && strings.HasPrefix(tokenString, "pat_") {
+				tenantID, userID, isAdmin, resourceAccess, allowedTags, found, err := patResolver.Resolve(r.Context(), tokenString)
+				if err != nil {
+					http.Error(w, "internal error", http.StatusInternalServerError)
+					return
+				}
+				if !found {
+					http.Error(w, "invalid, expired, or revoked token", http.StatusUnauthorized)
+					return
+				}
+				ctx := WithClaims(r.Context(), Claims{
+					TenantID:       tenantID,
+					UserID:         userID,
+					IsAdmin:        isAdmin,
+					ResourceAccess: resourceAccess,
+					AllowedTags:    allowedTags,
+					// A PAT holder is never mid-forced-password-change --
+					// that flow only exists for interactive login, and a
+					// user stuck in it can't reach Settings -> My Account
+					// to mint a token in the first place.
+					MustChangePassword: false,
+				})
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			claims, err := verifier.Verify(tokenString)
+			if err != nil {
+				http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+				return
+			}
+			ctx := WithClaims(r.Context(), Claims{
+				TenantID:           claims.TenantID,
+				UserID:             claims.UserID,
+				IsAdmin:            claims.IsAdmin,
+				ResourceAccess:     claims.ResourceAccess,
+				AllowedTags:        claims.AllowedTags,
+				MustChangePassword: claims.MustChangePassword,
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // DevHeaderAuth trusts X-Tenant-ID / X-User-ID / X-Is-Admin / X-Resource-Access
 // / X-Allowed-Tags request headers verbatim, bypassing JWT verification
 // entirely — a token from /auth/.../login will NOT work against this, since

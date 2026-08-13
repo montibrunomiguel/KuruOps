@@ -222,9 +222,13 @@ func main() {
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
 	authHandlers := handlers.NewAuthHandlers(pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
-	accountHandlers := handlers.NewAccountHandlers(authService)
+	patService := service.NewPersonalAccessTokenService(pool, tenantRepo, userRepo, repository.NewPersonalAccessTokenRepository())
+	accountHandlers := handlers.NewAccountHandlers(authService, patService)
 
-	authMiddleware := middleware.JWTAuth(verifier)
+	// APIAuth accepts both a session JWT and a personal access token
+	// (Settings -> My Account -- API Tokens) as a bearer credential -- see
+	// middleware.APIAuth's doc comment.
+	authMiddleware := middleware.APIAuth(verifier, patService)
 	if useDevHeaderAuth {
 		authMiddleware = middleware.DevHeaderAuth
 	}
