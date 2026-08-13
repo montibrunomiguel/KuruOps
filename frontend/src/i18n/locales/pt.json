@@ -349,6 +349,8 @@
       "analyzeWithAI": "Analisar com IA",
       "analyzing": "Analisando...",
       "closeIncident": "Fechar Incidente",
+      "generatePostmortem": "Gerar Postmortem",
+      "generatingPostmortem": "Gerando...",
       "closedEvent": "Incidente fechado",
       "closing": "Fechando...",
       "closeRequiresPostIncident": "Mova para Pós-Incidente antes de fechar",

@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -19,12 +20,13 @@ type IncidentHandlers struct {
 	svc *service.IncidentService
 	// users resolves the acting user's display name for AddComment -- see
 	// domain.IncidentComment.AuthorName and UserService.Get's doc comment.
-	users *service.UserService
-	ai    *service.AIAnalysisService
+	users      *service.UserService
+	ai         *service.AIAnalysisService
+	postmortem *service.PostmortemService
 }
 
-func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService) *IncidentHandlers {
-	return &IncidentHandlers{svc: svc, users: users, ai: ai}
+func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService, postmortem *service.PostmortemService) *IncidentHandlers {
+	return &IncidentHandlers{svc: svc, users: users, ai: ai, postmortem: postmortem}
 }
 
 func (h *IncidentHandlers) Routes(r chi.Router) {
@@ -47,6 +49,7 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Put("/{id}/alerts/{alertId}", h.linkAlert)
 	r.Delete("/{id}/alerts/{alertId}", h.unlinkAlert)
 	r.Post("/{id}/analyze", h.analyze)
+	r.Get("/{id}/postmortem", h.postmortemDoc)
 }
 
 func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
@@ -523,4 +526,33 @@ func (h *IncidentHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
+}
+
+// postmortemDoc streams a generated Markdown postmortem for the incident --
+// same download-response shape as AuditExportHandlers.exportCEF (forced
+// attachment, no JSON envelope). See PostmortemService.Generate for what
+// the document contains.
+func (h *IncidentHandlers) postmortemDoc(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+
+	doc, found, err := h.postmortem.Generate(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
+		return
+	}
+
+	filename := fmt.Sprintf("postmortem-%s.md", id)
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(doc))
 }

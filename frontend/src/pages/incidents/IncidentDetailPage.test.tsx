@@ -26,6 +26,17 @@ function routeFetch(
       if (init?.method === "POST") return Promise.resolve(new Response(null, { status: 204 }));
       return Promise.resolve(jsonResponse(opts.statusHistory ?? []));
     }
+    if (url.includes("/postmortem")) {
+      return Promise.resolve(
+        new Response("# Postmortem: Ransomware suspected", {
+          status: 200,
+          headers: {
+            "content-type": "text/markdown; charset=utf-8",
+            "content-disposition": 'attachment; filename="postmortem-i1.md"',
+          },
+        }),
+      );
+    }
     if (url.includes("/timeline")) return Promise.resolve(jsonResponse(opts.events ?? []));
     if (url.includes("/comments")) {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ id: "c1" }, 201));
@@ -78,6 +89,40 @@ describe("IncidentDetailPage", () => {
     renderDetail();
 
     expect(await screen.findByRole("button", { name: "Close Incident" })).toBeEnabled();
+  });
+
+  it("Generate Postmortem only appears once phase is post_incident", async () => {
+    vi.stubGlobal("fetch", routeFetch(incidentFixture({ phase: "new" })));
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Ransomware suspected" });
+    expect(screen.queryByRole("button", { name: "Generate Postmortem" })).not.toBeInTheDocument();
+  });
+
+  it("Generate Postmortem stays visible after the incident is closed", async () => {
+    vi.stubGlobal("fetch", routeFetch(incidentFixture({ phase: "post_incident", closedAt: "2026-01-02T00:00:00Z" })));
+    renderDetail();
+
+    expect(await screen.findByRole("button", { name: "Generate Postmortem" })).toBeInTheDocument();
+  });
+
+  it("clicking Generate Postmortem fetches the postmortem endpoint and triggers a download", async () => {
+    // jsdom doesn't implement the Blob-URL APIs the download flow uses.
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:mock"), revokeObjectURL: vi.fn() });
+    const fetchMock = routeFetch(incidentFixture({ phase: "post_incident" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "Generate Postmortem" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/postmortem", expect.objectContaining({ headers: expect.any(Object) })),
+    );
+    expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("a closed incident shows no close button", async () => {
