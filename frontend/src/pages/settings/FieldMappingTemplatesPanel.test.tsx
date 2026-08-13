@@ -76,7 +76,7 @@ describe("FieldMappingTemplatesPanel", () => {
   });
 
   it("editing an existing template PUTs the updated rules", async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === "PUT") return Promise.resolve(jsonResponse(templateFixture(), 200));
       return Promise.resolve(jsonResponse([templateFixture()]));
     });
