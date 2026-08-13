@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -23,10 +25,13 @@ type IncidentHandlers struct {
 	users      *service.UserService
 	ai         *service.AIAnalysisService
 	postmortem *service.PostmortemService
+	// mcpTools backs the AnalysisChat's inline tool-call approve/reject --
+	// see AlertHandlers.mcpTools's doc comment, same reasoning.
+	mcpTools *service.MCPToolService
 }
 
-func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService, postmortem *service.PostmortemService) *IncidentHandlers {
-	return &IncidentHandlers{svc: svc, users: users, ai: ai, postmortem: postmortem}
+func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService, postmortem *service.PostmortemService, mcpTools *service.MCPToolService) *IncidentHandlers {
+	return &IncidentHandlers{svc: svc, users: users, ai: ai, postmortem: postmortem, mcpTools: mcpTools}
 }
 
 func (h *IncidentHandlers) Routes(r chi.Router) {
@@ -49,6 +54,10 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Put("/{id}/alerts/{alertId}", h.linkAlert)
 	r.Delete("/{id}/alerts/{alertId}", h.unlinkAlert)
 	r.Post("/{id}/analyze", h.analyze)
+	r.Get("/{id}/analyze/messages", h.getAnalysisChat)
+	r.Post("/{id}/analyze/messages", h.continueAnalysisChat)
+	r.Post("/{id}/analyze/tool-calls/{callId}/approve", h.approveAnalysisToolCall)
+	r.Post("/{id}/analyze/tool-calls/{callId}/reject", h.rejectAnalysisToolCall)
 	r.Get("/{id}/postmortem", h.postmortemDoc)
 }
 
@@ -526,6 +535,99 @@ func (h *IncidentHandlers) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
+}
+
+// getAnalysisChat/continueAnalysisChat/approveAnalysisToolCall/
+// rejectAnalysisToolCall are IncidentHandlers' counterparts to
+// AlertHandlers' identically-named methods -- see those doc comments.
+func (h *IncidentHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+	transcript, err := h.ai.GetIncidentTranscript(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, transcript)
+}
+
+func (h *IncidentHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+
+	var req continueMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		writeError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+
+	err = h.ai.ContinueIncidentAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
+	if err != nil {
+		if errors.Is(err, service.ErrAnalysisInProgress) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, analyzeStartedResponse{Status: "running"})
+}
+
+func (h *IncidentHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveAnalysisToolCall(w, r, true)
+}
+
+func (h *IncidentHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
+	h.resolveAnalysisToolCall(w, r, false)
+}
+
+func (h *IncidentHandlers) resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, approve bool) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tool call id")
+		return
+	}
+
+	call, err := h.mcpTools.GetToolCall(r.Context(), tenantID, callID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if call == nil || call.ContextType != "incident" || call.ContextID != id {
+		writeError(w, http.StatusNotFound, "tool call not found for this incident")
+		return
+	}
+
+	if approve {
+		err = h.mcpTools.ApproveToolCall(r.Context(), tenantID, callID, userID)
+	} else {
+		err = h.mcpTools.RejectToolCall(r.Context(), tenantID, callID, userID)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // postmortemDoc streams a generated Markdown postmortem for the incident --

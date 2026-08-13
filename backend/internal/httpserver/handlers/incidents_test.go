@@ -39,7 +39,7 @@ func newIncidentHandlerFixture(t *testing.T) (h *handlers.IncidentHandlers, tena
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
 	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
-	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc)
+	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -83,7 +83,7 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
 	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
-	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc)
+	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,

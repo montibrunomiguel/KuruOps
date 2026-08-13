@@ -3,29 +3,29 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../../auth/AuthContext";
 import { api } from "../../../api/client";
 import { mutationErrorMessage } from "../../../api/hooks";
-import type { Alert, AlertStatus, Severity } from "../../../types/alerts";
+import type { Alert, Severity } from "../../../types/alerts";
 
+// Severity only -- status used to live here too (a second dropdown), but
+// every status transition now has its own dedicated action: "Start
+// Investigation" in the toolbar (open -> investigating), "Escalate to
+// Incident" (-> escalated), "Close & Classify" (-> closed). A free-standing
+// status dropdown let an analyst silently mark an alert "escalated" without
+// actually creating/linking an incident, which was actively misleading.
 export function SeverityOverridePanel({ alert, onSaved }: { alert: Alert; onSaved: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [severity, setSeverity] = useState<Severity>(alert.severity);
-  const [status, setStatus] = useState<AlertStatus>(alert.status === "closed" ? "open" : alert.status);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const readOnly = alert.status === "closed";
-  const dirty = !readOnly && (severity !== alert.severity || status !== alert.status);
+  const dirty = !readOnly && severity !== alert.severity;
 
   async function save() {
     setSubmitting(true);
     setError(null);
     try {
-      if (severity !== alert.severity) {
-        await api.put(`/api/v1/alerts/${alert.id}/severity`, { severity }, token);
-      }
-      if (status !== alert.status) {
-        await api.post(`/api/v1/alerts/${alert.id}/status`, { status }, token);
-      }
+      await api.put(`/api/v1/alerts/${alert.id}/severity`, { severity }, token);
       onSaved();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -56,20 +56,6 @@ export function SeverityOverridePanel({ alert, onSaved }: { alert: Alert; onSave
           <option value="medium">{t("common.severity.medium")}</option>
           <option value="low">{t("common.severity.low")}</option>
           <option value="informational">{t("common.severity.informational")}</option>
-        </select>
-      </div>
-      <div className="field">
-        <label htmlFor="ov-status">{t("alerts.detail.statusLabel")}</label>
-        <select
-          id="ov-status"
-          className="select"
-          value={status}
-          disabled={readOnly}
-          onChange={(e) => setStatus(e.target.value as AlertStatus)}
-        >
-          <option value="open">{t("common.alertStatus.open")}</option>
-          <option value="investigating">{t("common.alertStatus.investigating")}</option>
-          <option value="escalated">{t("common.alertStatus.escalated")}</option>
         </select>
       </div>
       {dirty && (

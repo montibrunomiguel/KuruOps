@@ -126,6 +126,20 @@ func (r *AIAnalysisRunRepository) SetRunning(ctx context.Context, tx pgx.Tx, id 
 	return err
 }
 
+// AppendUserMessage persists a conversation that just grew by one analyst
+// turn (see AIAnalysisService.Continue*Analysis, continuing a completed
+// run) -- same shape as SetRunning, but named for its own call site since
+// "running" here means "resuming a finished conversation", not "mid-loop".
+func (r *AIAnalysisRunRepository) AppendUserMessage(ctx context.Context, tx pgx.Tx, id int64, messages []byte) error {
+	_, err := tx.Exec(ctx, `
+		update ai_analysis_runs
+		set status = 'running', messages = $2, pending_tool_call_id = null, updated_at = now()
+		where id = $1`,
+		id, messages,
+	)
+	return err
+}
+
 func (r *AIAnalysisRunRepository) SetCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result string) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs

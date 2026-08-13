@@ -12,6 +12,7 @@ import { SeverityBadge, PriorityBadge, AlertStatusBadge } from "../../components
 import { TagPicker } from "../../components/TagPicker";
 import { AttachmentPreview } from "../../components/AttachmentButton";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
+import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
 import { formatDateTime, initials, shortId } from "../../lib/format";
 import { IncidentRolesPanel } from "./IncidentDetailPage/IncidentRolesPanel";
@@ -68,6 +69,7 @@ export function IncidentDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [generatingPostmortem, setGeneratingPostmortem] = useState(false);
+  const [showAnalysisChat, setShowAnalysisChat] = useState(false);
 
   // Every mutation below can append a row to the incident_events timeline
   // (phase_changed, closed, severity_priority_changed, description_edited,
@@ -115,22 +117,6 @@ export function IncidentDetailPage() {
       await api.del(`/api/v1/incidents/${id}/alerts/${alertId}`, token);
       reloadLinkedAlerts();
       reloadTimeline();
-    } catch (err) {
-      setActionError(mutationErrorMessage(err));
-    }
-  }
-
-  // No local "analyzing" flag -- incident.latestAnalysisStatus (from the
-  // most recent GET) already reflects "running" the instant the POST below
-  // returns, since the server creates the run row synchronously before
-  // responding 202. reload() picks that up immediately; the eventual
-  // completed/failed transition arrives via the SSE subscription above.
-  async function analyze() {
-    if (!id) return;
-    setActionError(null);
-    try {
-      await api.post<{ status: string }>(`/api/v1/incidents/${id}/analyze`, {}, token);
-      reload();
     } catch (err) {
       setActionError(mutationErrorMessage(err));
     }
@@ -189,11 +175,7 @@ export function IncidentDetailPage() {
           </p>
         </div>
         <div className="toolbar-actions">
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused"}
-            onClick={analyze}
-          >
+          <button className="btn btn-primary btn-sm" onClick={() => setShowAnalysisChat(true)}>
             <SparkleIcon width={14} height={14} />
             {incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused"
               ? t("incidents.detail.analyzing")
@@ -221,34 +203,8 @@ export function IncidentDetailPage() {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
-      {(incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused") && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiResultTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>{t("alerts.detail.aiRunningMessage")}</p>
-        </div>
-      )}
-
-      {incident.latestAnalysisStatus === "failed" && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--critical)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiFailedTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{incident.latestAnalysisError}</p>
-          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={analyze}>
-            {t("alerts.detail.aiRetry")}
-          </button>
-        </div>
-      )}
-
-      {incident.latestAnalysisStatus === "completed" && incident.latestAnalysis && (
-        <div className="panel" style={{ marginBottom: 16, borderColor: "var(--accent)" }}>
-          <h2 className="panel-title" style={{ marginBottom: 10 }}>
-            {t("alerts.detail.aiResultTitle")}
-          </h2>
-          <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{incident.latestAnalysis}</p>
-        </div>
+      {showAnalysisChat && (
+        <AnalysisChat contextType="incident" contextId={incident.id} onClose={() => setShowAnalysisChat(false)} />
       )}
 
       <div className="panel" style={{ marginBottom: 16 }}>
@@ -308,6 +264,7 @@ export function IncidentDetailPage() {
             </h2>
             <LinkAlertForm
               incidentId={incident.id}
+              linkedAlerts={linkedAlerts ?? []}
               onLinked={() => {
                 reloadLinkedAlerts();
                 reloadTimeline();

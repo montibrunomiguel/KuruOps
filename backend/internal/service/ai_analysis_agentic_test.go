@@ -24,12 +24,16 @@ import (
 // newAIAnalysisService in ai_analysis_service_test.go deliberately doesn't,
 // since none of those tests register an MCP server that could pause.
 //
-// analyzed fires once per StartAlertAnalysis call once its background
-// goroutine finishes (whatever the outcome -- completed, paused, or
-// failed), same as ai_analysis_service_test.go's newAIAnalysisService. The
-// approve/reject-a-pending-tool-call path (MCPToolService.ApproveToolCall/
-// RejectToolCall -> ResumeAnalysisRun) is still synchronous, not something
-// these tests need to wait on separately.
+// analyzed carries every event type fx.ai publishes -- since driveAgentLoop
+// now also fires "ai_analysis_turn" per turn (see AIAnalysisService.publishTurn),
+// not just the one "alert"/"incident" event StartAlertAnalysis's background
+// goroutine fires via notifyAnalyzed once it's fully done (whatever the
+// outcome -- completed, paused, or failed). waitAnalyzed below specifically
+// waits for that final one, same as before this file had any per-turn
+// events to also see on the channel. The approve/reject-a-pending-tool-call
+// path (MCPToolService.ApproveToolCall/RejectToolCall -> ResumeAnalysisRun)
+// is still synchronous, not something these tests need to wait on
+// separately.
 type agenticFixture struct {
 	pool     *db.Pool
 	ai       *service.AIAnalysisService
@@ -37,7 +41,7 @@ type agenticFixture struct {
 	mcp      *service.MCPServerService
 	llm      *service.LLMProviderService
 	runs     *repository.AIAnalysisRunRepository
-	analyzed <-chan struct{}
+	analyzed <-chan string
 }
 
 func newAgenticFixture(t *testing.T) agenticFixture {
@@ -56,9 +60,9 @@ func newAgenticFixture(t *testing.T) agenticFixture {
 	)
 	mcpToolSvc.SetOnToolCallResolved(aiSvc.ResumeAnalysisRun)
 
-	analyzed := make(chan struct{}, 8)
-	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) {
-		analyzed <- struct{}{}
+	analyzed := make(chan string, 8)
+	aiSvc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) {
+		analyzed <- eventType
 	})
 
 	return agenticFixture{
@@ -68,14 +72,22 @@ func newAgenticFixture(t *testing.T) agenticFixture {
 	}
 }
 
-// waitAnalyzed blocks until fx.ai's background analysis goroutine signals
-// completion, or fails the test after 2s.
+// waitAnalyzed blocks until fx.ai's background analysis goroutine publishes
+// its final "alert"/"incident" completion event -- draining and ignoring
+// any "ai_analysis_turn" events seen first, since those fire mid-loop,
+// before the run's terminal DB state (completed/paused/failed) is
+// committed. Fails the test after 2s.
 func (fx agenticFixture) waitAnalyzed(t *testing.T) {
 	t.Helper()
-	select {
-	case <-fx.analyzed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("background analysis did not complete in time")
+	for {
+		select {
+		case eventType := <-fx.analyzed:
+			if eventType != "ai_analysis_turn" {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("background analysis did not complete in time")
+		}
 	}
 }
 

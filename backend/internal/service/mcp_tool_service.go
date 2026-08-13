@@ -209,6 +209,22 @@ func (s *MCPToolService) RejectToolCall(ctx context.Context, tenantID uuid.UUID,
 	return err
 }
 
+// GetToolCall backs the alert/incident-scoped inline approve/reject
+// handlers (see AlertHandlers/IncidentHandlers) -- they need the call's own
+// ContextType/ContextID to confirm it actually belongs to the alert/
+// incident named in the URL before approving/rejecting it, the same
+// ownership check every other alert/incident sub-resource endpoint already
+// does.
+func (s *MCPToolService) GetToolCall(ctx context.Context, tenantID uuid.UUID, callID int64) (*domain.AIToolCall, error) {
+	var call *domain.AIToolCall
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		c, err := s.toolCalls.Get(ctx, tx, callID)
+		call = c
+		return err
+	})
+	return call, err
+}
+
 func (s *MCPToolService) PendingApprovals(ctx context.Context, tenantID uuid.UUID) ([]domain.AIToolCall, error) {
 	var calls []domain.AIToolCall
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {

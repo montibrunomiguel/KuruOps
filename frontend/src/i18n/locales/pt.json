@@ -259,6 +259,16 @@
       }
     }
   },
+  "analysisChat": {
+    "title": "Analisar com IA",
+    "empty": "Pergunte qualquer coisa ao assistente sobre este item -- ele tem acesso às mesmas ferramentas que a análise automática usa.",
+    "thinking": "Pensando...",
+    "approvalNeeded": "O assistente quer executar uma ferramenta que precisa da sua aprovação para continuar.",
+    "requestingTool": "Solicitando ferramenta: {{tool}}",
+    "placeholder": "Faça uma pergunta de acompanhamento...",
+    "send": "Enviar",
+    "sending": "Enviando..."
+  },
   "alerts": {
     "title": "Alertas",
     "subtitle": "Todos os alertas de segurança recebidos via webhook",
@@ -377,7 +387,7 @@
       "timelineTitle": "Linha do Tempo",
       "timelineEmpty": "Sem eventos ainda.",
       "correlatedAlertsTitle": "Alertas Correlacionados",
-      "linkAlertPlaceholder": "ID do alerta a vincular",
+      "linkAlertPlaceholder": "Buscar por ID ou título do alerta...",
       "link": "Vincular",
       "unlink": "Desvincular",
       "noCorrelatedAlerts": "Nenhum alerta correlacionado ainda.",

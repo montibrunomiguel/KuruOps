@@ -168,11 +168,11 @@ func main() {
 	incidentService.EnableAnalysisLookup(aiAnalysisRunRepo)
 
 	postmortemService := service.NewPostmortemService(incidentService, aiAnalysisService)
-	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService)
+	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, mcpToolService)
 
 	// AlertHandlers needs IncidentService for the escalate-to-incident route
 	// (see AlertHandlers.escalate), so it's constructed after incidentService.
-	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, userService)
+	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService)
 
 	playbookRepo := repository.NewPlaybookRepository()
 	playbookService := service.NewPlaybookService(pool, playbookRepo)

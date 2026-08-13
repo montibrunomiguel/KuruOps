@@ -258,6 +258,35 @@ export interface DiscoveredTool {
   description: string;
 }
 
+// AnalysisChatMessage/AnalysisChatTranscript mirror backend
+// service.ChatMessage/ChatTranscript -- the "Analisar com IA" chat's
+// transcript (see components/AnalysisChat.tsx). role is "user" | "assistant"
+// | "tool"; toolCalls is only ever set on an "assistant" message that
+// requested tool use, toolCallId only on the "tool" message answering it.
+export interface AnalysisChatToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface AnalysisChatMessage {
+  role: "user" | "assistant" | "tool";
+  content: string;
+  toolCalls?: AnalysisChatToolCall[];
+  toolCallId?: string;
+}
+
+// status/runId/pendingToolCallId/error are omitted by the backend
+// (omitempty) when no analysis run exists yet -- an empty chat, not an
+// error.
+export interface AnalysisChatTranscript {
+  runId?: number;
+  status?: "running" | "paused" | "completed" | "failed";
+  messages: AnalysisChatMessage[];
+  pendingToolCallId?: number;
+  error?: string;
+}
+
 export interface LoginResponse {
   token: string;
   refreshToken: string;

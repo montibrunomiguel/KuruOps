@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored on
+# purpose (see .gitignore) -- never commit real values, especially
+# db_master_password.
+
+project     = "argusops"
+environment = "sample"
+region      = "us-east-1"
+azs         = ["us-east-1a", "us-east-1b"]
+
+kubernetes_version  = "1.30"
+node_instance_type  = "t3.medium"
+node_desired_size   = 2
+
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20
+# Leave unset to have Terraform generate one (see rds.tf) -- it'll show up
+# in `terraform output -raw db_master_password`.
+# db_master_password = ""
+
+create_uploads_bucket = true

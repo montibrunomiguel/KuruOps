@@ -31,7 +31,7 @@ import (
 // eventual result needs to wait for it to finish first; wiring
 // EnableEventPublishing here gives tests exactly that signal (the same
 // live-update event a real Broadcaster would fan out to SSE clients).
-func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalysisService, <-chan struct{}) {
+func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalysisService, <-chan string) {
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, store)
@@ -39,23 +39,32 @@ func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalys
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
-	analyzed := make(chan struct{}, 8)
-	svc.EnableEventPublishing(func(uuid.UUID, string, any) {
-		analyzed <- struct{}{}
+	analyzed := make(chan string, 8)
+	svc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) {
+		analyzed <- eventType
 	})
 	return svc, analyzed
 }
 
 // waitAnalyzed blocks until the background analysis started by
-// StartAlertAnalysis/StartIncidentAnalysis fires its completion event, or
-// fails the test after 2s -- generous for a test LLM double that responds
+// StartAlertAnalysis/StartIncidentAnalysis/Continue*Analysis fires its
+// final "alert"/"incident" completion event, draining and ignoring any
+// "ai_analysis_turn" events seen first (Continue*Analysis always drives its
+// turns through driveAgentLoop, which fires one of those per turn even
+// with no MCP tools configured -- see AIAnalysisService.publishTurn). Fails
+// the test after 2s -- generous for a test LLM double that responds
 // instantly, tight enough to fail fast if notifyAnalyzed regresses.
-func waitAnalyzed(t *testing.T, analyzed <-chan struct{}) {
+func waitAnalyzed(t *testing.T, analyzed <-chan string) {
 	t.Helper()
-	select {
-	case <-analyzed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("background analysis did not complete in time")
+	for {
+		select {
+		case eventType := <-analyzed:
+			if eventType != "ai_analysis_turn" {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("background analysis did not complete in time")
+		}
 	}
 }
 

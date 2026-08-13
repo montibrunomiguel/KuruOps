@@ -259,6 +259,16 @@
       }
     }
   },
+  "analysisChat": {
+    "title": "Analyze with AI",
+    "empty": "Ask the assistant anything about this item -- it has access to the same tools the automatic analysis does.",
+    "thinking": "Thinking...",
+    "approvalNeeded": "The assistant wants to run a tool that needs your approval before it continues.",
+    "requestingTool": "Requesting tool: {{tool}}",
+    "placeholder": "Ask a follow-up question...",
+    "send": "Send",
+    "sending": "Sending..."
+  },
   "alerts": {
     "title": "Alerts",
     "subtitle": "All webhook-ingested security alerts",
@@ -377,7 +387,7 @@
       "timelineTitle": "Timeline",
       "timelineEmpty": "No events yet.",
       "correlatedAlertsTitle": "Correlated Alerts",
-      "linkAlertPlaceholder": "Alert ID to link",
+      "linkAlertPlaceholder": "Search by alert ID or title...",
       "link": "Link",
       "unlink": "Unlink",
       "noCorrelatedAlerts": "No correlated alerts yet.",
