@@ -222,9 +222,10 @@ func main() {
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
 	authHandlers := handlers.NewAuthHandlers(pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
-	accountHandlers := handlers.NewAccountHandlers(authService)
+	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
+	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 
-	authMiddleware := middleware.JWTAuth(verifier)
+	authMiddleware := middleware.JWTAuth(verifier, apiTokenService)
 	if useDevHeaderAuth {
 		authMiddleware = middleware.DevHeaderAuth
 	}

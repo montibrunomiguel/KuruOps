@@ -119,7 +119,20 @@
     "currentPassword": "Current password",
     "currentPasswordHint": "(required to change your email)",
     "passwordTitle": "Change Password",
-    "saved": "Saved."
+    "saved": "Saved.",
+    "apiTokens": {
+      "title": "API Tokens",
+      "hint": "Personal tokens for authenticating your own API requests, as an alternative to logging in -- they carry your current permissions and stop working the moment they're revoked.",
+      "newToken": "+ New Token",
+      "noTokens": "No API tokens yet.",
+      "tokenGenerated": "Token \"{{name}}\" created. Copy it now -- it won't be shown again.",
+      "expiresOn": "expires {{date}}",
+      "revoke": "Revoke",
+      "form": {
+        "name": "Token Name",
+        "namePlaceholder": "e.g. CI script"
+      }
+    }
   },
   "access": {
     "adminOnly": "This area is restricted to administrators. Talk to an admin if you need access.",

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
@@ -14,11 +15,12 @@ import (
 // account. Mounted under /api/v1/account -- unlike AuthHandlers (login,
 // unauthenticated), these routes need to know who's calling.
 type AccountHandlers struct {
-	auth *service.AuthService
+	auth      *service.AuthService
+	apiTokens *service.UserAPITokenService
 }
 
-func NewAccountHandlers(auth *service.AuthService) *AccountHandlers {
-	return &AccountHandlers{auth: auth}
+func NewAccountHandlers(auth *service.AuthService, apiTokens *service.UserAPITokenService) *AccountHandlers {
+	return &AccountHandlers{auth: auth, apiTokens: apiTokens}
 }
 
 // ChangePasswordPath is registered on the router and passed to
@@ -29,6 +31,9 @@ const ChangePasswordPath = "/api/v1/account/change-password"
 func (h *AccountHandlers) Routes(r chi.Router) {
 	r.Post("/change-password", h.changePassword)
 	r.Put("/profile", h.updateProfile)
+	r.Get("/api-tokens", h.listAPITokens)
+	r.Post("/api-tokens", h.createAPIToken)
+	r.Delete("/api-tokens/{id}", h.revokeAPIToken)
 }
 
 type changePasswordRequest struct {
@@ -85,4 +90,66 @@ func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (h *AccountHandlers) listAPITokens(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+
+	tokens, err := h.apiTokens.List(r.Context(), tenantID, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+type createAPITokenRequest struct {
+	Name string `json:"name"`
+	// ExpiresInDays: omitted/null -> service default (90d); 0 or negative ->
+	// token never expires. Same convention as createWebhookRequest.
+	ExpiresInDays *int `json:"expiresInDays,omitempty"`
+}
+
+func (h *AccountHandlers) createAPIToken(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+
+	var req createAPITokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	result, err := h.apiTokens.Create(r.Context(), tenantID, userID, req.Name, req.ExpiresInDays)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Token is included in this response body only -- it is not retrievable
+	// again after this request (see service.CreateAPITokenResult).
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token":     result.Token,
+		"plaintext": result.Plaintext,
+	})
+}
+
+func (h *AccountHandlers) revokeAPIToken(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	userID, _ := middleware.UserID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid token id")
+		return
+	}
+
+	if err := h.apiTokens.Revoke(r.Context(), tenantID, userID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
