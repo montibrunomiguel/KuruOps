@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
@@ -206,7 +208,8 @@ func (h *UploadHandlers) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := store.Put(r.Context(), key, file, fileHeader.Size, contentType); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not store uploaded file")
+		slog.Error("upload: store.Put failed", "tenant_id", tenantID, "key", key, "error", err)
+		writeError(w, http.StatusInternalServerError, h.uploadFailureMessage(r, tenantID))
 		return
 	}
 
@@ -216,6 +219,40 @@ func (h *UploadHandlers) upload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{"url": "/api/v1/uploads/images/" + key})
+}
+
+// uploadFailureMessage tailors the client-facing message for a store.Put
+// failure to whether the tenant has a real S3/GCS integration configured.
+// BuildStore itself can't fail with "no storage configured" -- see its own
+// doc comment: a tenant with no storage_config row, or an unrecognized
+// provider, always falls back to a working LocalStore -- so reaching this
+// point means a real, previously-working Store rejected the write. With a
+// cloud integration configured, that's almost always a credentials/bucket
+// problem an admin can fix in Settings; on the local-disk fallback, it's a
+// server-side issue (disk full, permissions) nobody using the app can
+// self-serve, so the message doesn't send them looking for a Settings page
+// that wouldn't help.
+func (h *UploadHandlers) uploadFailureMessage(r *http.Request, tenantID uuid.UUID) string {
+	cfg, err := h.storageConfig.Get(r.Context(), tenantID)
+	if err != nil {
+		cfg = nil
+	}
+	return storageFailureMessage(cfg)
+}
+
+// storageFailureMessage is uploadFailureMessage's pure branching logic,
+// split out so it can be unit tested directly against every
+// domain.StorageConfig shape without needing a real tenant/database.
+func storageFailureMessage(cfg *domain.StorageConfig) string {
+	if cfg == nil {
+		return "could not store uploaded file -- contact your administrator"
+	}
+	switch cfg.Provider {
+	case domain.StorageProviderS3, domain.StorageProviderGCS:
+		return "could not upload to the configured storage integration -- verify its credentials and bucket in Settings -> Storage Integration"
+	default:
+		return "could not store uploaded file -- contact your administrator"
+	}
 }
 
 // resolveAttachmentExt validates an uploaded file's declared type against
