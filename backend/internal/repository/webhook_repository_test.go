@@ -62,6 +62,23 @@ func TestWebhookRepository_InsertGetList(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "disabled", got.Status)
 	})
+
+	t.Run("set field mapping template assigns then clears it", func(t *testing.T) {
+		templateRepo := repository.NewFieldMappingTemplateRepository()
+		template := &domain.FieldMappingTemplate{TenantID: tenantID, Name: "Wazuh fields"}
+		require.NoError(t, templateRepo.Insert(t.Context(), tx, template))
+
+		require.NoError(t, repo.SetFieldMappingTemplate(t.Context(), tx, ep.ID, &template.ID))
+		got, err := repo.Get(t.Context(), tx, ep.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.FieldMappingTemplateID)
+		assert.Equal(t, template.ID, *got.FieldMappingTemplateID)
+
+		require.NoError(t, repo.SetFieldMappingTemplate(t.Context(), tx, ep.ID, nil))
+		got, err = repo.Get(t.Context(), tx, ep.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.FieldMappingTemplateID)
+	})
 }
 
 func TestWebhookRepository_ResolveToken(t *testing.T) {

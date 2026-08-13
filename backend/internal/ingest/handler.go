@@ -21,22 +21,24 @@ import (
 const maxBodyBytes = 1 << 20 // 1 MiB; a webhook payload has no business being larger
 
 type Handler struct {
-	pool        *db.Pool
-	webhooks    *repository.WebhookRepository
-	alerts      *service.AlertService
-	tags        *service.TagService
-	generic     Normalizer
-	normalizers map[string]Normalizer
-	logger      *slog.Logger
+	pool          *db.Pool
+	webhooks      *repository.WebhookRepository
+	alerts        *service.AlertService
+	tags          *service.TagService
+	fieldMappings *service.FieldMappingTemplateService
+	generic       Normalizer
+	normalizers   map[string]Normalizer
+	logger        *slog.Logger
 }
 
-func NewHandler(pool *db.Pool, webhooks *repository.WebhookRepository, alerts *service.AlertService, tags *service.TagService, logger *slog.Logger) *Handler {
+func NewHandler(pool *db.Pool, webhooks *repository.WebhookRepository, alerts *service.AlertService, tags *service.TagService, fieldMappings *service.FieldMappingTemplateService, logger *slog.Logger) *Handler {
 	return &Handler{
-		pool:     pool,
-		webhooks: webhooks,
-		alerts:   alerts,
-		tags:     tags,
-		generic:  NewGenericNormalizer(),
+		pool:          pool,
+		webhooks:      webhooks,
+		alerts:        alerts,
+		tags:          tags,
+		fieldMappings: fieldMappings,
+		generic:       NewGenericNormalizer(),
 		// Keyed by webhook_endpoints.source, lower-cased -- an admin types
 		// this in freely when creating an endpoint (see Settings -> Webhook
 		// Endpoints), so matching is case-insensitive rather than requiring
@@ -129,6 +131,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	metadata := extractMetadata(body)
+	if endpoint.FieldMappingTemplateID != nil {
+		// A missing/deleted template shouldn't fail the whole alert over a
+		// best-effort enrichment -- same principle extractMetadata/
+		// FilterKnown already follow -- so this only logs and falls back to
+		// the metadata already extracted above.
+		template, err := h.fieldMappings.Get(r.Context(), endpoint.TenantID, *endpoint.FieldMappingTemplateID)
+		if err != nil {
+			logger.Error("load field mapping template failed", "error", err, "template_id", *endpoint.FieldMappingTemplateID)
+		} else if template != nil {
+			metadata = applyFieldMappingTemplate(body, template.Rules, metadata)
+		}
+	}
+
 	alert, err := h.alerts.Ingest(r.Context(), endpoint.TenantID, endpoint.ID, domain.Alert{
 		ExternalID: normalized.ExternalID,
 		Title:      normalized.Title,
@@ -139,7 +155,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		SrcIP:      srcIP,
 		Tags:       tags,
 		Payload:    body,
-		Metadata:   extractMetadata(body),
+		Metadata:   metadata,
 	})
 	if err != nil {
 		logger.Error("ingest alert failed", "error", err, "tenant_id", endpoint.TenantID)

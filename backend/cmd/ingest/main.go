@@ -112,7 +112,8 @@ func main() {
 	})
 
 	webhookRepo := repository.NewWebhookRepository()
-	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, logger)
+	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, fieldMappingTemplateService, logger)
 
 	hookLimiter := middleware.NewRateLimiter(pool.Pool, "webhook_ip", 60, time.Minute)
 

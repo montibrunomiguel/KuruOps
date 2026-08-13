@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
-import type { WebhookEndpoint } from "../../types/api";
+import type { FieldMappingTemplate, WebhookEndpoint } from "../../types/api";
 import { formatDateTime } from "../../lib/format";
 
 function expiryOptions(t: (k: string) => string): { value: string; label: string }[] {
@@ -27,6 +27,11 @@ export function WebhooksPanel() {
   const { t } = useTranslation();
   const { data: endpoints, loading, error, reload } = useList<WebhookEndpoint>(
     (tk) => api.get<WebhookEndpoint[]>("/api/v1/settings/webhooks", tk),
+  );
+  // Fetched once here and passed down to the create form and every row,
+  // instead of each of them fetching its own copy.
+  const { data: templates } = useList<FieldMappingTemplate>((tk) =>
+    api.get<FieldMappingTemplate[]>("/api/v1/settings/field-mapping-templates", tk),
   );
 
   const [showCreate, setShowCreate] = useState(false);
@@ -67,6 +72,7 @@ export function WebhooksPanel() {
 
       {showCreate && (
         <CreateWebhookForm
+          templates={templates ?? []}
           onCancel={() => setShowCreate(false)}
           onCreated={(name, tok) => {
             setShowCreate(false);
@@ -87,6 +93,7 @@ export function WebhooksPanel() {
           <WebhookRow
             key={ep.id}
             endpoint={ep}
+            templates={templates ?? []}
             onChanged={reload}
             // Regenerate's onChanged() triggers this same reload -- which
             // sets loading:true and (per the !loading guard above) briefly
@@ -103,9 +110,11 @@ export function WebhooksPanel() {
 }
 
 function CreateWebhookForm({
+  templates,
   onCancel,
   onCreated,
 }: {
+  templates: FieldMappingTemplate[];
   onCancel: () => void;
   onCreated: (name: string, token: string) => void;
 }) {
@@ -114,6 +123,7 @@ function CreateWebhookForm({
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
   const [expiresInDays, setExpiresInDays] = useState("90");
+  const [fieldMappingTemplateId, setFieldMappingTemplateId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,7 +134,7 @@ function CreateWebhookForm({
     try {
       const res = await api.post<{ endpoint: WebhookEndpoint; token: string }>(
         "/api/v1/settings/webhooks",
-        { name, source, expiresInDays: expiryToDays(expiresInDays) },
+        { name, source, expiresInDays: expiryToDays(expiresInDays), fieldMappingTemplateId: fieldMappingTemplateId || undefined },
         token,
       );
       onCreated(name, res.token);
@@ -162,6 +172,22 @@ function CreateWebhookForm({
             {options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="wh-field-mapping-template">{t("settings.webhooks.fieldMappingTemplate")}</label>
+          <select
+            id="wh-field-mapping-template"
+            className="select"
+            value={fieldMappingTemplateId}
+            onChange={(e) => setFieldMappingTemplateId(e.target.value)}
+          >
+            <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
+            {templates.map((tmpl) => (
+              <option key={tmpl.id} value={tmpl.id}>
+                {tmpl.name}
               </option>
             ))}
           </select>
@@ -210,10 +236,12 @@ function expiryBadge(t: (k: string, opts?: Record<string, unknown>) => string, e
 
 function WebhookRow({
   endpoint,
+  templates,
   onChanged,
   onRegenerated,
 }: {
   endpoint: WebhookEndpoint;
+  templates: FieldMappingTemplate[];
   onChanged: () => void;
   onRegenerated: (token: string) => void;
 }) {
@@ -221,7 +249,25 @@ function WebhookRow({
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [regenExpiry, setRegenExpiry] = useState("90");
+  const [fieldMappingTemplateId, setFieldMappingTemplateId] = useState(endpoint.fieldMappingTemplateId ?? "");
   const [error, setError] = useState<string | null>(null);
+
+  async function saveFieldMappingTemplate() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.put(
+        `/api/v1/settings/webhooks/${endpoint.id}/field-mapping-template`,
+        { templateId: fieldMappingTemplateId || null },
+        token,
+      );
+      onChanged();
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function toggleStatus() {
     setBusy(true);
@@ -274,6 +320,27 @@ function WebhookRow({
         {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
       </div>
       <div className="row-actions">
+        <select
+          className="select"
+          style={{ padding: "4px 8px", fontSize: 11.5 }}
+          value={fieldMappingTemplateId}
+          onChange={(e) => setFieldMappingTemplateId(e.target.value)}
+          title={t("settings.webhooks.fieldMappingTemplate")}
+        >
+          <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
+          {templates.map((tmpl) => (
+            <option key={tmpl.id} value={tmpl.id}>
+              {tmpl.name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn btn-sm"
+          onClick={saveFieldMappingTemplate}
+          disabled={busy || fieldMappingTemplateId === (endpoint.fieldMappingTemplateId ?? "")}
+        >
+          {t("settings.webhooks.changeTemplate")}
+        </button>
         <select
           className="select"
           style={{ padding: "4px 8px", fontSize: 11.5 }}

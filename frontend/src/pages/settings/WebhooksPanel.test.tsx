@@ -15,6 +15,16 @@ function endpointFixture(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+// WebhooksPanel fetches the field mapping template catalog alongside the
+// endpoint list -- routed to an empty list here so a mock built around one
+// endpointFixture() as its catch-all response doesn't also render that
+// fixture as a template <option>, which would duplicate "Wazuh Prod" and
+// break a plain findByText/getByText.
+function withEmptyTemplates(url: string, fallback: () => Promise<Response>) {
+  if (url.includes("field-mapping-templates")) return Promise.resolve(jsonResponse([]));
+  return fallback();
+}
+
 function renderPanel() {
   return render(
     <AuthProvider>
@@ -61,10 +71,12 @@ describe("WebhooksPanel", () => {
   });
 
   it("toggling status posts to the disable endpoint for an active token", async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/disable")) return Promise.resolve(new Response(null, { status: 204 }));
-      return Promise.resolve(jsonResponse([endpointFixture()]));
-    });
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      withEmptyTemplates(url, () => {
+        if (url.includes("/disable")) return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.resolve(jsonResponse([endpointFixture()]));
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
@@ -195,10 +207,12 @@ describe("WebhooksPanel", () => {
   });
 
   it("toggling status posts to the enable endpoint for a disabled token", async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/enable")) return Promise.resolve(new Response(null, { status: 204 }));
-      return Promise.resolve(jsonResponse([endpointFixture({ status: "disabled" })]));
-    });
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      withEmptyTemplates(url, () => {
+        if (url.includes("/enable")) return Promise.resolve(new Response(null, { status: 204 }));
+        return Promise.resolve(jsonResponse([endpointFixture({ status: "disabled" })]));
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
@@ -213,10 +227,12 @@ describe("WebhooksPanel", () => {
   it("shows an error message when toggling status fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockImplementation((url: string) => {
-        if (url.includes("/disable")) return Promise.resolve(jsonResponse({ error: "toggle boom" }, 500));
-        return Promise.resolve(jsonResponse([endpointFixture()]));
-      }),
+      vi.fn().mockImplementation((url: string) =>
+        withEmptyTemplates(url, () => {
+          if (url.includes("/disable")) return Promise.resolve(jsonResponse({ error: "toggle boom" }, 500));
+          return Promise.resolve(jsonResponse([endpointFixture()]));
+        }),
+      ),
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
@@ -226,10 +242,12 @@ describe("WebhooksPanel", () => {
   });
 
   it("Regenerate posts to the regenerate endpoint with the chosen expiry and reveals the new token", async () => {
-    const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/regenerate")) return Promise.resolve(jsonResponse({ token: "whk_newtoken" }));
-      return Promise.resolve(jsonResponse([endpointFixture()]));
-    });
+    const fetchMock = vi.fn().mockImplementation((url: string) =>
+      withEmptyTemplates(url, () => {
+        if (url.includes("/regenerate")) return Promise.resolve(jsonResponse({ token: "whk_newtoken" }));
+        return Promise.resolve(jsonResponse([endpointFixture()]));
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
@@ -253,15 +271,44 @@ describe("WebhooksPanel", () => {
   it("shows an error message when regenerate fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockImplementation((url: string) => {
-        if (url.includes("/regenerate")) return Promise.resolve(jsonResponse({ error: "regenerate boom" }, 500));
-        return Promise.resolve(jsonResponse([endpointFixture()]));
-      }),
+      vi.fn().mockImplementation((url: string) =>
+        withEmptyTemplates(url, () => {
+          if (url.includes("/regenerate")) return Promise.resolve(jsonResponse({ error: "regenerate boom" }, 500));
+          return Promise.resolve(jsonResponse([endpointFixture()]));
+        }),
+      ),
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
 
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(await screen.findByText("regenerate boom")).toBeInTheDocument();
+  });
+
+  it("changing the field mapping template PUTs the new selection", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("field-mapping-templates")) {
+        return Promise.resolve(jsonResponse([{ id: "t1", name: "Wazuh fields", rules: [] }]));
+      }
+      if (url.includes("field-mapping-template") && url.includes("/e1/")) {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(jsonResponse([endpointFixture()]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await screen.findByText("Wazuh Prod");
+
+    await userEvent.selectOptions(screen.getByTitle("Field mapping template"), "t1");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/settings/webhooks/e1/field-mapping-template",
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+    const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+    expect(JSON.parse((putCall![1] as RequestInit).body as string)).toEqual({ templateId: "t1" });
   });
 });

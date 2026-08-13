@@ -186,6 +186,9 @@ func main() {
 	webhookService := service.NewWebhookService(pool, webhookRepo)
 	webhookHandlers := handlers.NewWebhookHandlers(webhookService)
 
+	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	fieldMappingTemplateHandlers := handlers.NewFieldMappingTemplateHandlers(fieldMappingTemplateService)
+
 	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore)
 	llmProviderHandlers := handlers.NewLLMProviderHandlers(llmProviderService)
 
@@ -236,32 +239,33 @@ func main() {
 	loginRateLimiter := middleware.NewRateLimiter(pool.Pool, "login_ip", 20, time.Minute)
 
 	router := httpserver.NewRouter(httpserver.Options{
-		AlertHandlers:             alertHandlers,
-		IncidentHandlers:          incidentHandlers,
-		PlaybookHandlers:          playbookHandlers,
-		DashboardHandlers:         dashboardHandlers,
-		TagHandlers:               tagHandlers,
-		WebhookHandlers:           webhookHandlers,
-		LLMProviderHandlers:       llmProviderHandlers,
-		MCPServerHandlers:         mcpServerHandlers,
-		UserHandlers:              userHandlers,
-		RoleHandlers:              roleHandlers,
-		AuthHandlers:              authHandlers,
-		LoginRateLimiter:          loginRateLimiter,
-		AccountHandlers:           accountHandlers,
-		IdentityConfigHandlers:    identityCfgHandlers,
-		UploadHandlers:            uploadHandlers,
-		StorageConfigHandlers:     storageConfigHandlers,
-		SMTPConfigHandlers:        smtpConfigHandlers,
-		OnCallShiftHandlers:       onCallShiftHandlers,
-		IncidentSLAHandlers:       incidentSLAHandlers,
-		EscalationPolicyHandlers:  escalationPolicyHandlers,
-		AuditExportHandlers:       auditExportHandlers,
-		DatabaseMigrationHandlers: dbMigrationHandlers,
-		EventsHandlers:            eventsHandlers,
-		AuthMiddleware:            authMiddleware,
-		Logger:                    logger,
-		HealthCheck:               httpserver.HealthCheck(pool.Pool),
+		AlertHandlers:                alertHandlers,
+		IncidentHandlers:             incidentHandlers,
+		PlaybookHandlers:             playbookHandlers,
+		DashboardHandlers:            dashboardHandlers,
+		TagHandlers:                  tagHandlers,
+		WebhookHandlers:              webhookHandlers,
+		FieldMappingTemplateHandlers: fieldMappingTemplateHandlers,
+		LLMProviderHandlers:          llmProviderHandlers,
+		MCPServerHandlers:            mcpServerHandlers,
+		UserHandlers:                 userHandlers,
+		RoleHandlers:                 roleHandlers,
+		AuthHandlers:                 authHandlers,
+		LoginRateLimiter:             loginRateLimiter,
+		AccountHandlers:              accountHandlers,
+		IdentityConfigHandlers:       identityCfgHandlers,
+		UploadHandlers:               uploadHandlers,
+		StorageConfigHandlers:        storageConfigHandlers,
+		SMTPConfigHandlers:           smtpConfigHandlers,
+		OnCallShiftHandlers:          onCallShiftHandlers,
+		IncidentSLAHandlers:          incidentSLAHandlers,
+		EscalationPolicyHandlers:     escalationPolicyHandlers,
+		AuditExportHandlers:          auditExportHandlers,
+		DatabaseMigrationHandlers:    dbMigrationHandlers,
+		EventsHandlers:               eventsHandlers,
+		AuthMiddleware:               authMiddleware,
+		Logger:                       logger,
+		HealthCheck:                  httpserver.HealthCheck(pool.Pool),
 	})
 
 	srv := &http.Server{

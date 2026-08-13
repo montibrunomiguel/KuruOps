@@ -74,6 +74,24 @@ export interface WebhookEndpoint {
   expiresAt?: string;
   createdBy?: string;
   createdAt: string;
+  // Unlike name/source, changeable after creation -- see WebhooksPanel's
+  // "change template" action.
+  fieldMappingTemplateId?: string;
+}
+
+export interface FieldMappingRule {
+  jsonPath: string;
+  label: string;
+}
+
+export interface FieldMappingTemplate {
+  id: string;
+  tenantId: string;
+  name: string;
+  rules: FieldMappingRule[];
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UserAPIToken {

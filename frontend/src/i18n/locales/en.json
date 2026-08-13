@@ -431,6 +431,7 @@
     },
     "nav": {
       "webhooks": "Webhook Endpoints",
+      "fieldMappingTemplates": "Field Mapping Templates",
       "aiIntegration": "AI Integration",
       "mcpServers": "MCP Servers",
       "tags": "Tags",
@@ -471,7 +472,34 @@
       },
       "newTokenLabel": "new token: {{token}} (copy now)",
       "regenExpiryTitle": "New token expiry",
-      "regenerate": "Regenerate"
+      "regenerate": "Regenerate",
+      "fieldMappingTemplate": "Field mapping template",
+      "noFieldMappingTemplate": "None",
+      "changeTemplate": "Save"
+    },
+    "fieldMappingTemplates": {
+      "title": "Field Mapping Templates",
+      "helper": "Pull extra fields out of a webhook's raw JSON body (beyond its own \"metadata\" object) onto the alert's metadata panel. Assign a template to one or more endpoints in Webhook Endpoints above.",
+      "newTemplate": "+ New Template",
+      "noTemplates": "No field mapping templates yet.",
+      "form": {
+        "name": "Name",
+        "namePlaceholder": "Wazuh fields, CrowdStrike fields...",
+        "rules": "Rules",
+        "jsonPath": "JSON path",
+        "jsonPathPlaceholder": "rule.level, data.user.name...",
+        "label": "Display label",
+        "labelPlaceholder": "Rule Level, User...",
+        "addRule": "+ Add rule",
+        "removeRule": "Remove rule",
+        "noRulesHint": "Add at least one rule below."
+      },
+      "rulesCount_one": "{{count}} rule",
+      "rulesCount_other": "{{count}} rules",
+      "edit": "Edit",
+      "delete": "Delete",
+      "deleteConfirm": "Delete this template? Endpoints using it will fall back to just the sender's own \"metadata\" object.",
+      "conflictHint": "If a rule's label matches a key the sender already put in its own \"metadata\" object, the sender's value wins."
     },
     "llm": {
       "title": "AI Integration",

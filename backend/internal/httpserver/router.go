@@ -13,28 +13,29 @@ import (
 )
 
 type Options struct {
-	AlertHandlers             *handlers.AlertHandlers
-	IncidentHandlers          *handlers.IncidentHandlers
-	PlaybookHandlers          *handlers.PlaybookHandlers
-	DashboardHandlers         *handlers.DashboardHandlers
-	WebhookHandlers           *handlers.WebhookHandlers
-	LLMProviderHandlers       *handlers.LLMProviderHandlers
-	MCPServerHandlers         *handlers.MCPServerHandlers
-	UserHandlers              *handlers.UserHandlers
-	RoleHandlers              *handlers.RoleHandlers
-	AuthHandlers              *handlers.AuthHandlers
-	AccountHandlers           *handlers.AccountHandlers
-	IdentityConfigHandlers    *handlers.IdentityConfigHandlers
-	TagHandlers               *handlers.TagHandlers
-	UploadHandlers            *handlers.UploadHandlers
-	StorageConfigHandlers     *handlers.StorageConfigHandlers
-	SMTPConfigHandlers        *handlers.SMTPConfigHandlers
-	OnCallShiftHandlers       *handlers.OnCallShiftHandlers
-	IncidentSLAHandlers       *handlers.IncidentSLAHandlers
-	EscalationPolicyHandlers  *handlers.EscalationPolicyHandlers
-	AuditExportHandlers       *handlers.AuditExportHandlers
-	DatabaseMigrationHandlers *handlers.DatabaseMigrationHandlers
-	EventsHandlers            *handlers.EventsHandlers
+	AlertHandlers                *handlers.AlertHandlers
+	IncidentHandlers             *handlers.IncidentHandlers
+	PlaybookHandlers             *handlers.PlaybookHandlers
+	DashboardHandlers            *handlers.DashboardHandlers
+	WebhookHandlers              *handlers.WebhookHandlers
+	FieldMappingTemplateHandlers *handlers.FieldMappingTemplateHandlers
+	LLMProviderHandlers          *handlers.LLMProviderHandlers
+	MCPServerHandlers            *handlers.MCPServerHandlers
+	UserHandlers                 *handlers.UserHandlers
+	RoleHandlers                 *handlers.RoleHandlers
+	AuthHandlers                 *handlers.AuthHandlers
+	AccountHandlers              *handlers.AccountHandlers
+	IdentityConfigHandlers       *handlers.IdentityConfigHandlers
+	TagHandlers                  *handlers.TagHandlers
+	UploadHandlers               *handlers.UploadHandlers
+	StorageConfigHandlers        *handlers.StorageConfigHandlers
+	SMTPConfigHandlers           *handlers.SMTPConfigHandlers
+	OnCallShiftHandlers          *handlers.OnCallShiftHandlers
+	IncidentSLAHandlers          *handlers.IncidentSLAHandlers
+	EscalationPolicyHandlers     *handlers.EscalationPolicyHandlers
+	AuditExportHandlers          *handlers.AuditExportHandlers
+	DatabaseMigrationHandlers    *handlers.DatabaseMigrationHandlers
+	EventsHandlers               *handlers.EventsHandlers
 	// LoginRateLimiter is built by cmd/api (needs a *pgxpool.Pool, which
 	// this package otherwise has no reason to depend on -- see
 	// middleware.NewRateLimiter) and applied to /auth below.
@@ -154,6 +155,7 @@ func NewRouter(opts Options) http.Handler {
 		api.Group(func(admin chi.Router) {
 			admin.Use(middleware.RequireAdmin())
 			admin.Route("/settings/webhooks", opts.WebhookHandlers.Routes)
+			admin.Route("/settings/field-mapping-templates", opts.FieldMappingTemplateHandlers.Routes)
 			admin.Route("/settings/llm-providers", opts.LLMProviderHandlers.Routes)
 			admin.Route("/settings/mcp-servers", opts.MCPServerHandlers.Routes)
 			admin.Route("/settings/users", opts.UserHandlers.Routes)
