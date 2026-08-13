@@ -198,6 +198,70 @@ func TestAlertHandlers_AnalysisChat_ApproveToolCall_ScopedToOwningAlert(t *testi
 	assert.Equal(t, http.StatusNoContent, approveOwningAlert.Code)
 }
 
+// TestAlertHandlers_AnalysisChat_RejectToolCall confirms the inline reject
+// endpoint resolves a pending call without needing the MCP server to
+// respond to anything (RejectToolCall never dials -- see
+// MCPToolService.RejectToolCall).
+func TestAlertHandlers_AnalysisChat_RejectToolCall(t *testing.T) {
+	fx := newChatFixture(t, "irrelevant")
+	r := newRouter(fx.alertHandlers.Routes)
+	pool := testutil.RequireTestDB(t)
+
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
+		Name: "EDR", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
+		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
+		EnabledFor: []string{"alert_analysis"},
+	})
+	require.NoError(t, err)
+
+	call, err := fx.mcpTool.ProposeToolCall(t.Context(), fx.tenantID, server.ID, "alert", fx.alertID, "quarantine_host", map[string]any{"host": "10.0.0.5"})
+	require.NoError(t, err)
+	callID := strconv.FormatInt(call.ID, 10)
+
+	rec := doRequest(r, withClaims(httptest.NewRequest("POST", "/"+fx.alertID.String()+"/analyze/tool-calls/"+callID+"/reject", nil), fx.tenantID, fx.actorID, nil))
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+
+	pending, err := fx.mcpTool.PendingApprovals(t.Context(), fx.tenantID)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
+}
+
+// TestIncidentHandlers_AnalysisChat_ApproveToolCall_ScopedToOwningIncident
+// mirrors the alert-side ownership-scoping test above.
+func TestIncidentHandlers_AnalysisChat_ApproveToolCall_ScopedToOwningIncident(t *testing.T) {
+	fx := newChatFixture(t, "irrelevant")
+	r := newRouter(fx.incidentHandlers.Routes)
+	pool := testutil.RequireTestDB(t)
+
+	mcpSrv := fakeMCPToolServer(t, "quarantine_host", `{"quarantined":true}`)
+	defer mcpSrv.Close()
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
+		Name: "EDR", Transport: "http", EndpointOrCommand: mcpSrv.URL,
+		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
+		EnabledFor: []string{"incident_analysis"},
+	})
+	require.NoError(t, err)
+
+	call, err := fx.mcpTool.ProposeToolCall(t.Context(), fx.tenantID, server.ID, "incident", fx.incidentID, "quarantine_host", map[string]any{"host": "10.0.0.5"})
+	require.NoError(t, err)
+	callID := strconv.FormatInt(call.ID, 10)
+
+	rejectCall, err := fx.mcpTool.ProposeToolCall(t.Context(), fx.tenantID, server.ID, "incident", fx.incidentID, "quarantine_host", map[string]any{"host": "10.0.0.6"})
+	require.NoError(t, err)
+	rejectCallID := strconv.FormatInt(rejectCall.ID, 10)
+
+	notFound := doRequest(r, withClaims(httptest.NewRequest("POST", "/"+uuid.NewString()+"/analyze/tool-calls/"+callID+"/approve", nil), fx.tenantID, fx.actorID, nil))
+	assert.Equal(t, http.StatusNotFound, notFound.Code)
+
+	approve := doRequest(r, withClaims(httptest.NewRequest("POST", "/"+fx.incidentID.String()+"/analyze/tool-calls/"+callID+"/approve", nil), fx.tenantID, fx.actorID, nil))
+	assert.Equal(t, http.StatusNoContent, approve.Code)
+
+	reject := doRequest(r, withClaims(httptest.NewRequest("POST", "/"+fx.incidentID.String()+"/analyze/tool-calls/"+rejectCallID+"/reject", nil), fx.tenantID, fx.actorID, nil))
+	assert.Equal(t, http.StatusNoContent, reject.Code)
+}
+
 // fakeMCPToolServer serves just enough of the MCP JSON-RPC protocol
 // (initialize + tools/call) for MCPToolService.ApproveToolCall's execute()
 // step to succeed -- mirrors internal/service/ai_analysis_agentic_test.go's

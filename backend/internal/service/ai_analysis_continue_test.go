@@ -157,6 +157,44 @@ func TestAIAnalysisService_ContinueAlertAnalysis_RejectsWhileRunningOrPaused(t *
 	waitAnalyzed(t, analyzed) // drain before the next test reuses this fixture's alert/tenant
 }
 
+// TestAIAnalysisService_ContinueAlertAnalysis_LLMFailureMarksRunFailed
+// confirms a broken LLM response during Continue's fresh-run driveAgentLoop
+// call lands the run as 'failed' with the error recorded (see failRun),
+// same as a Start*Analysis failure would.
+func TestAIAnalysisService_ContinueAlertAnalysis_LLMFailureMarksRunFailed(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	store := secrets.NewEnvStore()
+
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	aiSvc, analyzed := newAIAnalysisService(pool, store)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+		Name: "Broken Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+
+	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, aiSvc.ContinueAlertAnalysis(t.Context(), tenantID, alert.ID, actorID, nil, "what's going on here?"))
+	waitAnalyzed(t, analyzed)
+
+	run := latestRun(t, pool, tenantID, "alert", alert.ID)
+	require.NotNil(t, run)
+	assert.Equal(t, domain.AIAnalysisRunFailed, run.Status)
+	require.NotNil(t, run.Error)
+}
+
 // TestAIAnalysisService_ContinueIncidentAnalysis_NoRunYet is
 // ContinueAlertAnalysis_NoRunYet's incident-side counterpart -- brief,
 // since the two share continueRun and only differ in which entity/prompt

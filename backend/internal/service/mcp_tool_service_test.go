@@ -66,6 +66,33 @@ func TestMCPToolService_ApproveToolCall_NotFound(t *testing.T) {
 	assert.ErrorContains(t, err, "not found")
 }
 
+func TestMCPToolService_GetToolCall(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	svc := service.NewMCPToolService(pool, repository.NewMCPServerRepository(), repository.NewAIToolCallRepository(), secrets.NewEnvStore())
+
+	server, err := mcpSvc.Create(t.Context(), tenantID, actorID, service.MCPServerSaveInput{
+		Name: "EDR", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
+		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
+	})
+	require.NoError(t, err)
+	alertID := uuid.New()
+	call, err := svc.ProposeToolCall(t.Context(), tenantID, server.ID, "alert", alertID, "quarantine_host", map[string]any{"host": "10.0.0.5"})
+	require.NoError(t, err)
+
+	got, err := svc.GetToolCall(t.Context(), tenantID, call.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "alert", got.ContextType)
+	assert.Equal(t, alertID, got.ContextID)
+
+	notFound, err := svc.GetToolCall(t.Context(), tenantID, 999999999)
+	require.NoError(t, err)
+	assert.Nil(t, notFound)
+}
+
 func TestMCPToolService_RejectToolCall(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

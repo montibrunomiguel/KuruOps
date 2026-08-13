@@ -124,6 +124,22 @@ func TestAIAnalysisRunRepository_PauseResumeCycle(t *testing.T) {
 	})
 }
 
+func TestAIAnalysisRunRepository_AppendUserMessage(t *testing.T) {
+	repo, tx, run := newAIAnalysisRunFixture(t)
+
+	require.NoError(t, repo.SetCompleted(t.Context(), tx, run.ID, json.RawMessage(`[{"role":"assistant","content":"first"}]`), "first"))
+
+	appended := json.RawMessage(`[{"role":"assistant","content":"first"},{"role":"user","content":"follow-up"}]`)
+	require.NoError(t, repo.AppendUserMessage(t.Context(), tx, run.ID, appended))
+
+	got, err := repo.Get(t.Context(), tx, run.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, domain.AIAnalysisRunRunning, got.Status, "continuing a completed run flips it back to running")
+	assert.JSONEq(t, string(appended), string(got.Messages))
+	assert.Nil(t, got.PendingToolCallID)
+}
+
 func TestAIAnalysisRunRepository_SetFailed(t *testing.T) {
 	repo, tx, run := newAIAnalysisRunFixture(t)
 
