@@ -25,6 +25,14 @@
     "addTagOption": "+ Add tag...",
     "removeFilterValue": "Remove {{value}}",
     "addFilterOption": "+ Add...",
+    "pagination": {
+      "showing": "Showing {{start}}-{{end}} of {{total}}",
+      "pageSizeLabel": "Items per page",
+      "perPage": "{{count}} / page",
+      "previous": "Previous",
+      "next": "Next",
+      "pageIndicator": "Page {{page}} of {{totalPages}}"
+    },
     "noTagsCatalog": "No tags registered yet -- create one in Settings > Tags.",
     "removeAssignee": "Remove assignee {{name}}",
     "addAssigneeOption": "+ Add assignee...",
@@ -289,7 +297,6 @@
       "assignee": "Assignee"
     },
     "empty": "No alerts found for the current filters.",
-    "loadMore": "Load more",
     "detail": {
       "backToAlerts": "Back to Alerts",
       "analyzeWithAI": "Analyze with AI",
@@ -356,7 +363,6 @@
       "slaBreachedAgo": "SLA breached {{time}} ago"
     },
     "empty": "No incidents found for the current filters.",
-    "loadMore": "Load more",
     "createForm": {
       "title": "New Incident",
       "titleLabel": "Title",

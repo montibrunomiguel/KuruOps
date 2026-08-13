@@ -138,6 +138,42 @@ func TestAlertRepository_List_Filters(t *testing.T) {
 	})
 }
 
+// TestAlertRepository_Count is the regression test for real page-number
+// pagination: Count must apply the same filters as List but ignore
+// Limit/Offset entirely, so a caller can compute total pages independent of
+// which page it's currently viewing.
+func TestAlertRepository_Count(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewAlertRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	require.NoError(t, repo.Insert(t.Context(), tx, newTestAlert(tenantID, domain.SeverityCritical, domain.AlertStatusOpen, []string{"phishing"})))
+	require.NoError(t, repo.Insert(t.Context(), tx, newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusInvestigating, []string{"vpn"})))
+	require.NoError(t, repo.Insert(t.Context(), tx, newTestAlert(tenantID, domain.SeverityHigh, domain.AlertStatusEscalated, nil)))
+
+	t.Run("no filter counts everything", func(t *testing.T) {
+		count, err := repo.Count(t.Context(), tx, repository.ListAlertsFilter{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, count)
+	})
+
+	t.Run("count matches filtered list length, ignoring limit/offset", func(t *testing.T) {
+		sev := domain.SeverityCritical
+		count, err := repo.Count(t.Context(), tx, repository.ListAlertsFilter{Severity: &sev, Limit: 1, Offset: 0})
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("count reflects statuses OR filter", func(t *testing.T) {
+		count, err := repo.Count(t.Context(), tx, repository.ListAlertsFilter{
+			Statuses: []domain.AlertStatus{domain.AlertStatusInvestigating, domain.AlertStatusEscalated},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+}
+
 // TestAlertRepository_Correlated_ReflectsIncidentAlertLinks is the
 // regression test for the "Correlated Alerts" bug: incident_id used to be
 // read straight off the alerts table, but nothing ever wrote it (escalating

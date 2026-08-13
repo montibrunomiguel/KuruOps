@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useList, usePaginatedList, mutationErrorMessage } from "./hooks";
+import { useList, usePagedList, mutationErrorMessage } from "./hooks";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { ApiError } from "./client";
 
@@ -83,74 +83,94 @@ describe("useList", () => {
   });
 });
 
-describe("usePaginatedList", () => {
+describe("usePagedList", () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it("fetches the first page on mount", async () => {
+  it("fetches page 1 with the default page size (20) on mount", async () => {
     withLoggedInSession();
-    const fetcher = vi.fn().mockResolvedValue([{ id: 1 }]);
-    const { result } = renderHook(() => usePaginatedList(fetcher), { wrapper });
+    const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 1 });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(fetcher).toHaveBeenCalledWith("tok", 50, 0);
+    expect(fetcher).toHaveBeenCalledWith("tok", 20, 0);
     expect(result.current.items).toEqual([{ id: 1 }]);
+    expect(result.current.page).toBe(1);
+    expect(result.current.pageSize).toBe(20);
+    expect(result.current.total).toBe(1);
   });
 
-  it("hasMore is true when a full page comes back, false for a short page", async () => {
-    const fullPage = Array.from({ length: 50 }, (_, i) => ({ id: i }));
-    const fetcher = vi.fn().mockResolvedValue(fullPage);
-    const { result } = renderHook(() => usePaginatedList(fetcher), { wrapper });
-
+  it("totalPages is computed from total/pageSize, minimum 1", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ items: [], total: 45 });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.hasMore).toBe(true);
+    expect(result.current.totalPages).toBe(3); // ceil(45/20)
 
-    const shortPage = Array.from({ length: 10 }, (_, i) => ({ id: i }));
-    fetcher.mockResolvedValue(shortPage);
-    act(() => {
-      result.current.loadMore();
-    });
-    await waitFor(() => expect(result.current.loadingMore).toBe(false));
-    expect(result.current.hasMore).toBe(false);
-    expect(result.current.items).toHaveLength(60);
-  });
-
-  it("loadMore appends to existing items using the running offset", async () => {
-    const fetcher = vi.fn();
-    fetcher.mockResolvedValueOnce([{ id: 1 }, { id: 2 }]);
-    const { result } = renderHook(() => usePaginatedList(fetcher), { wrapper });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    fetcher.mockResolvedValueOnce([{ id: 3 }]);
-    act(() => {
-      result.current.loadMore();
-    });
-    await waitFor(() => expect(result.current.loadingMore).toBe(false));
-
-    expect(fetcher).toHaveBeenLastCalledWith(null, 50, 2);
-    expect(result.current.items).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
-  });
-
-  it("reload() resets back to offset 0 and replaces items", async () => {
-    const fetcher = vi.fn();
-    fetcher.mockResolvedValueOnce([{ id: 1 }]);
-    const { result } = renderHook(() => usePaginatedList(fetcher), { wrapper });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    fetcher.mockResolvedValueOnce([{ id: 99 }]);
+    fetcher.mockResolvedValue({ items: [], total: 0 });
     act(() => {
       result.current.reload();
     });
+    await waitFor(() => expect(result.current.total).toBe(0));
+    expect(result.current.totalPages).toBe(1);
+  });
+
+  it("setPage fetches the requested page's offset", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 100 });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(fetcher).toHaveBeenLastCalledWith(null, 50, 0);
-    expect(result.current.items).toEqual([{ id: 99 }]);
+    fetcher.mockResolvedValueOnce({ items: [{ id: 2 }], total: 100 });
+    act(() => {
+      result.current.setPage(3);
+    });
+    await waitFor(() => expect(result.current.page).toBe(3));
+
+    expect(fetcher).toHaveBeenLastCalledWith(null, 20, 40);
+    expect(result.current.items).toEqual([{ id: 2 }]);
+  });
+
+  it("setPageSize resets to page 1 and refetches with the new limit", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ items: [], total: 100 });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.setPage(3);
+    });
+    await waitFor(() => expect(result.current.page).toBe(3));
+
+    act(() => {
+      result.current.setPageSize(100);
+    });
+    await waitFor(() => expect(result.current.pageSize).toBe(100));
+
+    expect(result.current.page).toBe(1);
+    expect(fetcher).toHaveBeenLastCalledWith(null, 100, 0);
+  });
+
+  it("reload() re-fetches the current page, not page 1", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 100 });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.setPage(2);
+    });
+    await waitFor(() => expect(result.current.page).toBe(2));
+
+    fetcher.mockResolvedValueOnce({ items: [{ id: 99 }], total: 100 });
+    act(() => {
+      result.current.reload();
+    });
+    await waitFor(() => expect(result.current.items).toEqual([{ id: 99 }]));
+
+    expect(fetcher).toHaveBeenLastCalledWith(null, 20, 20);
   });
 
   it("a failure surfaces the ApiError message", async () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(500, "server exploded"));
-    const { result } = renderHook(() => usePaginatedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("server exploded");
   });
@@ -160,7 +180,7 @@ describe("usePaginatedList", () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(401, "expired"));
     const { result } = renderHook(
       () => {
-        const list = usePaginatedList(fetcher);
+        const list = usePagedList(fetcher);
         const auth = useAuth();
         return { list, auth };
       },

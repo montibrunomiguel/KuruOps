@@ -80,6 +80,25 @@ func TestAlertHandlers_List(t *testing.T) {
 	assert.Len(t, alerts, 1)
 }
 
+// TestAlertHandlers_List_TotalCountHeader is the regression test for
+// page-number pagination: the total-row-count must reflect the applied
+// filter and ignore limit/offset, so the frontend can compute total pages
+// independent of which page it's currently viewing.
+func TestAlertHandlers_List_TotalCountHeader(t *testing.T) {
+	h, tenantID, _, _ := newAlertHandlerFixture(t)
+	newSecondAlert(t, h, tenantID)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("GET", "/?limit=1", nil), tenantID, uuid.New(), nil)
+	rec := doRequest(r, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "2", rec.Header().Get("X-Total-Count"))
+	var alerts []domain.Alert
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+	assert.Len(t, alerts, 1, "the page itself is still limited to 1")
+}
+
 func TestAlertHandlers_Analyze_NoProviderConfigured(t *testing.T) {
 	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
 	r := newRouter(h.Routes)

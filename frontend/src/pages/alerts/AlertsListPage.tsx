@@ -2,13 +2,14 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
-import { usePaginatedList } from "../../api/hooks";
+import { usePagedList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
+import { Pagination } from "../../components/Pagination";
 import { formatRelative, shortId } from "../../lib/format";
 
 export function AlertsListPage() {
@@ -26,13 +27,16 @@ export function AlertsListPage() {
 
   const {
     items: alerts,
+    total,
+    page,
+    pageSize,
+    totalPages,
     loading,
-    loadingMore,
     error,
-    hasMore,
-    loadMore,
+    setPage,
+    setPageSize,
     reload,
-  } = usePaginatedList<Alert>(
+  } = usePagedList<Alert>(
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
@@ -44,7 +48,7 @@ export function AlertsListPage() {
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
       params.set("offset", String(offset));
-      return api.get<Alert[]>(`/api/v1/alerts?${params.toString()}`, tk);
+      return api.getPaged<Alert>(`/api/v1/alerts?${params.toString()}`, tk);
     },
     [severity, status, source, correlated, tag, range.since, range.until],
   );
@@ -110,7 +114,7 @@ export function AlertsListPage() {
           />
           <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
         </div>
-        {!loading && <span className="chart-card-sub">{t("alerts.count", { count: alerts.length })}</span>}
+        {!loading && <span className="chart-card-sub">{t("alerts.count", { count: total })}</span>}
       </div>
 
       <div className="panel">
@@ -176,13 +180,14 @@ export function AlertsListPage() {
                 </tbody>
               </table>
             </div>
-            {hasMore && (
-              <div style={{ textAlign: "center", marginTop: 14 }}>
-                <button className="btn btn-sm" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? t("common.loading") : t("alerts.loadMore")}
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           </>
         )}
       </div>
