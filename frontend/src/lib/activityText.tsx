@@ -28,12 +28,17 @@ export function describeActivity(e: ActivityEvent, t: TFunction): Described {
         return { icon: <ClockIcon />, tone: "tone-accent", text: t("dashboard.activity.alert.status_changed", { id }) };
       case "severity_overridden":
         return { icon: <FlagIcon />, tone: "tone-high", text: t("dashboard.activity.alert.severity_overridden", { id }) };
-      case "closed":
+      case "closed": {
+        const classification = str(data.classification, "");
         return {
           icon: <CheckIcon />,
           tone: "tone-success",
-          text: t("dashboard.activity.alert.closed", { id, classification: str(data.classification, "—").replace(/_/g, " ") }),
+          text: t("dashboard.activity.alert.closed", {
+            id,
+            classification: classification ? t(`common.classification.${classification}`) : "—",
+          }),
         };
+      }
       case "escalated":
         return {
           icon: <FlagIcon />,

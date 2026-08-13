@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import { mutationErrorMessage } from "../api/hooks";
 import { useEventStream } from "../api/eventStream";
 import type { AnalysisChatMessage, AnalysisChatTranscript } from "../types/api";
+import { renderMarkdown } from "../lib/markdown";
 
 interface AnalysisChatProps {
   contextType: "alert" | "incident";
@@ -206,10 +207,10 @@ function ChatBubble({ message }: { message: AnalysisChatMessage }) {
             background: isUser ? "var(--accent)" : "var(--surface-2)",
             color: isUser ? "#fff" : "var(--text)",
             fontSize: 13,
-            whiteSpace: "pre-wrap",
+            whiteSpace: isUser ? "pre-wrap" : "normal",
           }}
         >
-          {message.content}
+          {isUser ? message.content : renderMarkdown(message.content)}
         </div>
       )}
       {requestedTool && (

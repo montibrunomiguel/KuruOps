@@ -69,7 +69,7 @@ export function IncidentRolesPanel({ incident, onSaved }: { incident: Incident; 
                 ))}
               </select>
             ) : (
-              <AssigneePicker value={current} onChange={(next) => save(role, next)} disabled={disabled} />
+              <AssigneePicker value={current} onChange={(next) => save(role, next)} disabled={disabled} directory={directory} />
             )}
           </div>
         );

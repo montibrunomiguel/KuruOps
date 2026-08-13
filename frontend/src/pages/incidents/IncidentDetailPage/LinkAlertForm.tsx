@@ -6,14 +6,16 @@ import { useList, mutationErrorMessage } from "../../../api/hooks";
 import type { Alert } from "../../../types/alerts";
 import { shortId } from "../../../lib/format";
 
-// Search-by-title/id + click-to-link, same pattern AlertDetailPage's
+// Search-by-title/id/asset + click-to-link, same pattern AlertDetailPage's
 // LinkedAlertsPanel already uses for alert-to-alert correlation -- a raw
 // "type the alert's ID" text field (the previous version of this
 // component) doesn't work in practice: every alert ID shown anywhere in
 // the UI is truncated to 8 characters (see lib/format.shortId), so there
 // was never a way to discover/copy a full UUID to paste in here, and
 // submitting the truncated one always failed with "invalid alert id"
-// (uuid.Parse rejecting a partial ID server-side).
+// (uuid.Parse rejecting a partial ID server-side). Also matches on
+// asset/srcIp so an analyst can find related alerts by affected
+// host/IP without already knowing the other alert's title.
 export function LinkAlertForm({
   incidentId,
   linkedAlerts,
@@ -29,12 +31,16 @@ export function LinkAlertForm({
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const results = (Array.isArray(candidates) ? candidates : []).filter(
-    (a) =>
-      !linkedAlerts.some((l) => l.id === a.id) &&
-      query.length > 0 &&
-      (a.id.toLowerCase().includes(query.toLowerCase()) || a.title.toLowerCase().includes(query.toLowerCase())),
-  );
+  const results = (Array.isArray(candidates) ? candidates : []).filter((a) => {
+    if (linkedAlerts.some((l) => l.id === a.id) || query.length === 0) return false;
+    const q = query.toLowerCase();
+    return (
+      a.id.toLowerCase().includes(q) ||
+      a.title.toLowerCase().includes(q) ||
+      (a.asset ?? "").toLowerCase().includes(q) ||
+      (a.srcIp ?? "").toLowerCase().includes(q)
+    );
+  });
 
   async function link(alertId: string) {
     setError(null);
@@ -62,6 +68,7 @@ export function LinkAlertForm({
           {results.map((a) => (
             <div className="search-result-item" key={a.id} onClick={() => link(a.id)}>
               <span className="mono">{shortId(a.id)}</span> · {a.title}
+              {a.asset && <span className="helper-text"> · {a.asset}</span>}
             </div>
           ))}
         </div>

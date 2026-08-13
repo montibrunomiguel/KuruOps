@@ -387,7 +387,7 @@
       "timelineTitle": "Timeline",
       "timelineEmpty": "No events yet.",
       "correlatedAlertsTitle": "Correlated Alerts",
-      "linkAlertPlaceholder": "Search by alert ID or title...",
+      "linkAlertPlaceholder": "Search by alert ID, title, or host/IP...",
       "link": "Link",
       "unlink": "Unlink",
       "noCorrelatedAlerts": "No correlated alerts yet.",

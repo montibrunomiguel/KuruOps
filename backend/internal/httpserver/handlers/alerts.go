@@ -322,9 +322,10 @@ type escalateResponse struct {
 }
 
 // escalate creates a new incident from the alert (title/severity/tags
-// copied over, priority defaults to p3 since severity alone doesn't map
-// cleanly to a response priority), links the alert to it, and marks the
-// alert 'escalated' -- the one place that legitimately touches both
+// copied over, priority seeded from the alert's severity via
+// domain.DefaultPriorityForSeverity -- an analyst can still override it on
+// the incident's NIST matrix afterward), links the alert to it, and marks
+// the alert 'escalated' -- the one place that legitimately touches both
 // aggregates, see the doc comment on AlertHandlers.incidents.
 func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
@@ -349,7 +350,7 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 	incident, err := h.incidents.Create(r.Context(), tenantID, userID, domain.CreateIncidentInput{
 		Title:    alert.Title,
 		Severity: alert.Severity,
-		Priority: domain.PriorityP3,
+		Priority: domain.DefaultPriorityForSeverity(alert.Severity),
 		Tags:     alert.Tags,
 	})
 	if err != nil {
