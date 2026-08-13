@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/authn"
+	"github.com/argusops/argusops/internal/service"
 )
 
 type ctxKey string
@@ -40,18 +41,44 @@ type Claims struct {
 	MustChangePassword bool
 }
 
+// apiTokenBearerPrefix is checked before JWT verification even runs -- a
+// personal API token (see service.UserAPITokenService) is never a valid JWT
+// (different format entirely), so routing on this prefix avoids feeding it
+// through the JWT parser only to fail there.
+const apiTokenBearerPrefix = "pat_"
+
 // JWTAuth verifies the bearer token issued by any of the three login flows
-// (local, LDAP, SAML — see internal/httpserver/handlers/auth.go) and
-// populates the request context from its claims. This is the real
-// production auth path; the dev header bypass below only exists to unblock
-// local development before an identity provider is configured.
-func JWTAuth(verifier *authn.Verifier) func(http.Handler) http.Handler {
+// (local, LDAP, SAML — see internal/httpserver/handlers/auth.go), OR a
+// self-service personal API token (Profile -> API Tokens, distinguished by
+// its pat_ prefix — see service.UserAPITokenService), and populates the
+// request context from whichever one resolved. This is the real production
+// auth path; the dev header bypass below only exists to unblock local
+// development before an identity provider is configured.
+func JWTAuth(verifier *authn.Verifier, apiTokens *service.UserAPITokenService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			tokenString, ok := strings.CutPrefix(header, "Bearer ")
 			if !ok || tokenString == "" {
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				return
+			}
+
+			if strings.HasPrefix(tokenString, apiTokenBearerPrefix) {
+				identity, err := apiTokens.Resolve(r.Context(), tokenString)
+				if err != nil || identity == nil {
+					http.Error(w, "invalid or expired token", http.StatusUnauthorized)
+					return
+				}
+				ctx := WithClaims(r.Context(), Claims{
+					TenantID:           identity.TenantID,
+					UserID:             identity.UserID,
+					IsAdmin:            identity.IsAdmin,
+					ResourceAccess:     identity.ResourceAccess,
+					AllowedTags:        identity.AllowedTags,
+					MustChangePassword: identity.MustChangePassword,
+				})
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 

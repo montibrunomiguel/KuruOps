@@ -76,6 +76,19 @@ export interface WebhookEndpoint {
   createdAt: string;
 }
 
+export interface UserAPIToken {
+  id: string;
+  tenantId: string;
+  userId: string;
+  name: string;
+  tokenLast4: string;
+  // undefined = the user explicitly opted this token out of expiring.
+  expiresAt?: string;
+  createdAt: string;
+  // undefined = still active.
+  revokedAt?: string;
+}
+
 export type LLMProviderKind = "anthropic" | "openai_compatible" | "azure_openai" | "self_hosted";
 
 export interface LLMProvider {
