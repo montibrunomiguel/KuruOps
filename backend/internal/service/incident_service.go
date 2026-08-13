@@ -109,6 +109,18 @@ func (s *IncidentService) List(ctx context.Context, tenantID uuid.UUID, f reposi
 	return incidents, err
 }
 
+// Count mirrors List but returns the total matching row count, ignoring
+// f.Limit/f.Offset -- see IncidentRepository.Count's doc comment.
+func (s *IncidentService) Count(ctx context.Context, tenantID uuid.UUID, f repository.ListIncidentsFilter) (int, error) {
+	var count int
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		c, err := s.repo.Count(ctx, tx, f)
+		count = c
+		return err
+	})
+	return count, err
+}
+
 // Create opens a new incident in the 'new' phase and records its first
 // status_history entry, matching "+ New Incident" in the design handoff.
 func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in domain.CreateIncidentInput) (*domain.Incident, error) {

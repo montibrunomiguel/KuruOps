@@ -81,8 +81,45 @@ async function request<T>(path: string, opts: RequestOptions, isRetry = false): 
   return payload as T;
 }
 
+// requestPaged mirrors request<T[]>, but also reads the X-Total-Count
+// response header (see backend/internal/httpserver/handlers/respond.go's
+// callers) -- kept as a separate function rather than growing request<T>'s
+// return shape, since every other caller of request<T> expects a bare body
+// and would otherwise need updating to unwrap {items, total}.
+async function requestPaged<T>(path: string, opts: RequestOptions, isRetry = false): Promise<{ items: T[]; total: number }> {
+  const res = await fetch(path, {
+    method: opts.method ?? "GET",
+    headers: {
+      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+    },
+  });
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const payload = isJson ? await res.json().catch(() => undefined) : undefined;
+
+  if (!res.ok) {
+    if (res.status === 401 && !isRetry && opts.token) {
+      const newToken = await refreshOnce();
+      if (newToken) {
+        return requestPaged<T>(path, { ...opts, token: newToken }, true);
+      }
+    }
+    const message =
+      (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
+      res.statusText ||
+      "Erro inesperado";
+    throw new ApiError(res.status, message);
+  }
+
+  const items = (payload as T[] | undefined) ?? [];
+  const totalHeader = res.headers.get("X-Total-Count");
+  const total = totalHeader !== null ? Number(totalHeader) : items.length;
+  return { items, total };
+}
+
 export const api = {
   get: <T>(path: string, token: string | null) => request<T>(path, { token }),
+  getPaged: <T>(path: string, token: string | null) => requestPaged<T>(path, { token }),
   post: <T>(path: string, body: unknown, token: string | null) =>
     request<T>(path, { method: "POST", body, token }),
   put: <T>(path: string, body: unknown, token: string | null) =>

@@ -14,8 +14,10 @@ function wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+function jsonResponse(body: unknown, status = 200, total?: number) {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (total !== undefined) headers["X-Total-Count"] = String(total);
+  return new Response(JSON.stringify(body), { status, headers });
 }
 
 function incidentFixture(overrides: Partial<Record<string, unknown>> = {}) {
@@ -151,27 +153,24 @@ describe("IncidentsListPage", () => {
     });
   });
 
-  it("the SLA filter narrows the already-fetched page client-side, without re-fetching", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse([
-        incidentFixture({ id: "i1", title: "Breached one", slaBreached: true }),
-        incidentFixture({ id: "i2", title: "OK one", slaBreached: false }),
-      ]),
-    );
+  it("the SLA filter re-fetches with the sla query param", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([incidentFixture()]));
     vi.stubGlobal("fetch", fetchMock);
     render(<IncidentsListPage />, { wrapper });
 
-    await screen.findByText("Breached one");
-    expect(screen.getByText("OK one")).toBeInTheDocument();
-
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const selects = screen.getAllByRole("combobox");
     await userEvent.selectOptions(selects[3], "breached");
-    expect(screen.getByText("Breached one")).toBeInTheDocument();
-    expect(screen.queryByText("OK one")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c) => c[0] as string);
+      expect(calls.some((u) => u.includes("sla=breached"))).toBe(true);
+    });
 
     await userEvent.selectOptions(selects[3], "ok");
-    expect(screen.queryByText("Breached one")).not.toBeInTheDocument();
-    expect(screen.getByText("OK one")).toBeInTheDocument();
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls.map((c) => c[0] as string);
+      expect(calls.some((u) => u.includes("sla=ok"))).toBe(true);
+    });
   });
 
   it("choosing a time-range preset re-fetches with a since query param", async () => {
@@ -339,18 +338,26 @@ describe("IncidentsListPage", () => {
     });
   });
 
-  it("shows a Load More button when a full page comes back, and loads the next page on click", async () => {
-    const fullPage = Array.from({ length: 50 }, (_, i) => incidentFixture({ id: `i${i}`, title: `Incident ${i}` }));
+  it("shows pagination totals and fetches the next page (offset) on click", async () => {
+    const page1 = Array.from({ length: 20 }, (_, i) => incidentFixture({ id: `i${i}`, title: `Incident ${i}` }));
+    const page2 = [incidentFixture({ id: "extra", title: "Extra incident" })];
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(fullPage))
-      .mockResolvedValueOnce(jsonResponse([incidentFixture({ id: "extra", title: "Extra incident" })]));
+      .mockResolvedValueOnce(jsonResponse(page1, 200, 21))
+      .mockResolvedValueOnce(jsonResponse(page2, 200, 21));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<IncidentsListPage />, { wrapper });
-    const loadMoreBtn = await screen.findByRole("button", { name: "Load more" });
+    await screen.findByText("Incident 0");
+    expect(screen.getByText("Showing 1-20 of 21")).toBeInTheDocument();
 
-    await userEvent.click(loadMoreBtn);
+    const nextBtn = screen.getByRole("button", { name: "Next" });
+    await userEvent.click(nextBtn);
     expect(await screen.findByText("Extra incident")).toBeInTheDocument();
+
+    const calls = fetchMock.mock.calls;
+    const lastCall = calls[calls.length - 1]?.[0] as string;
+    expect(lastCall).toContain("limit=20");
+    expect(lastCall).toContain("offset=20");
   });
 });

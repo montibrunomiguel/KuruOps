@@ -127,6 +127,18 @@ func (s *AlertService) List(ctx context.Context, tenantID uuid.UUID, f repositor
 	return alerts, err
 }
 
+// Count mirrors List but returns the total matching row count, ignoring
+// f.Limit/f.Offset -- see AlertRepository.Count's doc comment.
+func (s *AlertService) Count(ctx context.Context, tenantID uuid.UUID, f repository.ListAlertsFilter) (int, error) {
+	var count int
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		c, err := s.repo.Count(ctx, tx, f)
+		count = c
+		return err
+	})
+	return count, err
+}
+
 // ChangeStatus applies an analyst-driven status transition. Closing an alert
 // must go through Close instead — this rejects a direct transition to
 // 'closed' because that path is the only one allowed to set classification

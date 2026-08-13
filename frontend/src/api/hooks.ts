@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth, isSessionExpiredError } from "../auth/AuthContext";
 import { ApiError } from "./client";
 
@@ -39,78 +39,84 @@ export function useList<T>(fetcher: (token: string | null) => Promise<T[]>, deps
   return { ...state, reload };
 }
 
-const PAGE_SIZE = 50;
+export const PAGE_SIZE_OPTIONS = [20, 40, 60, 100] as const;
+export type PageSize = (typeof PAGE_SIZE_OPTIONS)[number];
 
-interface PaginatedState<T> {
+interface PagedState<T> {
   items: T[];
+  total: number;
   loading: boolean;
-  loadingMore: boolean;
   error: string | null;
-  hasMore: boolean;
 }
 
-// usePaginatedList backs list pages (Alerts, Incidents) that could grow into
-// the thousands in a real SOC instead of the handful mock data ships with --
-// GET-everything-then-render doesn't scale, so this fetches PAGE_SIZE rows
-// at a time via the backend's limit/offset support (see parsePaging in
-// backend/internal/httpserver/handlers/respond.go) and exposes loadMore()
-// for a "Carregar mais" button. Changing `deps` (e.g. a filter) resets back
-// to the first page, same as useList.
-export function usePaginatedList<T>(
-  fetcher: (token: string | null, limit: number, offset: number) => Promise<T[]>,
+// usePagedList backs list pages (Alerts, Incidents) that could grow into the
+// thousands in a real SOC instead of the handful mock data ships with --
+// GET-everything-then-render doesn't scale. Unlike the older "load more"
+// pattern this replaces, it's real page-number pagination: fetcher must
+// return {items, total} (see api.getPaged, which reads the backend's
+// X-Total-Count header), and page/pageSize are exposed so a <Pagination>
+// component can drive them directly. Changing `deps` (e.g. a filter) or
+// pageSize resets back to page 1, same as usePaginatedList did for offset 0.
+export function usePagedList<T>(
+  fetcher: (token: string | null, limit: number, offset: number) => Promise<{ items: T[]; total: number }>,
   deps: unknown[] = [],
 ) {
   const { token, logout } = useAuth();
-  const [state, setState] = useState<PaginatedState<T>>({
-    items: [],
-    loading: true,
-    loadingMore: false,
-    error: null,
-    hasMore: false,
-  });
-  // Mirrors state.items.length without needing to be a dependency of load()
-  // -- avoids load() being recreated (and effects re-firing) on every page
-  // fetched, which a plain items.length dependency would cause.
-  const offsetRef = useRef(0);
+  const [page, setPageState] = useState(1);
+  const [pageSize, setPageSizeState] = useState<PageSize>(20);
+  const [state, setState] = useState<PagedState<T>>({ items: [], total: 0, loading: true, error: null });
 
   const load = useCallback(
-    (reset: boolean) => {
-      const offset = reset ? 0 : offsetRef.current;
-      setState((s) => ({ ...s, loading: reset, loadingMore: !reset, error: null }));
-      fetcher(token, PAGE_SIZE, offset)
-        .then((rows) => {
-          offsetRef.current = offset + rows.length;
-          setState((s) => ({
-            items: reset ? rows : [...s.items, ...rows],
-            loading: false,
-            loadingMore: false,
-            error: null,
-            hasMore: rows.length === PAGE_SIZE,
-          }));
-        })
+    (targetPage: number) => {
+      setState((s) => ({ ...s, loading: true, error: null }));
+      fetcher(token, pageSize, (targetPage - 1) * pageSize)
+        .then(({ items, total }) => setState({ items, total, loading: false, error: null }))
         .catch((err: unknown) => {
           if (isSessionExpiredError(err)) {
             logout();
             return;
           }
           const message = err instanceof ApiError ? err.message : "Falha ao carregar dados";
-          setState((s) => ({ ...s, loading: false, loadingMore: false, error: message }));
+          setState((s) => ({ ...s, loading: false, error: message }));
         });
     },
     // fetcher/logout deliberately excluded, same reasoning as reload()'s
     // useCallback above -- they're referenced by identity from the enclosing
     // component, but listing them would recreate load() (and re-fire the
     // effect below) on every render a caller passes a fresh inline fetcher.
+    // Deliberately NOT keyed on `page` -- a filter/pageSize change should
+    // always reset to page 1 (see the effect below), while navigating pages
+    // goes through setPage() directly instead of via this effect, so the two
+    // never race into a double-fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [token, ...deps],
+    [token, pageSize, ...deps],
   );
 
   useEffect(() => {
-    offsetRef.current = 0;
-    load(true);
+    setPageState(1);
+    load(1);
   }, [load]);
 
-  return { ...state, loadMore: () => load(false), reload: () => load(true) };
+  function setPage(p: number) {
+    setPageState(p);
+    load(p);
+  }
+
+  function setPageSize(size: PageSize) {
+    setPageSizeState(size);
+    // Resetting to page 1 and refetching happens via the effect above, since
+    // pageSize is one of load()'s own deps.
+  }
+
+  return {
+    ...state,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(state.total / pageSize)),
+    setPage,
+    setPageSize,
+    reload: () => load(page),
+  };
 }
 
 // mutationErrorMessage extracts a user-facing message from a failed

@@ -84,6 +84,10 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("tag"); v != "" {
 		f.Tag = &v
 	}
+	if v := r.URL.Query().Get("sla"); v == "breached" || v == "ok" {
+		b := v == "breached"
+		f.SLABreached = &b
+	}
 	f.OpenedSince = parseSince(r)
 	f.OpenedUntil = parseUntil(r)
 	f.CommanderID = parseUUIDQueryParam(r, "commanderId")
@@ -95,6 +99,13 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	total, err := h.svc.Count(r.Context(), tenantID, f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("X-Total-Count", strconv.Itoa(total))
 	writeJSON(w, http.StatusOK, incidents)
 }
 

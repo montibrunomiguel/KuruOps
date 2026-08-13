@@ -25,6 +25,14 @@
     "addTagOption": "+ Adicionar tag...",
     "removeFilterValue": "Remover {{value}}",
     "addFilterOption": "+ Adicionar...",
+    "pagination": {
+      "showing": "Mostrando {{start}}-{{end}} de {{total}}",
+      "pageSizeLabel": "Itens por página",
+      "perPage": "{{count}} / página",
+      "previous": "Anterior",
+      "next": "Próxima",
+      "pageIndicator": "Página {{page}} de {{totalPages}}"
+    },
     "noTagsCatalog": "Nenhuma tag cadastrada ainda -- crie em Settings > Tags.",
     "removeAssignee": "Remover responsável {{name}}",
     "addAssigneeOption": "+ Adicionar responsável...",
@@ -289,7 +297,6 @@
       "assignee": "Responsável"
     },
     "empty": "Nenhum alerta encontrado com os filtros atuais.",
-    "loadMore": "Carregar mais",
     "detail": {
       "backToAlerts": "Voltar para Alertas",
       "analyzeWithAI": "Analisar com IA",
@@ -356,7 +363,6 @@
       "slaBreachedAgo": "SLA estourado há {{time}}"
     },
     "empty": "Nenhum incidente encontrado com os filtros atuais.",
-    "loadMore": "Carregar mais",
     "createForm": {
       "title": "Novo Incidente",
       "titleLabel": "Título",

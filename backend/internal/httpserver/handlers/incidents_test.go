@@ -133,6 +133,7 @@ func TestIncidentHandlers_ListAndCreate(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "1", rec.Header().Get("X-Total-Count"))
 		var incidents []domain.Incident
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
 		assert.Len(t, incidents, 1)
@@ -423,6 +424,25 @@ func TestIncidentHandlers_List_Filters(t *testing.T) {
 		var incidents []domain.Incident
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
 		assert.Empty(t, incidents)
+	})
+
+	t.Run("sla=breached excludes an incident that hasn't breached", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?sla=breached", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "0", rec.Header().Get("X-Total-Count"))
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Empty(t, incidents)
+	})
+
+	t.Run("sla=ok includes an incident that hasn't breached", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?sla=ok", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
 	})
 
 	t.Run("commanderId filter with no commander set yet excludes it", func(t *testing.T) {

@@ -71,8 +71,12 @@ type ListIncidentsFilter struct {
 	Offset      int
 }
 
-func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncidentsFilter) ([]domain.Incident, error) {
-	query := `select ` + incidentColumns + ` from incidents where 1 = 1`
+// incidentWhereClause builds the "where ..." fragment (starting with "where
+// 1 = 1" so every branch below can unconditionally prepend "and") plus its
+// positional args, shared by List and Count so the two can never drift apart
+// on which rows they consider a match.
+func incidentWhereClause(f ListIncidentsFilter) (string, []any) {
+	query := " where 1 = 1"
 	args := []any{}
 
 	if f.Severity != nil {
@@ -115,6 +119,13 @@ func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncident
 		query += fmt.Sprintf(" and tags && $%d", len(args))
 	}
 
+	return query, args
+}
+
+func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncidentsFilter) ([]domain.Incident, error) {
+	where, args := incidentWhereClause(f)
+	query := `select ` + incidentColumns + ` from incidents` + where
+
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -154,6 +165,20 @@ func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncident
 		incidents[i].Assignees = orEmptyUserSummarySlice(assignees[incidents[i].ID])
 	}
 	return incidents, nil
+}
+
+// Count returns how many incidents match f, ignoring f.Limit/f.Offset -- used
+// alongside List to compute total-page-count for real (non-"load more")
+// pagination (see IncidentHandlers.list's X-Total-Count response header).
+func (r *IncidentRepository) Count(ctx context.Context, tx pgx.Tx, f ListIncidentsFilter) (int, error) {
+	where, args := incidentWhereClause(f)
+	query := `select count(*) from incidents` + where
+
+	var count int
+	if err := tx.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count incidents: %w", err)
+	}
+	return count, nil
 }
 
 // orEmptyUserSummarySlice turns a nil slice into an empty one -- a missing

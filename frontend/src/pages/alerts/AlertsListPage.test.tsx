@@ -14,8 +14,10 @@ function wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-function jsonResponse(body: unknown) {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+function jsonResponse(body: unknown, total?: number) {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (total !== undefined) headers["X-Total-Count"] = String(total);
+  return new Response(JSON.stringify(body), { status: 200, headers });
 }
 
 function alertFixture(overrides: Partial<Record<string, unknown>> = {}) {
@@ -60,16 +62,45 @@ describe("AlertsListPage", () => {
     });
   });
 
-  it("shows a Load More button when a full page comes back, and loads the next page on click", async () => {
-    const fullPage = Array.from({ length: 50 }, (_, i) => alertFixture({ id: `a${i}`, title: `Alert ${i}` }));
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fullPage)).mockResolvedValueOnce(jsonResponse([alertFixture({ id: "extra", title: "Extra alert" })]));
+  it("shows pagination totals and fetches the next page (offset) on click", async () => {
+    const page1 = Array.from({ length: 20 }, (_, i) => alertFixture({ id: `a${i}`, title: `Alert ${i}` }));
+    const page2 = [alertFixture({ id: "extra", title: "Extra alert" })];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(page1, 21))
+      .mockResolvedValueOnce(jsonResponse(page2, 21));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AlertsListPage />, { wrapper });
-    const loadMoreBtn = await screen.findByRole("button", { name: "Load more" });
+    await screen.findByText("Alert 0");
+    expect(screen.getByText("Showing 1-20 of 21")).toBeInTheDocument();
 
-    await userEvent.click(loadMoreBtn);
+    const nextBtn = screen.getByRole("button", { name: "Next" });
+    await userEvent.click(nextBtn);
     expect(await screen.findByText("Extra alert")).toBeInTheDocument();
+
+    const calls = fetchMock.mock.calls;
+    const lastCall = calls[calls.length - 1]?.[0] as string;
+    expect(lastCall).toContain("limit=20");
+    expect(lastCall).toContain("offset=20");
+  });
+
+  it("changing the page size resets to page 1 and refetches with the new limit", async () => {
+    const page1 = Array.from({ length: 20 }, (_, i) => alertFixture({ id: `a${i}`, title: `Alert ${i}` }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page1, 21));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AlertsListPage />, { wrapper });
+    await screen.findByText("Alert 0");
+
+    await userEvent.selectOptions(screen.getByLabelText("Items per page"), "100");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("limit=100");
+      expect(lastCall).toContain("offset=0");
+    });
   });
 
   it("shows the resolved assignee name, or a dash when unassigned", async () => {

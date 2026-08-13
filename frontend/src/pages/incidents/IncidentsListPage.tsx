@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { usePaginatedList, mutationErrorMessage } from "../../api/hooks";
+import { usePagedList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import type { Severity } from "../../types/alerts";
 import type { Incident, IncidentPhase, IncidentPriority } from "../../types/incidents";
@@ -14,6 +14,7 @@ import { AssigneePicker } from "../../components/AssigneePicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
+import { Pagination } from "../../components/Pagination";
 import { formatDuration, shortId } from "../../lib/format";
 
 type SlaFilter = "" | "breached" | "ok";
@@ -33,26 +34,30 @@ export function IncidentsListPage() {
   const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const {
-    items: rawIncidents,
+    items: incidents,
+    total,
+    page,
+    pageSize,
+    totalPages,
     loading,
-    loadingMore,
     error,
-    hasMore,
-    loadMore,
+    setPage,
+    setPageSize,
     reload,
-  } = usePaginatedList<Incident>(
+  } = usePagedList<Incident>(
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
       if (priority) params.set("priority", priority);
       if (phase) params.set("phase", phase);
+      if (sla) params.set("sla", sla);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
       params.set("offset", String(offset));
-      return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
+      return api.getPaged<Incident>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity, priority, phase, range.since, range.until],
+    [severity, priority, phase, sla, range.since, range.until],
   );
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -61,15 +66,6 @@ export function IncidentsListPage() {
   useEventStream((event) => {
     if (event.type === "incident") reload();
   });
-
-  // SLA isn't a backend list filter yet -- narrowed client-side on the
-  // already-fetched page, same tradeoff as any other client-side filter on
-  // a paginated set (only applies to what's currently loaded).
-  const incidents = useMemo(() => {
-    if (sla === "breached") return rawIncidents.filter((i) => i.slaBreached);
-    if (sla === "ok") return rawIncidents.filter((i) => !i.slaBreached);
-    return rawIncidents;
-  }, [rawIncidents, sla]);
 
   return (
     <div>
@@ -135,7 +131,7 @@ export function IncidentsListPage() {
           <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {!loading && <span className="chart-card-sub">{t("incidents.count", { count: incidents.length })}</span>}
+          {!loading && <span className="chart-card-sub">{t("incidents.count", { count: total })}</span>}
           <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
             + {t("incidents.newIncident")}
           </button>
@@ -201,13 +197,14 @@ export function IncidentsListPage() {
                 </tbody>
               </table>
             </div>
-            {hasMore && (
-              <div style={{ textAlign: "center", marginTop: 14 }}>
-                <button className="btn btn-sm" onClick={loadMore} disabled={loadingMore}>
-                  {loadingMore ? t("common.loading") : t("incidents.loadMore")}
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           </>
         )}
       </div>

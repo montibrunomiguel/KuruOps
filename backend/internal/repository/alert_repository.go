@@ -87,8 +87,12 @@ type ListAlertsFilter struct {
 	Offset      int
 }
 
-func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilter) ([]domain.Alert, error) {
-	query := `select ` + alertColumnsWithAssignee + ` ` + alertsWithAssigneeFrom + ` where 1 = 1`
+// alertWhereClause builds the "where ..." fragment (starting with "where 1 =
+// 1" so every branch below can unconditionally prepend "and") plus its
+// positional args, shared by List and Count so the two can never drift apart
+// on which rows they consider a match.
+func alertWhereClause(f ListAlertsFilter) (string, []any) {
+	query := " where 1 = 1"
 	args := []any{}
 
 	if f.Severity != nil {
@@ -140,6 +144,13 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 		query += fmt.Sprintf(" and a.tags && $%d", len(args))
 	}
 
+	return query, args
+}
+
+func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilter) ([]domain.Alert, error) {
+	where, args := alertWhereClause(f)
+	query := `select ` + alertColumnsWithAssignee + ` ` + alertsWithAssigneeFrom + where
+
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -164,6 +175,20 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 		alerts = append(alerts, *a)
 	}
 	return alerts, rows.Err()
+}
+
+// Count returns how many alerts match f, ignoring f.Limit/f.Offset -- used
+// alongside List to compute total-page-count for real (non-"load more")
+// pagination (see AlertHandlers.list's X-Total-Count response header).
+func (r *AlertRepository) Count(ctx context.Context, tx pgx.Tx, f ListAlertsFilter) (int, error) {
+	where, args := alertWhereClause(f)
+	query := `select count(*) from alerts a` + where
+
+	var count int
+	if err := tx.QueryRow(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count alerts: %w", err)
+	}
+	return count, nil
 }
 
 func (r *AlertRepository) Insert(ctx context.Context, tx pgx.Tx, a *domain.Alert) error {

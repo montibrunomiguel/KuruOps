@@ -173,6 +173,40 @@ func TestIncidentRepository_List_Filters(t *testing.T) {
 	})
 }
 
+// TestIncidentRepository_Count is the regression test for real page-number
+// pagination: Count must apply the same filters as List but ignore
+// Limit/Offset entirely, so a caller can compute total pages independent of
+// which page it's currently viewing.
+func TestIncidentRepository_Count(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewIncidentRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	require.NoError(t, repo.Insert(t.Context(), tx, newTestIncident(tenantID, domain.SeverityCritical, domain.PriorityP1, []string{"ransomware"})))
+	require.NoError(t, repo.Insert(t.Context(), tx, newTestIncident(tenantID, domain.SeverityLow, domain.PriorityP3, []string{"phishing"})))
+
+	t.Run("no filter counts everything", func(t *testing.T) {
+		count, err := repo.Count(t.Context(), tx, repository.ListIncidentsFilter{})
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("count matches filtered list length, ignoring limit/offset", func(t *testing.T) {
+		priority := domain.PriorityP1
+		count, err := repo.Count(t.Context(), tx, repository.ListIncidentsFilter{Priority: &priority, Limit: 1, Offset: 0})
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("count reflects SLABreached filter", func(t *testing.T) {
+		breached := true
+		count, err := repo.Count(t.Context(), tx, repository.ListIncidentsFilter{SLABreached: &breached})
+		require.NoError(t, err)
+		assert.Equal(t, 0, count, "neither fixture incident has breached its SLA")
+	})
+}
+
 func TestIncidentRepository_UpdatePhase(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
