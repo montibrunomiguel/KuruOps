@@ -223,7 +223,7 @@ describe("IncidentDetailPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
-    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID or title..."), "suspicious");
+    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID, title, or host/IP..."), "suspicious");
     await userEvent.click(await screen.findByText(/Suspicious login/));
 
     await waitFor(() =>
@@ -242,7 +242,7 @@ describe("IncidentDetailPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
-    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID or title..."), "suspicious");
+    await userEvent.type(await screen.findByPlaceholderText("Search by alert ID, title, or host/IP..."), "suspicious");
 
     const match = await screen.findByText(/Suspicious download/);
     const resultsList = match.closest(".search-result-list") as HTMLElement;

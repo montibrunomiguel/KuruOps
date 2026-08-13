@@ -47,6 +47,26 @@ const (
 	PriorityP4 IncidentPriority = "p4"
 )
 
+// DefaultPriorityForSeverity is the starting point on the NIST
+// severity x priority matrix (see NistMatrixPanel.tsx on the frontend,
+// where an analyst can always override the cell after creation) --
+// Critical/High map to the two urgent priorities and Medium/Low/
+// Informational fall back to routine ones, per NIST 800-61's
+// impact-based prioritization guidance. Used when a new incident is
+// created without an explicit priority (e.g. escalating an alert).
+func DefaultPriorityForSeverity(s Severity) IncidentPriority {
+	switch s {
+	case SeverityCritical:
+		return PriorityP1
+	case SeverityHigh:
+		return PriorityP2
+	case SeverityMedium:
+		return PriorityP3
+	default: // SeverityLow, SeverityInformational, and any unknown value
+		return PriorityP4
+	}
+}
+
 // Incident mirrors the `incidents` table. Phase transitions, severity/priority
 // changes, and description edits all go through IncidentService — never
 // write this struct straight to the repository — because phase changes also

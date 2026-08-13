@@ -32,9 +32,9 @@ describe("describeActivity", () => {
     expect(result.tone).toBe("tone-critical");
   });
 
-  it("describes an alert closed event, including the classification", () => {
+  it("describes an alert closed event, including the translated classification", () => {
     const result = describeActivity(eventFixture({ eventType: "closed", data: { classification: "true_positive" } }), i18n.t);
-    expect(result.text).toContain("true positive");
+    expect(result.text).toContain("True Positive");
     expect(result.tone).toBe("tone-success");
   });
 

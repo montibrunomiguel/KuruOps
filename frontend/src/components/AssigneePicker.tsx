@@ -8,17 +8,38 @@ import type { UserSummary } from "../types/users";
 // assignee select already use) instead of accepting free text -- an incident
 // can only be assigned to a real, active user. Modeled directly on
 // TagPicker's controlled value/onChange + chip + dropdown shape.
+//
+// `directory` is optional: pass it down (even as `null` while it's still
+// loading) when a parent already fetches the user list -- e.g.
+// IncidentRolesPanel renders several of these side by side and shares one
+// fetch instead of each picker re-fetching independently. Leave the prop
+// out entirely and this component fetches its own copy, for standalone
+// callers like IncidentsListPage's create form. The distinction has to be
+// undefined (prop absent -> self-fetch) vs. null (prop present but its
+// fetch hasn't resolved yet -> wait, don't self-fetch either) -- collapsing
+// both to "falsy" would make every picker fire its own request during the
+// parent's loading window, before the shared value ever arrives.
 export function AssigneePicker({
   value,
   onChange,
   disabled,
+  directory: directoryProp,
 }: {
   value: string[];
   onChange: (next: string[]) => void;
   disabled?: boolean;
+  directory?: UserSummary[] | null;
 }) {
   const { t } = useTranslation();
-  const { data: directory } = useList<UserSummary>((tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
+  const sharesDirectory = directoryProp !== undefined;
+  // Skips the network call (resolves to [] locally instead) when a parent
+  // already owns the fetch -- still calls useList unconditionally so this
+  // obeys the rules of hooks either way.
+  const { data: fetchedDirectory } = useList<UserSummary>(
+    (tk) => (sharesDirectory ? Promise.resolve<UserSummary[]>([]) : api.get<UserSummary[]>("/api/v1/users/directory", tk)),
+    [sharesDirectory],
+  );
+  const directory = sharesDirectory ? directoryProp : fetchedDirectory;
   const byId = new Map((directory ?? []).map((u) => [u.id, u.name]));
   const available = (directory ?? []).filter((u) => !value.includes(u.id));
 

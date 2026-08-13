@@ -387,7 +387,7 @@
       "timelineTitle": "Linha do Tempo",
       "timelineEmpty": "Sem eventos ainda.",
       "correlatedAlertsTitle": "Alertas Correlacionados",
-      "linkAlertPlaceholder": "Buscar por ID ou título do alerta...",
+      "linkAlertPlaceholder": "Buscar por ID, título ou host/IP do alerta...",
       "link": "Vincular",
       "unlink": "Desvincular",
       "noCorrelatedAlerts": "Nenhum alerta correlacionado ainda.",

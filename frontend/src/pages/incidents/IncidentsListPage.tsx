@@ -14,7 +14,7 @@ import { AssigneePicker } from "../../components/AssigneePicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
-import { formatRelative, shortId } from "../../lib/format";
+import { formatDuration, shortId } from "../../lib/format";
 
 type SlaFilter = "" | "breached" | "ok";
 
@@ -219,11 +219,12 @@ function SlaCell({ incident }: { incident: Incident }) {
   const { t } = useTranslation();
   if (incident.closedAt) return <span className="table-sub-cell">{t("incidents.table.slaClosed")}</span>;
   if (incident.slaBreached) {
-    const ago = incident.slaDueAt ? formatRelative(incident.slaDueAt) : "";
-    return <span className="age-text tone-critical">{t("incidents.table.slaBreachedAgo", { time: ago })}</span>;
+    const elapsed = incident.slaDueAt ? formatDuration((Date.now() - new Date(incident.slaDueAt).getTime()) / 1000) : "";
+    return <span className="age-text tone-critical">{t("incidents.table.slaBreachedAgo", { time: elapsed })}</span>;
   }
   if (incident.slaDueAt) {
-    return <span className="table-sub-cell">{t("incidents.table.slaRemaining", { time: formatRelative(incident.slaDueAt) })}</span>;
+    const remaining = formatDuration((new Date(incident.slaDueAt).getTime() - Date.now()) / 1000);
+    return <span className="table-sub-cell">{t("incidents.table.slaRemaining", { time: remaining })}</span>;
   }
   return <span className="badge badge-muted">{t("incidents.table.slaOk")}</span>;
 }

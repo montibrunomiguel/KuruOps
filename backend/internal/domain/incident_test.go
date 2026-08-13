@@ -30,6 +30,25 @@ func TestIncidentPhase_Index(t *testing.T) {
 	}
 }
 
+func TestDefaultPriorityForSeverity(t *testing.T) {
+	cases := []struct {
+		severity domain.Severity
+		want     domain.IncidentPriority
+	}{
+		{domain.SeverityCritical, domain.PriorityP1},
+		{domain.SeverityHigh, domain.PriorityP2},
+		{domain.SeverityMedium, domain.PriorityP3},
+		{domain.SeverityLow, domain.PriorityP4},
+		{domain.SeverityInformational, domain.PriorityP4},
+		{domain.Severity("bogus"), domain.PriorityP4},
+	}
+	for _, c := range cases {
+		t.Run(string(c.severity), func(t *testing.T) {
+			assert.Equal(t, c.want, domain.DefaultPriorityForSeverity(c.severity))
+		})
+	}
+}
+
 func TestNISTPhaseOrder_MatchesConstants(t *testing.T) {
 	// Every declared phase constant must appear exactly once in the
 	// canonical order, and nothing else -- isForwardSkip in

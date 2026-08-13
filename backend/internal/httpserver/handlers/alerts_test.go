@@ -426,6 +426,16 @@ func TestAlertHandlers_Escalate(t *testing.T) {
 		assert.Equal(t, domain.AlertStatusEscalated, alert.Status)
 	})
 
+	t.Run("the new incident's priority is seeded from the alert's severity, not hardcoded p3", func(t *testing.T) {
+		pool := testutil.RequireTestDB(t)
+		incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+		incident, err := incidentSvc.Get(t.Context(), tenantID, resp.IncidentID, nil)
+		require.NoError(t, err)
+		require.NotNil(t, incident)
+		// the fixture alert is domain.SeverityHigh -- see newAlertHandlerFixture.
+		assert.Equal(t, domain.PriorityP2, incident.Priority)
+	})
+
 	t.Run("unknown alert id -- 404", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("POST", "/"+uuid.New().String()+"/escalate", nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)

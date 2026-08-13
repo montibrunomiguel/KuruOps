@@ -373,6 +373,7 @@ function IncidentTagsRow({ incident, onSaved }: { incident: Incident; onSaved: (
 function describeIncidentEvent(ev: IncidentEvent, t: (key: string, opts?: Record<string, unknown>) => string): { text: string; warning: boolean } {
   const data = (ev.data ?? {}) as Record<string, unknown>;
   const phaseLabel = (v: unknown) => (typeof v === "string" ? t(`common.phase.${v}`) : String(v));
+  const severityLabel = (v: unknown) => (typeof v === "string" ? t(`common.severity.${v}`) : String(v));
 
   switch (ev.eventType) {
     case "created":
@@ -382,15 +383,21 @@ function describeIncidentEvent(ev: IncidentEvent, t: (key: string, opts?: Record
     case "phase_skipped":
       return { text: `${phaseLabel(data.from)} → ${phaseLabel(data.to)}`, warning: true };
     case "severity_priority_changed":
-      return { text: `${data.severity} / ${String(data.priority).toUpperCase()}`, warning: false };
+      return { text: `${severityLabel(data.severity)} / ${String(data.priority).toUpperCase()}`, warning: false };
     case "description_edited":
       return { text: t("incidents.detail.descriptionTitle"), warning: false };
     case "status_timestamp_corrected":
       return { text: `${phaseLabel(data.phase)}: ${data.reason ?? ""}`, warning: false };
     case "alert_linked":
-      return { text: shortId(String(data.alertId ?? "")), warning: false };
+      return {
+        text: t("dashboard.activity.incident.alert_linked", { id: shortId(ev.incidentId), alertId: shortId(String(data.alertId ?? "")) }),
+        warning: false,
+      };
     case "alert_unlinked":
-      return { text: shortId(String(data.alertId ?? "")), warning: false };
+      return {
+        text: t("dashboard.activity.incident.alert_unlinked", { id: shortId(ev.incidentId), alertId: shortId(String(data.alertId ?? "")) }),
+        warning: false,
+      };
     case "ai_analysis_run":
       return { text: t("incidents.detail.analyzeWithAI"), warning: false };
     case "closed":
