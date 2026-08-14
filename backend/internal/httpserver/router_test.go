@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/argusops/argusops/internal/httpserver/handlers"
 )
 
@@ -109,5 +111,50 @@ func TestNewRouter_APIRoutesGoThroughAuthMiddleware(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 from AuthMiddleware, got %d", rec.Code)
+	}
+}
+
+// TestNewRouter_TimeoutAppliesExceptToEventsStream is the regression test
+// for the request-timeout wiring: /api/v1/events/stream (SSE, long-lived by
+// design) must NOT go through the same chimw.Timeout Group every other
+// /api/v1 route does, or every live-update connection would get killed on a
+// schedule. Since the real handlers panic on their nil dependencies in this
+// package's nilOptions() fixture (see its own doc comment -- these tests
+// never actually reach a handler, AuthMiddleware always 401s first), the
+// only way to observe the wiring without exercising a handler is to walk
+// the built route tree and compare middleware counts: every /api/v1 route
+// other than the stream should have exactly one more middleware applied
+// (the timeout) than the stream route does.
+func TestNewRouter_TimeoutAppliesExceptToEventsStream(t *testing.T) {
+	r := NewRouter(nilOptions())
+
+	routes, ok := r.(chi.Routes)
+	if !ok {
+		t.Fatalf("expected NewRouter's return value to satisfy chi.Routes")
+	}
+
+	middlewareCounts := map[string]int{}
+	err := chi.Walk(routes, func(method, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		middlewareCounts[method+" "+route] = len(middlewares)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk router: %v", err)
+	}
+
+	streamCount, ok := middlewareCounts["GET /api/v1/events/stream"]
+	if !ok {
+		t.Fatalf("expected /api/v1/events/stream to be registered, got routes: %v", middlewareCounts)
+	}
+	tagsCount, ok := middlewareCounts["GET /api/v1/tags/"]
+	if !ok {
+		t.Fatalf("expected /api/v1/tags/ to be registered, got routes: %v", middlewareCounts)
+	}
+
+	if tagsCount != streamCount+1 {
+		t.Fatalf(
+			"expected /api/v1/tags/ to carry exactly one more middleware (the request timeout) than /api/v1/events/stream, got %d vs %d",
+			tagsCount, streamCount,
+		)
 	}
 }

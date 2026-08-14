@@ -45,6 +45,9 @@ export interface Alert {
   latestAnalysis?: string;
   latestAnalysisStatus?: "running" | "paused" | "completed" | "failed";
   latestAnalysisError?: string;
+  // Count of subsequent alerts suppressed as duplicates of this one, via the
+  // webhook endpoint's group-by-fields dedup window. 0 means never deduped.
+  duplicateCount: number;
 }
 
 export type AlertEventType =
@@ -55,7 +58,8 @@ export type AlertEventType =
   | "escalated"
   | "tags_changed"
   | "linked"
-  | "ai_analysis_run";
+  | "ai_analysis_run"
+  | "duplicate_suppressed";
 
 export interface AlertEvent {
   id: number;

@@ -26,6 +26,7 @@ func (h *WebhookHandlers) Routes(r chi.Router) {
 	r.Post("/{id}/disable", h.disable)
 	r.Post("/{id}/enable", h.enable)
 	r.Put("/{id}/field-mapping-template", h.setFieldMappingTemplate)
+	r.Put("/{id}/group-by-fields", h.setGroupByFields)
 }
 
 func (h *WebhookHandlers) list(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +52,13 @@ type createWebhookRequest struct {
 	// FieldMappingTemplateID is optional; unlike Name/Source it can be
 	// changed later via setFieldMappingTemplate below.
 	FieldMappingTemplateID *uuid.UUID `json:"fieldMappingTemplateId,omitempty"`
+	// GroupByFields/DedupWindowMinutes are optional and, like
+	// FieldMappingTemplateID, changeable later (via setGroupByFields below).
+	// Empty/omitted GroupByFields means dedup is off, same as today's
+	// behavior. DedupWindowMinutes omitted/<=0 -> service default (30min,
+	// see service.resolveDedupWindow).
+	GroupByFields      []string `json:"groupByFields,omitempty"`
+	DedupWindowMinutes *int     `json:"dedupWindowMinutes,omitempty"`
 }
 
 func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +75,7 @@ func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.svc.Create(r.Context(), tenantID, userID, req.Name, req.Source, req.ExpiresInDays, req.FieldMappingTemplateID)
+	result, err := h.svc.Create(r.Context(), tenantID, userID, req.Name, req.Source, req.ExpiresInDays, req.FieldMappingTemplateID, req.GroupByFields, req.DedupWindowMinutes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -134,6 +142,35 @@ func (h *WebhookHandlers) setFieldMappingTemplate(w http.ResponseWriter, r *http
 	}
 
 	if err := h.svc.SetFieldMappingTemplate(r.Context(), tenantID, id, req.TemplateID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type setGroupByFieldsRequest struct {
+	// GroupByFields null/omitted/empty turns dedup back off for this
+	// endpoint -- same "clears the association" shape as
+	// setFieldMappingTemplateRequest.TemplateID.
+	GroupByFields      []string `json:"groupByFields"`
+	DedupWindowMinutes *int     `json:"dedupWindowMinutes,omitempty"`
+}
+
+func (h *WebhookHandlers) setGroupByFields(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid endpoint id")
+		return
+	}
+
+	var req setGroupByFieldsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.SetGroupByFields(r.Context(), tenantID, id, req.GroupByFields, req.DedupWindowMinutes); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

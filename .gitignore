@@ -6,6 +6,9 @@ backend/.env
 backend/coverage.out
 backend/.dev-keys/
 
+# Local pg_dump output from `task db:backup` -- never commit a real dump
+backups/
+
 # Node
 frontend/node_modules/
 frontend/dist/

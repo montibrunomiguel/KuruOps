@@ -145,7 +145,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	alert, err := h.alerts.Ingest(r.Context(), endpoint.TenantID, endpoint.ID, domain.Alert{
+	alert, deduped, err := h.alerts.Ingest(r.Context(), endpoint.TenantID, endpoint.ID, domain.Alert{
 		ExternalID: normalized.ExternalID,
 		Title:      normalized.Title,
 		Source:     endpoint.Source,
@@ -156,15 +156,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Tags:       tags,
 		Payload:    body,
 		Metadata:   metadata,
-	})
+	}, endpoint.GroupByFields, endpoint.DedupWindowMinutes)
 	if err != nil {
 		logger.Error("ingest alert failed", "error", err, "tenant_id", endpoint.TenantID)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
+	// A deduped alert isn't new -- 200 instead of 201 signals that to any
+	// sender paying attention, without changing the response body shape
+	// (still just {"id":...}) that an existing integration already parses.
+	status := http.StatusCreated
+	if deduped {
+		status = http.StatusOK
+	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(status)
 	_, _ = w.Write([]byte(`{"id":"` + alert.ID.String() + `"}`))
 }
 

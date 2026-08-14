@@ -44,7 +44,7 @@ func NewAlertRepository() *AlertRepository {
 const alertColumnsQualified = `
 	a.id, a.tenant_id, a.external_id, a.webhook_endpoint_id, a.title, a.source,
 	a.severity, a.original_severity, a.status, a.classification, a.close_comment,
-	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata,
+	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.duplicate_count,
 	(select l.incident_id from incident_alert_links l where l.alert_id = a.id order by l.linked_at desc limit 1),
 	a.assigned_analyst_id, a.received_at, a.acknowledged_at, a.closed_at, a.created_at, a.updated_at`
 
@@ -204,15 +204,59 @@ func (r *AlertRepository) Insert(ctx context.Context, tx pgx.Tx, a *domain.Alert
 		insert into alerts (
 			tenant_id, external_id, webhook_endpoint_id, title, source,
 			severity, original_severity, status, tags, payload, metadata, rule_id, asset, src_ip,
-			assigned_analyst_id, received_at
-		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			assigned_analyst_id, received_at, group_key
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		returning id, created_at, updated_at,
 			(select name from users where id = assigned_analyst_id)`,
 		a.TenantID, a.ExternalID, a.WebhookEndpointID, a.Title, a.Source,
 		a.Severity, a.OriginalSeverity, a.Status, a.Tags, a.Payload, a.Metadata, a.RuleID, a.Asset, a.SrcIP,
-		a.AssignedAnalystID, a.ReceivedAt,
+		a.AssignedAnalystID, a.ReceivedAt, a.GroupKey,
 	)
 	return row.Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt, &a.AssignedAnalystName)
+}
+
+// FindAndIncrementDuplicate is the whole dedup match-and-suppress step in
+// one atomic statement: it looks for the most recently received alert on
+// webhookEndpointID whose group_key equals groupKey and whose received_at
+// is still within windowMinutes, and if found, increments its
+// duplicate_count and bumps updated_at in the same UPDATE. found=false
+// (with a zero id/newCount) means no match -- the caller should insert a
+// fresh alert instead, exactly like it would with dedup off.
+//
+// This alone does not fully serialize two concurrent ingests for the same
+// (webhookEndpointID, groupKey) that both arrive before either has been
+// inserted yet -- both would find nothing and both would insert. See
+// AlertService.Ingest's doc comment for the pg_advisory_xact_lock that
+// closes that window; this method assumes the caller already holds it.
+func (r *AlertRepository) FindAndIncrementDuplicate(ctx context.Context, tx pgx.Tx, webhookEndpointID uuid.UUID, groupKey string, windowMinutes int) (id uuid.UUID, newCount int, found bool, err error) {
+	err = tx.QueryRow(ctx, `
+		update alerts
+		set duplicate_count = duplicate_count + 1, updated_at = now()
+		where id = (
+			select id from alerts
+			where webhook_endpoint_id = $1 and group_key = $2
+			  and received_at > now() - make_interval(mins => $3)
+			order by received_at desc
+			limit 1
+		)
+		returning id, duplicate_count`,
+		// make_interval(mins => $3), not ($3 || ' minutes')::interval -- the
+		// escalation_policies precedent for that string-concat idiom always
+		// binds a column reference there (already typed integer by the
+		// table), not a bare Go int parameter. pgx can't infer a type for
+		// $3 against the || operator's text operand ("cannot find encode
+		// plan"), the same class of bug as the severity/status enum-array
+		// casts fixed earlier -- make_interval's own signature gives $3 an
+		// unambiguous integer type instead.
+		webhookEndpointID, groupKey, windowMinutes,
+	).Scan(&id, &newCount)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, 0, false, nil
+		}
+		return uuid.Nil, 0, false, fmt.Errorf("find and increment duplicate: %w", err)
+	}
+	return id, newCount, true, nil
 }
 
 // UpdateStatus moves the alert to a new status. Passing stampAcknowledged=true
@@ -367,7 +411,7 @@ func scanAlert(row pgx.Row) (*domain.Alert, error) {
 	err := row.Scan(
 		&a.ID, &a.TenantID, &a.ExternalID, &a.WebhookEndpointID, &a.Title, &a.Source,
 		&a.Severity, &a.OriginalSeverity, &a.Status, &a.Classification, &a.CloseComment,
-		&a.CloseAttachmentURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.IncidentID,
+		&a.CloseAttachmentURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.DuplicateCount, &a.IncidentID,
 		&a.AssignedAnalystID, &a.ReceivedAt, &a.AcknowledgedAt, &a.ClosedAt, &a.CreatedAt, &a.UpdatedAt,
 		&a.AssignedAnalystName,
 	)

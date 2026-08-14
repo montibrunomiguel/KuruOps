@@ -23,6 +23,80 @@ function expiryToDays(value: string): number | undefined {
   return Number(value);
 }
 
+const DEFAULT_DEDUP_WINDOW_MINUTES = "30";
+
+// GroupByFieldsEditor: a dynamic list of JSON-path inputs (e.g. "host.name")
+// plus the dedup window in minutes -- used both in CreateWebhookForm and in
+// WebhookRow's post-creation edit UX, same "controlled list, lift state to
+// the parent" shape as FieldMappingTemplatesPanel's rule list.
+function GroupByFieldsEditor({
+  fields,
+  windowMinutes,
+  onFieldsChange,
+  onWindowChange,
+}: {
+  fields: string[];
+  windowMinutes: string;
+  onFieldsChange: (fields: string[]) => void;
+  onWindowChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  function updateField(idx: number, value: string) {
+    onFieldsChange(fields.map((f, i) => (i === idx ? value : f)));
+  }
+
+  function removeField(idx: number) {
+    onFieldsChange(fields.filter((_, i) => i !== idx));
+  }
+
+  return (
+    <div className="field" style={{ marginTop: 10 }}>
+      <label>{t("settings.webhooks.groupByFields.label")}</label>
+      <p className="helper-text" style={{ marginTop: -2, marginBottom: 6 }}>
+        {t("settings.webhooks.groupByFields.help")}
+      </p>
+      {fields.map((f, idx) => (
+        <div key={idx} className="form-grid" style={{ marginBottom: 6, alignItems: "end" }}>
+          <div className="field">
+            <input
+              className="input"
+              aria-label={t("settings.webhooks.groupByFields.fieldLabel")}
+              placeholder={t("settings.webhooks.groupByFields.placeholder")}
+              value={f}
+              onChange={(e) => updateField(idx, e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => removeField(idx)}
+            aria-label={t("settings.webhooks.groupByFields.removeField")}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button type="button" className="btn btn-sm" onClick={() => onFieldsChange([...fields, ""])}>
+        {t("settings.webhooks.groupByFields.addField")}
+      </button>
+      {fields.length > 0 && (
+        <div className="field" style={{ marginTop: 8, maxWidth: 180 }}>
+          <label htmlFor="wh-dedup-window">{t("settings.webhooks.groupByFields.window")}</label>
+          <input
+            id="wh-dedup-window"
+            type="number"
+            min={1}
+            className="input"
+            value={windowMinutes}
+            onChange={(e) => onWindowChange(e.target.value)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WebhooksPanel() {
   const { t } = useTranslation();
   const { data: endpoints, loading, error, reload } = useList<WebhookEndpoint>(
@@ -124,6 +198,8 @@ function CreateWebhookForm({
   const [source, setSource] = useState("");
   const [expiresInDays, setExpiresInDays] = useState("90");
   const [fieldMappingTemplateId, setFieldMappingTemplateId] = useState("");
+  const [groupByFields, setGroupByFields] = useState<string[]>([]);
+  const [dedupWindowMinutes, setDedupWindowMinutes] = useState(DEFAULT_DEDUP_WINDOW_MINUTES);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,10 +207,20 @@ function CreateWebhookForm({
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    // Blank rows are dropped client-side too, same principle as
+    // FieldMappingTemplatesPanel's TemplateForm.
+    const cleanFields = groupByFields.map((f) => f.trim()).filter(Boolean);
     try {
       const res = await api.post<{ endpoint: WebhookEndpoint; token: string }>(
         "/api/v1/settings/webhooks",
-        { name, source, expiresInDays: expiryToDays(expiresInDays), fieldMappingTemplateId: fieldMappingTemplateId || undefined },
+        {
+          name,
+          source,
+          expiresInDays: expiryToDays(expiresInDays),
+          fieldMappingTemplateId: fieldMappingTemplateId || undefined,
+          groupByFields: cleanFields.length ? cleanFields : undefined,
+          dedupWindowMinutes: cleanFields.length ? Number(dedupWindowMinutes) : undefined,
+        },
         token,
       );
       onCreated(name, res.token);
@@ -193,7 +279,15 @@ function CreateWebhookForm({
           </select>
         </div>
       </div>
-      <div className="row-actions">
+
+      <GroupByFieldsEditor
+        fields={groupByFields}
+        windowMinutes={dedupWindowMinutes}
+        onFieldsChange={setGroupByFields}
+        onWindowChange={setDedupWindowMinutes}
+      />
+
+      <div className="row-actions" style={{ marginTop: 10 }}>
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
           {submitting ? t("common.creating") : t("common.create")}
         </button>
@@ -251,6 +345,11 @@ function WebhookRow({
   const [regenExpiry, setRegenExpiry] = useState("90");
   const [fieldMappingTemplateId, setFieldMappingTemplateId] = useState(endpoint.fieldMappingTemplateId ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [editingDedup, setEditingDedup] = useState(false);
+  const [groupByFields, setGroupByFields] = useState<string[]>(
+    endpoint.groupByFields.length ? endpoint.groupByFields : [""],
+  );
+  const [dedupWindowMinutes, setDedupWindowMinutes] = useState(String(endpoint.dedupWindowMinutes));
 
   async function saveFieldMappingTemplate() {
     setBusy(true);
@@ -261,6 +360,25 @@ function WebhookRow({
         { templateId: fieldMappingTemplateId || null },
         token,
       );
+      onChanged();
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveGroupByFields() {
+    setBusy(true);
+    setError(null);
+    const cleanFields = groupByFields.map((f) => f.trim()).filter(Boolean);
+    try {
+      await api.put(
+        `/api/v1/settings/webhooks/${endpoint.id}/group-by-fields`,
+        { groupByFields: cleanFields, dedupWindowMinutes: Number(dedupWindowMinutes) },
+        token,
+      );
+      setEditingDedup(false);
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -317,7 +435,40 @@ function WebhookRow({
         <p className="row-sub">
           {endpoint.source} · token whk_••••••••{endpoint.tokenLast4}
         </p>
+        <p className="row-sub">
+          {endpoint.groupByFields.length
+            ? t("settings.webhooks.groupByFields.summary", {
+                fields: endpoint.groupByFields.join(", "),
+                minutes: endpoint.dedupWindowMinutes,
+              })
+            : t("settings.webhooks.groupByFields.summaryOff")}
+        </p>
         {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
+        {editingDedup && (
+          <>
+            <GroupByFieldsEditor
+              fields={groupByFields}
+              windowMinutes={dedupWindowMinutes}
+              onFieldsChange={setGroupByFields}
+              onWindowChange={setDedupWindowMinutes}
+            />
+            <div className="row-actions" style={{ marginTop: 6 }}>
+              <button className="btn btn-sm" onClick={saveGroupByFields} disabled={busy}>
+                {t("common.save")}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setEditingDedup(false);
+                  setGroupByFields(endpoint.groupByFields.length ? endpoint.groupByFields : [""]);
+                  setDedupWindowMinutes(String(endpoint.dedupWindowMinutes));
+                }}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </>
+        )}
       </div>
       <div className="row-actions">
         <select
@@ -340,6 +491,9 @@ function WebhookRow({
           disabled={busy || fieldMappingTemplateId === (endpoint.fieldMappingTemplateId ?? "")}
         >
           {t("settings.webhooks.changeTemplate")}
+        </button>
+        <button className="btn btn-sm" onClick={() => setEditingDedup((v) => !v)}>
+          {t("settings.webhooks.groupByFields.editButton")}
         </button>
         <select
           className="select"

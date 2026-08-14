@@ -152,6 +152,56 @@ func TestWebhookHandlers_SetFieldMappingTemplate(t *testing.T) {
 	})
 }
 
+func TestWebhookHandlers_SetGroupByFields(t *testing.T) {
+	h, tenantID, actorID := newWebhookHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	body, _ := json.Marshal(map[string]string{"name": "Wazuh Prod", "source": "wazuh"})
+	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	id := created["endpoint"].(map[string]any)["id"].(string)
+
+	t.Run("invalid endpoint id -- 400", func(t *testing.T) {
+		setBody, _ := json.Marshal(map[string]any{"groupByFields": []string{"host.name"}})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid/group-by-fields", bytes.NewReader(setBody)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/group-by-fields", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("assigns fields and a custom window", func(t *testing.T) {
+		setBody, _ := json.Marshal(map[string]any{"groupByFields": []string{"host.name", "rule.id"}, "dedupWindowMinutes": 45})
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/group-by-fields", bytes.NewReader(setBody)), tenantID, actorID, nil)
+		require.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		listRec := doRequest(r, listReq)
+		var endpoints []map[string]any
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &endpoints))
+		require.Len(t, endpoints, 1)
+		assert.Equal(t, []any{"host.name", "rule.id"}, endpoints[0]["groupByFields"])
+		assert.Equal(t, float64(45), endpoints[0]["dedupWindowMinutes"])
+	})
+
+	t.Run("empty groupByFields turns dedup back off", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+id+"/group-by-fields", bytes.NewReader([]byte(`{"groupByFields":[]}`))), tenantID, actorID, nil)
+		require.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, actorID, nil)
+		listRec := doRequest(r, listReq)
+		var endpoints []map[string]any
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &endpoints))
+		require.Len(t, endpoints, 1)
+		assert.Empty(t, endpoints[0]["groupByFields"])
+	})
+}
+
 func TestWebhookHandlers_List_MissingTenantContext(t *testing.T) {
 	h := handlers.NewWebhookHandlers(nil)
 	r := newRouter(h.Routes)

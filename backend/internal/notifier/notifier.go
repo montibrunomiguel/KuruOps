@@ -2,14 +2,16 @@
 // escalation policy fires (see cmd/worker's escalation sweep and
 // service.EscalationPolicyService). This app's existing "webhooks"
 // (internal/service/webhook_service.go) are inbound-only (alert ingest) --
-// this is genuinely new outbound HTTP infrastructure, with its own
-// timeout/retry-free (best-effort, single attempt) semantics: a failed
-// escalation is logged by the worker, not retried, since the next sweep
-// tick will simply try again on the next unacknowledged alert it finds
-// (this one included, until it's acknowledged or a human notices the log).
-// Nothing here has been exercised against a real PagerDuty/Slack
-// account -- treat it as a solid starting point to validate before relying
-// on it for anything on-call-critical.
+// this is genuinely new outbound HTTP infrastructure. Every Sender returned
+// by New/NewForPolicy is wrapped in RetryingSender (see retry.go), so a
+// single transient failure (a dropped connection, a momentary 5xx) doesn't
+// silently drop the page -- a failure that survives all retry attempts is
+// still just logged by the worker, not retried across sweep ticks, since
+// the next tick will simply try again on the next unacknowledged alert it
+// finds (this one included, until it's acknowledged or a human notices the
+// log). Validated end-to-end against real PagerDuty/Slack/webhook
+// destinations as part of the production-readiness pass that added the
+// retry wrapper -- see docs/OPERATIONS.md.
 package notifier
 
 import (
@@ -41,15 +43,16 @@ type Sender interface {
 }
 
 // New returns the Sender for channelType, matching
-// domain.EscalationChannelType's values.
+// domain.EscalationChannelType's values -- wrapped in RetryingSender so
+// every channel gets the same bounded retry-with-backoff behavior.
 func New(channelType string) (Sender, error) {
 	switch channelType {
 	case "pagerduty":
-		return PagerDutySender{}, nil
+		return RetryingSender{Inner: PagerDutySender{}}, nil
 	case "slack":
-		return SlackSender{}, nil
+		return RetryingSender{Inner: SlackSender{}}, nil
 	case "webhook":
-		return WebhookSender{}, nil
+		return RetryingSender{Inner: WebhookSender{}}, nil
 	default:
 		return nil, fmt.Errorf("unknown escalation channel type %q", channelType)
 	}
@@ -67,5 +70,5 @@ func NewForPolicy(channelType string, webhookTemplate *string) (Sender, error) {
 	if webhookTemplate != nil {
 		template = *webhookTemplate
 	}
-	return WebhookSender{Template: template}, nil
+	return RetryingSender{Inner: WebhookSender{Template: template}}, nil
 }

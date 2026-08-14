@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,6 +40,56 @@ func TestMetricsHandler(t *testing.T) {
 	}
 	if !strings.Contains(body, "argusops_http_request_duration_seconds_count 3") {
 		t.Fatal("expected duration count of 3")
+	}
+}
+
+// TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet confirms a fresh
+// process (no sweep tick has completed yet) doesn't emit the
+// argusops_worker_last_sweep_success_timestamp series at all -- a metric
+// that's simply absent is normal in Prometheus, unlike one that's present
+// with a misleading zero value (which would read as "last successful run
+// was at the Unix epoch", immediately tripping a staleness alert).
+func TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet(t *testing.T) {
+	m := &MetricsCollector{}
+	orig := globalMetrics
+	globalMetrics = m
+	defer func() { globalMetrics = orig }()
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	MetricsHandler(rr, req)
+
+	if strings.Contains(rr.Body.String(), "argusops_worker_last_sweep_success_timestamp") {
+		t.Fatal("expected no sweep-success gauge before any job has recorded a success")
+	}
+}
+
+func TestMetricsCollector_RecordSweepSuccess(t *testing.T) {
+	m := &MetricsCollector{}
+	orig := globalMetrics
+	globalMetrics = m
+	defer func() { globalMetrics = orig }()
+
+	before := time.Now().Unix()
+	m.RecordSweepSuccess("sweep_escalations")
+	after := time.Now().Unix()
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	MetricsHandler(rr, req)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`) {
+		t.Fatalf("expected the sweep-success gauge labeled by job, got body: %s", body)
+	}
+
+	var got int64
+	line := body[strings.Index(body, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`):]
+	if _, err := fmt.Sscanf(line, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"} %d`, &got); err != nil {
+		t.Fatalf("parse gauge value: %v", err)
+	}
+	if got < before || got > after {
+		t.Fatalf("expected the recorded timestamp to fall within [%d, %d], got %d", before, after, got)
 	}
 }
 

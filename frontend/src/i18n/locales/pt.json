@@ -249,7 +249,8 @@
         "tags_changed": "Tags do alerta {{id}} atualizadas",
         "linked": "Alerta {{id}} vinculado a {{linkedId}} como correlacionado",
         "ai_analysis_run": "Análise de IA executada no alerta {{id}}",
-        "assignee_changed": "Responsável pelo alerta {{id}} atualizado"
+        "assignee_changed": "Responsável pelo alerta {{id}} atualizado",
+        "duplicate_suppressed": "Alerta duplicado suprimido em {{id}} ({{count}} no total)"
       },
       "incident": {
         "created": "Incidente {{id}} criado",
@@ -284,6 +285,8 @@
     "subtitle": "Todos os alertas de segurança recebidos via webhook",
     "count_one": "{{count}} alerta",
     "count_other": "{{count}} alertas",
+    "duplicateBadgeTitle_one": "{{count}} alerta duplicado suprimido",
+    "duplicateBadgeTitle_other": "{{count}} alertas duplicados suprimidos",
     "table": {
       "id": "ID",
       "title": "Título",
@@ -306,6 +309,8 @@
       "escalateToIncident": "Escalar para Incidente",
       "escalating": "Escalando...",
       "receivedLine": "Origem: {{source}} · Recebido em {{date}}",
+      "duplicateNote_one": "{{count}} duplicado suprimido",
+      "duplicateNote_other": "{{count}} duplicados suprimidos",
       "customMetadataTitle": "Metadados Personalizados",
       "payloadTitle": "Payload do Webhook",
       "collapse": "Recolher",
@@ -483,7 +488,19 @@
       "regenerate": "Regenerar",
       "fieldMappingTemplate": "Template de mapeamento",
       "noFieldMappingTemplate": "Nenhum",
-      "changeTemplate": "Salvar"
+      "changeTemplate": "Salvar",
+      "groupByFields": {
+        "label": "Agrupar por campos (dedup)",
+        "help": "Campos do JSON recebido que identificam \"o mesmo evento\" (ex: host.name, rule.id). Uma repetição dentro da janela é suprimida e contabilizada em vez de gerar um novo alerta. Um payload sem um desses campos nunca é agrupado.",
+        "fieldLabel": "Caminho do campo JSON",
+        "placeholder": "host.name, rule.id...",
+        "addField": "+ Adicionar campo",
+        "removeField": "Remover campo",
+        "window": "Janela de dedup (minutos)",
+        "editButton": "Editar campos de dedup",
+        "summary": "Dedup: {{fields}} · janela de {{minutes}}min",
+        "summaryOff": "Dedup: desativado"
+      }
     },
     "fieldMappingTemplates": {
       "title": "Templates de Mapeamento de Campos",

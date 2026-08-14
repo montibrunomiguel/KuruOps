@@ -1,0 +1,88 @@
+# Daily automated Postgres backup: pg_dump (custom format) straight to a
+# local scratch file, then uploaded to S3 -- no PVC needed just to stage the
+# dump before upload. Uses DATABASE_URL_MIGRATE (superuser, bypasses RLS),
+# same reasoning as 03-migration-job.yaml: a dump taken through a
+# tenant-scoped role would only capture whatever tenant context happened to
+# be set (or nothing at all), silently missing every other tenant's data.
+#
+# RPO with a once-daily schedule is ~24h -- an explicit, documented starting
+# point for assisted production, not a substitute for WAL archiving/PITR if
+# a tighter RPO is ever needed later (see docs/OPERATIONS.md).
+#
+# `postgres:16-alpine` is the same image tag docker-compose.yml already uses
+# for local Postgres -- reused here so pg_dump's version always matches the
+# server being dumped, with aws-cli added on top via Alpine's package
+# manager instead of maintaining a second custom-built image just for this.
+#
+# Requires, none of which are provided by this file (same "fill in before
+# applying" pattern as 01-secret.example.yaml):
+#   - An S3 bucket the cluster can reach.
+#   - IAM credentials (or better, IRSA/Workload Identity so no static keys
+#     are needed at all) with s3:PutObject on that bucket's backup prefix.
+#   - BACKUP_S3_BUCKET / BACKUP_AWS_REGION in 02-configmap.yaml and
+#     BACKUP_AWS_ACCESS_KEY_ID / BACKUP_AWS_SECRET_ACCESS_KEY in your real
+#     Secret (see 01-secret.example.yaml) filled in with real values.
+#
+# Restoring: see docs/OPERATIONS.md's restore runbook, and
+# `task db:backup:restore-test` for the same restore path exercised locally
+# against a disposable database.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: argusops-backup
+  namespace: argusops
+spec:
+  schedule: "0 3 * * *" # 03:00 UTC daily -- adjust to your own low-traffic window
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  apk add --no-cache aws-cli
+                  file="argusops-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  pg_dump "$DATABASE_URL" -Fc -f "/tmp/$file"
+                  aws s3 cp "/tmp/$file" "s3://$BACKUP_S3_BUCKET/argusops/$file"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: argusops-secrets
+                      key: DATABASE_URL_MIGRATE
+                - name: BACKUP_S3_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: argusops-config
+                      key: BACKUP_S3_BUCKET
+                - name: AWS_DEFAULT_REGION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: argusops-config
+                      key: BACKUP_AWS_REGION
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: argusops-secrets
+                      key: BACKUP_AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: argusops-secrets
+                      key: BACKUP_AWS_SECRET_ACCESS_KEY
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

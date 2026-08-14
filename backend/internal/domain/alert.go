@@ -67,6 +67,20 @@ type Alert struct {
 	// unfiltered raw webhook body.
 	Metadata   json.RawMessage `json:"metadata"`
 	IncidentID *uuid.UUID      `json:"incidentId,omitempty"`
+	// GroupKey is the canonical value AlertService.computeGroupKey derived
+	// from this alert's Payload via its webhook endpoint's GroupByFields at
+	// ingest time -- nil when dedup was off, or the payload was missing one
+	// of the configured fields. Repository-internal matching detail, never
+	// exposed through the API (same json:"-" treatment as
+	// WebhookEndpoint.TokenHash).
+	GroupKey *string `json:"-"`
+	// DuplicateCount is how many subsequent payloads matched this alert's
+	// GroupKey within its endpoint's dedup window and were suppressed
+	// (no new alert created) rather than incrementing this instead -- see
+	// AlertRepository.FindAndIncrementDuplicate. 0 means no duplicates have
+	// been suppressed (the common case, including every alert from an
+	// endpoint with dedup off).
+	DuplicateCount int `json:"duplicateCount"`
 	// AssignedAnalystID/AssignedAnalystName mirror Incident's Assignees field
 	// (see Incident.Assignees's doc comment) -- a live join against users
 	// rather than denormalized, since assignment is mutable and the display
@@ -123,6 +137,11 @@ const (
 	AlertEventLinked          AlertEventType = "linked"
 	AlertEventAIAnalysisRun   AlertEventType = "ai_analysis_run"
 	AlertEventAssigneeChanged AlertEventType = "assignee_changed"
+	// AlertEventDuplicateSuppressed is recorded on the ORIGINAL alert (never
+	// on a new row -- none is created) each time a subsequent payload
+	// matches its GroupKey within the endpoint's dedup window. See
+	// AlertService.Ingest.
+	AlertEventDuplicateSuppressed AlertEventType = "duplicate_suppressed"
 )
 
 type ActorType string

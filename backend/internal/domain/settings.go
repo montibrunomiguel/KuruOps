@@ -32,6 +32,23 @@ type WebhookEndpoint struct {
 	// top of the automatic metadata extraction for every alert this endpoint
 	// receives (see internal/ingest/field_mapping.go).
 	FieldMappingTemplateID *uuid.UUID `json:"fieldMappingTemplateId,omitempty"`
+	// GroupByFields is the JSON-path list (dot notation, same syntax as
+	// FieldMappingRule.JSONPath -- see internal/jsonpath) an admin uses to
+	// say "these fields together identify the same event". Empty (the
+	// default) means dedup is off for this endpoint. Editable after
+	// creation via WebhookHandlers' PUT /{id}/group-by-fields, same as
+	// FieldMappingTemplateID. See AlertService.computeGroupKey/Ingest for
+	// how this drives suppressing a repeat alert instead of creating a new
+	// one (domain.Alert.DuplicateCount).
+	GroupByFields []string `json:"groupByFields"`
+	// DedupWindowMinutes is how long a match against GroupByFields still
+	// counts as "the same event" -- a payload with the same field values
+	// arriving after this many minutes starts a new alert instead of
+	// incrementing an old one. Only meaningful when GroupByFields is
+	// non-empty; defaults to 30 (see service.WebhookService's
+	// resolveDedupWindow), same "sensible default, explicitly overridable"
+	// shape as escalation_policies.unacknowledged_after_minutes.
+	DedupWindowMinutes int `json:"dedupWindowMinutes"`
 }
 
 // LLMProvider mirrors `llm_providers`. Kind "openai_compatible" with a

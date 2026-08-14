@@ -23,7 +23,7 @@ function jsonResponse(body: unknown, total?: number) {
 function alertFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "a1", title: "Suspicious login", source: "wazuh", severity: "high", status: "open",
-    tags: [], receivedAt: "2026-01-01T00:00:00Z", ...overrides,
+    tags: [], receivedAt: "2026-01-01T00:00:00Z", duplicateCount: 0, ...overrides,
   };
 }
 
@@ -44,6 +44,21 @@ describe("AlertsListPage", () => {
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("No alerts found for the current filters.")).toBeInTheDocument();
+  });
+
+  it("shows a duplicate-count badge when duplicateCount > 0", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ duplicateCount: 3 })])));
+    render(<AlertsListPage />, { wrapper });
+
+    expect(await screen.findByText("+3")).toBeInTheDocument();
+  });
+
+  it("does not show a duplicate-count badge when duplicateCount is 0", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture()])));
+    render(<AlertsListPage />, { wrapper });
+
+    await screen.findByText("Suspicious login");
+    expect(screen.queryByText(/^\+\d/)).not.toBeInTheDocument();
   });
 
   it("changing the severity filter re-fetches with the new query param", async () => {

@@ -196,9 +196,9 @@ func TestAIAnalysisService_AgenticLoop_NonSideEffectingTool(t *testing.T) {
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
 	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, fx.ai.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
@@ -237,9 +237,9 @@ func TestAIAnalysisService_AgenticLoop_SideEffectingTool_PausesAndResumesOnAppro
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
 	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Ransomware behavior detected", Source: "edr", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	t.Run("first call pauses instead of returning a final answer", func(t *testing.T) {
@@ -300,9 +300,9 @@ func TestAIAnalysisService_AgenticLoop_RejectedToolCall(t *testing.T) {
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
 	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious activity", Source: "edr", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, fx.ai.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))

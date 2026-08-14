@@ -12,7 +12,7 @@ function jsonResponse(body: unknown, status = 200) {
 function alertFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "a1", title: "Suspicious login", source: "wazuh", severity: "high", originalSeverity: "high", status: "open",
-    tags: [], payload: { raw: true }, receivedAt: "2026-01-01T00:00:00Z", ...overrides,
+    tags: [], payload: { raw: true }, receivedAt: "2026-01-01T00:00:00Z", duplicateCount: 0, ...overrides,
   };
 }
 

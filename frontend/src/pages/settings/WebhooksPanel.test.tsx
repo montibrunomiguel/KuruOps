@@ -11,7 +11,8 @@ function jsonResponse(body: unknown, status = 200) {
 function endpointFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "e1", name: "Wazuh Prod", source: "wazuh", status: "active",
-    tokenLast4: "ab12", expiresAt: "2026-06-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z", ...overrides,
+    tokenLast4: "ab12", expiresAt: "2026-06-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z",
+    groupByFields: [], dedupWindowMinutes: 30, ...overrides,
   };
 }
 
@@ -310,5 +311,88 @@ describe("WebhooksPanel", () => {
     );
     const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
     expect(JSON.parse((putCall![1] as RequestInit).body as string)).toEqual({ templateId: "t1" });
+  });
+
+  it("adding a group-by field on create sends groupByFields and the dedup window", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse({ endpoint: endpointFixture(), token: "whk_x" }, 201));
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No webhook endpoints configured yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Endpoint" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Wazuh Prod");
+    await userEvent.type(screen.getByLabelText("Source"), "wazuh");
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    await userEvent.type(screen.getByLabelText("JSON field path"), "host.name");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+      expect(postCall).toBeDefined();
+      const body = JSON.parse((postCall![1] as RequestInit).body as string);
+      expect(body.groupByFields).toEqual(["host.name"]);
+      expect(body.dedupWindowMinutes).toBe(30);
+    });
+  });
+
+  it("removing a group-by field row drops it from the create form", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No webhook endpoints configured yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Endpoint" }));
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    expect(screen.getAllByLabelText("JSON field path")).toHaveLength(2);
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Remove field" })[0]);
+    expect(screen.getAllByLabelText("JSON field path")).toHaveLength(1);
+  });
+
+  it("editing an existing endpoint's group-by fields PUTs the new fields and window", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("group-by-fields")) return Promise.resolve(new Response(null, { status: 204 }));
+      return withEmptyTemplates(url, () =>
+        Promise.resolve(jsonResponse([endpointFixture({ groupByFields: ["host.name"], dedupWindowMinutes: 45 })])),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await screen.findByText("Wazuh Prod");
+    expect(screen.getByText("Dedup: host.name · 45min window")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit dedup fields" }));
+    const fieldInput = screen.getByLabelText("JSON field path");
+    await userEvent.clear(fieldInput);
+    await userEvent.type(fieldInput, "rule.id");
+    const windowInput = screen.getByLabelText("Dedup window (minutes)");
+    await userEvent.clear(windowInput);
+    await userEvent.type(windowInput, "60");
+
+    // The dedup editor's own "Save" is rendered inside row-main, ahead of
+    // the field-mapping-template row's "Save" in row-actions (which is also
+    // disabled here since no template was selected) -- so it's the first
+    // "Save" button in document order, not the last.
+    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        (c) => (c[0] as string).includes("group-by-fields") && (c[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.groupByFields).toEqual(["rule.id"]);
+      expect(body.dedupWindowMinutes).toBe(60);
+    });
+  });
+
+  it("an endpoint with dedup off shows the 'off' summary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([endpointFixture()])));
+    renderPanel();
+
+    expect(await screen.findByText("Dedup: off")).toBeInTheDocument();
   });
 });

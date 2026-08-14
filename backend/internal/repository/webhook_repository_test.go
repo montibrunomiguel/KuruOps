@@ -79,6 +79,33 @@ func TestWebhookRepository_InsertGetList(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, got.FieldMappingTemplateID)
 	})
+
+	// The 30-minute default is resolved by WebhookService.Create
+	// (resolveDedupWindow), not this repository -- Insert persists whatever
+	// is already on the struct, same as every other field. ep above never
+	// set DedupWindowMinutes, so it's the Go zero value; the fixture only
+	// left GroupByFields nil to exercise Insert's own defensive nil->empty
+	// normalization (see Insert's doc comment).
+	t.Run("insert defaults a nil GroupByFields to an empty slice, not NULL", func(t *testing.T) {
+		got, err := repo.Get(t.Context(), tx, ep.ID)
+		require.NoError(t, err)
+		assert.Empty(t, got.GroupByFields)
+		assert.NotNil(t, got.GroupByFields)
+	})
+
+	t.Run("set group by fields assigns then clears it", func(t *testing.T) {
+		require.NoError(t, repo.SetGroupByFields(t.Context(), tx, ep.ID, []string{"host.name", "rule.id"}, 45))
+		got, err := repo.Get(t.Context(), tx, ep.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"host.name", "rule.id"}, got.GroupByFields)
+		assert.Equal(t, 45, got.DedupWindowMinutes)
+
+		require.NoError(t, repo.SetGroupByFields(t.Context(), tx, ep.ID, []string{}, 30))
+		got, err = repo.Get(t.Context(), tx, ep.ID)
+		require.NoError(t, err)
+		assert.Empty(t, got.GroupByFields)
+		assert.Equal(t, 30, got.DedupWindowMinutes)
+	})
 }
 
 func TestWebhookRepository_ResolveToken(t *testing.T) {

@@ -19,13 +19,17 @@ project picking one for you.
 - **Ingress/TLS.** `frontend`'s Service is `ClusterIP` — reaching it from
   outside the cluster (an ingress controller, a cloud LoadBalancer Service,
   `kubectl port-forward` for a quick look) is up to you.
-- **Autoscaling.** Every Deployment is a fixed `replicas: 1`. `api` and
-  `ingest` are safe to scale up as-is (SSE fan-out, the rate limiter, and
-  the worker's sweep jobs are already Postgres-backed for exactly this —
-  see the backend engineering write-up). `api` specifically also needs
-  either a ReadWriteMany `uploads` PVC or the S3 storage backend (Settings
-  -> Storage) once it's more than one replica, so every replica sees the
-  same attachments.
+- **Autoscaling.** No HorizontalPodAutoscaler — every replica count below is
+  a fixed number you set by hand. `ingest` ships at `replicas: 2` by default
+  (see its own comment): it has no local-disk dependency, and its rate
+  limiter/SSE-adjacent infra are already Postgres-backed for exactly this.
+  `api` ships at `replicas: 1` — its `uploads` PVC is `ReadWriteOnce`, so
+  going beyond 1 replica needs either a ReadWriteMany StorageClass or
+  switching Settings -> Storage to the S3/GCS backend first (see
+  `04-api.yaml`'s comment for the exact steps). `worker` stays at 1 by
+  design (its sweep jobs use a Postgres advisory lock specifically so
+  running more than one replica is safe but not currently useful — only one
+  would ever be doing work at a time).
 - **Secrets management.** `01-secret.example.yaml` is a template with
   placeholder values, not something to `kubectl apply` and forget — see its
   own comments.
@@ -48,6 +52,17 @@ kubectl apply -f deploy/k8s/04-api.yaml
 kubectl apply -f deploy/k8s/05-ingest.yaml
 kubectl apply -f deploy/k8s/06-worker.yaml
 kubectl apply -f deploy/k8s/07-frontend.yaml
+
+# Optional but strongly recommended before real data flows in -- see
+# "Backups" below and 08-backup-cronjob.yaml's own comments for the S3
+# bucket/IAM prerequisites this needs first.
+kubectl apply -f deploy/k8s/08-backup-cronjob.yaml
+
+# Optional but strongly recommended for an assisted-production launch -- see
+# "Monitoring" below. No prerequisites beyond the cluster itself; the
+# Alertmanager receiver ships as a placeholder null route until you edit
+# 09-monitoring.yaml's alertmanager-config to point at a real destination.
+kubectl apply -f deploy/k8s/09-monitoring.yaml
 ```
 
 Re-running the whole set after a new release is safe: the migration Job is
@@ -84,3 +99,33 @@ caveat applies: sized for trying this out, not a production sizing
 recommendation. Watch the real `argusops_db_pool_*` /
 `argusops_http_request_duration_seconds` series on `/metrics` once deployed
 and adjust from there.
+
+## Monitoring
+
+`09-monitoring.yaml` runs a minimal self-hosted Prometheus + Alertmanager —
+scraping api/ingest/worker's existing `/metrics` (no code changes needed,
+it's already there) and alerting on the basics: a scrape target going down,
+an elevated 5xx rate, high p99 latency, connection-pool saturation, and a
+worker sweep job going stale (see the ConfigMap's own comments for exact
+thresholds — starting points, not tuned against real traffic yet). No
+persistent storage and no Grafana, deliberately: this answers "is something
+on fire right now", not "show me a dashboard of the last 30 days". See the
+manifest's own header comment for how to point a managed provider (Grafana
+Cloud, Datadog, etc.) at the same metrics later instead. The Alertmanager
+receiver ships as a placeholder null route — alerts fire and show up in
+Prometheus/Alertmanager's own UI, but notify no one until you edit
+`alertmanager-config` to point at a real destination.
+
+## Backups
+
+`08-backup-cronjob.yaml` runs `pg_dump` once a day and uploads the dump to
+S3 — see its own comments for the exact prerequisites (bucket, IAM
+credentials, the `BACKUP_*` keys it expects in `01-secret.example.yaml` and
+`02-configmap.yaml`). RPO with the default daily schedule is ~24h; that's a
+documented starting point for an assisted-production launch, not a
+substitute for WAL archiving/point-in-time recovery if you need a tighter
+RPO later. To restore, see `docs/OPERATIONS.md`'s restore runbook — the same
+`pg_restore` path is exercised locally by `task db:backup:restore-test`
+against a disposable database, so that's also the fastest way to confirm a
+given dump is actually restorable before you ever need to rely on one for
+real.

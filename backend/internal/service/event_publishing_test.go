@@ -58,9 +58,9 @@ func TestAlertService_PublishesEventsOnKeyActions(t *testing.T) {
 	rec := &eventRecorder{}
 	alertSvc.EnableEventPublishing(rec.publish)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "t", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 	require.NoError(t, alertSvc.ChangeStatus(t.Context(), tenantID, alert.ID, actorID, domain.AlertStatusInvestigating, nil))
 	require.NoError(t, alertSvc.OverrideSeverity(t.Context(), tenantID, alert.ID, actorID, domain.SeverityCritical, nil))
@@ -80,9 +80,9 @@ func TestAlertService_OverrideSeverity_NoOpDoesNotPublish(t *testing.T) {
 	rec := &eventRecorder{}
 	alertSvc.EnableEventPublishing(rec.publish)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "t", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 	rec.reset()
 

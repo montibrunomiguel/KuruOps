@@ -57,6 +57,14 @@ export function describeActivity(e: ActivityEvent, t: TFunction): Described {
         return { icon: <SparkleIcon />, tone: "tone-accent", text: t("dashboard.activity.alert.ai_analysis_run", { id }) };
       case "assignee_changed":
         return { icon: <ClockIcon />, tone: "tone-accent", text: t("dashboard.activity.alert.assignee_changed", { id }) };
+      case "duplicate_suppressed": {
+        const duplicateCount = typeof data.duplicateCount === "number" ? data.duplicateCount : 0;
+        return {
+          icon: <ClockIcon />,
+          tone: "tone-muted",
+          text: t("dashboard.activity.alert.duplicate_suppressed", { id, count: duplicateCount }),
+        };
+      }
       default:
         return { icon: <ClockIcon />, tone: "tone-muted", text: `${e.eventType.replace(/_/g, " ")} (${id})` };
     }

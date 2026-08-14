@@ -73,9 +73,9 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	inc, err := incidentSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{

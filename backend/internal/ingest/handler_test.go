@@ -35,7 +35,7 @@ func newIngestHandlerFixture(t *testing.T) (h *ingest.Handler, token string) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil, nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	_, err = tagSvc.Create(t.Context(), tenantID, actorID, "phishing", nil)
@@ -108,7 +108,7 @@ func TestIngestHandler_UnknownSourceFallsBackToGeneric(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -141,7 +141,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
 	t.Run("a metadata object is stored verbatim", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM A", "siem-a", nil, nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM A", "siem-a", nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{
@@ -172,7 +172,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	})
 
 	t.Run("no metadata field -- stored as an empty object, not null", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM B", "siem-b", nil, nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM B", "siem-b", nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{"title": "No metadata here", "severity": "low"})
@@ -197,7 +197,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	})
 
 	t.Run("metadata sent as a non-object is dropped, not a hard failure", func(t *testing.T) {
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM C", "siem-c", nil, nil)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM C", "siem-c", nil, nil, nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{"title": "Weird metadata", "severity": "low", "metadata": []string{"not", "an", "object"}})
@@ -216,7 +216,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM D", "siem-d", nil, &template.ID)
+		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM D", "siem-d", nil, &template.ID, nil, nil)
 		require.NoError(t, err)
 
 		body, _ := json.Marshal(map[string]any{
@@ -278,7 +278,7 @@ func TestIngestHandler_DisabledEndpoint(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil, nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, webhookSvc.SetStatus(t.Context(), tenantID, result.Endpoint.ID, "disabled"))
 
@@ -303,7 +303,7 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
 
-	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil, nil)
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	// RotateToken keeps the same plaintext token's hash but overwrites
@@ -330,4 +330,91 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// TestIngestHandler_Dedup exercises the group-by-fields dedup feature
+// end-to-end through the real HTTP handler: same group-key value within the
+// window suppresses and increments duplicate_count on the original alert
+// (200, not 201); a different value, or a payload missing the configured
+// field entirely, always inserts a new alert (201) -- the field-missing case
+// is the confirmed "never dedup on shared absence" decision.
+func TestIngestHandler_Dedup(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+
+	webhookRepo := repository.NewWebhookRepository()
+	webhookSvc := service.NewWebhookService(pool, webhookRepo)
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	alertRepo := repository.NewAlertRepository()
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Dedup Endpoint", "some_custom_siem", nil, nil, []string{"host.name"}, nil)
+	require.NoError(t, err)
+
+	post := func(payload map[string]any) (*httptest.ResponseRecorder, string) {
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
+		req.Header.Set("X-Webhook-Token", result.Token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var resp map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return rec, resp["id"]
+	}
+
+	countAlerts := func() int {
+		var n int
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			list, err := alertRepo.List(t.Context(), tx, repository.ListAlertsFilter{})
+			if err != nil {
+				return err
+			}
+			n = len(list)
+			return nil
+		}))
+		return n
+	}
+
+	rec1, id1 := post(map[string]any{"title": "Suspicious login", "severity": "high", "host": map[string]any{"name": "srv-1"}})
+	require.Equal(t, http.StatusCreated, rec1.Code)
+	assert.Equal(t, 1, countAlerts())
+
+	t.Run("same host.name within the window suppresses and increments the original", func(t *testing.T) {
+		rec2, id2 := post(map[string]any{"title": "Suspicious login", "severity": "high", "host": map[string]any{"name": "srv-1"}})
+		require.Equal(t, http.StatusOK, rec2.Code)
+		assert.Equal(t, id1, id2, "the deduped response still returns the original alert's id")
+		assert.Equal(t, 1, countAlerts(), "no new alert row was inserted")
+
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			alertID, err := uuid.Parse(id1)
+			require.NoError(t, err)
+			alert, err := alertRepo.Get(t.Context(), tx, alertID)
+			require.NoError(t, err)
+			require.NotNil(t, alert)
+			assert.Equal(t, 1, alert.DuplicateCount)
+			return nil
+		}))
+	})
+
+	t.Run("a different host.name is a new alert", func(t *testing.T) {
+		rec3, id3 := post(map[string]any{"title": "Suspicious login", "severity": "high", "host": map[string]any{"name": "srv-2"}})
+		require.Equal(t, http.StatusCreated, rec3.Code)
+		assert.NotEqual(t, id1, id3)
+		assert.Equal(t, 2, countAlerts())
+	})
+
+	t.Run("a payload missing the configured field never dedups", func(t *testing.T) {
+		rec4, id4 := post(map[string]any{"title": "Suspicious login", "severity": "high"})
+		require.Equal(t, http.StatusCreated, rec4.Code)
+		assert.NotEqual(t, id1, id4)
+		assert.Equal(t, 3, countAlerts())
+
+		rec5, id5 := post(map[string]any{"title": "Suspicious login", "severity": "high"})
+		require.Equal(t, http.StatusCreated, rec5.Code, "still no dedup the second time -- absence never matches absence")
+		assert.NotEqual(t, id4, id5)
+		assert.Equal(t, 4, countAlerts())
+	})
 }

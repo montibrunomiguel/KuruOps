@@ -48,8 +48,11 @@ type CreateResult struct {
 // same convention as Regenerate (see resolveExpiry): nil defaults to the
 // standard 90-day rotation policy, 0/negative means the admin explicitly
 // opted this endpoint out of expiring. fieldMappingTemplateID is optional
-// and, unlike name/source, can be changed later via SetFieldMappingTemplate.
-func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, name, source string, expiresInDays *int, fieldMappingTemplateID *uuid.UUID) (*CreateResult, error) {
+// and, unlike name/source, can be changed later via SetFieldMappingTemplate
+// -- same for groupByFields/dedupWindowMinutes via SetGroupByFields.
+// dedupWindowMinutes nil or <= 0 resolves to defaultDedupWindowMinutes
+// (see resolveDedupWindow), same shape as resolveExpiry.
+func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, name, source string, expiresInDays *int, fieldMappingTemplateID *uuid.UUID, groupByFields []string, dedupWindowMinutes *int) (*CreateResult, error) {
 	token, err := generateToken()
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
@@ -64,6 +67,8 @@ func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID
 		ExpiresAt:              resolveExpiry(expiresInDays),
 		CreatedBy:              &actorID,
 		FieldMappingTemplateID: fieldMappingTemplateID,
+		GroupByFields:          groupByFields,
+		DedupWindowMinutes:     resolveDedupWindow(dedupWindowMinutes),
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -114,6 +119,23 @@ func resolveExpiry(expiresInDays *int) *time.Time {
 	return &t
 }
 
+// defaultDedupWindowMinutes is how long a repeat payload matching an
+// endpoint's GroupByFields still counts as the same event, when the admin
+// doesn't say otherwise -- see AlertService.Ingest/FindAndIncrementDuplicate.
+const defaultDedupWindowMinutes = 30
+
+// resolveDedupWindow mirrors resolveExpiry's shape: nil or <= 0 means "use
+// the default", not "0-minute window" (which would never match anything).
+// Unlike ExpiresAt there's no "opt out" value here -- GroupByFields being
+// empty is what turns dedup off entirely; the window only matters once
+// GroupByFields is set.
+func resolveDedupWindow(minutes *int) int {
+	if minutes == nil || *minutes <= 0 {
+		return defaultDedupWindowMinutes
+	}
+	return *minutes
+}
+
 func (s *WebhookService) SetStatus(ctx context.Context, tenantID, id uuid.UUID, status string) error {
 	if status != "active" && status != "disabled" {
 		return fmt.Errorf("invalid status %q", status)
@@ -129,6 +151,21 @@ func (s *WebhookService) SetStatus(ctx context.Context, tenantID, id uuid.UUID, 
 func (s *WebhookService) SetFieldMappingTemplate(ctx context.Context, tenantID, id uuid.UUID, templateID *uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.SetFieldMappingTemplate(ctx, tx, id, templateID)
+	})
+}
+
+// SetGroupByFields assigns which JSON-path fields (and dedup window) mark
+// two payloads on this endpoint as the same event -- see Settings ->
+// Webhook Endpoints' group-by editor, same "editable after creation" shape
+// as SetFieldMappingTemplate. Passing an empty fields slice turns dedup
+// back off. dedupWindowMinutes follows resolveDedupWindow's convention
+// (nil/<=0 -> default 30).
+func (s *WebhookService) SetGroupByFields(ctx context.Context, tenantID, id uuid.UUID, fields []string, dedupWindowMinutes *int) error {
+	if fields == nil {
+		fields = []string{}
+	}
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.SetGroupByFields(ctx, tx, id, fields, resolveDedupWindow(dedupWindowMinutes))
 	})
 }
 

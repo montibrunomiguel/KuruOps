@@ -249,7 +249,8 @@
         "tags_changed": "Alert {{id}} tags updated",
         "linked": "Alert {{id}} linked to {{linkedId}} as correlated",
         "ai_analysis_run": "AI analysis run on alert {{id}}",
-        "assignee_changed": "Alert {{id}} assignee updated"
+        "assignee_changed": "Alert {{id}} assignee updated",
+        "duplicate_suppressed": "Duplicate alert suppressed on {{id}} ({{count}} total)"
       },
       "incident": {
         "created": "Incident {{id}} created",
@@ -284,6 +285,8 @@
     "subtitle": "All webhook-ingested security alerts",
     "count_one": "{{count}} alert",
     "count_other": "{{count}} alerts",
+    "duplicateBadgeTitle_one": "{{count}} duplicate alert suppressed",
+    "duplicateBadgeTitle_other": "{{count}} duplicate alerts suppressed",
     "table": {
       "id": "ID",
       "title": "Title",
@@ -306,6 +309,8 @@
       "escalateToIncident": "Escalate to Incident",
       "escalating": "Escalating...",
       "receivedLine": "Source: {{source}} · Received {{date}}",
+      "duplicateNote_one": "{{count}} duplicate suppressed",
+      "duplicateNote_other": "{{count}} duplicates suppressed",
       "customMetadataTitle": "Custom Metadata",
       "payloadTitle": "Webhook Payload",
       "collapse": "Collapse",
@@ -483,7 +488,19 @@
       "regenerate": "Regenerate",
       "fieldMappingTemplate": "Field mapping template",
       "noFieldMappingTemplate": "None",
-      "changeTemplate": "Save"
+      "changeTemplate": "Save",
+      "groupByFields": {
+        "label": "Group by fields (dedup)",
+        "help": "JSON fields from the incoming payload that identify \"the same event\" (e.g. host.name, rule.id). A repeat within the window is suppressed and counted instead of creating a new alert. A payload missing one of these fields is never deduped.",
+        "fieldLabel": "JSON field path",
+        "placeholder": "host.name, rule.id...",
+        "addField": "+ Add field",
+        "removeField": "Remove field",
+        "window": "Dedup window (minutes)",
+        "editButton": "Edit dedup fields",
+        "summary": "Dedup: {{fields}} · {{minutes}}min window",
+        "summaryOff": "Dedup: off"
+      }
     },
     "fieldMappingTemplates": {
       "title": "Field Mapping Templates",

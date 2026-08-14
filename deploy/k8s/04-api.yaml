@@ -4,6 +4,22 @@
 # (already supported, see internal/blobstore) instead of local disk, so
 # every replica sees the same attachments regardless of which one an
 # analyst's request lands on.
+#
+# api's own rate limiter, request timeout, and SSE fan-out are already safe
+# for multiple replicas (Postgres-backed / context-bounded / LISTEN-NOTIFY-
+# based, respectively) -- the uploads PVC above is the ONLY thing actually
+# blocking replicas: 1 -> 2+ here. To scale api once you're ready:
+#   1. Settings -> Storage -> switch to the S3 (or GCS) backend and confirm
+#      existing attachments were migrated/are reachable there.
+#   2. Remove this PersistentVolumeClaim and the "uploads" volumeMount/
+#      volume below (local disk is no longer used once Storage is S3/GCS).
+#   3. Bump spec.replicas below.
+# Skipping step 1-2 and just bumping replicas will schedule fine (a second
+# ReadWriteOnce claim mount on a different node either fails to attach or,
+# depending on your CSI driver, silently gives the second replica its own
+# empty uploads directory) -- either way, some analysts silently can't see
+# attachments other analysts uploaded, depending on which pod their request
+# happened to land on.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

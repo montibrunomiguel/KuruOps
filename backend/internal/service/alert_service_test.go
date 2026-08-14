@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,11 +42,11 @@ func TestAlertService_Ingest(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("always starts open with no classification, regardless of input", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "Suspicious login", Source: "wazuh",
 			Severity: domain.SeverityHigh, Status: domain.AlertStatusClosed,
 			Tags: []string{"phishing", "unregistered-tag"}, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 		assert.Equal(t, domain.AlertStatusOpen, alert.Status)
 		assert.Nil(t, alert.Classification)
@@ -58,9 +59,9 @@ func TestAlertService_Ingest(t *testing.T) {
 	})
 
 	t.Run("nil tags become an empty slice, never a NULL", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "No tags", Source: "wazuh", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 		assert.Equal(t, []string{}, alert.Tags)
 	})
@@ -85,9 +86,9 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("no resolver enabled -- alert stays unassigned", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 		assert.Nil(t, alert.AssignedAnalystID)
 	})
@@ -96,9 +97,9 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
 
-		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 		require.NotNil(t, alert.AssignedAnalystID)
 		assert.Equal(t, analystID, *alert.AssignedAnalystID)
@@ -108,9 +109,9 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: nil})
 
-		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 		assert.Nil(t, alert.AssignedAnalystID)
 	})
@@ -127,9 +128,9 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 
 	t.Run("no hook enabled -- Ingest completes fine without one", func(t *testing.T) {
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
-		_, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 	})
 
@@ -140,9 +141,9 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 			fired <- [2]uuid.UUID{gotTenantID, gotAlertID}
 		})
 
-		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		select {
@@ -173,9 +174,9 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 
 	t.Run("no lookup wired -- nil, not an error", func(t *testing.T) {
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
-		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		got, err := svc.Get(t.Context(), tenantID, alert.ID, nil)
@@ -187,9 +188,9 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
 		svc.EnableAnalysisLookup(runsRepo)
 
-		alert, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		got, err := svc.Get(t.Context(), tenantID, alert.ID, nil)
@@ -219,9 +220,9 @@ func TestAlertService_GetVisibility(t *testing.T) {
 	_, alertSvc, _ := newAlertServices(t)
 	tenantID := testutil.NewTenant(t)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "t", Source: "s", Severity: domain.SeverityLow, Tags: []string{}, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	t.Run("unrestricted (empty allowedTags) sees everything", func(t *testing.T) {
@@ -249,14 +250,14 @@ func TestAlertService_ChangeStatus(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("rejects a direct transition to closed", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		err = alertSvc.ChangeStatus(t.Context(), tenantID, alert.ID, actorID, domain.AlertStatusClosed, nil)
 		assert.ErrorContains(t, err, "use Close")
 	})
 
 	t.Run("a normal transition stamps acknowledged_at the first time it leaves open", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		require.NoError(t, alertSvc.ChangeStatus(t.Context(), tenantID, alert.ID, actorID, domain.AlertStatusInvestigating, nil))
 
@@ -267,7 +268,7 @@ func TestAlertService_ChangeStatus(t *testing.T) {
 	})
 
 	t.Run("a closed alert's status is read-only", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		require.NoError(t, alertSvc.Close(t.Context(), tenantID, alert.ID, actorID, domain.CloseAlertInput{
 			Classification: domain.ClassificationTruePositive, Comment: "confirmed",
@@ -278,7 +279,7 @@ func TestAlertService_ChangeStatus(t *testing.T) {
 	})
 
 	t.Run("an out-of-scope alert reads as not found, not forbidden", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		err = alertSvc.ChangeStatus(t.Context(), tenantID, alert.ID, actorID, domain.AlertStatusInvestigating, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
@@ -289,7 +290,7 @@ func TestAlertService_AddCommentAndComments(t *testing.T) {
 	_, alertSvc, _ := newAlertServices(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	t.Run("a fresh alert has no comments", func(t *testing.T) {
@@ -319,7 +320,7 @@ func TestAlertService_Close(t *testing.T) {
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, alertSvc.Close(t.Context(), tenantID, alert.ID, actorID, domain.CloseAlertInput{
@@ -346,7 +347,7 @@ func TestAlertService_OverrideSeverity(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("overrides severity without touching original_severity", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 
 		require.NoError(t, alertSvc.OverrideSeverity(t.Context(), tenantID, alert.ID, actorID, domain.SeverityCritical, nil))
@@ -358,7 +359,7 @@ func TestAlertService_OverrideSeverity(t *testing.T) {
 	})
 
 	t.Run("a closed alert's severity is read-only", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		require.NoError(t, alertSvc.Close(t.Context(), tenantID, alert.ID, actorID, domain.CloseAlertInput{
 			Classification: domain.ClassificationTruePositive, Comment: "confirmed",
@@ -369,7 +370,7 @@ func TestAlertService_OverrideSeverity(t *testing.T) {
 	})
 
 	t.Run("an out-of-scope alert reads as not found", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		err = alertSvc.OverrideSeverity(t.Context(), tenantID, alert.ID, actorID, domain.SeverityCritical, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
@@ -383,7 +384,7 @@ func TestAlertService_Reassign(t *testing.T) {
 	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("assigns then clears the analyst, recording an event each time", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		assert.Nil(t, alert.AssignedAnalystID)
 
@@ -400,7 +401,7 @@ func TestAlertService_Reassign(t *testing.T) {
 	})
 
 	t.Run("an out-of-scope alert reads as not found", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		err = alertSvc.Reassign(t.Context(), tenantID, alert.ID, actorID, &analystID, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
@@ -414,7 +415,7 @@ func TestAlertService_LinkAlert(t *testing.T) {
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
 	newAlert := func(t *testing.T, title string) *domain.Alert {
-		a, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{Title: title, Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		a, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{Title: title, Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 		return a
 	}
@@ -473,7 +474,7 @@ func TestAlertService_UpdateTags(t *testing.T) {
 	_, err := tagSvc.Create(t.Context(), tenantID, actorID, "vpn", nil)
 	require.NoError(t, err)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	t.Run("only catalog tags are attached", func(t *testing.T) {
@@ -486,5 +487,146 @@ func TestAlertService_UpdateTags(t *testing.T) {
 	t.Run("an out-of-scope alert can't have its tags updated", func(t *testing.T) {
 		err := alertSvc.UpdateTags(t.Context(), tenantID, alert.ID, actorID, []string{"vpn"}, []string{"unrelated-tag"})
 		assert.ErrorContains(t, err, "not found")
+	})
+}
+
+// hostPayload builds a minimal payload with a "host.name" field -- the
+// group-by field every TestAlertService_Ingest_Dedup subtest below groups
+// on, unless noted otherwise.
+func hostPayload(host string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"host": map[string]string{"name": host}})
+	return b
+}
+
+func TestAlertService_Ingest_Dedup(t *testing.T) {
+	_, alertSvc, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	groupByFields := []string{"host.name"}
+
+	t.Run("a second payload with the same group key within the window suppresses instead of creating a new alert", func(t *testing.T) {
+		first, deduped1, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Repeated alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-01"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+		assert.False(t, deduped1)
+		assert.Equal(t, 0, first.DuplicateCount)
+
+		second, deduped2, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Repeated alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-01"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+		assert.True(t, deduped2, "second payload with the same group key must be suppressed, not create a new alert")
+		assert.Equal(t, first.ID, second.ID, "the returned alert must be the original, not a fresh one")
+		assert.Equal(t, 1, second.DuplicateCount)
+
+		// A third confirms the count keeps climbing, not just flipping to 1.
+		third, deduped3, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Repeated alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-01"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+		assert.True(t, deduped3)
+		assert.Equal(t, 2, third.DuplicateCount)
+
+		got, err := alertSvc.Get(t.Context(), tenantID, first.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, got.DuplicateCount, "the persisted alert reflects the suppressed count")
+	})
+
+	t.Run("a different group key value creates a separate alert", func(t *testing.T) {
+		a, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Host A", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("host-a"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+
+		b, deduped, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Host B", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("host-b"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+		assert.False(t, deduped)
+		assert.NotEqual(t, a.ID, b.ID)
+	})
+
+	t.Run("a payload missing the configured field is never deduped, even against itself", func(t *testing.T) {
+		payload := json.RawMessage(`{"no_host_field": true}`)
+		a, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "No host field", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, groupByFields, 30)
+		require.NoError(t, err)
+
+		b, deduped, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "No host field", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, groupByFields, 30)
+		require.NoError(t, err)
+		assert.False(t, deduped, "a missing configured field must never be treated as a match, even against an identical payload")
+		assert.NotEqual(t, a.ID, b.ID)
+	})
+
+	t.Run("empty groupByFields keeps today's behavior -- every alert is new", func(t *testing.T) {
+		a, deduped1, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "No dedup configured", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-99"),
+		}, nil, 0)
+		require.NoError(t, err)
+		assert.False(t, deduped1)
+
+		b, deduped2, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "No dedup configured", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-99"),
+		}, nil, 0)
+		require.NoError(t, err)
+		assert.False(t, deduped2)
+		assert.NotEqual(t, a.ID, b.ID)
+	})
+
+	t.Run("outside the window, a matching payload starts a new alert instead of incrementing the old one", func(t *testing.T) {
+		first, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Old alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-old"),
+		}, groupByFields, 30)
+		require.NoError(t, err)
+
+		// A 0-minute window means "received_at > now() - 0 minutes", which no
+		// already-committed row can ever satisfy -- the cheapest way to
+		// simulate "the window already elapsed" without manipulating time.
+		second, deduped, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Old alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-old"),
+		}, groupByFields, 0)
+		require.NoError(t, err)
+		assert.False(t, deduped, "a window that has already elapsed must not match the earlier alert")
+		assert.NotEqual(t, first.ID, second.ID)
+	})
+
+	t.Run("concurrent ingests for the same group key still result in exactly one alert", func(t *testing.T) {
+		const n = 8
+		results := make(chan bool, n) // each true/false is that call's `deduped`
+		errs := make(chan error, n)
+
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, deduped, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+					Title: "Concurrent alert", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("srv-concurrent"),
+				}, groupByFields, 30)
+				errs <- err
+				results <- deduped
+			}()
+		}
+		wg.Wait()
+		close(results)
+		close(errs)
+
+		for err := range errs {
+			require.NoError(t, err)
+		}
+		newCount, dedupedCount := 0, 0
+		for deduped := range results {
+			if deduped {
+				dedupedCount++
+			} else {
+				newCount++
+			}
+		}
+		assert.Equal(t, 1, newCount, "exactly one of the concurrent calls must have created the alert")
+		assert.Equal(t, n-1, dedupedCount, "every other concurrent call must have been suppressed, not created its own alert")
 	})
 }

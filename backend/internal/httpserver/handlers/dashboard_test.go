@@ -63,13 +63,13 @@ func TestDashboardHandlers_StatsAndFollowup(t *testing.T) {
 
 	t.Run("stats parses alertSeverity/incidentSeverity query params into the filter", func(t *testing.T) {
 		endpointID := testutil.NewWebhookEndpoint(t, tenantID)
-		_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "critical one", Source: "s", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
-		_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "low one", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		r := newRouter(h.Routes)
@@ -86,17 +86,17 @@ func TestDashboardHandlers_StatsAndFollowup(t *testing.T) {
 
 	t.Run("stats parses a comma-separated alertSeverity into a multi-select OR filter", func(t *testing.T) {
 		endpointID := testutil.NewWebhookEndpoint(t, tenantID)
-		_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "critical two", Source: "s", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
-		_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "high one", Source: "s", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
-		_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+		_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "medium one", Source: "s", Severity: domain.SeverityMedium, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		r := newRouter(h.Routes)
@@ -147,9 +147,9 @@ func TestDashboardHandlers_Stats_MoreFilters(t *testing.T) {
 	r := newRouter(h.Routes)
 
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
-	_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "open one", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 	_, err = incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "an incident", Severity: domain.SeverityHigh, Priority: domain.PriorityP2,

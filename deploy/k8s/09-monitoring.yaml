@@ -1,0 +1,244 @@
+# Minimal self-hosted Prometheus + Alertmanager -- deliberately small: no
+# Kubernetes service-discovery RBAC (static_configs pointing at api/ingest/
+# worker's own Services by DNS name are enough, since they're fixed names in
+# this same namespace), no persistent storage (Prometheus' local TSDB is
+# emptyDir -- metrics history is lost on pod restart, which is fine for
+# "is something on fire right now", not meant as a long-term metrics store),
+# no Grafana. This is the assisted-production starting point: something is
+# actually watching the /metrics endpoints that already exist (see
+# internal/httpserver/metrics.go) instead of nothing consuming them at all.
+#
+# To swap in a managed provider later (Grafana Cloud, Datadog, etc.) instead
+# of this: point a remote_write target at it from prometheus.yml below (most
+# providers support scraping their own agent from this same /metrics
+# endpoint, or accepting remote_write directly), or drop this file entirely
+# and point their agent's scrape config at the same api/ingest/worker
+# Services this one uses.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: argusops
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:9093"]
+
+    rule_files:
+      - /etc/prometheus/rules/argusops.rules.yml
+
+    scrape_configs:
+      - job_name: argusops-api
+        static_configs:
+          - targets: ["api:8080"]
+      - job_name: argusops-ingest
+        static_configs:
+          - targets: ["ingest:8080"]
+      - job_name: argusops-worker
+        static_configs:
+          - targets: ["worker:8080"]
+
+  # Alert thresholds below are starting points, not tuned against real
+  # traffic -- revisit once you have a few days of real
+  # argusops_http_request_duration_seconds/argusops_db_pool_* history to
+  # compare against (see docs/OPERATIONS.md's PromQL reference queries).
+  argusops.rules.yml: |
+    groups:
+      - name: argusops.rules
+        rules:
+          - alert: ArgusOpsScrapeTargetDown
+            expr: up{job=~"argusops-.*"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Prometheus can't reach {{ $labels.job }}"
+              description: "Scrape target {{ $labels.instance }} (job {{ $labels.job }}) has been unreachable for over 2 minutes."
+
+          - alert: ArgusOpsHighErrorRate
+            expr: |
+              (sum by (job) (rate(argusops_http_requests_5xx_total[5m]))
+                /
+               sum by (job) (rate(argusops_http_requests_total[5m]))) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.job }} 5xx rate above 5%"
+              description: "More than 5% of {{ $labels.job }}'s requests have returned 5xx over the last 5 minutes."
+
+          - alert: ArgusOpsHighLatencyP99
+            expr: |
+              histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m]))) > 2
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.job }} p99 latency above 2s"
+              description: "99th percentile request latency for {{ $labels.job }} has been above 2s for 10 minutes -- see argusops_db_pool_* below for a likely cause."
+
+          - alert: ArgusOpsDBPoolSaturated
+            expr: (argusops_db_pool_acquired_conns / argusops_db_pool_max_conns) > 0.9
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.job }} connection pool nearly saturated"
+              description: "{{ $labels.job }}'s acquired connections have been above 90% of DB_POOL_MAX_CONNS for 5 minutes -- requests may start queuing or hitting HTTP_REQUEST_TIMEOUT."
+
+          - alert: ArgusOpsWorkerSweepStale
+            expr: (time() - argusops_worker_last_sweep_success_timestamp) > 900
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Worker sweep {{ $labels.sweep_job }} hasn't succeeded recently"
+              description: "{{ $labels.sweep_job }} hasn't completed a successful tick in over 15 minutes -- SLA breaches, escalations, or stale AI-analysis cleanup may be silently stuck. See cmd/worker/main.go's ticker loop."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: argusops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: config
+              mountPath: /etc/prometheus/rules/argusops.rules.yml
+              subPath: argusops.rules.yml
+            - name: storage
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9090 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9090 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: argusops
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+# Placeholder receiver, same "fill in before applying for real" pattern as
+# 01-secret.example.yaml -- a null route means alerts fire in Prometheus/
+# Alertmanager's own UI but notify no one until this is replaced with a
+# real receiver (Slack webhook, PagerDuty, email, etc. -- see Alertmanager's
+# own receiver docs). ArgusOps' own notifier package (internal/notifier) is
+# for tenant-facing on-call escalation, not platform alerting -- deliberately
+# not reused here, since who gets paged for "the platform itself is
+# unhealthy" is a different audience than a tenant's own on-call rotation.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: argusops
+data:
+  alertmanager.yml: |
+    route:
+      receiver: placeholder-null-route
+    receivers:
+      - name: placeholder-null-route
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: argusops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+          ports:
+            - containerPort: 9093
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager/alertmanager.yml
+              subPath: alertmanager.yml
+          readinessProbe:
+            httpGet: { path: /-/ready, port: 9093 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /-/healthy, port: 9093 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: argusops
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
