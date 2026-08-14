@@ -34,6 +34,14 @@ function renderPanel() {
   );
 }
 
+// The settings/edit UI now lives behind a popup opened by clicking the
+// endpoint's row -- this clicks the row (identified by its name) and waits
+// for a field only the modal renders.
+async function openEditModal(name = "Wazuh Prod") {
+  await userEvent.click(screen.getByText(name));
+  await screen.findByLabelText("New token expiry");
+}
+
 describe("WebhooksPanel", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -71,6 +79,15 @@ describe("WebhooksPanel", () => {
     expect(await screen.findByText("whk_supersecretvalue")).toBeInTheDocument();
   });
 
+  it("clicking an endpoint row opens the settings popup", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => withEmptyTemplates(url, () => Promise.resolve(jsonResponse([endpointFixture()])))));
+    renderPanel();
+    await screen.findByText("Wazuh Prod");
+
+    await openEditModal();
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+  });
+
   it("toggling status posts to the disable endpoint for an active token", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) =>
       withEmptyTemplates(url, () => {
@@ -81,6 +98,7 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Disable" }));
     await waitFor(() =>
@@ -109,8 +127,8 @@ describe("WebhooksPanel", () => {
     renderPanel();
 
     await screen.findByText("Wazuh Prod");
-    // "Never expires" also appears as a <select> option (expiry picker), so
-    // the assertion targets the badge specifically, not just any match.
+    // "Never expires" also appears as a <select> option once the create
+    // modal is open, so the assertion targets the badge specifically.
     expect(screen.getByText("Never expires", { selector: "span" })).toBeInTheDocument();
   });
 
@@ -218,6 +236,7 @@ describe("WebhooksPanel", () => {
     renderPanel();
     await screen.findByText("Wazuh Prod");
     expect(screen.getByText("disabled")).toBeInTheDocument();
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Enable" }));
     await waitFor(() =>
@@ -237,6 +256,7 @@ describe("WebhooksPanel", () => {
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Disable" }));
     expect(await screen.findByText("toggle boom")).toBeInTheDocument();
@@ -252,14 +272,15 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
-    await userEvent.selectOptions(screen.getByTitle("New token expiry"), "30");
+    await userEvent.selectOptions(screen.getByLabelText("New token expiry"), "30");
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
 
     // The reveal is lifted to the panel-level banner (like the create flow)
-    // rather than held in the row's own state -- the row unmounts during
-    // the reload that immediately follows, which would otherwise destroy
-    // a locally-held token before it's ever shown.
+    // rather than held in modal state -- regenerate closes the modal, whose
+    // own unmount would otherwise destroy a locally-held token before it's
+    // ever shown.
     expect(await screen.findByText(/whk_newtoken/)).toBeInTheDocument();
     await waitFor(() => {
       const regenCall = fetchMock.mock.calls.find((c) => (c[0] as string).includes("/regenerate"));
@@ -281,6 +302,7 @@ describe("WebhooksPanel", () => {
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(await screen.findByText("regenerate boom")).toBeInTheDocument();
@@ -299,9 +321,13 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
-    await userEvent.selectOptions(screen.getByTitle("Field mapping template"), "t1");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.selectOptions(screen.getByLabelText("Field mapping template"), "t1");
+    // The modal also renders the (disabled, unrelated) dedup-fields "Save"
+    // button, so two "Save" buttons exist -- the field-mapping-template's is
+    // first in document order.
+    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -363,8 +389,8 @@ describe("WebhooksPanel", () => {
     renderPanel();
     await screen.findByText("Wazuh Prod");
     expect(screen.getByText("Dedup: host.name · 45min window")).toBeInTheDocument();
+    await openEditModal();
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit dedup fields" }));
     const fieldInput = screen.getByLabelText("JSON field path");
     await userEvent.clear(fieldInput);
     await userEvent.type(fieldInput, "rule.id");
@@ -372,11 +398,10 @@ describe("WebhooksPanel", () => {
     await userEvent.clear(windowInput);
     await userEvent.type(windowInput, "60");
 
-    // The dedup editor's own "Save" is rendered inside row-main, ahead of
-    // the field-mapping-template row's "Save" in row-actions (which is also
-    // disabled here since no template was selected) -- so it's the first
-    // "Save" button in document order, not the last.
-    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+    // The modal renders the field-mapping-template "Save" (disabled here,
+    // since no template changed) before the dedup editor's own "Save" -- so
+    // it's the second "Save" button in document order, not the first.
+    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(

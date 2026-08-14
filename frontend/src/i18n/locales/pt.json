@@ -462,6 +462,7 @@
     "webhooks": {
       "title": "Webhook Endpoints",
       "newEndpoint": "+ Novo Endpoint",
+      "newEndpointTitle": "Novo Endpoint",
       "tokenGenerated": "Token gerado para {{name}}. Copie agora — ele não será mostrado de novo.",
       "noEndpoints": "Nenhum endpoint de webhook configurado ainda.",
       "form": {
