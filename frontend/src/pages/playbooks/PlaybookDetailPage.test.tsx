@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { PlaybookDetailPage } from "./PlaybookDetailPage";
@@ -12,7 +12,8 @@ function jsonResponse(body: unknown, status = 200) {
 function playbookFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "p1", title: "Phishing Response", category: "Phishing", description: "Standard triage",
-    keywords: ["phishing"], steps: { detection_analysis: ["Check headers"] }, ...overrides,
+    keywords: ["phishing"], alertNamePattern: "", isDefault: false,
+    steps: { detection_analysis: [{ id: "s1", text: "Check headers" }] }, ...overrides,
   };
 }
 
@@ -160,7 +161,7 @@ describe("PlaybookDetailPage", () => {
       expect(body.category).toBe("Malware");
       expect(body.keywords).toEqual(["malware", "ransomware"]);
       expect(body.description).toBe("Updated description");
-      expect(body.steps.detection_analysis).toEqual(["Check email headers"]);
+      expect(body.steps.detection_analysis).toEqual([{ text: "Check email headers", webhookUrl: "", webhookPayloadTemplate: "" }]);
     });
 
     // Save exits edit mode back to the read-only view.
@@ -244,5 +245,76 @@ describe("PlaybookDetailPage", () => {
     expect(await screen.findByText("delete boom")).toBeInTheDocument();
     // Falls back out of the confirming state on failure.
     expect(screen.queryByRole("button", { name: "Confirm delete" })).not.toBeInTheDocument();
+  });
+
+  it("shows the alert name pattern and default badge in read-only mode", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbookFixture({ alertNamePattern: "Suspicious login%" }))));
+    renderDetail("p1");
+
+    expect(await screen.findByText("Matches alerts named: Suspicious login%")).toBeInTheDocument();
+  });
+
+  it("shows the default-playbook badge instead of the pattern when isDefault is set", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbookFixture({ isDefault: true, alertNamePattern: "ignored%" }))));
+    renderDetail("p1");
+
+    expect(await screen.findByText("Default playbook")).toBeInTheDocument();
+  });
+
+  it("editing the alert name pattern and default flag saves them", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(playbookFixture(), 200));
+      return Promise.resolve(jsonResponse(playbookFixture()));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.type(screen.getByLabelText("Alert name pattern"), "Suspicious login%");
+    await userEvent.click(screen.getByLabelText("Default playbook"));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.alertNamePattern).toBe("Suspicious login%");
+      expect(body.isDefault).toBe(true);
+    });
+  });
+
+  it("a containment step reveals webhook URL/payload fields once a URL is typed, and they're included on save", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(playbookFixture(), 200));
+      return Promise.resolve(jsonResponse(playbookFixture({ steps: {} })));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const addButtons = screen.getAllByRole("button", { name: "+ Add step" });
+    // Phase order is New, Detection & Analysis, Containment, Eradication,
+    // Recovery, Post-Incident -- containment is the third "+ Add step".
+    await userEvent.click(addButtons[2]);
+    await userEvent.type(screen.getByPlaceholderText("Step 1"), "Isolate host");
+
+    expect(screen.queryByPlaceholderText("Custom payload (optional)")).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByPlaceholderText("Webhook URL (optional, containment only)"), "https://hooks.example/isolate");
+    // fireEvent.change, not userEvent.type -- userEvent.type parses "{" as
+    // the start of a special-key sequence, which mangles a literal
+    // {{placeholder}} string; fireEvent sets the value directly.
+    fireEvent.change(screen.getByPlaceholderText("Custom payload (optional)"), { target: { value: '{"host":"{{title}}"}' } });
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.steps.containment).toEqual([
+        { text: "Isolate host", webhookUrl: "https://hooks.example/isolate", webhookPayloadTemplate: '{"host":"{{title}}"}' },
+      ]);
+    });
   });
 });

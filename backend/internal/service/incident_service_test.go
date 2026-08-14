@@ -403,7 +403,7 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 	pool, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{Title: "t", Severity: domain.SeverityLow, Priority: domain.PriorityP4})
 	require.NoError(t, err)

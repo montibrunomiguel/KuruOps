@@ -521,6 +521,7 @@ func (r *IncidentRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, in
 		from alerts a
 		join incident_alert_links l on l.alert_id = a.id
 		left join users u on u.id = a.assigned_analyst_id
+		left join playbooks pb on pb.id = a.playbook_id
 		where l.incident_id = $1
 		order by a.received_at desc`,
 		incidentID,

@@ -47,7 +47,7 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertRepo := repository.NewAlertRepository()
 	incidentRepo := repository.NewIncidentRepository()
-	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()

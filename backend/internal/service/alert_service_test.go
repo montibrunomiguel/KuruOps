@@ -28,7 +28,7 @@ func newAlertServices(t *testing.T) (*db.Pool, *service.AlertService, *service.T
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	return pool, alertSvc, tagSvc
 }
 
@@ -67,6 +67,52 @@ func TestAlertService_Ingest(t *testing.T) {
 	})
 }
 
+func TestAlertService_Ingest_PlaybookAssignment(t *testing.T) {
+	pool, alertSvc, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	playbookRepo := repository.NewPlaybookRepository()
+
+	t.Run("no playbooks configured at all -- ingest still succeeds, alert has no playbook", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Unmatched alert", Source: "wazuh", Severity: domain.SeverityLow, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		assert.Nil(t, alert.PlaybookID)
+	})
+
+	var defaultPlaybook, patternPlaybook domain.Playbook
+	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+		defaultPlaybook = domain.Playbook{TenantID: tenantID, Title: "General Response", Category: "General", IsDefault: true, CreatedBy: &actorID}
+		if err := playbookRepo.Insert(t.Context(), tx, &defaultPlaybook); err != nil {
+			return err
+		}
+		patternPlaybook = domain.Playbook{TenantID: tenantID, Title: "Phishing Response", Category: "Phishing", AlertNamePattern: "Phishing%", CreatedBy: &actorID}
+		return playbookRepo.Insert(t.Context(), tx, &patternPlaybook)
+	}))
+
+	t.Run("a matching alert_name_pattern is assigned", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Phishing attempt reported", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		require.NotNil(t, alert.PlaybookID)
+		assert.Equal(t, patternPlaybook.ID, *alert.PlaybookID)
+		require.NotNil(t, alert.PlaybookTitle)
+		assert.Equal(t, "Phishing Response", *alert.PlaybookTitle)
+	})
+
+	t.Run("no pattern matches -- falls back to the default playbook", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Something unrelated entirely", Source: "wazuh", Severity: domain.SeverityLow, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		require.NotNil(t, alert.PlaybookID)
+		assert.Equal(t, defaultPlaybook.ID, *alert.PlaybookID)
+	})
+}
+
 // fakeOnCallResolver is a minimal service.OnCallResolver double -- avoids
 // pulling in the real on-call schema (tenant timezone, shifts) just to
 // verify Ingest wires the resolved analyst onto the new alert.
@@ -94,7 +140,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 
 	t.Run("resolver enabled with a match -- alert is auto-assigned", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -106,7 +152,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 
 	t.Run("resolver enabled with no match -- alert stays unassigned, not an error", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: nil})
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -127,7 +173,7 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
 	t.Run("no hook enabled -- Ingest completes fine without one", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		_, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
 		}, nil, 0)
@@ -135,7 +181,7 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 	})
 
 	t.Run("hook enabled -- fired exactly once with the new alert's tenant/id", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		fired := make(chan [2]uuid.UUID, 2)
 		svc.EnableAutoAnalysis(func(gotTenantID, gotAlertID uuid.UUID) {
 			fired <- [2]uuid.UUID{gotTenantID, gotAlertID}
@@ -173,7 +219,7 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 	runsRepo := repository.NewAIAnalysisRunRepository()
 
 	t.Run("no lookup wired -- nil, not an error", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
 		}, nil, 0)
@@ -185,7 +231,7 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 	})
 
 	t.Run("lookup wired -- surfaces the latest completed analysis", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 		svc.EnableAnalysisLookup(runsRepo)
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{

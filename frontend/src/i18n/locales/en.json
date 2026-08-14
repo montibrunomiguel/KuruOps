@@ -250,7 +250,9 @@
         "linked": "Alert {{id}} linked to {{linkedId}} as correlated",
         "ai_analysis_run": "AI analysis run on alert {{id}}",
         "assignee_changed": "Alert {{id}} assignee updated",
-        "duplicate_suppressed": "Duplicate alert suppressed on {{id}} ({{count}} total)"
+        "duplicate_suppressed": "Duplicate alert suppressed on {{id}} ({{count}} total)",
+        "playbook_webhook_triggered_success": "Playbook automation triggered on {{id}}",
+        "playbook_webhook_triggered_failure": "Playbook automation failed on {{id}}"
       },
       "incident": {
         "created": "Incident {{id}} created",
@@ -902,12 +904,32 @@
       "category": "Category",
       "categoryPlaceholder": "Malware, Phishing, Unauthorized Access...",
       "keywords": "Keywords (comma separated)",
+      "alertNamePattern": "Alert name pattern",
+      "alertNamePatternPlaceholder": "Suspicious login%",
+      "alertNamePatternHelp": "SQL LIKE-style pattern matched against an alert's title (use % as a wildcard). Alerts matching it are auto-assigned this playbook.",
+      "isDefault": "Default playbook",
+      "isDefaultHelp": "Assigned to any alert whose title doesn't match another playbook's pattern. Only one playbook per tenant can be the default.",
+      "defaultBadge": "Default playbook",
+      "patternSummary": "Matches alerts named: {{pattern}}",
+      "noPatternSummary": "Not auto-assigned to any alert",
       "description": "Description",
       "stepsByPhaseTitle": "Steps by phase",
       "stepPlaceholder": "Step {{num}}",
       "removeStep": "Remove",
       "addStep": "+ Add step",
-      "noSteps": "No steps registered yet."
+      "noSteps": "No steps registered yet.",
+      "webhookUrlPlaceholder": "Webhook URL (optional, containment only)",
+      "webhookPayloadTemplatePlaceholder": "Custom payload (optional)",
+      "webhookPayloadTemplateHelp": "Leave blank to send the default payload. Available placeholders:",
+      "webhookConfiguredBadge": "Automation configured"
+    },
+    "view": {
+      "editPlaybook": "Edit playbook",
+      "triggerWebhook": "Run automation",
+      "triggering": "Running...",
+      "triggerSuccess": "Automation triggered successfully.",
+      "triggerError": "Failed to trigger automation: {{error}}",
+      "close": "Close"
     }
   }
 }

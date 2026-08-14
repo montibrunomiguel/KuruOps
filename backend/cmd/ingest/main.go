@@ -52,7 +52,7 @@ func main() {
 	tagRepo := repository.NewTagRepository()
 	tagService := service.NewTagService(pool, tagRepo)
 	alertRepo := repository.NewAlertRepository()
-	alertService := service.NewAlertService(pool, alertRepo, tagService)
+	alertService := service.NewAlertService(pool, alertRepo, tagService, repository.NewPlaybookRepository())
 
 	// eventBroadcaster publishes to the same Postgres NOTIFY channel
 	// cmd/api's own Broadcaster listens on -- an alert ingested here reaches

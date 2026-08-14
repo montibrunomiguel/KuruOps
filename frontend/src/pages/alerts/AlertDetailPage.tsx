@@ -6,7 +6,6 @@ import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertComment } from "../../types/alerts";
-import type { Playbook } from "../../types/playbooks";
 import { SeverityBadge, AlertStatusBadge, ClassificationBadge } from "../../components/badges";
 import { TagPicker } from "../../components/TagPicker";
 import { AttachmentButton, AttachmentPreview } from "../../components/AttachmentButton";
@@ -21,6 +20,7 @@ import { CloseAlertModal } from "./AlertDetailPage/CloseAlertModal";
 import { LinkedAlertsPanel } from "./AlertDetailPage/LinkedAlertsPanel";
 import { AssigneePanel } from "./AlertDetailPage/AssigneePanel";
 import { SeverityOverridePanel } from "./AlertDetailPage/SeverityOverridePanel";
+import { PlaybookViewModal } from "../playbooks/PlaybookViewModal";
 
 export function AlertDetailPage() {
   const { t } = useTranslation();
@@ -53,23 +53,12 @@ export function AlertDetailPage() {
     [id],
   );
 
-  const { data: playbookMatch } = useList<Playbook>(
-    async (tk) => {
-      if (!current) return [];
-      const pb = await api.get<Playbook | null>(
-        `/api/v1/playbooks/match?title=${encodeURIComponent(current.title)}`,
-        tk,
-      );
-      return pb ? [pb] : [];
-    },
-    [current?.title],
-  );
-
   const [actionError, setActionError] = useState<string | null>(null);
   const [escalating, setEscalating] = useState(false);
   const [startingInvestigation, setStartingInvestigation] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showAnalysisChat, setShowAnalysisChat] = useState(false);
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false);
 
   // Marks the alert as being actively worked before it's closed, and claims
   // it for whoever clicked -- two independent calls (assignee, then status),
@@ -180,6 +169,10 @@ export function AlertDetailPage() {
         <AnalysisChat contextType="alert" contextId={current.id} onClose={() => setShowAnalysisChat(false)} />
       )}
 
+      {showPlaybookModal && current.playbookId && (
+        <PlaybookViewModal playbookId={current.playbookId} alertId={current.id} onClose={() => setShowPlaybookModal(false)} />
+      )}
+
       <div className="detail-layout">
         <div className="detail-main">
           <MetadataPanel metadata={current.metadata} />
@@ -213,18 +206,19 @@ export function AlertDetailPage() {
         </div>
 
         <div className="detail-side">
-          {playbookMatch && playbookMatch.length > 0 && (
+          {current.playbookId && (
             <div className="panel">
               <h2 className="panel-title" style={{ marginBottom: 10 }}>
                 {t("alerts.detail.relatedPlaybookTitle")}
               </h2>
-              <span className="badge badge-admin" style={{ marginBottom: 8, display: "inline-block" }}>
-                {playbookMatch[0].category}
-              </span>
-              <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600 }}>{playbookMatch[0].title}</p>
-              <Link to={`/playbooks/${playbookMatch[0].id}`} className="btn btn-sm" style={{ width: "100%", justifyContent: "center" }}>
+              <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 600 }}>{current.playbookTitle}</p>
+              <button
+                className="btn btn-sm"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={() => setShowPlaybookModal(true)}
+              >
                 {t("alerts.detail.viewPlaybook")}
-              </Link>
+              </button>
             </div>
           )}
 

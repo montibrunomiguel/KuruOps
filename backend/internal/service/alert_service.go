@@ -32,14 +32,15 @@ type AlertService struct {
 	pool        *db.Pool
 	repo        *repository.AlertRepository
 	tags        *TagService
+	playbooks   *repository.PlaybookRepository
 	onCall      OnCallResolver
 	publish     func(tenantID uuid.UUID, eventType string, payload any)
 	autoAnalyze func(tenantID, alertID uuid.UUID)
 	runs        *repository.AIAnalysisRunRepository
 }
 
-func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService) *AlertService {
-	return &AlertService{pool: pool, repo: repo, tags: tags}
+func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService, playbooks *repository.PlaybookRepository) *AlertService {
+	return &AlertService{pool: pool, repo: repo, tags: tags, playbooks: playbooks}
 }
 
 // EnableOnCallAutoAssign wires the on-call resolver used by Ingest to
@@ -333,6 +334,21 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 			}
 			key := groupKey
 			in.GroupKey = &key
+		}
+
+		// Every new alert is born with a playbook already attached: the most
+		// specific alert_name_pattern match, or the tenant's is_default
+		// playbook, or nil if neither exists (never blocks ingest, same as
+		// the on-call auto-assign above -- a nil match is a valid outcome,
+		// only a genuine query error aborts).
+		if s.playbooks != nil {
+			pb, matchErr := s.playbooks.MatchForAlertTitle(ctx, tx, in.Title)
+			if matchErr != nil {
+				return fmt.Errorf("match playbook: %w", matchErr)
+			}
+			if pb != nil {
+				in.PlaybookID = &pb.ID
+			}
 		}
 
 		if err := s.repo.Insert(ctx, tx, &in); err != nil {

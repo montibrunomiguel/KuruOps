@@ -87,7 +87,7 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	t.Run("no provider configured", func(t *testing.T) {

@@ -26,6 +26,15 @@ function routeFetch(alert: Record<string, unknown>) {
     if (url.includes("/api/v1/alerts/a1")) return Promise.resolve(jsonResponse(alert));
     if (url.includes("/api/v1/alerts?")) return Promise.resolve(jsonResponse([]));
     if (url.includes("/api/v1/playbooks/match")) return Promise.resolve(jsonResponse(null));
+    if (url.includes("/api/v1/playbooks/p1")) {
+      return Promise.resolve(
+        jsonResponse({
+          id: "p1", title: "Suspicious Login Response", category: "Auth", description: "",
+          keywords: [], alertNamePattern: "Suspicious login%", isDefault: false,
+          steps: { containment: [{ id: "s1", text: "Isolate host" }] },
+        }),
+      );
+    }
     if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
     if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
     return Promise.resolve(jsonResponse({}));
@@ -412,5 +421,31 @@ describe("AlertDetailPage", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "Investigating further", attachmentUrl: null }) }),
       ),
     );
+  });
+
+  it("does not show the Related Playbook panel when the alert has no playbook assigned", async () => {
+    vi.stubGlobal("fetch", routeFetch(alertFixture()));
+    renderDetail();
+
+    await screen.findByRole("heading", { name: "Suspicious login" });
+    expect(screen.queryByText("Related Playbook")).not.toBeInTheDocument();
+  });
+
+  it("shows the Related Playbook panel from the alert's own playbookId/playbookTitle, and opens the popup on click", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(alertFixture({ playbookId: "p1", playbookTitle: "Suspicious Login Response" })),
+    );
+    renderDetail();
+
+    expect(await screen.findByText("Related Playbook")).toBeInTheDocument();
+    expect(screen.getByText("Suspicious Login Response")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "View Playbook" }));
+
+    // The popup fetches the full playbook by id and renders its steps --
+    // proves it's a modal, not a navigation (the alert page is still here).
+    expect(await screen.findByText("Isolate host")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Suspicious login" })).toBeInTheDocument();
   });
 });

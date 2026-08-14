@@ -28,6 +28,12 @@ export interface Alert {
   // internal/ingest's extractMetadata). Always an object, possibly empty.
   metadata: Record<string, unknown>;
   incidentId?: string;
+  // Playbook auto-assigned at ingest time (most specific alertNamePattern
+  // match, or the tenant's default playbook) -- both undefined when neither
+  // exists. playbookTitle is denormalized for display without a second
+  // fetch; open the full playbook via playbookId when needed.
+  playbookId?: string;
+  playbookTitle?: string;
   assignedAnalystId?: string;
   assignedAnalystName?: string;
   receivedAt: string;
@@ -59,7 +65,8 @@ export type AlertEventType =
   | "tags_changed"
   | "linked"
   | "ai_analysis_run"
-  | "duplicate_suppressed";
+  | "duplicate_suppressed"
+  | "playbook_webhook_triggered";
 
 export interface AlertEvent {
   id: number;

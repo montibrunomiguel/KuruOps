@@ -195,7 +195,7 @@ func TestAIAnalysisService_AgenticLoop_NonSideEffectingTool(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: json.RawMessage(`{}`),
 	}, nil, 0)
@@ -236,7 +236,7 @@ func TestAIAnalysisService_AgenticLoop_SideEffectingTool_PausesAndResumesOnAppro
 	require.NoError(t, err)
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Ransomware behavior detected", Source: "edr", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
 	}, nil, 0)
@@ -299,7 +299,7 @@ func TestAIAnalysisService_AgenticLoop_RejectedToolCall(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious activity", Source: "edr", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
 	}, nil, 0)
