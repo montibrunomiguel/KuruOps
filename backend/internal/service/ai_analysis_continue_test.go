@@ -43,9 +43,9 @@ func TestAIAnalysisService_ContinueAlertAnalysis_NoRunYet(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	transcript, err := aiSvc.GetAlertTranscript(t.Context(), tenantID, alert.ID, nil)
@@ -93,9 +93,9 @@ func TestAIAnalysisService_ContinueAlertAnalysis_AppendsToCompletedRun(t *testin
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
@@ -145,9 +145,9 @@ func TestAIAnalysisService_ContinueAlertAnalysis_RejectsWhileRunningOrPaused(t *
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
@@ -181,9 +181,9 @@ func TestAIAnalysisService_ContinueAlertAnalysis_LLMFailureMarksRunFailed(t *tes
 	require.NoError(t, err)
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, aiSvc.ContinueAlertAnalysis(t.Context(), tenantID, alert.ID, actorID, nil, "what's going on here?"))
@@ -263,9 +263,9 @@ func TestAIAnalysisService_PublishesOneTurnEventPerLoopIteration(t *testing.T) {
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
 	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	require.NoError(t, fx.ai.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))

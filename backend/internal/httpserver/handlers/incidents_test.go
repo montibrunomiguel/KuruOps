@@ -366,9 +366,9 @@ func TestIncidentHandlers_TimelineCommentsAndAlertLinks(t *testing.T) {
 	t.Run("alert links", func(t *testing.T) {
 		tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 		alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		req := withClaims(httptest.NewRequest("PUT", "/"+incidentID.String()+"/alerts/"+alert.ID.String(), nil), tenantID, actorID, nil)

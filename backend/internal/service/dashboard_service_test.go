@@ -43,13 +43,13 @@ func TestDashboardService_Stats_Filtered(t *testing.T) {
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
-	_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityCritical, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
-	_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "b", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	stats, err := dashSvc.Stats(t.Context(), tenantID, repository.StatsFilter{AlertSeverity: []domain.Severity{domain.SeverityCritical}})
@@ -70,13 +70,13 @@ func TestDashboardService_Stats_AllowedTagsScoping(t *testing.T) {
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
-	_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "in scope", Source: "s", Severity: domain.SeverityCritical, Tags: []string{"ifood"}, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
-	_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "out of scope", Source: "s", Severity: domain.SeverityCritical, Tags: []string{"other-company"}, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	stats, err := dashSvc.Stats(t.Context(), tenantID, repository.StatsFilter{AllowedTags: []string{"ifood"}})
@@ -95,13 +95,13 @@ func TestDashboardService_Activity_AllowedTagsScoping(t *testing.T) {
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
-	_, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "in scope", Source: "s", Severity: domain.SeverityHigh, Tags: []string{"ifood"}, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
-	_, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	_, _, err = alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "out of scope", Source: "s", Severity: domain.SeverityHigh, Tags: []string{"other-company"}, Payload: testPayload,
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", []string{"ifood"}, nil, nil)
@@ -118,7 +118,7 @@ func TestDashboardService_Activity(t *testing.T) {
 	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 
-	_, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload})
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	events, err := dashSvc.Activity(t.Context(), tenantID, 0, "", nil, nil, nil)
@@ -135,7 +135,7 @@ func TestDashboardService_Activity_KindFilter(t *testing.T) {
 	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 
-	_, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload})
+	_, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	incidentEvents, err := dashSvc.Activity(t.Context(), tenantID, 0, "incident", nil, nil, nil)
@@ -159,15 +159,15 @@ func TestDashboardService_Followup(t *testing.T) {
 
 	// An escalated alert, an investigating one, and a still-open (untriaged)
 	// one all belong in Follow-up; a closed one does not.
-	escalated, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload})
+	escalated, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 	require.NoError(t, alertSvc.ChangeStatus(t.Context(), tenantID, escalated.ID, actorID, domain.AlertStatusEscalated, nil))
 
-	investigating, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "b", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	investigating, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "b", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 	require.NoError(t, alertSvc.ChangeStatus(t.Context(), tenantID, investigating.ID, actorID, domain.AlertStatusInvestigating, nil))
 
-	open, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "c", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+	open, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "c", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 	require.NoError(t, err)
 
 	view, err := dashSvc.Followup(t.Context(), tenantID, nil, nil, nil)

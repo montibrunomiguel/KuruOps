@@ -165,6 +165,31 @@ func TestIncidentRepository_List_Filters(t *testing.T) {
 		assert.Equal(t, p1.ID, list[0].ID)
 	})
 
+	// Same reasoning as AlertRepository's combined-filter regression test:
+	// every subtest above applies exactly one filter, which wouldn't catch a
+	// positional-arg bug in the where-clause builder that only surfaces once
+	// 2+ filters stack in the same call.
+	t.Run("combined filters (severity + priority + phase + tag) narrow to the one incident matching all four", func(t *testing.T) {
+		sev := domain.SeverityCritical
+		priority := domain.PriorityP1
+		phase := domain.PhaseNew
+		tag := "ransomware"
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{
+			Severity: &sev, Priority: &priority, Phase: &phase, Tag: &tag,
+		})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, p1.ID, list[0].ID)
+	})
+
+	t.Run("combined filters where one condition matches nothing returns empty, not a partial match", func(t *testing.T) {
+		sev := domain.SeverityCritical // p1 is critical...
+		priority := domain.PriorityP3  // ...but not p3
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{Severity: &sev, Priority: &priority})
+		require.NoError(t, err)
+		assert.Empty(t, list)
+	})
+
 	t.Run("filter by SLABreached", func(t *testing.T) {
 		breached := true
 		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{SLABreached: &breached})

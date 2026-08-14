@@ -37,11 +37,15 @@ func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tok
 
 	var ep domain.WebhookEndpoint
 	err = tx.QueryRow(ctx, `
-		select id, tenant_id, source, status, expires_at, field_mapping_template_id
+		select id, tenant_id, source, status, expires_at, field_mapping_template_id,
+		       group_by_fields, dedup_window_minutes
 		from webhook_endpoints
 		where token_hash = $1`,
 		tokenHash,
-	).Scan(&ep.ID, &ep.TenantID, &ep.Source, &ep.Status, &ep.ExpiresAt, &ep.FieldMappingTemplateID)
+	).Scan(
+		&ep.ID, &ep.TenantID, &ep.Source, &ep.Status, &ep.ExpiresAt, &ep.FieldMappingTemplateID,
+		&ep.GroupByFields, &ep.DedupWindowMinutes,
+	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -56,7 +60,7 @@ func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tok
 	return &ep, nil
 }
 
-const webhookColumns = `id, tenant_id, name, source, token_hash, token_last4, status, rotated_at, expires_at, created_by, created_at, field_mapping_template_id`
+const webhookColumns = `id, tenant_id, name, source, token_hash, token_last4, status, rotated_at, expires_at, created_by, created_at, field_mapping_template_id, group_by_fields, dedup_window_minutes`
 
 func (r *WebhookRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.WebhookEndpoint, error) {
 	rows, err := tx.Query(ctx, `select `+webhookColumns+` from webhook_endpoints order by created_at desc`)
@@ -87,16 +91,45 @@ func (r *WebhookRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*
 // optional and, unlike the rest of these fields, changeable afterward — see
 // SetFieldMappingTemplate.
 func (r *WebhookRepository) Insert(ctx context.Context, tx pgx.Tx, ep *domain.WebhookEndpoint) error {
+	// group_by_fields is NOT NULL -- defaulted here (not just in
+	// WebhookService.Create) so every direct-repository caller (every test
+	// fixture built before this column existed) keeps working without
+	// having to set GroupByFields itself, same reasoning as
+	// AlertRepository.Insert's Metadata default: a Go nil slice encodes as
+	// SQL NULL, not '{}', so this can't be left to the column's own
+	// `default '{}'` -- that default only fires when the column is omitted
+	// from the INSERT entirely, and it's always named explicitly here.
+	if ep.GroupByFields == nil {
+		ep.GroupByFields = []string{}
+	}
 	row := tx.QueryRow(ctx, `
-		insert into webhook_endpoints (tenant_id, name, source, token_hash, token_last4, expires_at, created_by, field_mapping_template_id)
-		values ($1,$2,$3,$4,$5,$6,$7,$8)
+		insert into webhook_endpoints (
+			tenant_id, name, source, token_hash, token_last4, expires_at, created_by,
+			field_mapping_template_id, group_by_fields, dedup_window_minutes
+		)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		returning id, status, created_at`,
-		ep.TenantID, ep.Name, ep.Source, ep.TokenHash, ep.TokenLast4, ep.ExpiresAt, ep.CreatedBy, ep.FieldMappingTemplateID,
+		ep.TenantID, ep.Name, ep.Source, ep.TokenHash, ep.TokenLast4, ep.ExpiresAt, ep.CreatedBy,
+		ep.FieldMappingTemplateID, ep.GroupByFields, ep.DedupWindowMinutes,
 	)
 	if err := row.Scan(&ep.ID, &ep.Status, &ep.CreatedAt); err != nil {
 		return fmt.Errorf("insert webhook endpoint: %w", err)
 	}
 	return nil
+}
+
+// SetGroupByFields assigns the JSON-path list (and dedup window) that
+// determine which incoming payloads on this endpoint are treated as
+// duplicates of an existing alert -- see Settings -> Webhook Endpoints'
+// "group by fields" editor, same "editable after creation" shape as
+// SetFieldMappingTemplate. Passing an empty fields slice turns dedup back
+// off for this endpoint (a fresh alert every time, today's behavior).
+func (r *WebhookRepository) SetGroupByFields(ctx context.Context, tx pgx.Tx, id uuid.UUID, fields []string, windowMinutes int) error {
+	_, err := tx.Exec(ctx,
+		`update webhook_endpoints set group_by_fields = $2, dedup_window_minutes = $3 where id = $1`,
+		id, fields, windowMinutes,
+	)
+	return err
 }
 
 // SetFieldMappingTemplate assigns or clears (templateID == nil) the field
@@ -131,6 +164,7 @@ func scanWebhookEndpoint(row pgx.Row) (*domain.WebhookEndpoint, error) {
 	err := row.Scan(
 		&ep.ID, &ep.TenantID, &ep.Name, &ep.Source, &ep.TokenHash, &ep.TokenLast4, &ep.Status, &ep.RotatedAt,
 		&ep.ExpiresAt, &ep.CreatedBy, &ep.CreatedAt, &ep.FieldMappingTemplateID,
+		&ep.GroupByFields, &ep.DedupWindowMinutes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("scan webhook endpoint: %w", err)

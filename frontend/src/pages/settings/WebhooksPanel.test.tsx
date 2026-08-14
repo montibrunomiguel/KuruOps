@@ -11,7 +11,8 @@ function jsonResponse(body: unknown, status = 200) {
 function endpointFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "e1", name: "Wazuh Prod", source: "wazuh", status: "active",
-    tokenLast4: "ab12", expiresAt: "2026-06-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z", ...overrides,
+    tokenLast4: "ab12", expiresAt: "2026-06-01T00:00:00Z", createdAt: "2026-01-01T00:00:00Z",
+    groupByFields: [], dedupWindowMinutes: 30, ...overrides,
   };
 }
 
@@ -31,6 +32,14 @@ function renderPanel() {
       <WebhooksPanel />
     </AuthProvider>,
   );
+}
+
+// The settings/edit UI now lives behind a popup opened by clicking the
+// endpoint's row -- this clicks the row (identified by its name) and waits
+// for a field only the modal renders.
+async function openEditModal(name = "Wazuh Prod") {
+  await userEvent.click(screen.getByText(name));
+  await screen.findByLabelText("New token expiry");
 }
 
 describe("WebhooksPanel", () => {
@@ -70,6 +79,15 @@ describe("WebhooksPanel", () => {
     expect(await screen.findByText("whk_supersecretvalue")).toBeInTheDocument();
   });
 
+  it("clicking an endpoint row opens the settings popup", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string) => withEmptyTemplates(url, () => Promise.resolve(jsonResponse([endpointFixture()])))));
+    renderPanel();
+    await screen.findByText("Wazuh Prod");
+
+    await openEditModal();
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+  });
+
   it("toggling status posts to the disable endpoint for an active token", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) =>
       withEmptyTemplates(url, () => {
@@ -80,6 +98,7 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Disable" }));
     await waitFor(() =>
@@ -108,8 +127,8 @@ describe("WebhooksPanel", () => {
     renderPanel();
 
     await screen.findByText("Wazuh Prod");
-    // "Never expires" also appears as a <select> option (expiry picker), so
-    // the assertion targets the badge specifically, not just any match.
+    // "Never expires" also appears as a <select> option once the create
+    // modal is open, so the assertion targets the badge specifically.
     expect(screen.getByText("Never expires", { selector: "span" })).toBeInTheDocument();
   });
 
@@ -217,6 +236,7 @@ describe("WebhooksPanel", () => {
     renderPanel();
     await screen.findByText("Wazuh Prod");
     expect(screen.getByText("disabled")).toBeInTheDocument();
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Enable" }));
     await waitFor(() =>
@@ -236,6 +256,7 @@ describe("WebhooksPanel", () => {
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Disable" }));
     expect(await screen.findByText("toggle boom")).toBeInTheDocument();
@@ -251,14 +272,15 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
-    await userEvent.selectOptions(screen.getByTitle("New token expiry"), "30");
+    await userEvent.selectOptions(screen.getByLabelText("New token expiry"), "30");
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
 
     // The reveal is lifted to the panel-level banner (like the create flow)
-    // rather than held in the row's own state -- the row unmounts during
-    // the reload that immediately follows, which would otherwise destroy
-    // a locally-held token before it's ever shown.
+    // rather than held in modal state -- regenerate closes the modal, whose
+    // own unmount would otherwise destroy a locally-held token before it's
+    // ever shown.
     expect(await screen.findByText(/whk_newtoken/)).toBeInTheDocument();
     await waitFor(() => {
       const regenCall = fetchMock.mock.calls.find((c) => (c[0] as string).includes("/regenerate"));
@@ -280,6 +302,7 @@ describe("WebhooksPanel", () => {
     );
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
     await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
     expect(await screen.findByText("regenerate boom")).toBeInTheDocument();
@@ -298,9 +321,13 @@ describe("WebhooksPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
     await screen.findByText("Wazuh Prod");
+    await openEditModal();
 
-    await userEvent.selectOptions(screen.getByTitle("Field mapping template"), "t1");
-    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.selectOptions(screen.getByLabelText("Field mapping template"), "t1");
+    // The modal also renders the (disabled, unrelated) dedup-fields "Save"
+    // button, so two "Save" buttons exist -- the field-mapping-template's is
+    // first in document order.
+    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -310,5 +337,87 @@ describe("WebhooksPanel", () => {
     );
     const putCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
     expect(JSON.parse((putCall![1] as RequestInit).body as string)).toEqual({ templateId: "t1" });
+  });
+
+  it("adding a group-by field on create sends groupByFields and the dedup window", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse({ endpoint: endpointFixture(), token: "whk_x" }, 201));
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No webhook endpoints configured yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Endpoint" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Wazuh Prod");
+    await userEvent.type(screen.getByLabelText("Source"), "wazuh");
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    await userEvent.type(screen.getByLabelText("JSON field path"), "host.name");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+      expect(postCall).toBeDefined();
+      const body = JSON.parse((postCall![1] as RequestInit).body as string);
+      expect(body.groupByFields).toEqual(["host.name"]);
+      expect(body.dedupWindowMinutes).toBe(30);
+    });
+  });
+
+  it("removing a group-by field row drops it from the create form", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No webhook endpoints configured yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Endpoint" }));
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    await userEvent.click(screen.getByRole("button", { name: "+ Add field" }));
+    expect(screen.getAllByLabelText("JSON field path")).toHaveLength(2);
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Remove field" })[0]);
+    expect(screen.getAllByLabelText("JSON field path")).toHaveLength(1);
+  });
+
+  it("editing an existing endpoint's group-by fields PUTs the new fields and window", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("group-by-fields")) return Promise.resolve(new Response(null, { status: 204 }));
+      return withEmptyTemplates(url, () =>
+        Promise.resolve(jsonResponse([endpointFixture({ groupByFields: ["host.name"], dedupWindowMinutes: 45 })])),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await screen.findByText("Wazuh Prod");
+    expect(screen.getByText("Dedup: host.name · 45min window")).toBeInTheDocument();
+    await openEditModal();
+
+    const fieldInput = screen.getByLabelText("JSON field path");
+    await userEvent.clear(fieldInput);
+    await userEvent.type(fieldInput, "rule.id");
+    const windowInput = screen.getByLabelText("Dedup window (minutes)");
+    await userEvent.clear(windowInput);
+    await userEvent.type(windowInput, "60");
+
+    // The modal renders the field-mapping-template "Save" (disabled here,
+    // since no template changed) before the dedup editor's own "Save" -- so
+    // it's the second "Save" button in document order, not the first.
+    await userEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(
+        (c) => (c[0] as string).includes("group-by-fields") && (c[1] as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(putCall).toBeDefined();
+      const body = JSON.parse((putCall![1] as RequestInit).body as string);
+      expect(body.groupByFields).toEqual(["rule.id"]);
+      expect(body.dedupWindowMinutes).toBe(60);
+    });
+  });
+
+  it("an endpoint with dedup off shows the 'off' summary", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([endpointFixture()])));
+    renderPanel();
+
+    expect(await screen.findByText("Dedup: off")).toBeInTheDocument();
   });
 });

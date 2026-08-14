@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/httpserver"
 	"github.com/argusops/argusops/internal/mailer"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
@@ -367,6 +368,64 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
 }
 
+// TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall is the
+// regression test for reordering escalated_at's stamp to happen right after
+// a successful Send instead of after notifyOnCallAnalyst (see
+// sweepEscalations' doc comment): the stamp must still be gated on Send
+// actually succeeding, not unconditional -- a destination that's down
+// (retried by notifier.RetryingSender and still failing every attempt) must
+// leave the alert un-escalated so the next sweep tick retries it, and must
+// never reach the best-effort on-call email step either.
+func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
+	adminPool := sweepAdminPool(t)
+	workerPool := sweepWorkerPool(t)
+	appPool := testutil.RequireTestDB(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+	store := secrets.NewEnvStore()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	tenantID := testutil.NewTenant(t)
+	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	ref, err := store.Put(ctx, tenantID.String(), "escalation:critical", srv.URL)
+	require.NoError(t, err)
+	_, err = adminPool.Exec(ctx, `
+		insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
+		values ($1, 'critical', 15, 'webhook', $2)`,
+		tenantID, ref,
+	)
+	require.NoError(t, err)
+	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
+
+	// On shift every day, all day, with SMTP configured too -- if the
+	// reordering somehow made the stamp (or the on-call email) unconditional
+	// on Send's outcome, this fixture would be enough to observe it.
+	setupOnCall := service.NewOnCallShiftService(appPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	for weekday := 0; weekday <= 6; weekday++ {
+		_, err := setupOnCall.Create(ctx, tenantID, analystID, weekday, 0, 1439)
+		require.NoError(t, err)
+	}
+	fake := &fakeMailSender{}
+	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
+	require.NoError(t, setupSMTP.Save(ctx, tenantID, service.SaveSMTPInput{
+		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
+	}))
+
+	onCall := service.NewOnCallShiftService(workerPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	users := repository.NewUserRepository()
+	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
+
+	sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+
+	assert.Nil(t, escalatedAtFor(t, adminPool, alertID), "a failed Send must leave the alert un-escalated so the next tick retries it")
+	assert.Empty(t, fake.sent, "the on-call email step must never run when the primary Send failed")
+}
+
 // TestRunLocked_OnlyOneReplicaExecutesConcurrently is the regression test
 // for the bug this advisory-lock wrapper exists to close: without it, two
 // cmd/worker replicas whose tickers fire the same tick would both run
@@ -405,6 +464,31 @@ func TestRunLocked_OnlyOneReplicaExecutesConcurrently(t *testing.T) {
 
 	assert.True(t, firstRan, "the replica that wins the lock must run the job")
 	assert.False(t, secondRan, "the replica that loses the lock must skip this tick, not run the job again")
+}
+
+// TestRunLocked_RecordsSweepSuccessMetric is the regression test for the
+// argusops_worker_last_sweep_success_timestamp gauge (see
+// MetricsCollector.RecordSweepSuccess): it must be stamped when a tick
+// actually acquires the lock and runs fn, and must NOT be stamped for a
+// tick that loses the lock and skips -- an Alertmanager rule watching this
+// gauge for staleness would otherwise never fire on a genuinely stuck job
+// (if a losing replica stamped it anyway) or false-alarm on a healthy
+// multi-replica setup (if a winning replica's tick didn't stamp it at all).
+func TestRunLocked_RecordsSweepSuccessMetric(t *testing.T) {
+	pool := sweepWorkerPool(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	m := &httpserver.MetricsCollector{}
+	orig := httpserver.SetMetricsForTest(m)
+	defer httpserver.SetMetricsForTest(orig)
+
+	runLocked(context.Background(), pool, -990003, "test-metric-job", logger, func() {})
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	httpserver.MetricsHandler(rec, req)
+
+	assert.Contains(t, rec.Body.String(), `argusops_worker_last_sweep_success_timestamp{sweep_job="test-metric-job"}`)
 }
 
 // insertAIRunFixture inserts an ai_analysis_runs row with an explicit

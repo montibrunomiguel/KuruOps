@@ -147,6 +147,15 @@ export function AlertsListPage() {
                       </td>
                       <td className="table-title-cell">
                         {a.title}
+                        {a.duplicateCount > 0 && (
+                          <span
+                            className="badge badge-muted"
+                            style={{ marginLeft: 6 }}
+                            title={t("alerts.duplicateBadgeTitle", { count: a.duplicateCount })}
+                          >
+                            +{a.duplicateCount}
+                          </span>
+                        )}
                         {a.tags.length > 0 && (
                           <div className="tag-chip-list" style={{ marginTop: 4 }}>
                             {a.tags.map((tagName) => (

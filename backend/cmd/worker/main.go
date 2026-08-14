@@ -185,7 +185,13 @@ func runLocked(ctx context.Context, pool *db.Pool, key int64, job string, logger
 	}
 	if !acquired {
 		logger.Debug("skipping tick, another replica holds the lock", "job", job)
+		return
 	}
+	// fn returned without panicking (a panic here would already have
+	// propagated out of WithAdvisoryLock, past this line) -- see
+	// MetricsCollector.RecordSweepSuccess's doc comment for what an
+	// Alertmanager rule watching this gauge is actually meant to catch.
+	httpserver.GetMetrics().RecordSweepSuccess(job)
 }
 
 // refreshMaterializedViews recomputes mv_alert_daily_stats, mv_incident_kpis,
@@ -305,10 +311,23 @@ type escalationCandidate struct {
 // refreshMaterializedViews/sweepSLABreaches -- see
 // db/init/argusops_worker_role.sql.
 //
-// A single failed notification (unreachable PagerDuty/Slack, a bad
-// destination secret) is logged and skipped, not retried here -- the alert
-// stays un-escalated (escalated_at stays null), so the very next sweep
-// tick will simply try it again.
+// A single failed Send (already retried with backoff inside
+// notifier.RetryingSender -- see internal/notifier/retry.go) is logged and
+// skipped, not retried across sweep ticks here -- the alert stays
+// un-escalated (escalated_at stays null), so the very next tick will simply
+// try it again.
+//
+// escalated_at is stamped immediately after Send succeeds, before the
+// best-effort on-call-analyst email below -- not before Send is called.
+// Stamping before Send would close the crash window entirely, but at the
+// cost of a worse one: a real (not just crash-timing) Send failure would
+// then never be retried on a later tick either, since the row would already
+// read as escalated. Stamping right after a successful Send keeps that
+// retry-until-it-works behavior for genuine failures intact, and shrinks the
+// crash window down to the time between Send returning and the next
+// pool.Exec actually reaching Postgres -- as opposed to also covering
+// notifyOnCallAnalyst's own DB/SMTP round trips, which used to sit in
+// between the two.
 //
 // Beyond the configured channel, this also makes a best-effort attempt to
 // email whoever's actually on shift right now (see notifyOnCallAnalyst) --
@@ -364,15 +383,15 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 			continue
 		}
 
-		if err := notifyOnCallAnalyst(ctx, pool, onCall, users, smtp, c, appBaseURL); err != nil {
-			logger.Warn("on-call analyst email skipped", "alert_id", c.alertID, "error", err)
-		}
-
 		if _, err := pool.Exec(ctx, `update alerts set escalated_at = now() where id = $1`, c.alertID); err != nil {
 			logger.Error("stamp escalated_at failed", "alert_id", c.alertID, "error", err)
 			continue
 		}
 		logger.Info("alert escalated", "alert_id", c.alertID, "channel", c.channelType)
+
+		if err := notifyOnCallAnalyst(ctx, pool, onCall, users, smtp, c, appBaseURL); err != nil {
+			logger.Warn("on-call analyst email skipped", "alert_id", c.alertID, "error", err)
+		}
 	}
 }
 

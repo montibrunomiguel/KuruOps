@@ -87,3 +87,42 @@ func TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics(t *testing.T) {
 		t.Fatalf("expected the handler's logger (from context) to carry request_id, got %v", entry)
 	}
 }
+
+// TestWrapWithObservability_RecoversFromPanic is the regression test for the
+// cmd/ingest /hooks crash scenario: before chimw.Recoverer was added to this
+// chain, a handler panic (e.g. a malformed webhook payload panicking a
+// normalizer) propagated all the way out of ServeHTTP, which would crash the
+// whole ingest process for every tenant instead of just failing the one
+// request. A handler calling ServeHTTP directly (as this test does, and as
+// httptest.Server would) with no recover() of its own would otherwise see
+// the panic re-thrown here and fail the test process itself, proving
+// Recoverer is actually in the chain rather than just present in source.
+func TestWrapWithObservability_RecoversFromPanic(t *testing.T) {
+	// MetricsMiddleware's deferred RecordRequest call still fires while the
+	// panic unwinds through it (defers run during unwinding, even though
+	// Recoverer -- further out in the chain -- is what ultimately stops the
+	// panic) -- swap out the global collector so that doesn't pollute
+	// TestMetricsHandler's exact-count assertions elsewhere in this package,
+	// same isolation TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics
+	// above already uses.
+	orig := globalMetrics
+	globalMetrics = &MetricsCollector{}
+	defer func() { globalMetrics = orig }()
+
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+
+	base := http.NewServeMux()
+	base.HandleFunc("/hooks", func(w http.ResponseWriter, r *http.Request) {
+		panic("malformed payload")
+	})
+
+	handler := WrapWithObservability(base, logger)
+
+	req := httptest.NewRequest(http.MethodPost, "/hooks", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected the panic to be recovered into a 500, got %d", rec.Code)
+	}
+}

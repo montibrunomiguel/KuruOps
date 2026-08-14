@@ -3,6 +3,7 @@ package httpserver
 import (
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +36,33 @@ type MetricsCollector struct {
 	// pool is optional (see SetPool) -- MetricsHandler simply omits the
 	// argusops_db_pool_* gauges when it's never registered.
 	pool *pgxpool.Pool
+
+	// lastSweepSuccessUnix tracks, per cmd/worker sweep job name (see
+	// runLocked's job strings), the unix time it last completed a tick
+	// without panicking -- a zero-value sync.Map needs no constructor,
+	// matching every other field here being safe to use straight off
+	// &MetricsCollector{} (see this type's own test fixtures). This is the
+	// first labeled metric in this file, by necessity: an unlabeled single
+	// gauge couldn't distinguish "escalations sweep is stuck" from "SLA
+	// sweep is stuck". The label is named sweep_job, not job -- Prometheus
+	// auto-injects its own "job" label onto every scraped series from the
+	// scrape config's job_name (see deploy/k8s/09-monitoring.yaml), so a
+	// custom label also called "job" would silently collide with it.
+	lastSweepSuccessUnix sync.Map // map[string]int64
+}
+
+// RecordSweepSuccess stamps job's last-success time to now -- called by
+// cmd/worker's runLocked immediately after a sweep tick's fn returns
+// without panicking. Only the replica that actually won the tick's
+// Postgres advisory lock calls this (see db.Pool.WithAdvisoryLock), so in
+// a single-worker-replica deployment (the current default -- see
+// deploy/k8s/05-ingest.yaml's sibling comment on why worker stays at 1) the
+// exposed gauge is exactly "when did this job last actually run". Scaling
+// worker to more than one replica would need an alert rule that takes the
+// max across replicas' series, not a per-pod threshold, since only whichever
+// replica wins a given tick updates its own local value.
+func (m *MetricsCollector) RecordSweepSuccess(job string) {
+	m.lastSweepSuccessUnix.Store(job, time.Now().Unix())
 }
 
 var globalMetrics = &MetricsCollector{}
@@ -42,6 +70,18 @@ var globalMetrics = &MetricsCollector{}
 // GetMetrics returns the global metrics collector instance.
 func GetMetrics() *MetricsCollector {
 	return globalMetrics
+}
+
+// SetMetricsForTest overrides the global metrics collector and returns the
+// previous one -- lets a test in another package (e.g. cmd/worker, which
+// can't reach the unexported globalMetrics var this package's own tests
+// swap directly) isolate its assertions from whatever the shared global
+// collector has already accumulated. Callers should restore the returned
+// value when done, same pattern as this package's own tests.
+func SetMetricsForTest(m *MetricsCollector) *MetricsCollector {
+	old := globalMetrics
+	globalMetrics = m
+	return old
 }
 
 func (m *MetricsCollector) RecordRequest(status int, duration time.Duration) {
@@ -133,6 +173,22 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP argusops_sse_active_connections Current active SSE stream connections.\n")
 	fmt.Fprintf(w, "# TYPE argusops_sse_active_connections gauge\n")
 	fmt.Fprintf(w, "argusops_sse_active_connections %d\n", m.activeSSE.Load())
+
+	// Absent entirely on a fresh process until each job's first tick
+	// completes -- Prometheus tolerates a gauge series simply not existing
+	// yet, no need to pre-seed zeros for jobs that haven't run.
+	var sweepLines []string
+	m.lastSweepSuccessUnix.Range(func(k, v any) bool {
+		sweepLines = append(sweepLines, fmt.Sprintf("argusops_worker_last_sweep_success_timestamp{sweep_job=%q} %d\n", k, v))
+		return true
+	})
+	if len(sweepLines) > 0 {
+		fmt.Fprintf(w, "\n# HELP argusops_worker_last_sweep_success_timestamp Unix time each named cmd/worker sweep job last completed a tick without panicking.\n")
+		fmt.Fprintf(w, "# TYPE argusops_worker_last_sweep_success_timestamp gauge\n")
+		for _, line := range sweepLines {
+			fmt.Fprint(w, line)
+		}
+	}
 
 	if m.pool != nil {
 		stat := m.pool.Stat()

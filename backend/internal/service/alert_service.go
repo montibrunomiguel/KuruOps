@@ -15,6 +15,7 @@ import (
 
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/jsonpath"
 	"github.com/argusops/argusops/internal/repository"
 )
 
@@ -225,7 +226,50 @@ func (s *AlertService) UpdateTags(ctx context.Context, tenantID, alertID, actorI
 // classification, per the alert lifecycle in the design handoff — the
 // severity carried on the webhook becomes both Severity and
 // OriginalSeverity so a later manual override has something to diff against.
-func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEndpointID uuid.UUID, in domain.Alert) (*domain.Alert, error) {
+// computeGroupKey resolves each of fields against payload (via
+// jsonpath.Resolve) and returns a canonical key identifying this specific
+// combination of values -- or "" if fields is empty, payload isn't valid
+// JSON, or ANY field is missing. A missing field deliberately does not
+// resolve to some shared "absent" placeholder: two alerts that are each
+// missing a different (or the same) configured field are not necessarily
+// the same event, and matching on absence risks silently grouping alerts an
+// admin never intended to group. "" means "don't dedup this one" -- Ingest
+// treats it exactly like GroupByFields being unset.
+//
+// The key itself is the JSON encoding of the resolved values in field
+// order (not a delimited string join) -- avoids ambiguity between e.g.
+// fields ["a","bc"] with values ["1","2"] and fields ["ab","c"] with values
+// ["1","2"] both joining to "1:2" or similar; encoding preserves each
+// value's own type/boundaries.
+func computeGroupKey(payload json.RawMessage, fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	var root any
+	if err := json.Unmarshal(payload, &root); err != nil {
+		return ""
+	}
+	values := make([]any, len(fields))
+	for i, f := range fields {
+		v, ok := jsonpath.Resolve(root, f)
+		if !ok {
+			return ""
+		}
+		values[i] = v
+	}
+	key, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(key)
+}
+
+// Ingest records a webhook-received alert, unless it's a duplicate of one
+// already open -- see groupByFields/dedupWindowMinutes (the ingesting
+// endpoint's own dedup config, see domain.WebhookEndpoint). deduped=true
+// means no new alert was created: the returned *domain.Alert is the
+// EXISTING one, with DuplicateCount incremented, not a fresh row.
+func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEndpointID uuid.UUID, in domain.Alert, groupByFields []string, dedupWindowMinutes int) (alert *domain.Alert, deduped bool, err error) {
 	in.TenantID = tenantID
 	in.WebhookEndpointID = &webhookEndpointID
 	in.OriginalSeverity = in.Severity
@@ -239,23 +283,62 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 	// "recently received" ordering, both of which anchor on this field.
 	in.ReceivedAt = time.Now()
 
+	groupKey := computeGroupKey(in.Payload, groupByFields)
+
 	// Auto-assign to whoever's on shift, if on-call scheduling is enabled
 	// (see EnableOnCallAutoAssign). Resolved before the insert tx opens --
 	// it's a read-only lookup against a different table/tx, no need to
 	// share a transaction with the insert below. No match (or on-call
 	// disabled) just leaves the alert unassigned; it never blocks ingest.
-	if s.onCall != nil {
-		analystID, err := s.onCall.ResolveCurrentAnalyst(ctx, tenantID, in.ReceivedAt)
-		if err != nil {
-			return nil, fmt.Errorf("resolve on-call analyst: %w", err)
+	// Skipped entirely for a duplicate -- there's no new alert to assign.
+	if s.onCall != nil && groupKey == "" {
+		analystID, resolveErr := s.onCall.ResolveCurrentAnalyst(ctx, tenantID, in.ReceivedAt)
+		if resolveErr != nil {
+			return nil, false, fmt.Errorf("resolve on-call analyst: %w", resolveErr)
 		}
 		in.AssignedAnalystID = analystID
 	}
 
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if groupKey != "" {
+			// Serializes the whole check-then-(increment-or-insert) section
+			// per (endpoint, groupKey), same pg_advisory_xact_lock(hashtext(...))
+			// idiom as middleware.RateLimiter -- without it, two concurrent
+			// POSTs for the same group arriving before either has inserted
+			// yet would BOTH find no existing match and both insert,
+			// defeating dedup entirely. Released automatically at the end
+			// of this transaction (commit or rollback), never needs an
+			// explicit unlock.
+			if _, lockErr := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtext($1))", webhookEndpointID.String()+":"+groupKey); lockErr != nil {
+				return fmt.Errorf("acquire dedup lock: %w", lockErr)
+			}
+
+			existingID, newCount, found, findErr := s.repo.FindAndIncrementDuplicate(ctx, tx, webhookEndpointID, groupKey, dedupWindowMinutes)
+			if findErr != nil {
+				return fmt.Errorf("find duplicate: %w", findErr)
+			}
+			if found {
+				if err := s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
+					AlertID:   existingID,
+					TenantID:  tenantID,
+					EventType: domain.AlertEventDuplicateSuppressed,
+					ActorType: domain.ActorSystem,
+					Data:      json.RawMessage(fmt.Sprintf(`{"duplicateCount":%d}`, newCount)),
+				}); err != nil {
+					return fmt.Errorf("record duplicate event: %w", err)
+				}
+				alert = &domain.Alert{ID: existingID, TenantID: tenantID, DuplicateCount: newCount}
+				deduped = true
+				return nil
+			}
+			key := groupKey
+			in.GroupKey = &key
+		}
+
 		if err := s.repo.Insert(ctx, tx, &in); err != nil {
 			return fmt.Errorf("insert alert: %w", err)
 		}
+		alert = &in
 		return s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
 			AlertID:   in.ID,
 			TenantID:  tenantID,
@@ -265,22 +348,29 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	s.publishEvent(tenantID, in.ID, "received")
+
+	if deduped {
+		s.publishEvent(tenantID, alert.ID, "duplicate_suppressed")
+		return alert, true, nil
+	}
+
+	s.publishEvent(tenantID, alert.ID, "received")
 
 	// Fire-and-forget: an LLM call (possibly an agentic tool-use loop) can
 	// take several seconds, and this is the webhook ingest path -- the
 	// source SIEM/XDR tool is waiting on this HTTP response, it must never
 	// block on analysis. context.Background() deliberately, not ctx: by
 	// the time the goroutine runs, the request that triggered Ingest may
-	// already have returned and had its context cancelled.
+	// already have returned and had its context cancelled. Never fires for
+	// a suppressed duplicate -- there's no new content to analyze.
 	if s.autoAnalyze != nil {
-		alertID := in.ID
+		alertID := alert.ID
 		go s.autoAnalyze(tenantID, alertID)
 	}
 
-	return &in, nil
+	return alert, false, nil
 }
 
 // OverrideSeverity is the manual "Override Severity" action. Like

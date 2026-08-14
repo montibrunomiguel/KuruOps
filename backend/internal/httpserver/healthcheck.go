@@ -44,12 +44,25 @@ func Livez(w http.ResponseWriter, r *http.Request) {
 }
 
 // WrapWithObservability applies the same request-id / correlated-logging /
-// metrics middleware chain NewRouter wires into the chi router (see
-// router.go), for a binary whose own routing isn't chi-based (cmd/worker,
-// cmd/ingest's plain http.ServeMux) -- keeps that chain defined and tested
-// in one place instead of hand-assembled identically in every cmd/main.go.
+// panic-recovery / metrics middleware chain NewRouter wires into the chi
+// router (see router.go), for a binary whose own routing isn't chi-based
+// (cmd/worker, cmd/ingest's plain http.ServeMux) -- keeps that chain defined
+// and tested in one place instead of hand-assembled identically in every
+// cmd/main.go.
+//
+// chimw.Recoverer sits between the request logger and MetricsMiddleware,
+// mirroring where router.go's own Recoverer sits relative to its logging
+// middleware -- so a panic still gets a request_id-correlated log line
+// before being turned into a 500, and still gets recorded in the http_*
+// metrics, instead of either being invisible or (absent Recoverer entirely)
+// taking the whole process down. This matters most for cmd/ingest's /hooks
+// endpoint, the one route in this app that parses arbitrary payloads posted
+// by an external, untrusted SIEM/webhook sender -- a single malformed
+// payload panicking a normalizer used to be able to crash the entire ingest
+// process for every tenant.
 func WrapWithObservability(base http.Handler, logger *slog.Logger) http.Handler {
 	h := MetricsMiddleware(base)
+	h = chimw.Recoverer(h)
 	h = middleware.RequestLogger(logger)(h)
 	h = chimw.RequestID(h)
 	return h

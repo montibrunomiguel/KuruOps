@@ -125,6 +125,9 @@ export function AlertDetailPage() {
             <SeverityBadge severity={current.severity} />
             <AlertStatusBadge status={current.status} />
             {current.classification && <ClassificationBadge classification={current.classification} />}
+            {current.duplicateCount > 0 && (
+              <span className="badge badge-muted">{t("alerts.detail.duplicateNote", { count: current.duplicateCount })}</span>
+            )}
           </div>
           <h1 className="page-title" style={{ marginBottom: 4 }}>
             {current.title}

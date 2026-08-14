@@ -110,9 +110,9 @@ func TestUploadHandlers_UploadFailure_LocalStoreError(t *testing.T) {
 	tenantID := testutil.NewTenant(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
@@ -128,9 +128,9 @@ func TestUploadHandlers_UploadAndServe(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Outbound C2 Traffic", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
@@ -164,9 +164,9 @@ func TestUploadHandlers_ServeEnforcesAllowedTags(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Tag-Restricted Evidence", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
@@ -202,9 +202,9 @@ func TestUploadHandlers_ServePreMigrationKeyIgnoresTags(t *testing.T) {
 	h, alertSvc, tenantID, pool := setupUploadHandlersWithPool(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Pre-Migration Evidence", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, tinyPNG(t))
@@ -232,9 +232,9 @@ func TestUploadHandlers_UploadAndServeNonImageAttachment(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Outbound C2 Traffic", Source: "test", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "packet-capture.pcap", []byte("not really a pcap but the extension is what's checked"))
@@ -261,9 +261,9 @@ func TestUploadHandlers_RejectsExecutableExtension(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	for _, filename := range []string{"totally-safe.exe", "installer.msi", "script.ps1", "run-me.sh", "payload.jar"} {
@@ -283,9 +283,9 @@ func TestUploadHandlers_AllowsArbitraryNonExecutableExtension(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	for _, filename := range []string{"evidence.rar", "notes.md", "capture.7z", "export.parquet", "dump.sqlite"} {
@@ -305,9 +305,9 @@ func TestUploadHandlers_RejectsFakeImageExtension(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequestNamed(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, "not-really-a.png", []byte("plain text, not a real png"))
@@ -330,9 +330,9 @@ func TestUploadHandlers_RejectsUnsupportedType(t *testing.T) {
 	h, alertSvc, tenantID := setupUploadHandlers(t)
 	r := newRouter(h.Routes)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	req := multipartUploadRequest(t, map[string]string{"kind": "alert", "id": alert.ID.String()}, []byte("not an image"))

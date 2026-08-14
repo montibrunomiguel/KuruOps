@@ -95,6 +95,18 @@ type Config struct {
 	// binaries and any direct/admin connections.
 	DBPoolMaxConns int32
 	DBPoolMinConns int32
+
+	// HTTPRequestTimeout bounds how long any single /api/v1 request (other
+	// than the long-lived SSE stream, /api/v1/events/stream -- see
+	// router.go's doc comment on why that one is exempt) can run before the
+	// request's context is canceled. Without this, a saturated connection
+	// pool (see db.NewPool's DBPoolMaxConns doc comment) leaves a caller
+	// blocked on pool.Acquire indefinitely instead of failing cleanly --
+	// pgx's Acquire/Query/Exec all respect the request context's deadline,
+	// so this is what actually turns "hangs forever" into "fails after N
+	// seconds so the client (and whatever's watching argusops_http_requests_
+	// 5xx_total on /metrics) finds out something is wrong."
+	HTTPRequestTimeout time.Duration
 }
 
 func Load() (Config, error) {
@@ -124,6 +136,8 @@ func Load() (Config, error) {
 
 		DBPoolMaxConns: getEnvInt32Default("DB_POOL_MAX_CONNS", 0),
 		DBPoolMinConns: getEnvInt32Default("DB_POOL_MIN_CONNS", 0),
+
+		HTTPRequestTimeout: getEnvDurationDefault("HTTP_REQUEST_TIMEOUT", 30*time.Second),
 	}
 
 	if cfg.DatabaseURL == "" {

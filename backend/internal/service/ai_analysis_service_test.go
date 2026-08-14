@@ -91,9 +91,9 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	t.Run("no provider configured", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil)
@@ -115,9 +115,9 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 
 	t.Run("analyzes the alert in the background and logs an ai_analysis_run event", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
@@ -131,9 +131,9 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	})
 
 	t.Run("an out-of-scope alert reads as not found", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, []string{"unrelated-tag"})
@@ -159,9 +159,9 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 			require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
 		}()
 
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
-		})
+		}, nil, 0)
 		require.NoError(t, err)
 
 		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))

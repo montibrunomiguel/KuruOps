@@ -43,10 +43,10 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 	userSvc := service.NewUserService(pool, repository.NewUserRepository())
 	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc)
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh,
 		Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 	return h, tenantID, actorID, alert.ID
 }
@@ -59,10 +59,10 @@ func newSecondAlert(t *testing.T, h *handlers.AlertHandlers, tenantID uuid.UUID)
 	pool := testutil.RequireTestDB(t)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
-	a, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+	a, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Second alert", Source: "wazuh", Severity: domain.SeverityMedium,
 		Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 	return a.ID
 }
@@ -138,9 +138,9 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
 	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,9 +203,9 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
 	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
 
-	alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
-	})
+	}, nil, 0)
 	require.NoError(t, err)
 
 	// A slow LLM double -- long enough that the first analysis is still

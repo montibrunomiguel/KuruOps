@@ -419,7 +419,7 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 	})
 
 	t.Run("alert linking", func(t *testing.T) {
-		alert, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: testPayload})
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 
 		require.NoError(t, incSvc.LinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID))

@@ -266,6 +266,7 @@ func main() {
 		AuthMiddleware:               authMiddleware,
 		Logger:                       logger,
 		HealthCheck:                  httpserver.HealthCheck(pool.Pool),
+		HTTPRequestTimeout:           cfg.HTTPRequestTimeout,
 	})
 
 	srv := &http.Server{

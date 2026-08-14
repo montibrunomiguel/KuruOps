@@ -77,6 +77,10 @@ export interface WebhookEndpoint {
   // Unlike name/source, changeable after creation -- see WebhooksPanel's
   // "change template" action.
   fieldMappingTemplateId?: string;
+  // Empty means dedup is off. Changeable after creation via the "group by
+  // fields" editor -- same pattern as fieldMappingTemplateId above.
+  groupByFields: string[];
+  dedupWindowMinutes: number;
 }
 
 export interface FieldMappingRule {

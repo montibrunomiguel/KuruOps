@@ -1,10 +1,19 @@
+# Unlike api (see 04-api.yaml's PVC comment), ingest has no local-disk
+# dependency at all -- it never touches uploaded attachments -- and its
+# webhook-ingest rate limiter (webhook_ip, see
+# internal/httpserver/middleware/ratelimit.go) is already Postgres-backed
+# specifically so it counts correctly across replicas. 2 replicas here is
+# the assisted-production starting point for basic availability (a single
+# pod restart no longer means a brief window of dropped/refused inbound
+# webhooks); bump further once you have real throughput numbers to size
+# against (see docs/OPERATIONS.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ingest
   namespace: argusops
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: ingest

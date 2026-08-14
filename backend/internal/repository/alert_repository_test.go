@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -120,6 +121,34 @@ func TestAlertRepository_List_Filters(t *testing.T) {
 		assert.Len(t, list, 2)
 	})
 
+	// TestAlertRepository_List_Filters' other subtests each apply exactly one
+	// filter -- every branch in List's where-clause builder appends its own
+	// arg and computes its own "$%d" position from len(args), so a filter
+	// added later in the struct could in principle clobber an earlier one's
+	// positional param if that arithmetic were ever wrong. That class of bug
+	// only surfaces when 2+ filters are combined in the same call, which
+	// none of the single-filter subtests above would catch.
+	t.Run("combined filters (severity + status + tag + source) narrow to the one alert matching all four", func(t *testing.T) {
+		sev := domain.SeverityLow
+		status := domain.AlertStatusInvestigating
+		tag := "vpn"
+		source := "wazuh"
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{
+			Severity: &sev, Status: &status, Tag: &tag, Source: &source,
+		})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, lowInvestigating.ID, list[0].ID)
+	})
+
+	t.Run("combined filters where one condition matches nothing returns empty, not a partial match", func(t *testing.T) {
+		sev := domain.SeverityLow
+		status := domain.AlertStatusOpen // lowInvestigating is "investigating", not "open"
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Severity: &sev, Status: &status})
+		require.NoError(t, err)
+		assert.Empty(t, list)
+	})
+
 	t.Run("filter by correlated=false excludes alerts already linked to an incident", func(t *testing.T) {
 		correlated := false
 		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Correlated: &correlated})
@@ -171,6 +200,73 @@ func TestAlertRepository_Count(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
+	})
+}
+
+// insertAlertWithGroupKey inserts an alert with an explicit
+// WebhookEndpointID/GroupKey/ReceivedAt -- FindAndIncrementDuplicate's own
+// three match conditions -- since newTestAlert doesn't set any of them.
+func insertAlertWithGroupKey(t *testing.T, tx pgx.Tx, tenantID, endpointID uuid.UUID, groupKey string, receivedAt time.Time) *domain.Alert {
+	t.Helper()
+	repo := repository.NewAlertRepository()
+	a := newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusOpen, nil)
+	a.WebhookEndpointID = &endpointID
+	a.GroupKey = &groupKey
+	a.ReceivedAt = receivedAt
+	require.NoError(t, repo.Insert(t.Context(), tx, a))
+	return a
+}
+
+func TestAlertRepository_FindAndIncrementDuplicate(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	repo := repository.NewAlertRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	original := insertAlertWithGroupKey(t, tx, tenantID, endpointID, "key-a", time.Now())
+
+	t.Run("a match within the window increments and returns the existing alert", func(t *testing.T) {
+		id, newCount, found, err := repo.FindAndIncrementDuplicate(t.Context(), tx, endpointID, "key-a", 30)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, original.ID, id)
+		assert.Equal(t, 1, newCount)
+
+		// A second call keeps incrementing, not resetting to 1.
+		_, newCount2, found2, err := repo.FindAndIncrementDuplicate(t.Context(), tx, endpointID, "key-a", 30)
+		require.NoError(t, err)
+		assert.True(t, found2)
+		assert.Equal(t, 2, newCount2)
+	})
+
+	t.Run("no row for that group key returns found=false, not an error", func(t *testing.T) {
+		_, _, found, err := repo.FindAndIncrementDuplicate(t.Context(), tx, endpointID, "no-such-key", 30)
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("a match on a different webhook endpoint doesn't count", func(t *testing.T) {
+		otherEndpointID := testutil.NewWebhookEndpoint(t, tenantID)
+		_, _, found, err := repo.FindAndIncrementDuplicate(t.Context(), tx, otherEndpointID, "key-a", 30)
+		require.NoError(t, err)
+		assert.False(t, found, "the same group key on a different endpoint must not match")
+	})
+
+	t.Run("outside the window, no match", func(t *testing.T) {
+		insertAlertWithGroupKey(t, tx, tenantID, endpointID, "key-old", time.Now().Add(-time.Hour))
+
+		_, _, found, err := repo.FindAndIncrementDuplicate(t.Context(), tx, endpointID, "key-old", 30)
+		require.NoError(t, err)
+		assert.False(t, found, "an alert received an hour ago must not match a 30-minute window")
+	})
+
+	t.Run("within the window, a match", func(t *testing.T) {
+		insertAlertWithGroupKey(t, tx, tenantID, endpointID, "key-recent", time.Now().Add(-5*time.Minute))
+
+		_, _, found, err := repo.FindAndIncrementDuplicate(t.Context(), tx, endpointID, "key-recent", 30)
+		require.NoError(t, err)
+		assert.True(t, found)
 	})
 }
 
