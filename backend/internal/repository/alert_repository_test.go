@@ -53,6 +53,44 @@ func TestAlertRepository_InsertGet(t *testing.T) {
 	})
 }
 
+func TestAlertRepository_PlaybookJoin(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewAlertRepository()
+	playbookRepo := repository.NewPlaybookRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	pb := &domain.Playbook{TenantID: tenantID, Title: "Phishing Response", Category: "Phishing"}
+	require.NoError(t, playbookRepo.Insert(t.Context(), tx, pb))
+
+	t.Run("no playbook_id -- both fields nil", func(t *testing.T) {
+		a := newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusOpen, nil)
+		require.NoError(t, repo.Insert(t.Context(), tx, a))
+		assert.Nil(t, a.PlaybookID)
+		assert.Nil(t, a.PlaybookTitle)
+
+		got, err := repo.Get(t.Context(), tx, a.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.PlaybookID)
+		assert.Nil(t, got.PlaybookTitle)
+	})
+
+	t.Run("playbook_id set -- Insert and Get both resolve the joined title", func(t *testing.T) {
+		a := newTestAlert(tenantID, domain.SeverityHigh, domain.AlertStatusOpen, nil)
+		a.PlaybookID = &pb.ID
+		require.NoError(t, repo.Insert(t.Context(), tx, a))
+		require.NotNil(t, a.PlaybookTitle)
+		assert.Equal(t, "Phishing Response", *a.PlaybookTitle)
+
+		got, err := repo.Get(t.Context(), tx, a.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.PlaybookID)
+		assert.Equal(t, pb.ID, *got.PlaybookID)
+		require.NotNil(t, got.PlaybookTitle)
+		assert.Equal(t, "Phishing Response", *got.PlaybookTitle)
+	})
+}
+
 func TestAlertRepository_List_Filters(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

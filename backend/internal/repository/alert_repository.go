@@ -46,15 +46,17 @@ const alertColumnsQualified = `
 	a.severity, a.original_severity, a.status, a.classification, a.close_comment,
 	a.close_attachment_url, a.rule_id, a.asset, a.src_ip, a.tags, a.payload, a.metadata, a.duplicate_count,
 	(select l.incident_id from incident_alert_links l where l.alert_id = a.id order by l.linked_at desc limit 1),
+	a.playbook_id,
 	a.assigned_analyst_id, a.received_at, a.acknowledged_at, a.closed_at, a.created_at, a.updated_at`
 
 // alertColumnsWithAssignee/alertsWithAssigneeFrom resolve
-// domain.Alert.AssignedAnalystName via a live join, same reasoning and shape
-// as incidentColumnsWithOwner/incidentsWithOwnerFrom in incident_repository.go.
+// domain.Alert.AssignedAnalystName/PlaybookTitle via live joins, same
+// reasoning and shape as incidentColumnsWithOwner/incidentsWithOwnerFrom in
+// incident_repository.go.
 const alertColumnsWithAssignee = alertColumnsQualified + `,
-	u.name`
+	u.name, pb.title`
 
-const alertsWithAssigneeFrom = `from alerts a left join users u on u.id = a.assigned_analyst_id`
+const alertsWithAssigneeFrom = `from alerts a left join users u on u.id = a.assigned_analyst_id left join playbooks pb on pb.id = a.playbook_id`
 
 func (r *AlertRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.Alert, error) {
 	row := tx.QueryRow(ctx, `select `+alertColumnsWithAssignee+` `+alertsWithAssigneeFrom+` where a.id = $1`, id)
@@ -204,15 +206,16 @@ func (r *AlertRepository) Insert(ctx context.Context, tx pgx.Tx, a *domain.Alert
 		insert into alerts (
 			tenant_id, external_id, webhook_endpoint_id, title, source,
 			severity, original_severity, status, tags, payload, metadata, rule_id, asset, src_ip,
-			assigned_analyst_id, received_at, group_key
-		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			assigned_analyst_id, received_at, group_key, playbook_id
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		returning id, created_at, updated_at,
-			(select name from users where id = assigned_analyst_id)`,
+			(select name from users where id = assigned_analyst_id),
+			(select title from playbooks where id = playbook_id)`,
 		a.TenantID, a.ExternalID, a.WebhookEndpointID, a.Title, a.Source,
 		a.Severity, a.OriginalSeverity, a.Status, a.Tags, a.Payload, a.Metadata, a.RuleID, a.Asset, a.SrcIP,
-		a.AssignedAnalystID, a.ReceivedAt, a.GroupKey,
+		a.AssignedAnalystID, a.ReceivedAt, a.GroupKey, a.PlaybookID,
 	)
-	return row.Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt, &a.AssignedAnalystName)
+	return row.Scan(&a.ID, &a.CreatedAt, &a.UpdatedAt, &a.AssignedAnalystName, &a.PlaybookTitle)
 }
 
 // FindAndIncrementDuplicate is the whole dedup match-and-suppress step in
@@ -340,6 +343,7 @@ func (r *AlertRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, alert
 		from alerts a
 		join alert_links l on l.linked_alert_id = a.id
 		left join users u on u.id = a.assigned_analyst_id
+		left join playbooks pb on pb.id = a.playbook_id
 		where l.alert_id = $1
 		order by a.received_at desc`,
 		alertID,
@@ -412,8 +416,9 @@ func scanAlert(row pgx.Row) (*domain.Alert, error) {
 		&a.ID, &a.TenantID, &a.ExternalID, &a.WebhookEndpointID, &a.Title, &a.Source,
 		&a.Severity, &a.OriginalSeverity, &a.Status, &a.Classification, &a.CloseComment,
 		&a.CloseAttachmentURL, &a.RuleID, &a.Asset, &a.SrcIP, &a.Tags, &a.Payload, &a.Metadata, &a.DuplicateCount, &a.IncidentID,
+		&a.PlaybookID,
 		&a.AssignedAnalystID, &a.ReceivedAt, &a.AcknowledgedAt, &a.ClosedAt, &a.CreatedAt, &a.UpdatedAt,
-		&a.AssignedAnalystName,
+		&a.AssignedAnalystName, &a.PlaybookTitle,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

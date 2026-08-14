@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,7 +25,7 @@ func newPlaybookHandlerFixture(t *testing.T) (h *handlers.PlaybookHandlers, tena
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository()))
+	h = handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://argusops.example"))
 	return h, tenantID, actorID
 }
 
@@ -37,12 +39,17 @@ func TestPlaybookHandlers_CreateGetUpdateDelete(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
 	})
 
-	body, _ := json.Marshal(map[string]any{"title": "Phishing Response", "category": "Phishing"})
+	body, _ := json.Marshal(map[string]any{
+		"title": "Phishing Response", "category": "Phishing",
+		"alertNamePattern": "Phishing%", "isDefault": true,
+	})
 	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
 	rec := doRequest(r, req)
 	require.Equal(t, http.StatusCreated, rec.Code)
 	var pb domain.Playbook
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pb))
+	assert.Equal(t, "Phishing%", pb.AlertNamePattern)
+	assert.True(t, pb.IsDefault)
 
 	t.Run("get", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/"+pb.ID.String(), nil), tenantID, actorID, nil)
@@ -145,4 +152,99 @@ func TestPlaybookHandlers_List_MissingTenantContext(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+}
+
+func TestPlaybookHandlers_TriggerStepWebhook(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	alertRepo := repository.NewAlertRepository()
+	h := handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), alertRepo, "https://argusops.example"))
+	r := newRouter(h.Routes)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"title": "Ransomware Response", "category": "Ransomware",
+		"steps": map[string]any{
+			"containment": []map[string]any{{"text": "Isolate host", "webhookUrl": srv.URL}},
+		},
+	})
+	req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var pb domain.Playbook
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &pb))
+
+	// create's response never has the DB-generated step ids (replaceSteps is
+	// a delete-then-reinsert with nothing to scan back) -- re-fetch to learn
+	// the real one.
+	getReq := withClaims(httptest.NewRequest("GET", "/"+pb.ID.String(), nil), tenantID, actorID, nil)
+	getRec := doRequest(r, getReq)
+	require.Equal(t, http.StatusOK, getRec.Code)
+	var fetched domain.Playbook
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &fetched))
+	stepID := fetched.Steps[domain.PhaseContainment][0].ID.String()
+
+	var alertID string
+	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+		a := &domain.Alert{
+			TenantID: tenantID, Title: "Suspicious login", Source: "wazuh",
+			Severity: domain.SeverityHigh, OriginalSeverity: domain.SeverityHigh,
+			Status: domain.AlertStatusOpen, Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: time.Now(),
+		}
+		if err := alertRepo.Insert(t.Context(), tx, a); err != nil {
+			return err
+		}
+		alertID = a.ID.String()
+		return nil
+	}))
+
+	t.Run("invalid step id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"alertId": alertID})
+		req := withClaims(httptest.NewRequest("POST", "/steps/not-a-uuid/trigger", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("missing alertId -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/steps/"+stepID+"/trigger", bytes.NewReader([]byte("{}"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/steps/"+stepID+"/trigger", bytes.NewReader([]byte("{not-json"))), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("fires the webhook -- 204", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"alertId": alertID})
+		req := withClaims(httptest.NewRequest("POST", "/steps/"+stepID+"/trigger", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+	})
+
+	t.Run("a step with no webhook configured -- 502", func(t *testing.T) {
+		noHookBody, _ := json.Marshal(map[string]any{
+			"title": "No Hook", "category": "Test",
+			"steps": map[string]any{"containment": []map[string]any{{"text": "Just text"}}},
+		})
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(noHookBody)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+		var noHookPb domain.Playbook
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &noHookPb))
+
+		getReq := withClaims(httptest.NewRequest("GET", "/"+noHookPb.ID.String(), nil), tenantID, actorID, nil)
+		getRec := doRequest(r, getReq)
+		require.Equal(t, http.StatusOK, getRec.Code)
+		var fetchedNoHook domain.Playbook
+		require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &fetchedNoHook))
+		noHookStepID := fetchedNoHook.Steps[domain.PhaseContainment][0].ID.String()
+
+		body, _ := json.Marshal(map[string]string{"alertId": alertID})
+		req = withClaims(httptest.NewRequest("POST", "/steps/"+noHookStepID+"/trigger", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadGateway, doRequest(r, req).Code)
+	})
 }

@@ -77,7 +77,7 @@ func setupUploadHandlersWithPool(t *testing.T) (h *handlers.UploadHandlers, aler
 	dir := t.TempDir()
 
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc = service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc = service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir)
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
@@ -102,7 +102,7 @@ func TestUploadHandlers_UploadFailure_LocalStoreError(t *testing.T) {
 	require.NoError(t, os.WriteFile(blockedDir, []byte("i'm a file, not a directory"), 0o644))
 
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir)
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())

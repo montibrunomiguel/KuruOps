@@ -33,7 +33,7 @@ func newIngestHandlerFixture(t *testing.T) (h *ingest.Handler, token string) {
 	webhookRepo := repository.NewWebhookRepository()
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestIngestHandler_UnknownSourceFallsBackToGeneric(t *testing.T) {
 	webhookRepo := repository.NewWebhookRepository()
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil, nil, nil)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertRepo := repository.NewAlertRepository()
-	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 
@@ -276,7 +276,7 @@ func TestIngestHandler_DisabledEndpoint(t *testing.T) {
 	webhookRepo := repository.NewWebhookRepository()
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	webhookRepo := repository.NewWebhookRepository()
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
@@ -347,7 +347,7 @@ func TestIngestHandler_Dedup(t *testing.T) {
 	webhookSvc := service.NewWebhookService(pool, webhookRepo)
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertRepo := repository.NewAlertRepository()
-	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc)
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
 

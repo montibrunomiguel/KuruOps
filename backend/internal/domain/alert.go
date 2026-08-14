@@ -81,6 +81,13 @@ type Alert struct {
 	// been suppressed (the common case, including every alert from an
 	// endpoint with dedup off).
 	DuplicateCount int `json:"duplicateCount"`
+	// PlaybookID/PlaybookTitle are the playbook auto-assigned at ingest time
+	// (see AlertService.Ingest / PlaybookRepository.MatchForAlertTitle) --
+	// PlaybookTitle is denormalized via a join, same "cheap read, mutable
+	// source of truth is elsewhere" tradeoff as AssignedAnalystName below.
+	// Both nil when the tenant has no matching or default playbook.
+	PlaybookID    *uuid.UUID `json:"playbookId,omitempty"`
+	PlaybookTitle *string    `json:"playbookTitle,omitempty"`
 	// AssignedAnalystID/AssignedAnalystName mirror Incident's Assignees field
 	// (see Incident.Assignees's doc comment) -- a live join against users
 	// rather than denormalized, since assignment is mutable and the display
@@ -142,6 +149,11 @@ const (
 	// matches its GroupKey within the endpoint's dedup window. See
 	// AlertService.Ingest.
 	AlertEventDuplicateSuppressed AlertEventType = "duplicate_suppressed"
+	// AlertEventPlaybookWebhookTriggered records every attempt (success or
+	// failure) to fire a playbook containment step's webhook against this
+	// alert -- see PlaybookService.TriggerStepWebhook. Data holds
+	// {"playbookId":..., "stepId":..., "success": bool}.
+	AlertEventPlaybookWebhookTriggered AlertEventType = "playbook_webhook_triggered"
 )
 
 type ActorType string

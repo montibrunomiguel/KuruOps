@@ -29,7 +29,7 @@ func TestAIAnalysisService_ContinueAlertAnalysis_NoRunYet(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +78,7 @@ func TestAIAnalysisService_ContinueAlertAnalysis_AppendsToCompletedRun(t *testin
 	store := secrets.NewEnvStore()
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	reply := "first reply"
@@ -130,7 +130,7 @@ func TestAIAnalysisService_ContinueAlertAnalysis_RejectsWhileRunningOrPaused(t *
 	store := secrets.NewEnvStore()
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func TestAIAnalysisService_ContinueAlertAnalysis_LLMFailureMarksRunFailed(t *tes
 	store := secrets.NewEnvStore()
 
 	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +262,7 @@ func TestAIAnalysisService_PublishesOneTurnEventPerLoopIteration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()))
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: testPayload,
 	}, nil, 0)

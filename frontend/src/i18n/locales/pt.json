@@ -250,7 +250,9 @@
         "linked": "Alerta {{id}} vinculado a {{linkedId}} como correlacionado",
         "ai_analysis_run": "Análise de IA executada no alerta {{id}}",
         "assignee_changed": "Responsável pelo alerta {{id}} atualizado",
-        "duplicate_suppressed": "Alerta duplicado suprimido em {{id}} ({{count}} no total)"
+        "duplicate_suppressed": "Alerta duplicado suprimido em {{id}} ({{count}} no total)",
+        "playbook_webhook_triggered_success": "Automação de playbook disparada em {{id}}",
+        "playbook_webhook_triggered_failure": "Automação de playbook falhou em {{id}}"
       },
       "incident": {
         "created": "Incidente {{id}} criado",
@@ -902,12 +904,32 @@
       "category": "Categoria",
       "categoryPlaceholder": "Malware, Phishing, Acesso Não Autorizado...",
       "keywords": "Palavras-chave (separadas por vírgula)",
+      "alertNamePattern": "Padrão de nome do alerta",
+      "alertNamePatternPlaceholder": "Login suspeito%",
+      "alertNamePatternHelp": "Padrão estilo SQL LIKE comparado com o título do alerta (use % como curinga). Alertas que baterem com ele recebem este playbook automaticamente.",
+      "isDefault": "Playbook padrão",
+      "isDefaultHelp": "Atribuído a qualquer alerta cujo título não bata com o padrão de nenhum outro playbook. Apenas um playbook por tenant pode ser o padrão.",
+      "defaultBadge": "Playbook padrão",
+      "patternSummary": "Bate com alertas chamados: {{pattern}}",
+      "noPatternSummary": "Não atribuído automaticamente a nenhum alerta",
       "description": "Descrição",
       "stepsByPhaseTitle": "Passos por fase",
       "stepPlaceholder": "Passo {{num}}",
       "removeStep": "Remover",
       "addStep": "+ Adicionar passo",
-      "noSteps": "Nenhum passo cadastrado ainda."
+      "noSteps": "Nenhum passo cadastrado ainda.",
+      "webhookUrlPlaceholder": "URL do webhook (opcional, só contenção)",
+      "webhookPayloadTemplatePlaceholder": "Payload customizado (opcional)",
+      "webhookPayloadTemplateHelp": "Deixe em branco para enviar o payload padrão. Placeholders disponíveis:",
+      "webhookConfiguredBadge": "Automação configurada"
+    },
+    "view": {
+      "editPlaybook": "Editar playbook",
+      "triggerWebhook": "Disparar automação",
+      "triggering": "Disparando...",
+      "triggerSuccess": "Automação disparada com sucesso.",
+      "triggerError": "Falha ao disparar automação: {{error}}",
+      "close": "Fechar"
     }
   }
 }

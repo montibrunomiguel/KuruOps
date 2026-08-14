@@ -65,6 +65,14 @@ export function describeActivity(e: ActivityEvent, t: TFunction): Described {
           text: t("dashboard.activity.alert.duplicate_suppressed", { id, count: duplicateCount }),
         };
       }
+      case "playbook_webhook_triggered": {
+        const success = data.success === true;
+        return {
+          icon: <FlagIcon />,
+          tone: success ? "tone-accent" : "tone-critical",
+          text: t(`dashboard.activity.alert.playbook_webhook_triggered_${success ? "success" : "failure"}`, { id }),
+        };
+      }
       default:
         return { icon: <ClockIcon />, tone: "tone-muted", text: `${e.eventType.replace(/_/g, " ")} (${id})` };
     }

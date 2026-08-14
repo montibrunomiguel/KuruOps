@@ -48,7 +48,7 @@ func TestPostmortemService_Generate_WithoutAIProvider(t *testing.T) {
 	incidentRepo := repository.NewIncidentRepository()
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	aiSvc, _ := newAIAnalysisService(pool, store)
 	pmSvc := service.NewPostmortemService(incSvc, aiSvc)
 

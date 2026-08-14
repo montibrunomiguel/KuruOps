@@ -99,7 +99,7 @@ func main() {
 	eventsHandlers := handlers.NewEventsHandlers(eventBroadcaster)
 
 	alertRepo := repository.NewAlertRepository()
-	alertService := service.NewAlertService(pool, alertRepo, tagService)
+	alertService := service.NewAlertService(pool, alertRepo, tagService, repository.NewPlaybookRepository())
 	alertService.EnableEventPublishing(eventBroadcaster.Publish)
 
 	// userService is needed by IncidentHandlers/AlertHandlers (resolving a
@@ -175,7 +175,7 @@ func main() {
 	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService)
 
 	playbookRepo := repository.NewPlaybookRepository()
-	playbookService := service.NewPlaybookService(pool, playbookRepo)
+	playbookService := service.NewPlaybookService(pool, playbookRepo, alertRepo, cfg.AppBaseURL)
 	playbookHandlers := handlers.NewPlaybookHandlers(playbookService)
 
 	dashboardRepo := repository.NewDashboardRepository()

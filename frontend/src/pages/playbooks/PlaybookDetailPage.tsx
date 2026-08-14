@@ -4,11 +4,24 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { WEBHOOK_PAYLOAD_PLACEHOLDERS } from "../../types/api";
 import type { IncidentPhase } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import type { Playbook } from "../../types/playbooks";
 
-type StepsState = Partial<Record<IncidentPhase, string[]>>;
+// EditableStep drops PlaybookStep's `id` -- a step being edited (including
+// every brand-new one added via "+ Add Step") has no id yet, since
+// PlaybookRepository.replaceSteps always deletes-and-reinserts on save,
+// generating fresh ids server-side. The edit form never needs to know a
+// step's id; only the read-only PlaybookViewModal's "Run automation"
+// button does, reading it straight off the freshly-fetched Playbook.
+interface EditableStep {
+  text: string;
+  webhookUrl: string;
+  webhookPayloadTemplate: string;
+}
+
+type StepsState = Partial<Record<IncidentPhase, EditableStep[]>>;
 
 function emptySteps(): StepsState {
   return {};
@@ -17,7 +30,9 @@ function emptySteps(): StepsState {
 function cleanSteps(steps: StepsState): StepsState {
   const out: StepsState = {};
   for (const phase of NIST_PHASE_ORDER) {
-    const values = (steps[phase] ?? []).map((s) => s.trim()).filter(Boolean);
+    const values = (steps[phase] ?? [])
+      .map((s) => ({ text: s.text.trim(), webhookUrl: s.webhookUrl.trim(), webhookPayloadTemplate: s.webhookPayloadTemplate }))
+      .filter((s) => s.text);
     if (values.length > 0) out[phase] = values;
   }
   return out;
@@ -44,29 +59,46 @@ export function PlaybookDetailPage() {
   const [category, setCategory] = useState("");
   const [description, setDescription] = useState("");
   const [keywords, setKeywords] = useState("");
+  const [alertNamePattern, setAlertNamePattern] = useState("");
+  const [isDefault, setIsDefault] = useState(false);
   const [steps, setSteps] = useState<StepsState>(emptySteps);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  useEffect(() => {
-    if (playbook) {
-      setTitle(playbook.title);
-      setCategory(playbook.category);
-      setDescription(playbook.description);
-      setKeywords(playbook.keywords.join(", "));
-      setSteps(playbook.steps);
+  function loadFromPlaybook(pb: Playbook) {
+    setTitle(pb.title);
+    setCategory(pb.category);
+    setDescription(pb.description);
+    setKeywords(pb.keywords.join(", "));
+    setAlertNamePattern(pb.alertNamePattern ?? "");
+    setIsDefault(pb.isDefault ?? false);
+    const loaded: StepsState = {};
+    for (const phase of NIST_PHASE_ORDER) {
+      const phaseSteps = pb.steps[phase];
+      if (phaseSteps) {
+        loaded[phase] = phaseSteps.map((s) => ({
+          text: s.text,
+          webhookUrl: s.webhookUrl ?? "",
+          webhookPayloadTemplate: s.webhookPayloadTemplate ?? "",
+        }));
+      }
     }
+    setSteps(loaded);
+  }
+
+  useEffect(() => {
+    if (playbook) loadFromPlaybook(playbook);
   }, [playbook]);
 
   function addStep(phase: IncidentPhase) {
-    setSteps((s) => ({ ...s, [phase]: [...(s[phase] ?? []), ""] }));
+    setSteps((s) => ({ ...s, [phase]: [...(s[phase] ?? []), { text: "", webhookUrl: "", webhookPayloadTemplate: "" }] }));
   }
 
-  function updateStep(phase: IncidentPhase, idx: number, value: string) {
+  function updateStep(phase: IncidentPhase, idx: number, patch: Partial<EditableStep>) {
     setSteps((s) => {
       const arr = [...(s[phase] ?? [])];
-      arr[idx] = value;
+      arr[idx] = { ...arr[idx], ...patch };
       return { ...s, [phase]: arr };
     });
   }
@@ -91,6 +123,8 @@ export function PlaybookDetailPage() {
       category,
       description,
       keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      alertNamePattern: alertNamePattern.trim(),
+      isDefault,
       steps: cleanSteps(steps),
     };
     try {
@@ -145,6 +179,15 @@ export function PlaybookDetailPage() {
             <h1 className="page-title">{playbook?.title}</h1>
           )}
           {!editing && <p className="page-sub" style={{ marginBottom: 0 }}>{playbook?.category}</p>}
+          {!editing && playbook && (
+            <p className="page-sub" style={{ marginBottom: 0 }}>
+              {playbook.isDefault
+                ? t("playbooks.detail.defaultBadge")
+                : playbook.alertNamePattern
+                  ? t("playbooks.detail.patternSummary", { pattern: playbook.alertNamePattern })
+                  : t("playbooks.detail.noPatternSummary")}
+            </p>
+          )}
         </div>
         <div className="toolbar-actions">
           {!editing && !isNew && (
@@ -181,13 +224,7 @@ export function PlaybookDetailPage() {
                   className="btn btn-ghost btn-sm"
                   onClick={() => {
                     setEditing(false);
-                    if (playbook) {
-                      setTitle(playbook.title);
-                      setCategory(playbook.category);
-                      setDescription(playbook.description);
-                      setKeywords(playbook.keywords.join(", "));
-                      setSteps(playbook.steps);
-                    }
+                    if (playbook) loadFromPlaybook(playbook);
                   }}
                 >
                   {t("common.cancel")}
@@ -222,6 +259,29 @@ export function PlaybookDetailPage() {
                 onChange={(e) => setKeywords(e.target.value)}
               />
             </div>
+            <div className="field">
+              <label htmlFor="pb-alert-name-pattern">{t("playbooks.detail.alertNamePattern")}</label>
+              <input
+                id="pb-alert-name-pattern"
+                className="input"
+                placeholder={t("playbooks.detail.alertNamePatternPlaceholder")}
+                value={alertNamePattern}
+                onChange={(e) => setAlertNamePattern(e.target.value)}
+              />
+              <p className="helper-text" style={{ marginTop: 4 }}>{t("playbooks.detail.alertNamePatternHelp")}</p>
+            </div>
+            <div className="field">
+              <label htmlFor="pb-is-default" style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  id="pb-is-default"
+                  type="checkbox"
+                  checked={isDefault}
+                  onChange={(e) => setIsDefault(e.target.checked)}
+                />
+                {t("playbooks.detail.isDefault")}
+              </label>
+              <p className="helper-text" style={{ marginTop: 4 }}>{t("playbooks.detail.isDefaultHelp")}</p>
+            </div>
             <div className="field field-full">
               <label htmlFor="pb-description">{t("playbooks.detail.description")}</label>
               <textarea
@@ -246,8 +306,9 @@ export function PlaybookDetailPage() {
           {t("playbooks.detail.stepsByPhaseTitle")}
         </h2>
         {NIST_PHASE_ORDER.map((phase) => {
-          const phaseSteps = (editing ? steps[phase] : playbook?.steps[phase]) ?? [];
+          const phaseSteps = (editing ? steps[phase] : playbook?.steps[phase]?.map((s) => ({ text: s.text, webhookUrl: s.webhookUrl ?? "", webhookPayloadTemplate: s.webhookPayloadTemplate ?? "" }))) ?? [];
           if (!editing && phaseSteps.length === 0) return null;
+          const isContainment = phase === "containment";
           return (
             <div key={phase} style={{ marginBottom: 18 }}>
               <p style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--text-muted)", margin: "0 0 8px" }}>
@@ -256,16 +317,43 @@ export function PlaybookDetailPage() {
               {editing ? (
                 <>
                   {phaseSteps.map((step, idx) => (
-                    <div className="step-editor-row" key={idx}>
-                      <input
-                        className="input"
-                        value={step}
-                        onChange={(e) => updateStep(phase, idx, e.target.value)}
-                        placeholder={t("playbooks.detail.stepPlaceholder", { num: idx + 1 })}
-                      />
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeStep(phase, idx)}>
-                        {t("playbooks.detail.removeStep")}
-                      </button>
+                    <div key={idx} style={{ marginBottom: 10, padding: isContainment ? 10 : 0, borderRadius: 7, border: isContainment ? "1px solid var(--border)" : "none" }}>
+                      <div className="step-editor-row">
+                        <input
+                          className="input"
+                          value={step.text}
+                          onChange={(e) => updateStep(phase, idx, { text: e.target.value })}
+                          placeholder={t("playbooks.detail.stepPlaceholder", { num: idx + 1 })}
+                        />
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeStep(phase, idx)}>
+                          {t("playbooks.detail.removeStep")}
+                        </button>
+                      </div>
+                      {isContainment && (
+                        <div style={{ marginTop: 6 }}>
+                          <input
+                            className="input"
+                            style={{ marginBottom: step.webhookUrl ? 6 : 0 }}
+                            placeholder={t("playbooks.detail.webhookUrlPlaceholder")}
+                            value={step.webhookUrl}
+                            onChange={(e) => updateStep(phase, idx, { webhookUrl: e.target.value })}
+                          />
+                          {step.webhookUrl && (
+                            <>
+                              <textarea
+                                className="textarea"
+                                style={{ minHeight: 60, fontSize: 12 }}
+                                placeholder={t("playbooks.detail.webhookPayloadTemplatePlaceholder")}
+                                value={step.webhookPayloadTemplate}
+                                onChange={(e) => updateStep(phase, idx, { webhookPayloadTemplate: e.target.value })}
+                              />
+                              <p className="helper-text" style={{ marginTop: 4 }}>
+                                {t("playbooks.detail.webhookPayloadTemplateHelp")} {WEBHOOK_PAYLOAD_PLACEHOLDERS.join(", ")}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                   <button type="button" className="btn btn-sm" onClick={() => addStep(phase)}>
@@ -275,7 +363,14 @@ export function PlaybookDetailPage() {
               ) : (
                 <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
                   {phaseSteps.map((step, idx) => (
-                    <li key={idx}>{step}</li>
+                    <li key={idx}>
+                      {step.text}
+                      {step.webhookUrl && (
+                        <span className="badge badge-muted" style={{ marginLeft: 6 }}>
+                          {t("playbooks.detail.webhookConfiguredBadge")}
+                        </span>
+                      )}
+                    </li>
                   ))}
                 </ol>
               )}
