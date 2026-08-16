@@ -678,7 +678,7 @@ func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID 
 		return nil, err
 	}
 	if alert == nil {
-		return nil, fmt.Errorf("alert %s not found", alertID)
+		return nil, nil
 	}
 
 	incident, err := s.incidents.Create(ctx, tenantID, actorID, domain.CreateIncidentInput{

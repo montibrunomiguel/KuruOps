@@ -340,6 +340,10 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if incident == nil {
+		writeError(w, http.StatusNotFound, "alert not found")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, escalateResponse{IncidentID: incident.ID})
 }
