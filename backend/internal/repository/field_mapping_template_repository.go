@@ -21,26 +21,11 @@ func NewFieldMappingTemplateRepository() *FieldMappingTemplateRepository {
 const fieldMappingTemplateColumns = `id, tenant_id, name, rules, created_by, created_at, updated_at`
 
 func (r *FieldMappingTemplateRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.FieldMappingTemplate, error) {
-	rows, err := tx.Query(ctx, `select `+fieldMappingTemplateColumns+` from field_mapping_templates order by name asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query field mapping templates: %w", err)
-	}
-	defer rows.Close()
-
-	templates := []domain.FieldMappingTemplate{}
-	for rows.Next() {
-		t, err := scanFieldMappingTemplate(rows)
-		if err != nil {
-			return nil, err
-		}
-		templates = append(templates, *t)
-	}
-	return templates, rows.Err()
+	return queryList(ctx, tx, `select `+fieldMappingTemplateColumns+` from field_mapping_templates order by name asc`, scanFieldMappingTemplate)
 }
 
 func (r *FieldMappingTemplateRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.FieldMappingTemplate, error) {
-	row := tx.QueryRow(ctx, `select `+fieldMappingTemplateColumns+` from field_mapping_templates where id = $1`, id)
-	return scanFieldMappingTemplate(row)
+	return queryOne(ctx, tx, `select `+fieldMappingTemplateColumns+` from field_mapping_templates where id = $1`, scanFieldMappingTemplate, id)
 }
 
 func (r *FieldMappingTemplateRepository) Insert(ctx context.Context, tx pgx.Tx, t *domain.FieldMappingTemplate) error {

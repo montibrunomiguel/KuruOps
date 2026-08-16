@@ -21,34 +21,18 @@ const llmProviderColumns = `
 	id, tenant_id, name, kind, base_url, model, api_key_secret_ref, is_default, created_by, created_at, updated_at`
 
 func (r *LLMProviderRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.LLMProvider, error) {
-	rows, err := tx.Query(ctx, `select `+llmProviderColumns+` from llm_providers order by created_at asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query llm providers: %w", err)
-	}
-	defer rows.Close()
-
-	providers := []domain.LLMProvider{}
-	for rows.Next() {
-		p, err := scanLLMProvider(rows)
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, *p)
-	}
-	return providers, rows.Err()
+	return queryList(ctx, tx, `select `+llmProviderColumns+` from llm_providers order by created_at asc`, scanLLMProvider)
 }
 
 func (r *LLMProviderRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.LLMProvider, error) {
-	row := tx.QueryRow(ctx, `select `+llmProviderColumns+` from llm_providers where id = $1`, id)
-	return scanLLMProvider(row)
+	return queryOne(ctx, tx, `select `+llmProviderColumns+` from llm_providers where id = $1`, scanLLMProvider, id)
 }
 
 // GetDefault returns the tenant's default provider (see SetDefault -- the
 // unique partial index guarantees at most one), or nil if none has been
 // configured yet.
 func (r *LLMProviderRepository) GetDefault(ctx context.Context, tx pgx.Tx) (*domain.LLMProvider, error) {
-	row := tx.QueryRow(ctx, `select `+llmProviderColumns+` from llm_providers where is_default = true limit 1`)
-	return scanLLMProvider(row)
+	return queryOne(ctx, tx, `select `+llmProviderColumns+` from llm_providers where is_default = true limit 1`, scanLLMProvider)
 }
 
 func (r *LLMProviderRepository) Insert(ctx context.Context, tx pgx.Tx, p *domain.LLMProvider) error {
