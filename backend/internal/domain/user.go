@@ -100,7 +100,7 @@ type User struct {
 	// only (see middleware.RequirePasswordChanged) until the password is
 	// rotated. Set true for the seeded default admin (0013_seed_default_admin.up.sql)
 	// and never cleared except by a successful password change.
-	MustChangePassword bool       `json:"mustChangePassword"`
+	MustChangePassword bool `json:"mustChangePassword"`
 	// Phone is optional but, when set, must pass ValidatePhone (E.164-ish,
 	// country code required) -- surfaced in Escala de Acionamento's webhook
 	// payload placeholders as {{analystPhone}} once a step resolves who's on

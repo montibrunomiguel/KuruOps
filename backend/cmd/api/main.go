@@ -267,7 +267,7 @@ func main() {
 		UploadHandlers:               uploadHandlers,
 		StorageConfigHandlers:        storageConfigHandlers,
 		SMTPConfigHandlers:           smtpConfigHandlers,
-		OnCallScheduleHandlers:          onCallShiftHandlers,
+		OnCallScheduleHandlers:       onCallShiftHandlers,
 		IncidentSLAHandlers:          incidentSLAHandlers,
 		EscalationPolicyHandlers:     escalationPolicyHandlers,
 		AuditExportHandlers:          auditExportHandlers,
