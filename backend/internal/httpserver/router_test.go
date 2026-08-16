@@ -157,4 +157,27 @@ func TestNewRouter_TimeoutAppliesExceptToEventsStream(t *testing.T) {
 			tagsCount, streamCount,
 		)
 	}
+
+	// The migration route must still carry a RequireAdmin+Timeout pair, same
+	// count as any other /settings/* admin route (webhooks, chosen as a
+	// route that's still inside the normal HTTPRequestTimeout-bound admin
+	// Group) -- it's structurally a SEPARATE api.Group from every other
+	// /settings/* route (see router.go), using DatabaseMigrationTimeout
+	// instead of HTTPRequestTimeout, but a middleware count alone can't
+	// distinguish the two durations, only that both a timeout of *some* kind
+	// and RequireAdmin are still applied.
+	webhooksCount, ok := middlewareCounts["GET /api/v1/settings/webhooks/"]
+	if !ok {
+		t.Fatalf("expected /api/v1/settings/webhooks/ to be registered, got routes: %v", middlewareCounts)
+	}
+	migrateCount, ok := middlewareCounts["POST /api/v1/settings/database-migration/migrate"]
+	if !ok {
+		t.Fatalf("expected /api/v1/settings/database-migration/migrate to be registered, got routes: %v", middlewareCounts)
+	}
+	if migrateCount != webhooksCount {
+		t.Fatalf(
+			"expected /api/v1/settings/database-migration/migrate to carry the same middleware count (RequireAdmin + its own timeout) as /api/v1/settings/webhooks/, got %d vs %d",
+			migrateCount, webhooksCount,
+		)
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // pagerDutyEventsURL is a var, not a const, so tests can point it at a
@@ -86,8 +85,7 @@ func (PagerDutySender) Send(ctx context.Context, destination string, n Notificat
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("pagerduty request failed: %w", err)
 	}

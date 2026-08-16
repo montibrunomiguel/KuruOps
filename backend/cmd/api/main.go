@@ -36,7 +36,7 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(logger)
 	if err != nil {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
@@ -234,7 +234,7 @@ func main() {
 	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
-	authHandlers := handlers.NewAuthHandlers(pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
+	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 
@@ -246,7 +246,7 @@ func main() {
 	// Login endpoints are unauthenticated by definition -- rate limited to
 	// prevent brute force attacks. Built here (not inside httpserver.NewRouter)
 	// because it needs pool -- see middleware.NewRateLimiter.
-	loginRateLimiter := middleware.NewRateLimiter(pool.Pool, "login_ip", 20, time.Minute)
+	loginRateLimiter := middleware.NewRateLimiter(ctx, pool.Pool, "login_ip", cfg.LoginRateLimitPerMinute, time.Minute)
 
 	router := httpserver.NewRouter(httpserver.Options{
 		AlertHandlers:                alertHandlers,
@@ -277,6 +277,7 @@ func main() {
 		Logger:                       logger,
 		HealthCheck:                  httpserver.HealthCheck(pool.Pool),
 		HTTPRequestTimeout:           cfg.HTTPRequestTimeout,
+		DatabaseMigrationTimeout:     cfg.DatabaseMigrationTimeout,
 	})
 
 	srv := &http.Server{

@@ -56,19 +56,33 @@ type Options struct {
 	// database connection.
 	HealthCheck http.HandlerFunc
 	// HTTPRequestTimeout bounds every /api/v1 request except /events/stream
-	// (see config.Config's doc comment) -- the zero value would make
-	// chimw.Timeout fire immediately on every request, so NewRouter falls
-	// back to a sane default rather than trusting every caller to set this.
+	// and /settings/database-migration (see config.Config's doc comment) --
+	// the zero value would make chimw.Timeout fire immediately on every
+	// request, so NewRouter falls back to a sane default rather than
+	// trusting every caller to set this.
 	HTTPRequestTimeout time.Duration
+	// DatabaseMigrationTimeout bounds /settings/database-migration/migrate
+	// specifically -- see config.Config.DatabaseMigrationTimeout's doc
+	// comment for why this route needs a much larger timeout than every
+	// other /api/v1 route.
+	DatabaseMigrationTimeout time.Duration
 }
 
 // defaultHTTPRequestTimeout is used when Options.HTTPRequestTimeout is left
 // at the zero value -- see its doc comment.
 const defaultHTTPRequestTimeout = 30 * time.Second
 
+// defaultDatabaseMigrationTimeout is used when
+// Options.DatabaseMigrationTimeout is left at the zero value -- see its doc
+// comment.
+const defaultDatabaseMigrationTimeout = 10 * time.Minute
+
 func NewRouter(opts Options) http.Handler {
 	if opts.HTTPRequestTimeout <= 0 {
 		opts.HTTPRequestTimeout = defaultHTTPRequestTimeout
+	}
+	if opts.DatabaseMigrationTimeout <= 0 {
+		opts.DatabaseMigrationTimeout = defaultDatabaseMigrationTimeout
 	}
 
 	r := chi.NewRouter()
@@ -81,7 +95,12 @@ func NewRouter(opts Options) http.Handler {
 	// request (proxy_set_header X-Real-IP $remote_addr), overwriting whatever
 	// the client sent, so it's the only header safe to trust here.
 	r.Use(chimw.ClientIPFromHeader("X-Real-IP"))
-	r.Use(chimw.Logger)
+	// Not chimw.Logger: it writes plain-text access-log lines through its own
+	// default *log.Logger, not opts.Logger, so every request would emit a
+	// non-JSON line alongside the JSON logs every cmd/* binary otherwise
+	// produces (slog.NewJSONHandler) -- breaks structured log scraping in a
+	// real deployment for no benefit RequestLogger/MetricsMiddleware don't
+	// already cover.
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.SecurityHeaders)
 	// Not WrapWithObservability here: chi's own r.Use chain already applies
@@ -196,8 +215,20 @@ func NewRouter(opts Options) http.Handler {
 				admin.Route("/settings/incident-sla", opts.IncidentSLAHandlers.Routes)
 				admin.Route("/settings/escalation-policies", opts.EscalationPolicyHandlers.Routes)
 				admin.Route("/settings/audit-export", opts.AuditExportHandlers.Routes)
-				admin.Route("/settings/database-migration", opts.DatabaseMigrationHandlers.Routes)
 			})
+		})
+
+		// Settings -> External Database's /migrate can run for minutes on a
+		// real dataset (see db_migration.go's doc comment) -- registered
+		// directly on api, deliberately OUTSIDE the HTTPRequestTimeout-bound
+		// Group above, same reasoning as /events/stream, but with its own
+		// much longer timeout (DatabaseMigrationTimeout) rather than none at
+		// all: a genuinely hung migration still shouldn't hold a connection
+		// open forever.
+		api.Group(func(migration chi.Router) {
+			migration.Use(middleware.RequireAdmin())
+			migration.Use(chimw.Timeout(opts.DatabaseMigrationTimeout))
+			migration.Route("/settings/database-migration", opts.DatabaseMigrationHandlers.Routes)
 		})
 	})
 

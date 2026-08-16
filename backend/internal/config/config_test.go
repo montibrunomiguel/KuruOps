@@ -25,7 +25,7 @@ func clearEnv(t *testing.T) {
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
 	clearEnv(t)
-	_, err := config.Load()
+	_, err := config.Load(nil)
 	assert.ErrorContains(t, err, "DATABASE_URL is required")
 }
 
@@ -33,7 +33,7 @@ func TestLoad_Defaults(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(nil)
 	require.NoError(t, err)
 	assert.Equal(t, "postgres://localhost/argusops", cfg.DatabaseURL)
 	assert.Equal(t, ":8080", cfg.HTTPAddr)
@@ -43,6 +43,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "env", cfg.SecretsBackend)
 	assert.Equal(t, "secret", cfg.VaultMount)
 	assert.Equal(t, "/app/db/migrations", cfg.MigrationsPath)
+	assert.Equal(t, 10*time.Minute, cfg.DatabaseMigrationTimeout)
+	assert.Equal(t, 20, cfg.LoginRateLimitPerMinute)
+	assert.Equal(t, 60, cfg.WebhookRateLimitPerMinute)
 }
 
 func TestLoad_SecretsBackendOverrides(t *testing.T) {
@@ -57,7 +60,7 @@ func TestLoad_SecretsBackendOverrides(t *testing.T) {
 	t.Setenv("KMS_SECRET_ACCESS_KEY", "shh")
 	t.Setenv("KMS_KEY_ID", "arn:aws:kms:us-east-1:000000000000:key/fake")
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(nil)
 	require.NoError(t, err)
 	assert.Equal(t, "vault", cfg.SecretsBackend)
 	assert.Equal(t, "https://vault.internal:8200", cfg.VaultAddr)
@@ -78,7 +81,7 @@ func TestLoad_OverridesFromEnv(t *testing.T) {
 	t.Setenv("AUTH_MODE", "dev")
 	t.Setenv("SHUTDOWN_TIMEOUT", "30s")
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(nil)
 	require.NoError(t, err)
 	assert.Equal(t, ":9090", cfg.HTTPAddr)
 	assert.Equal(t, "/keys/pub.pem", cfg.JWTPublicKeyPath)
@@ -92,7 +95,7 @@ func TestLoad_InvalidDurationFallsBackToDefault(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
 	t.Setenv("SHUTDOWN_TIMEOUT", "not-a-duration")
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(nil)
 	require.NoError(t, err)
 	assert.Equal(t, 15*time.Second, cfg.ShutdownTimeout, "an unparsable duration must fall back, not propagate as an error")
 }

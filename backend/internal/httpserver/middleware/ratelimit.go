@@ -30,10 +30,15 @@ type KeyedLimiter struct {
 // user ID, or any other string) via Allow -- for use directly inside a
 // handler, not as middleware, since the key often isn't known until the
 // request body has been parsed. scope must be unique per call site (see
-// KeyedLimiter's doc comment).
-func NewKeyedLimiter(pool *pgxpool.Pool, scope string, limit int, window time.Duration) *KeyedLimiter {
+// KeyedLimiter's doc comment). ctx bounds cleanupLoop's background
+// goroutine -- same shutdown-context pattern as events.Broadcaster.Start(ctx)
+// and secrets.PersistentEnvStore's refresh loop, so this limiter's goroutine
+// actually exits on process shutdown instead of leaking until the process
+// dies (harmless for a process-lifetime singleton, but a real leak if a
+// limiter is ever constructed more than once per process, e.g. per-test).
+func NewKeyedLimiter(ctx context.Context, pool *pgxpool.Pool, scope string, limit int, window time.Duration) *KeyedLimiter {
 	limiter := &KeyedLimiter{pool: pool, scope: scope, limit: limit, window: window}
-	go limiter.cleanupLoop()
+	go limiter.cleanupLoop(ctx)
 	return limiter
 }
 
@@ -102,20 +107,27 @@ func (l *KeyedLimiter) Allow(key string) bool {
 // keys -- Allow only ever cleans the one key it was just called with, so
 // this is what keeps the table from growing unboundedly for keys that stop
 // being checked.
-func (l *KeyedLimiter) cleanupLoop() {
+func (l *KeyedLimiter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(l.window * 2)
 	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-l.window)
-		_, _ = l.pool.Exec(context.Background(), "delete from rate_limit_events where scope = $1 and occurred_at <= $2", l.scope, cutoff)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().Add(-l.window)
+			_, _ = l.pool.Exec(context.Background(), "delete from rate_limit_events where scope = $1 and occurred_at <= $2", l.scope, cutoff)
+		}
 	}
 }
 
 // NewRateLimiter creates Postgres-backed rate-limiting middleware, keyed by
 // client IP. limit: max requests allowed per window duration. scope must be
-// unique per call site (see KeyedLimiter's doc comment).
-func NewRateLimiter(pool *pgxpool.Pool, scope string, limit int, window time.Duration) func(http.Handler) http.Handler {
-	limiter := NewKeyedLimiter(pool, scope, limit, window)
+// unique per call site (see KeyedLimiter's doc comment). ctx bounds the
+// limiter's background cleanup goroutine -- see NewKeyedLimiter's doc
+// comment.
+func NewRateLimiter(ctx context.Context, pool *pgxpool.Pool, scope string, limit int, window time.Duration) func(http.Handler) http.Handler {
+	limiter := NewKeyedLimiter(ctx, pool, scope, limit, window)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

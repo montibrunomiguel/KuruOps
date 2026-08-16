@@ -32,7 +32,7 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(logger)
 	if err != nil {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
@@ -115,7 +115,7 @@ func main() {
 	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
 	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, fieldMappingTemplateService, logger)
 
-	hookLimiter := middleware.NewRateLimiter(pool.Pool, "webhook_ip", 60, time.Minute)
+	hookLimiter := middleware.NewRateLimiter(ctx, pool.Pool, "webhook_ip", cfg.WebhookRateLimitPerMinute, time.Minute)
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))

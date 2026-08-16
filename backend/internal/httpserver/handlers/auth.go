@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -36,10 +37,10 @@ type AuthHandlers struct {
 	loginAttempts *middleware.KeyedLimiter
 }
 
-func NewAuthHandlers(pool *pgxpool.Pool, auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService) *AuthHandlers {
+func NewAuthHandlers(ctx context.Context, pool *pgxpool.Pool, auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService) *AuthHandlers {
 	return &AuthHandlers{
 		auth: auth, ldap: ldap, saml: saml, passwordReset: passwordReset,
-		loginAttempts: middleware.NewKeyedLimiter(pool, "login_email", 10, 15*time.Minute),
+		loginAttempts: middleware.NewKeyedLimiter(ctx, pool, "login_email", 10, 15*time.Minute),
 	}
 }
 

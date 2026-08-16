@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -107,9 +108,26 @@ type Config struct {
 	// seconds so the client (and whatever's watching argusops_http_requests_
 	// 5xx_total on /metrics) finds out something is wrong."
 	HTTPRequestTimeout time.Duration
+
+	// DatabaseMigrationTimeout bounds Settings -> External Database's
+	// /migrate request -- deliberately much larger than HTTPRequestTimeout
+	// and applied via its own chimw.Timeout in router.go (that route is
+	// registered outside the HTTPRequestTimeout-bound group, same as
+	// /events/stream) since a real copy can take minutes, not seconds, but
+	// still shouldn't be allowed to hold a connection open forever if the
+	// target genuinely hangs.
+	DatabaseMigrationTimeout time.Duration
+
+	// LoginRateLimitPerMinute/WebhookRateLimitPerMinute configure the
+	// per-account login limiter (cmd/api) and per-IP webhook limiter
+	// (cmd/ingest) -- see middleware.NewRateLimiter's callers in each
+	// main.go. Previously hardcoded; every other operational tunable in
+	// this struct is env-var driven, so these were the odd ones out.
+	LoginRateLimitPerMinute   int
+	WebhookRateLimitPerMinute int
 }
 
-func Load() (Config, error) {
+func Load(logger *slog.Logger) (Config, error) {
 	cfg := Config{
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		HTTPAddr:          getEnvDefault("HTTP_ADDR", ":8080"),
@@ -117,7 +135,7 @@ func Load() (Config, error) {
 		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
 		AuthMode:          getEnvDefault("AUTH_MODE", "jwt"),
 		DevKeysDir:        getEnvDefault("DEV_KEYS_DIR", ".dev-keys"),
-		ShutdownTimeout:   getEnvDurationDefault("SHUTDOWN_TIMEOUT", 15*time.Second),
+		ShutdownTimeout:   getEnvDurationDefault(logger, "SHUTDOWN_TIMEOUT", 15*time.Second),
 		UploadDir:         getEnvDefault("UPLOAD_DIR", "/data/uploads"),
 		AppBaseURL:        getEnvDefault("APP_BASE_URL", "http://localhost:3000"),
 
@@ -134,10 +152,13 @@ func Load() (Config, error) {
 
 		MigrationsPath: getEnvDefault("MIGRATIONS_PATH", "/app/db/migrations"),
 
-		DBPoolMaxConns: getEnvInt32Default("DB_POOL_MAX_CONNS", 0),
-		DBPoolMinConns: getEnvInt32Default("DB_POOL_MIN_CONNS", 0),
+		DBPoolMaxConns: getEnvInt32Default(logger, "DB_POOL_MAX_CONNS", 0),
+		DBPoolMinConns: getEnvInt32Default(logger, "DB_POOL_MIN_CONNS", 0),
 
-		HTTPRequestTimeout: getEnvDurationDefault("HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		HTTPRequestTimeout:        getEnvDurationDefault(logger, "HTTP_REQUEST_TIMEOUT", 30*time.Second),
+		DatabaseMigrationTimeout:  getEnvDurationDefault(logger, "DATABASE_MIGRATION_TIMEOUT", 10*time.Minute),
+		LoginRateLimitPerMinute:   int(getEnvInt32Default(logger, "LOGIN_RATE_LIMIT_PER_MINUTE", 20)),
+		WebhookRateLimitPerMinute: int(getEnvInt32Default(logger, "WEBHOOK_RATE_LIMIT_PER_MINUTE", 60)),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -154,25 +175,39 @@ func getEnvDefault(key, def string) string {
 	return def
 }
 
-func getEnvDurationDefault(key string, def time.Duration) time.Duration {
+// getEnvDurationDefault/getEnvInt32Default warn (rather than silently
+// falling back) when the env var is SET but fails to parse -- a bare
+// "unset" is expected and stays quiet, but a typo'd value (e.g.
+// HTTP_REQUEST_TIMEOUT=3oh) reverting to the default with zero signal is
+// exactly the kind of misconfiguration this codebase otherwise prefers to
+// fail loudly on (see SECRETS_ENCRYPTION_KEY). logger may be nil (e.g. in
+// tests that don't care about the warning) -- callers that pass nil just
+// don't get the log line, parsing behavior is unaffected either way.
+func getEnvDurationDefault(logger *slog.Logger, key string, def time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		if logger != nil {
+			logger.Warn("env var set but unparseable, using default", "key", key, "value", v, "default", def, "error", err)
+		}
 		return def
 	}
 	return d
 }
 
-func getEnvInt32Default(key string, def int32) int32 {
+func getEnvInt32Default(logger *slog.Logger, key string, def int32) int32 {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
 	n, err := strconv.ParseInt(v, 10, 32)
 	if err != nil {
+		if logger != nil {
+			logger.Warn("env var set but unparseable, using default", "key", key, "value", v, "default", def, "error", err)
+		}
 		return def
 	}
 	return int32(n)
