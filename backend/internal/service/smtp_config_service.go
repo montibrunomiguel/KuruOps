@@ -76,29 +76,23 @@ func (s *SMTPConfigService) Save(ctx context.Context, tenantID uuid.UUID, in Sav
 	})
 }
 
-// resolveSecretRef is the "empty value means keep the existing secret"
-// guard, matching StorageConfigService.resolveSecretRef -- a new password
-// is always stored fresh; a blank one falls back to whatever was already
-// saved, and the very first save requires a real value. An SMTP relay with
-// no auth at all (in.Username == "") still calls this with an empty
-// password and simply gets an empty ref back, which is fine since Send
-// only authenticates when Username is non-empty.
+// resolveSecretRef is SMTP's use of secrets.PutOrKeepExisting: a new
+// password is always stored fresh; a blank one falls back to whatever was
+// already saved. Unlike StorageConfigService, an empty result is left as
+// "" rather than rejected -- an SMTP relay with no auth at all
+// (in.Username == "") still calls this with an empty password and simply
+// gets an empty ref back, which is fine since Send only authenticates when
+// Username is non-empty.
 func (s *SMTPConfigService) resolveSecretRef(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, plaintext string) (string, error) {
-	if plaintext != "" {
-		ref, err := s.secrets.Put(ctx, tenantID.String(), "smtp-password", plaintext)
-		if err != nil {
-			return "", fmt.Errorf("store secret: %w", err)
-		}
-		return ref, nil
-	}
 	existing, err := s.repo.Get(ctx, tx)
 	if err != nil {
 		return "", fmt.Errorf("load existing smtp config: %w", err)
 	}
-	if existing != nil && existing.PasswordSecretRef != "" {
-		return existing.PasswordSecretRef, nil
+	existingRef := ""
+	if existing != nil {
+		existingRef = existing.PasswordSecretRef
 	}
-	return "", nil
+	return secrets.PutOrKeepExisting(ctx, s.secrets, tenantID.String(), "smtp-password", plaintext, existingRef)
 }
 
 // resolve builds the mailer.Config for the tenant's current SMTP settings,

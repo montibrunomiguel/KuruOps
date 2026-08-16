@@ -119,6 +119,22 @@ func (s *AlertService) Get(ctx context.Context, tenantID, id uuid.UUID, allowedT
 	return alert, err
 }
 
+// loadVisible loads id inside tx and returns it only if it exists and is
+// visible under allowedTags -- nil, nil for either case (not-found and
+// not-visible look identical to a caller, same reasoning as Get's doc
+// comment). Every mutating method below calls this instead of repeating the
+// load-then-check block by hand.
+func (s *AlertService) loadVisible(ctx context.Context, tx pgx.Tx, id uuid.UUID, allowedTags []string) (*domain.Alert, error) {
+	a, err := s.repo.Get(ctx, tx, id)
+	if err != nil {
+		return nil, fmt.Errorf("load alert: %w", err)
+	}
+	if a == nil || !tagsVisible(allowedTags, a.Tags) {
+		return nil, nil
+	}
+	return a, nil
+}
+
 func (s *AlertService) List(ctx context.Context, tenantID uuid.UUID, f repository.ListAlertsFilter) ([]domain.Alert, error) {
 	var alerts []domain.Alert
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -151,11 +167,11 @@ func (s *AlertService) ChangeStatus(ctx context.Context, tenantID, alertID, acto
 	}
 
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		if current.Status == domain.AlertStatusClosed {
@@ -216,11 +232,11 @@ func (s *AlertService) UpdateTags(ctx context.Context, tenantID, alertID, actorI
 	known = orEmptySlice(known)
 
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		if err := s.repo.UpdateTags(ctx, tx, alertID, known); err != nil {
@@ -419,11 +435,11 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 func (s *AlertService) OverrideSeverity(ctx context.Context, tenantID, alertID, actorID uuid.UUID, newSeverity domain.Severity, allowedTags []string) error {
 	changed := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		if current.Status == domain.AlertStatusClosed {
@@ -466,11 +482,11 @@ func (s *AlertService) OverrideSeverity(ctx context.Context, tenantID, alertID, 
 // level, same trust boundary as OverrideSeverity's newSeverity.
 func (s *AlertService) Reassign(ctx context.Context, tenantID, alertID, actorID uuid.UUID, analystID *uuid.UUID, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		if uuidEqual(current.AssignedAnalystID, analystID) {
@@ -514,18 +530,18 @@ func (s *AlertService) LinkAlert(ctx context.Context, tenantID, alertID, otherID
 		return fmt.Errorf("cannot link an alert to itself")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
-		other, err := s.repo.Get(ctx, tx, otherID)
+		other, err := s.loadVisible(ctx, tx, otherID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load linked alert: %w", err)
+			return err
 		}
-		if other == nil || !tagsVisible(allowedTags, other.Tags) {
+		if other == nil {
 			return fmt.Errorf("alert %s not found", otherID)
 		}
 
@@ -547,11 +563,11 @@ func (s *AlertService) LinkAlert(ctx context.Context, tenantID, alertID, otherID
 
 func (s *AlertService) UnlinkAlert(ctx context.Context, tenantID, alertID, otherID uuid.UUID, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		return s.repo.UnlinkAlert(ctx, tx, alertID, otherID)
@@ -561,11 +577,11 @@ func (s *AlertService) UnlinkAlert(ctx context.Context, tenantID, alertID, other
 func (s *AlertService) LinkedAlerts(ctx context.Context, tenantID, alertID uuid.UUID, allowedTags []string) ([]domain.Alert, error) {
 	var linked []domain.Alert
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		all, err := s.repo.ListLinkedAlerts(ctx, tx, alertID)
@@ -589,11 +605,11 @@ func (s *AlertService) LinkedAlerts(ctx context.Context, tenantID, alertID uuid.
 // check constraints in the database as a second line of defense.
 func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uuid.UUID, in domain.CloseAlertInput, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, alertID)
+		current, err := s.loadVisible(ctx, tx, alertID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
 		if current.Status == domain.AlertStatusClosed {

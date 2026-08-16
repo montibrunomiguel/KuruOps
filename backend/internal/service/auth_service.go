@@ -2,10 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -44,32 +40,19 @@ const refreshTokenTTL = 30 * 24 * time.Hour
 
 const refreshTokenPrefix = "rt_"
 
-func generateRefreshToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return refreshTokenPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-func hashRefreshToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
 // issueRefreshToken generates and persists a new refresh token for a user
 // inside an already-open tenant-scoped transaction, returning the plaintext
 // -- only ever returned here, never retrievable again (same discipline as
 // WebhookService's token issuance).
 func (s *AuthService) issueRefreshToken(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID) (string, error) {
-	plaintext, err := generateRefreshToken()
+	plaintext, err := generatePrefixedToken(refreshTokenPrefix, 32)
 	if err != nil {
 		return "", fmt.Errorf("generate refresh token: %w", err)
 	}
 	rt := &domain.RefreshToken{
 		TenantID:  tenantID,
 		UserID:    userID,
-		TokenHash: hashRefreshToken(plaintext),
+		TokenHash: hashToken(plaintext),
 		ExpiresAt: time.Now().Add(refreshTokenTTL),
 	}
 	if err := s.refreshTokens.Insert(ctx, tx, rt); err != nil {
@@ -141,7 +124,7 @@ func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshTo
 	var user *domain.User
 	var newRefreshToken string
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		rt, err := s.refreshTokens.GetByHash(ctx, tx, hashRefreshToken(refreshToken))
+		rt, err := s.refreshTokens.GetByHash(ctx, tx, hashToken(refreshToken))
 		if err != nil {
 			return fmt.Errorf("load refresh token: %w", err)
 		}

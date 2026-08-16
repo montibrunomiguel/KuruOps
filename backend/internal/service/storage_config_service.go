@@ -103,27 +103,25 @@ func (s *StorageConfigService) SaveGCS(ctx context.Context, tenantID uuid.UUID, 
 	})
 }
 
-// resolveSecretRef is the "empty value means keep the existing secret"
-// guard shared by SaveS3/SaveGCS, matching IdentityConfigService.SaveLDAPConfig
-// -- a new value is always stored fresh; a blank one falls back to whatever
-// the same provider already had, and the very first save for a provider
-// requires a real value (there's nothing to fall back to yet).
+// resolveSecretRef is SaveS3/SaveGCS's use of secrets.PutOrKeepExisting: a
+// new value is always stored fresh; a blank one falls back to whatever the
+// same provider already had. Unlike SMTP, the very first save for a
+// provider requires a real value -- there's nothing to fall back to yet,
+// and an empty storage credential isn't a valid configuration the way an
+// unauthenticated SMTP relay is.
 func (s *StorageConfigService) resolveSecretRef(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, plaintext, purpose string, existingRef func(*domain.StorageConfig) string) (string, error) {
-	if plaintext != "" {
-		ref, err := s.secrets.Put(ctx, tenantID.String(), purpose, plaintext)
-		if err != nil {
-			return "", fmt.Errorf("store secret: %w", err)
-		}
-		return ref, nil
-	}
 	existing, err := s.repo.Get(ctx, tx)
 	if err != nil {
 		return "", fmt.Errorf("load existing storage config: %w", err)
 	}
-	if ref := existingRef(existing); ref != "" {
-		return ref, nil
+	ref, err := secrets.PutOrKeepExisting(ctx, s.secrets, tenantID.String(), purpose, plaintext, existingRef(existing))
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("a credential value is required for initial configuration")
+	if ref == "" {
+		return "", fmt.Errorf("a credential value is required for initial configuration")
+	}
+	return ref, nil
 }
 
 // BuildStore resolves the blobstore.Store a caller should upload evidence

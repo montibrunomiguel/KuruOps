@@ -7,6 +7,7 @@ package secrets
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -18,6 +19,28 @@ import (
 type Store interface {
 	Put(ctx context.Context, tenantID, purpose, value string) (ref string, err error)
 	Resolve(ctx context.Context, ref string) (value string, err error)
+}
+
+// PutOrKeepExisting is the "empty value on save means keep the existing
+// secret" convention shared by every Settings integration that stores a
+// write-only credential (SMTP password, S3/GCS keys, LDAP bind password,
+// an escalation step's webhook destination, ...): a non-empty plaintext is
+// always stored fresh under (tenantID, purpose); an empty one returns
+// existingRef unchanged. existingRef may itself be "" when nothing has ever
+// been configured -- whether that's acceptable (an SMTP relay with no auth)
+// or should be rejected (a storage credential that's required) is a
+// business rule each caller still decides for itself after calling this;
+// this only removes the store-if-nonempty-else-keep mechanics duplicated
+// across every caller.
+func PutOrKeepExisting(ctx context.Context, store Store, tenantID, purpose, plaintext, existingRef string) (string, error) {
+	if plaintext == "" {
+		return existingRef, nil
+	}
+	ref, err := store.Put(ctx, tenantID, purpose, plaintext)
+	if err != nil {
+		return "", fmt.Errorf("store secret: %w", err)
+	}
+	return ref, nil
 }
 
 // EnvStore is a pure in-memory Store, kept around for tests that need a

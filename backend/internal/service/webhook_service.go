@@ -2,10 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -53,7 +49,7 @@ type CreateResult struct {
 // dedupWindowMinutes nil or <= 0 resolves to defaultDedupWindowMinutes
 // (see resolveDedupWindow), same shape as resolveExpiry.
 func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, name, source string, expiresInDays *int, fieldMappingTemplateID *uuid.UUID, groupByFields []string, dedupWindowMinutes *int) (*CreateResult, error) {
-	token, err := generateToken()
+	token, err := generatePrefixedToken(tokenPrefix, 24)
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -85,7 +81,7 @@ func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID
 // old one immediately — "Regenerate" in Settings -> Webhook Endpoints.
 // Rotating also resets the expiry clock (see resolveExpiry).
 func (s *WebhookService) Regenerate(ctx context.Context, tenantID, id uuid.UUID, expiresInDays *int) (string, error) {
-	token, err := generateToken()
+	token, err := generatePrefixedToken(tokenPrefix, 24)
 	if err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
@@ -170,19 +166,6 @@ func (s *WebhookService) SetGroupByFields(ctx context.Context, tenantID, id uuid
 }
 
 const tokenPrefix = "whk_"
-
-func generateToken() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return tokenPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
 
 func lastN(s string, n int) string {
 	if len(s) <= n {

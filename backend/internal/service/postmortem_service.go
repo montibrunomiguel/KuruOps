@@ -110,7 +110,7 @@ func (s *PostmortemService) executiveSummary(
 	comments []domain.IncidentComment,
 	linkedAlerts []domain.Alert,
 ) string {
-	client, err := s.ai.buildClientForTenant(ctx, tenantID)
+	client, err := s.ai.BuildClient(ctx, tenantID)
 	if err != nil {
 		return ""
 	}

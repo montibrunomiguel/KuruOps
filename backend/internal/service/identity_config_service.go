@@ -58,15 +58,17 @@ type SaveLDAPConfigInput struct {
 
 func (s *IdentityConfigService) SaveLDAPConfig(ctx context.Context, tenantID uuid.UUID, in SaveLDAPConfigInput) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		ref := ""
-		if in.BindPassword != "" {
-			r, err := s.secrets.Put(ctx, tenantID.String(), "ldap-bind-password", in.BindPassword)
-			if err != nil {
-				return fmt.Errorf("store bind password: %w", err)
-			}
-			ref = r
-		} else if existing, err := s.repo.GetLDAPConfig(ctx, tx); err == nil && existing != nil {
-			ref = existing.BindPasswordSecretRef
+		existing, err := s.repo.GetLDAPConfig(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing ldap config: %w", err)
+		}
+		existingRef := ""
+		if existing != nil {
+			existingRef = existing.BindPasswordSecretRef
+		}
+		ref, err := secrets.PutOrKeepExisting(ctx, s.secrets, tenantID.String(), "ldap-bind-password", in.BindPassword, existingRef)
+		if err != nil {
+			return err
 		}
 		if ref == "" {
 			return fmt.Errorf("bindPassword is required for initial configuration")
