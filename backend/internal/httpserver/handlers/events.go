@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/argusops/argusops/internal/events"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 )
 
 // sseKeepAliveInterval bounds how long the connection can go silent before
@@ -32,9 +31,8 @@ func NewEventsHandlers(b *events.Broadcaster) *EventsHandlers {
 // still gets a coherent stream, they just won't act on event types their
 // own pages don't render.
 func (h *EventsHandlers) Stream(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	flusher, ok := w.(http.Flusher)

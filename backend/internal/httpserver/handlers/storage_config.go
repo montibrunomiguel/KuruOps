@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -28,9 +27,8 @@ func (h *StorageConfigHandlers) Routes(r chi.Router) {
 }
 
 func (h *StorageConfigHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	cfg, err := h.svc.Get(r.Context(), tenantID)
@@ -49,7 +47,10 @@ type saveS3ConfigRequest struct {
 }
 
 func (h *StorageConfigHandlers) saveS3(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveS3ConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -74,7 +75,10 @@ type saveGCSConfigRequest struct {
 }
 
 func (h *StorageConfigHandlers) saveGCS(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveGCSConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -93,9 +97,8 @@ func (h *StorageConfigHandlers) saveGCS(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *StorageConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	if err := h.svc.Delete(r.Context(), tenantID); err != nil {

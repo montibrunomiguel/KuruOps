@@ -55,9 +55,8 @@ func (h *AlertHandlers) Routes(r chi.Router) {
 }
 
 func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 
@@ -101,9 +100,8 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -129,7 +127,10 @@ type changeStatusRequest struct {
 }
 
 func (h *AlertHandlers) changeStatus(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -157,7 +158,10 @@ type closeAlertRequest struct {
 }
 
 func (h *AlertHandlers) close(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -188,7 +192,10 @@ type updateTagsRequest struct {
 }
 
 func (h *AlertHandlers) updateTags(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -214,7 +221,10 @@ type overrideSeverityRequest struct {
 }
 
 func (h *AlertHandlers) overrideSeverity(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -240,7 +250,10 @@ type reassignAlertRequest struct {
 }
 
 func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -262,7 +275,10 @@ func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) listLinkedAlerts(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -278,7 +294,10 @@ func (h *AlertHandlers) listLinkedAlerts(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AlertHandlers) linkAlert(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -299,7 +318,10 @@ func (h *AlertHandlers) linkAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) unlinkAlert(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -326,7 +348,10 @@ type escalateResponse struct {
 // what actually happens (creates+links an incident, marks the alert
 // escalated, fires the next manual-escalation chain step).
 func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	allowedTags := middleware.AllowedTags(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -358,7 +383,10 @@ type analyzeStartedResponse struct {
 // connected AlertDetailPage to reload (see AIAnalysisService's doc
 // comment). 409 if one's already running/paused for this alert.
 func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -388,7 +416,10 @@ type continueMessageRequest struct {
 // getAnalysisChat backs AnalysisChat's initial load and its
 // refetch-on-SSE-event -- see AIAnalysisService.GetAlertTranscript.
 func (h *AlertHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -408,7 +439,10 @@ func (h *AlertHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) 
 // why the analyst's own message is already persisted by the time this
 // returns, even though the LLM's reply isn't yet).
 func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -452,7 +486,10 @@ func (h *AlertHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Re
 }
 
 func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -473,7 +510,10 @@ type addAlertCommentRequest struct {
 }
 
 func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

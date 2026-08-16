@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -32,9 +31,8 @@ func (h *IdentityConfigHandlers) Routes(r chi.Router) {
 }
 
 func (h *IdentityConfigHandlers) getLDAP(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	cfg, err := h.svc.GetLDAPConfig(r.Context(), tenantID)
@@ -58,7 +56,10 @@ type saveLDAPConfigRequest struct {
 }
 
 func (h *IdentityConfigHandlers) saveLDAP(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveLDAPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -79,9 +80,8 @@ func (h *IdentityConfigHandlers) saveLDAP(w http.ResponseWriter, r *http.Request
 }
 
 func (h *IdentityConfigHandlers) deleteLDAP(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	if err := h.svc.DeleteLDAPConfig(r.Context(), tenantID); err != nil {
@@ -92,9 +92,8 @@ func (h *IdentityConfigHandlers) deleteLDAP(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *IdentityConfigHandlers) getSAML(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	cfg, err := h.svc.GetSAMLConfig(r.Context(), tenantID)
@@ -114,7 +113,10 @@ type saveSAMLConfigRequest struct {
 }
 
 func (h *IdentityConfigHandlers) saveSAML(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveSAMLConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -134,9 +136,8 @@ func (h *IdentityConfigHandlers) saveSAML(w http.ResponseWriter, r *http.Request
 }
 
 func (h *IdentityConfigHandlers) deleteSAML(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	if err := h.svc.DeleteSAMLConfig(r.Context(), tenantID); err != nil {

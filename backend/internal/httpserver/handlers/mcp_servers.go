@@ -36,9 +36,8 @@ func (h *MCPServerHandlers) Routes(r chi.Router) {
 }
 
 func (h *MCPServerHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	servers, err := h.svc.List(r.Context(), tenantID)
@@ -60,7 +59,10 @@ type saveMCPServerRequest struct {
 }
 
 func (h *MCPServerHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req saveMCPServerRequest
@@ -86,7 +88,10 @@ func (h *MCPServerHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MCPServerHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
@@ -120,7 +125,10 @@ func (h *MCPServerHandlers) disable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MCPServerHandlers) setEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
@@ -134,7 +142,10 @@ func (h *MCPServerHandlers) setEnabled(w http.ResponseWriter, r *http.Request, e
 }
 
 func (h *MCPServerHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
@@ -153,7 +164,10 @@ func (h *MCPServerHandlers) delete(w http.ResponseWriter, r *http.Request) {
 // sideEffectingTools from what the server actually exposes instead of
 // typing tool names from memory.
 func (h *MCPServerHandlers) discoverTools(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
@@ -169,9 +183,8 @@ func (h *MCPServerHandlers) discoverTools(w http.ResponseWriter, r *http.Request
 }
 
 func (h *MCPServerHandlers) listPendingToolCalls(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	calls, err := h.toolSvc.PendingApprovals(r.Context(), tenantID)
@@ -183,7 +196,10 @@ func (h *MCPServerHandlers) listPendingToolCalls(w http.ResponseWriter, r *http.
 }
 
 func (h *MCPServerHandlers) approveToolCall(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
 	if err != nil {
@@ -198,7 +214,10 @@ func (h *MCPServerHandlers) approveToolCall(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *MCPServerHandlers) rejectToolCall(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
 	if err != nil {

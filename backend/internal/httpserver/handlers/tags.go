@@ -33,9 +33,8 @@ func (h *TagHandlers) SettingsRoutes(r chi.Router) {
 }
 
 func (h *TagHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	tags, err := h.svc.List(r.Context(), tenantID)
@@ -52,7 +51,10 @@ type createTagRequest struct {
 }
 
 func (h *TagHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req createTagRequest
@@ -70,7 +72,10 @@ func (h *TagHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TagHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tag id")

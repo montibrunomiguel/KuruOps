@@ -22,7 +22,10 @@ import (
 // alert/incident's chat can never be used to approve/reject a tool call
 // queued against a different one.
 func resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, mcpTools *service.MCPToolService, contextType string, approve bool) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

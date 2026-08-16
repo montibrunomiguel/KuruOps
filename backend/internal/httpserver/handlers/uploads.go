@@ -140,9 +140,8 @@ func (h *UploadHandlers) Routes(r chi.Router) {
 }
 
 func (h *UploadHandlers) upload(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	allowedTags := middleware.AllowedTags(r.Context())
@@ -359,9 +358,8 @@ func fileNameSlug(originalFilename string) string {
 }
 
 func (h *UploadHandlers) serve(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 

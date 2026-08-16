@@ -126,9 +126,8 @@ func (h *DashboardHandlers) FollowupRoutes(r chi.Router) {
 // frontend sends a comma-separated list of chosen values in one param
 // (e.g. "alertSeverity=critical,high") rather than a repeated query key.
 func (h *DashboardHandlers) stats(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 
@@ -157,9 +156,8 @@ func (h *DashboardHandlers) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DashboardHandlers) activity(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -174,9 +172,8 @@ func (h *DashboardHandlers) activity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DashboardHandlers) followup(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	view, err := h.svc.Followup(r.Context(), tenantID, middleware.AllowedTags(r.Context()), parseSince(r), parseUntil(r))

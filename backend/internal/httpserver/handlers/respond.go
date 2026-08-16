@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/google/uuid"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -14,6 +17,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// mustTenantID reads the tenant ID out of the request context, writing a 401
+// and returning ok=false if it's missing -- every handler entry point should
+// call this instead of middleware.TenantID directly, so a missing tenant
+// context is always rejected rather than silently proceeding with a zero
+// uuid.UUID.
+func mustTenantID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	tenantID, ok := middleware.TenantID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing tenant context")
+		return uuid.UUID{}, false
+	}
+	return tenantID, true
 }
 
 // maxPageLimit mirrors the cap already enforced independently in

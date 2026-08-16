@@ -47,7 +47,10 @@ type changePasswordRequest struct {
 // Re-issues the session token with MustChangePassword cleared so the
 // frontend can swap it in immediately, no fresh login required.
 func (h *AccountHandlers) changePassword(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req changePasswordRequest
@@ -80,7 +83,10 @@ type updateProfileRequest struct {
 // AuthService.UpdateProfile for the local-only guard and the
 // email-change-requires-password rule (phone carries no such guard).
 func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req updateProfileRequest
@@ -98,7 +104,10 @@ func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *AccountHandlers) listAPITokens(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	tokens, err := h.apiTokens.List(r.Context(), tenantID, userID)
@@ -117,7 +126,10 @@ type createAPITokenRequest struct {
 }
 
 func (h *AccountHandlers) createAPIToken(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req createAPITokenRequest
@@ -144,7 +156,10 @@ func (h *AccountHandlers) createAPIToken(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AccountHandlers) revokeAPIToken(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
