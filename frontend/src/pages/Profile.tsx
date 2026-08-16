@@ -34,6 +34,7 @@ function ProfileForm() {
   const { token, user, updateProfile } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,10 +50,10 @@ function ProfileForm() {
     try {
       await api.put(
         "/api/v1/account/profile",
-        { name, email, currentPassword: emailChanged ? currentPassword : undefined },
+        { name, email, phone, currentPassword: emailChanged ? currentPassword : undefined },
         token,
       );
-      updateProfile(name, email);
+      updateProfile(name, email, phone);
       setCurrentPassword("");
       setSaved(true);
     } catch (err) {
@@ -85,6 +86,19 @@ function ProfileForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="profile-phone">
+            {t("profile.phone")} <span className="field-hint">{t("profile.phoneHint")}</span>
+          </label>
+          <input
+            id="profile-phone"
+            className="input"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+5511912345678"
           />
         </div>
         {emailChanged && (

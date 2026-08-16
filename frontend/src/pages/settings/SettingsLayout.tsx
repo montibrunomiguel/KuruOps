@@ -10,7 +10,8 @@ import { IdentityProvidersPanel } from "./IdentityProvidersPanel";
 import { TagsPanel } from "./TagsPanel";
 import { StorageIntegrationPanel } from "./StorageIntegrationPanel";
 import { SMTPConfigPanel } from "./SMTPConfigPanel";
-import { OnCallShiftsPanel } from "./OnCallShiftsPanel";
+import { OnCallSchedulesListPage } from "./OnCallSchedulesListPage";
+import { OnCallScheduleDetailPage } from "./OnCallScheduleDetailPage";
 import { IncidentSLAPanel } from "./IncidentSLAPanel";
 import { EscalationPoliciesPanel } from "./EscalationPoliciesPanel";
 import { AuditExportPanel } from "./AuditExportPanel";
@@ -51,7 +52,7 @@ const NAV_GROUPS = [
   {
     labelKey: "settings.navGroups.operations",
     items: [
-      { to: "/settings/on-call-shifts", labelKey: "settings.nav.onCallShifts" },
+      { to: "/settings/on-call-schedules", labelKey: "settings.nav.onCallSchedule" },
       { to: "/settings/incident-sla", labelKey: "settings.nav.incidentSla" },
       { to: "/settings/escalation-policies", labelKey: "settings.nav.escalationPolicies" },
     ],
@@ -98,7 +99,8 @@ export function SettingsLayout() {
             <Route path="identity-providers" element={<IdentityProvidersPanel />} />
             <Route path="storage" element={<StorageIntegrationPanel />} />
             <Route path="smtp" element={<SMTPConfigPanel />} />
-            <Route path="on-call-shifts" element={<OnCallShiftsPanel />} />
+            <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
+            <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
             <Route path="incident-sla" element={<IncidentSLAPanel />} />
             <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
             <Route path="audit-export" element={<AuditExportPanel />} />

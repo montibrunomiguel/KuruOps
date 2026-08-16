@@ -1,0 +1,167 @@
+package domain_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/argusops/argusops/internal/domain"
+)
+
+func participant(name string) domain.OnCallParticipant {
+	return domain.OnCallParticipant{UserID: uuid.New(), UserName: name}
+}
+
+func names(set []domain.OnCallParticipant) []string {
+	out := make([]string, len(set))
+	for i, p := range set {
+		out[i] = p.UserName
+	}
+	return out
+}
+
+func TestResolveOnCallSet_NoParticipants(t *testing.T) {
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	got := domain.ResolveOnCallSet(nil, handover, 7, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.Add(time.Hour))
+	assert.Empty(t, got)
+}
+
+func TestResolveOnCallSet_BeforeHandover(t *testing.T) {
+	alice := participant("Alice")
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.Add(-time.Minute))
+	assert.Empty(t, got, "the rotation hasn't started yet")
+}
+
+func TestResolveOnCallSet_SingleParticipantAlwaysOn(t *testing.T) {
+	alice := participant("Alice")
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 30))
+	assert.Equal(t, []string{"Alice"}, names(got))
+}
+
+func TestResolveOnCallSet_WeeklyRotationAlternates(t *testing.T) {
+	alice, bob := participant("Alice"), participant("Bob")
+	participants := []domain.OnCallParticipant{alice, bob}
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		now  time.Time
+		want []string
+	}{
+		{"period 0 -- exactly at handover", handover, []string{"Alice"}},
+		{"period 0 -- mid-week", handover.AddDate(0, 0, 3), []string{"Alice"}},
+		{"period 1 -- one week later", handover.AddDate(0, 0, 7), []string{"Bob"}},
+		{"period 2 -- two weeks later, wraps back to Alice", handover.AddDate(0, 0, 14), []string{"Alice"}},
+		{"period 5 -- odd period is Bob", handover.AddDate(0, 0, 35), []string{"Bob"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := domain.ResolveOnCallSet(participants, handover, 7, 1, domain.OnCallWorkingHoursAllDay, nil, nil, c.now)
+			assert.Equal(t, c.want, names(got))
+		})
+	}
+}
+
+func TestResolveOnCallSet_DailyCadence(t *testing.T) {
+	alice, bob := participant("Alice"), participant("Bob")
+	participants := []domain.OnCallParticipant{alice, bob}
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, []string{"Alice"}, names(domain.ResolveOnCallSet(participants, handover, 1, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 2))))
+	assert.Equal(t, []string{"Bob"}, names(domain.ResolveOnCallSet(participants, handover, 1, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 3))))
+}
+
+func TestResolveOnCallSet_CustomCadence(t *testing.T) {
+	alice, bob := participant("Alice"), participant("Bob")
+	participants := []domain.OnCallParticipant{alice, bob}
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	// period_days = 3: period 0 is days [0,3), period 1 is [3,6), etc.
+	assert.Equal(t, []string{"Alice"}, names(domain.ResolveOnCallSet(participants, handover, 3, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 2))))
+	assert.Equal(t, []string{"Bob"}, names(domain.ResolveOnCallSet(participants, handover, 3, 1, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 3))))
+}
+
+func TestResolveOnCallSet_ConcurrentShiftsEvenSplit(t *testing.T) {
+	chris, sam, willis, tom := participant("Chris"), participant("SamStarling"), participant("SamWillis"), participant("Tom")
+	participants := []domain.OnCallParticipant{chris, sam, willis, tom}
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	t.Run("period 0 -- first pair", func(t *testing.T) {
+		got := domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover)
+		assert.Equal(t, []string{"Chris", "SamStarling"}, names(got))
+	})
+	t.Run("period 1 -- second pair", func(t *testing.T) {
+		got := domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 7))
+		assert.Equal(t, []string{"SamWillis", "Tom"}, names(got))
+	})
+	t.Run("period 2 -- wraps back to the first pair", func(t *testing.T) {
+		got := domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 14))
+		assert.Equal(t, []string{"Chris", "SamStarling"}, names(got))
+	})
+}
+
+func TestResolveOnCallSet_ConcurrentShiftsUnevenSplit(t *testing.T) {
+	// 3 participants, concurrency 2 -- groups are [0:2] and [2:3] (last group smaller).
+	alice, bob, carol := participant("Alice"), participant("Bob"), participant("Carol")
+	participants := []domain.OnCallParticipant{alice, bob, carol}
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, []string{"Alice", "Bob"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover)))
+	assert.Equal(t, []string{"Carol"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 7))))
+	assert.Equal(t, []string{"Alice", "Bob"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 14))))
+}
+
+func TestResolveOnCallSet_ConcurrencyClampedToParticipantCount(t *testing.T) {
+	alice := participant("Alice")
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 5, domain.OnCallWorkingHoursAllDay, nil, nil, handover)
+	assert.Equal(t, []string{"Alice"}, names(got), "concurrency greater than participant count doesn't panic or duplicate")
+}
+
+func TestResolveOnCallSet_WorkingHoursGap(t *testing.T) {
+	alice := participant("Alice")
+	handover := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC) // a Monday
+	businessHours := []domain.OnCallWorkingHoursInterval{
+		{Weekdays: []int{1, 2, 3, 4, 5}, StartMinute: 9 * 60, EndMinute: 17 * 60}, // Mon-Fri 09:00-17:00
+	}
+
+	t.Run("within business hours -- on call", func(t *testing.T) {
+		now := time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC) // Monday 10:00
+		got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursSpecificTimes, businessHours, nil, now)
+		assert.Equal(t, []string{"Alice"}, names(got))
+	})
+	t.Run("outside business hours -- gap, nobody on call", func(t *testing.T) {
+		now := time.Date(2026, 1, 5, 20, 0, 0, 0, time.UTC) // Monday 20:00
+		got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursSpecificTimes, businessHours, nil, now)
+		assert.Empty(t, got)
+	})
+	t.Run("weekend -- gap, nobody on call", func(t *testing.T) {
+		now := time.Date(2026, 1, 10, 10, 0, 0, 0, time.UTC) // Saturday 10:00
+		got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursSpecificTimes, businessHours, nil, now)
+		assert.Empty(t, got)
+	})
+}
+
+func TestResolveOnCallSet_OverrideWinsOutright(t *testing.T) {
+	alice, bob := participant("Alice"), participant("Bob")
+	override := participant("Carol")
+	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice, bob}, handover, 7, 1, domain.OnCallWorkingHoursAllDay, nil, &override, handover)
+	assert.Equal(t, []string{"Carol"}, names(got), "an override replaces the whole computed set, even though Alice would otherwise be on call")
+}
+
+func TestResolveOnCallSet_OverrideWinsEvenDuringAGap(t *testing.T) {
+	alice := participant("Alice")
+	override := participant("Carol")
+	handover := time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC)
+	businessHours := []domain.OnCallWorkingHoursInterval{{Weekdays: []int{1}, StartMinute: 9 * 60, EndMinute: 17 * 60}}
+	outsideHours := time.Date(2026, 1, 5, 20, 0, 0, 0, time.UTC)
+
+	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursSpecificTimes, businessHours, &override, outsideHours)
+	assert.Equal(t, []string{"Carol"}, names(got))
+}

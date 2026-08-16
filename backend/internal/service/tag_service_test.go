@@ -28,6 +28,18 @@ func TestTagService_CreateListDelete(t *testing.T) {
 		assert.Equal(t, "phishing", tag.Name)
 	})
 
+	// Regression: a duplicate name used to surface Postgres's raw
+	// constraint-violation error (SQLSTATE 23505, tags_tenant_name_uq)
+	// straight to the caller. Must now be a clean, actionable message.
+	t.Run("duplicate name is rejected with a clean message, not a raw SQL error", func(t *testing.T) {
+		_, err := svc.Create(t.Context(), tenantID, actorID, "phishing", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"phishing"`)
+		assert.Contains(t, err.Error(), "already exists")
+		assert.NotContains(t, err.Error(), "SQLSTATE")
+		assert.NotContains(t, err.Error(), "constraint")
+	})
+
 	list, err := svc.List(t.Context(), tenantID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)

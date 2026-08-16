@@ -22,19 +22,29 @@ type WebhookSender struct {
 	Template string
 }
 
+// webhookPayload's fields must stay identical in count, order, and type to
+// Notification's -- the default fixed-shape path below converts one
+// directly into the other (webhookPayload(n)), which the Go compiler only
+// allows between structs with identical underlying field sequences.
 type webhookPayload struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Severity    string `json:"severity"`
-	AlertID     string `json:"alertId"`
-	URL         string `json:"url,omitempty"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	Severity     string `json:"severity"`
+	AlertID      string `json:"alertId"`
+	URL          string `json:"url,omitempty"`
+	AnalystName  string `json:"analystName,omitempty"`
+	AnalystEmail string `json:"analystEmail,omitempty"`
+	AnalystPhone string `json:"analystPhone,omitempty"`
 }
 
 // WebhookPlaceholders are the substitution tokens available in a custom
 // webhook payload template -- exported so the Settings UI can show the
 // exact same list, and so EscalationPolicyService can validate a template
 // by substituting sample values before ever saving it.
-var WebhookPlaceholders = []string{"{{title}}", "{{description}}", "{{severity}}", "{{alertId}}", "{{url}}"}
+var WebhookPlaceholders = []string{
+	"{{title}}", "{{description}}", "{{severity}}", "{{alertId}}", "{{url}}",
+	"{{analystName}}", "{{analystEmail}}", "{{analystPhone}}",
+}
 
 // RenderWebhookTemplate substitutes n's fields into template's placeholders.
 // Plain string replacement, not a templating engine -- the payload shape a
@@ -47,6 +57,9 @@ func RenderWebhookTemplate(template string, n Notification) string {
 		"{{severity}}", n.Severity,
 		"{{alertId}}", n.AlertID,
 		"{{url}}", n.URL,
+		"{{analystName}}", n.AnalystName,
+		"{{analystEmail}}", n.AnalystEmail,
+		"{{analystPhone}}", n.AnalystPhone,
 	)
 	return replacer.Replace(template)
 }

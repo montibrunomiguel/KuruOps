@@ -60,6 +60,9 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	aiSvc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) { analyzed <- eventType })
 	userSvc := service.NewUserService(pool, repository.NewUserRepository())
 	postmortemSvc := service.NewPostmortemService(incidentSvc, aiSvc)
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -84,7 +87,7 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	require.NoError(t, err)
 
 	return chatFixture{
-		alertHandlers:    handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc),
+		alertHandlers:    handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000"),
 		incidentHandlers: handlers.NewIncidentHandlers(incidentSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc),
 		mcpTool:          mcpToolSvc,
 		tenantID:         tenantID, actorID: actorID, alertID: alert.ID, incidentID: inc.ID,

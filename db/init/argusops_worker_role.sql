@@ -52,10 +52,16 @@ alter default privileges in schema public grant select on tables to argusops_wor
 -- (sla_breached, updated_at) is ever written by this role.
 grant update (sla_breached, updated_at) on incidents to argusops_worker;
 
--- cmd/worker's third job, sweepEscalations, stamps alerts.escalated_at once
--- an on-call notification has fired for an overdue alert -- same
+-- cmd/worker's third job, sweepEscalations, advances an overdue alert's
+-- automatic SLA escalation loop each time a chain step fires:
+-- sla_escalation_step (which step to fire next, wrapping around once the
+-- chain is exhausted) and escalated_at (now redefined as "when the last
+-- automatic step fired", not just a one-time stamp) -- same
 -- column-scoped-UPDATE reasoning as the incidents grant above.
-grant update (escalated_at) on alerts to argusops_worker;
+-- manual_escalation_step is deliberately NOT granted here -- it's only ever
+-- written by AlertHandlers.escalate via the argusops_app role (already has
+-- full table grants), never by this worker's automatic sweep.
+grant update (escalated_at, sla_escalation_step) on alerts to argusops_worker;
 
 -- cmd/worker's fourth job, sweepStaleAIRuns, fails any ai_analysis_runs row
 -- still stuck 'running'/'paused' long past when it should have finished (a

@@ -31,7 +31,7 @@ type Options struct {
 	UploadHandlers               *handlers.UploadHandlers
 	StorageConfigHandlers        *handlers.StorageConfigHandlers
 	SMTPConfigHandlers           *handlers.SMTPConfigHandlers
-	OnCallShiftHandlers          *handlers.OnCallShiftHandlers
+	OnCallScheduleHandlers       *handlers.OnCallScheduleHandlers
 	IncidentSLAHandlers          *handlers.IncidentSLAHandlers
 	EscalationPolicyHandlers     *handlers.EscalationPolicyHandlers
 	AuditExportHandlers          *handlers.AuditExportHandlers
@@ -192,7 +192,7 @@ func NewRouter(opts Options) http.Handler {
 				admin.Route("/settings/tags", opts.TagHandlers.SettingsRoutes)
 				admin.Route("/settings/storage", opts.StorageConfigHandlers.Routes)
 				admin.Route("/settings/smtp", opts.SMTPConfigHandlers.Routes)
-				admin.Route("/settings/on-call-shifts", opts.OnCallShiftHandlers.Routes)
+				admin.Route("/settings/on-call-schedules", opts.OnCallScheduleHandlers.Routes)
 				admin.Route("/settings/incident-sla", opts.IncidentSLAHandlers.Routes)
 				admin.Route("/settings/escalation-policies", opts.EscalationPolicyHandlers.Routes)
 				admin.Route("/settings/audit-export", opts.AuditExportHandlers.Routes)

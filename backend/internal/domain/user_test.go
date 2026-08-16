@@ -52,3 +52,32 @@ func TestValidateResourceAccess(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestValidatePhone(t *testing.T) {
+	cases := []struct {
+		name    string
+		phone   string
+		wantErr bool
+	}{
+		{"empty is valid (optional field)", "", false},
+		{"valid E.164 with country code", "+5511912345678", false},
+		{"valid, shorter number", "+15550199", false},
+		{"missing leading +", "5511912345678", true},
+		{"leading zero after +", "+05511912345678", true},
+		{"contains spaces", "+55 11 91234-5678", true},
+		{"contains a dash", "+1-555-0199", true},
+		{"too short", "+551", true},
+		{"letters", "+55abc12345", true},
+		{"just a plus sign", "+", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := domain.ValidatePhone(c.phone)
+			if c.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

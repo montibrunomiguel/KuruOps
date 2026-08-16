@@ -91,11 +91,12 @@ type loginResponse struct {
 }
 
 type loginUser struct {
-	ID                 string `json:"id"`
-	Email              string `json:"email"`
-	Name               string `json:"name"`
-	Role               string `json:"role"`
-	MustChangePassword bool   `json:"mustChangePassword"`
+	ID                 string  `json:"id"`
+	Email              string  `json:"email"`
+	Name               string  `json:"name"`
+	Phone              *string `json:"phone,omitempty"`
+	Role               string  `json:"role"`
+	MustChangePassword bool    `json:"mustChangePassword"`
 }
 
 func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +129,7 @@ func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 		Token:        token,
 		RefreshToken: refreshToken,
 		User: loginUser{
-			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: user.Role.Name,
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
 		},
 	})
@@ -160,7 +161,7 @@ func (h *AuthHandlers) loginLDAP(w http.ResponseWriter, r *http.Request) {
 		Token:        token,
 		RefreshToken: refreshToken,
 		User: loginUser{
-			ID: user.ID.String(), Email: user.Email, Name: user.Name, Role: user.Role.Name,
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
 		},
 	})

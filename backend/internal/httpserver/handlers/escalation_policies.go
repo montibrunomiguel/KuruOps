@@ -12,7 +12,7 @@ import (
 	"github.com/argusops/argusops/internal/service"
 )
 
-// EscalationPolicyHandlers is Settings -> On-Call Escalation: admin-only.
+// EscalationPolicyHandlers is Settings -> Escala de Acionamento: admin-only.
 type EscalationPolicyHandlers struct {
 	svc *service.EscalationPolicyService
 }
@@ -42,16 +42,21 @@ func (h *EscalationPolicyHandlers) list(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, policies)
 }
 
-type saveEscalationPolicyRequest struct {
-	Severity                   domain.Severity              `json:"severity"`
-	UnacknowledgedAfterMinutes int                          `json:"unacknowledgedAfterMinutes"`
-	ChannelType                domain.EscalationChannelType `json:"channelType"`
-	// Destination is plaintext; "" on update means keep the existing one --
-	// see EscalationPolicyService.Save.
+type saveEscalationStepRequest struct {
+	ScheduleID   uuid.UUID                    `json:"scheduleId"`
+	DelayMinutes int                          `json:"delayMinutes"`
+	ChannelType  domain.EscalationChannelType `json:"channelType"`
+	// Destination is plaintext; "" for a position that already had a step
+	// saved there means keep the existing one -- see EscalationPolicyService.Save.
 	Destination string `json:"destination"`
 	// WebhookPayloadTemplate only applies when ChannelType is webhook; ""
 	// means send the default fixed payload shape.
 	WebhookPayloadTemplate string `json:"webhookPayloadTemplate"`
+}
+
+type saveEscalationPolicyRequest struct {
+	Severity domain.Severity             `json:"severity"`
+	Steps    []saveEscalationStepRequest `json:"steps"`
 }
 
 func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +68,16 @@ func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	policy, err := h.svc.Save(r.Context(), tenantID, req.Severity, req.UnacknowledgedAfterMinutes, req.ChannelType, req.Destination, req.WebhookPayloadTemplate)
+	steps := make([]domain.SaveEscalationStepInput, len(req.Steps))
+	for i, st := range req.Steps {
+		steps[i] = domain.SaveEscalationStepInput{
+			ScheduleID: st.ScheduleID, DelayMinutes: st.DelayMinutes,
+			ChannelType: st.ChannelType, Destination: st.Destination,
+			WebhookPayloadTemplate: st.WebhookPayloadTemplate,
+		}
+	}
+
+	policy, err := h.svc.Save(r.Context(), tenantID, domain.SaveEscalationPolicyInput{Severity: req.Severity, Steps: steps})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -73,13 +87,15 @@ func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) 
 
 type testEscalationPolicyRequest struct {
 	Severity domain.Severity `json:"severity"`
+	// StepPosition is 0-indexed, matching EscalationStep.Position.
+	StepPosition int `json:"stepPosition"`
 }
 
-// test sends a real notification through an already-saved policy's
-// configured channel -- lets an admin confirm a destination (and, for
-// webhook, a custom payload template) actually works without waiting for a
-// real alert to go unacknowledged. Mirrors SMTPConfigHandlers' "send test
-// email" endpoint.
+// test sends a real notification through a step of an already-saved chain
+// -- lets an admin confirm a destination (and, for webhook, a custom
+// payload template with the analyst placeholders) actually works without
+// waiting for a real alert to escalate. Mirrors SMTPConfigHandlers' "send
+// test email" endpoint.
 func (h *EscalationPolicyHandlers) test(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
 
@@ -89,7 +105,7 @@ func (h *EscalationPolicyHandlers) test(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.svc.Test(r.Context(), tenantID, req.Severity); err != nil {
+	if err := h.svc.Test(r.Context(), tenantID, req.Severity, req.StepPosition); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

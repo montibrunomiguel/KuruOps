@@ -5,13 +5,21 @@ import { MemoryRouter } from "react-router-dom";
 import { ProfilePage } from "./Profile";
 import { AuthProvider } from "../auth/AuthContext";
 
-function renderWithSession() {
+function renderWithSession(phone?: string) {
   localStorage.setItem(
     "argusops.session",
     JSON.stringify({
       token: "tok",
       refreshToken: "rt",
-      user: { id: "1", email: "analyst@argusops.local", name: "Ana Lyst", role: "analyst", mustChangePassword: false, resourceAccess: [] },
+      user: {
+        id: "1",
+        email: "analyst@argusops.local",
+        name: "Ana Lyst",
+        phone,
+        role: "analyst",
+        mustChangePassword: false,
+        resourceAccess: [],
+      },
     }),
   );
   return render(
@@ -32,12 +40,48 @@ describe("ProfilePage", () => {
     localStorage.clear();
   });
 
-  it("loads the current name/email into the form", () => {
+  it("loads the current name/email/phone into the form", () => {
     vi.stubGlobal("fetch", vi.fn());
-    renderWithSession();
+    renderWithSession("+5511912345678");
 
     expect(screen.getByLabelText("Name")).toHaveValue("Ana Lyst");
     expect(screen.getByLabelText("Email")).toHaveValue("analyst@argusops.local");
+    expect(screen.getByLabelText(/Phone/)).toHaveValue("+5511912345678");
+  });
+
+  it("a phone change is included in the profile PUT body", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+      return Promise.resolve(jsonResponse(200, {}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithSession();
+
+    await userEvent.type(screen.getByLabelText(/Phone/), "+5511912345678");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/account/profile",
+        expect.objectContaining({ method: "PUT", body: expect.stringContaining("+5511912345678") }),
+      ),
+    );
+  });
+
+  it("shows the server's error message when an invalid phone is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
+        return Promise.resolve(jsonResponse(400, { error: "phone must include a country code, e.g. +5511912345678" }));
+      }),
+    );
+    renderWithSession();
+
+    await userEvent.type(screen.getByLabelText(/Phone/), "5511912345678");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText(/phone must include a country code/)).toBeInTheDocument();
   });
 
   it("does not show the profile's current-password field until the email is changed", async () => {

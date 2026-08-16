@@ -246,7 +246,10 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 // already documents for password changes. LDAP/SAML users are rejected:
 // their name/email come from the IdP and are overwritten on every login
 // anyway, so editing them here would just be silently undone.
-func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.UUID, name, email, currentPassword string) (*domain.User, error) {
+// phone is nil when the caller's request omitted the field entirely (leave
+// the stored value untouched -- see updateProfileRequest); a non-nil empty
+// string explicitly clears it; a non-nil non-empty string sets it.
+func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.UUID, name, email string, phone *string, currentPassword string) (*domain.User, error) {
 	name = strings.TrimSpace(name)
 	email = strings.TrimSpace(email)
 	if name == "" {
@@ -266,6 +269,19 @@ func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.U
 			return fmt.Errorf("profile changes are only available for local accounts")
 		}
 
+		phonePtr := u.Phone
+		if phone != nil {
+			trimmed := strings.TrimSpace(*phone)
+			if err := domain.ValidatePhone(trimmed); err != nil {
+				return err
+			}
+			if trimmed == "" {
+				phonePtr = nil
+			} else {
+				phonePtr = &trimmed
+			}
+		}
+
 		if email != u.Email {
 			if u.PasswordHash == nil {
 				return fmt.Errorf("current password is incorrect")
@@ -276,11 +292,12 @@ func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.U
 			}
 		}
 
-		if err := s.users.UpdateProfile(ctx, tx, userID, name, email); err != nil {
+		if err := s.users.UpdateProfile(ctx, tx, userID, name, email, phonePtr); err != nil {
 			return err
 		}
 		u.Name = name
 		u.Email = email
+		u.Phone = phonePtr
 		user = u
 		return nil
 	})

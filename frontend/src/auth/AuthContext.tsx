@@ -6,6 +6,7 @@ interface SessionUser {
   id: string;
   email: string;
   name: string;
+  phone?: string;
   // Display-only: the assigned Role's name (e.g. "Admin", "Analyst 1").
   // Never used for an authorization decision -- see isAdmin/resourceAccess.
   role: string;
@@ -39,7 +40,7 @@ interface AuthContextValue extends AuthState {
   // Called after PUT /account/profile succeeds -- name/email aren't part of
   // the JWT claims (see decodeTokenClaims), so this patches the locally
   // held user directly from the response body instead of decoding a token.
-  updateProfile: (name: string, email: string) => void;
+  updateProfile: (name: string, email: string, phone?: string) => void;
   logout: () => void;
 }
 
@@ -120,10 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const updateProfile = useCallback(
-    (name: string, email: string) => {
+    (name: string, email: string, phone?: string) => {
       setState((prev) => {
         if (!prev.user) return prev;
-        const next: AuthState = { ...prev, user: { ...prev.user, name, email } };
+        const next: AuthState = { ...prev, user: { ...prev.user, name, email, phone: phone ?? prev.user.phone } };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
       });

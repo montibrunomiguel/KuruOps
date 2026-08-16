@@ -153,6 +153,7 @@ function CreateUserForm({
   const { token } = useAuth();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,7 +163,7 @@ function CreateUserForm({
     setSubmitting(true);
     setError(null);
     try {
-      const result = await api.post<CreatedUser>("/api/v1/settings/users", { email, name, roleId }, token);
+      const result = await api.post<CreatedUser>("/api/v1/settings/users", { email, name, phone, roleId }, token);
       onCreated(result);
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -196,6 +197,10 @@ function CreateUserForm({
           <input id="nu-name" className="input" value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
         <div className="field">
+          <label htmlFor="nu-phone">{t("settings.users.form.phone")}</label>
+          <input id="nu-phone" type="tel" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div className="field">
           <label htmlFor="nu-role">{t("settings.users.form.role")}</label>
           <RoleSelect id="nu-role" roles={roles} value={roleId} onChange={setRoleId} />
         </div>
@@ -226,9 +231,13 @@ function UserRow({
   const { t } = useTranslation();
   const { token, user: me } = useAuth();
   const [roleId, setRoleId] = useState(user.roleId);
+  const [phone, setPhone] = useState(user.phone ?? "");
   const [saving, setSaving] = useState(false);
+  const [phoneSaving, setPhoneSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [phoneDirty, setPhoneDirty] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [revoked, setRevoked] = useState(false);
@@ -250,6 +259,20 @@ function UserRow({
       setError(mutationErrorMessage(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function savePhone() {
+    setPhoneSaving(true);
+    setPhoneError(null);
+    try {
+      await api.put(`/api/v1/settings/users/${user.id}/phone`, { phone }, token);
+      setPhoneDirty(false);
+      onChanged();
+    } catch (err) {
+      setPhoneError(mutationErrorMessage(err));
+    } finally {
+      setPhoneSaving(false);
     }
   }
 
@@ -314,6 +337,7 @@ function UserRow({
           {user.email} · {user.authProvider}
         </p>
         {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
+        {phoneError && <div className="error-banner" style={{ marginTop: 8 }}>{phoneError}</div>}
       </div>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -328,6 +352,25 @@ function UserRow({
         />
         {dirty && (
           <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>
+            {t("common.save")}
+          </button>
+        )}
+        <input
+          id={`user-phone-${user.id}`}
+          aria-label={t("settings.users.phoneLabel") ?? undefined}
+          className="input"
+          style={{ width: 150 }}
+          type="tel"
+          value={phone}
+          onChange={(e) => {
+            setPhone(e.target.value);
+            setPhoneDirty(true);
+          }}
+          title={t("settings.users.phoneHint") ?? undefined}
+          placeholder={t("settings.users.phonePlaceholder") ?? undefined}
+        />
+        {phoneDirty && (
+          <button className="btn btn-primary btn-sm" onClick={savePhone} disabled={phoneSaving}>
             {t("common.save")}
           </button>
         )}

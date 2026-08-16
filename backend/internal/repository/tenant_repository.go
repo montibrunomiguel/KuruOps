@@ -45,7 +45,7 @@ func (r *TenantRepository) GetDefault(ctx context.Context, pool *db.Pool) (*doma
 }
 
 // GetTimezone/SetTimezone back the on-call schedule's "resolve who's on
-// shift right now" logic (see OnCallShiftService.ResolveCurrentAnalyst) --
+// call right now" logic (see OnCallScheduleService.ResolveCurrentAnalyst) --
 // pool-direct for the same reason as GetDefault: tenants carries no RLS.
 func (r *TenantRepository) GetTimezone(ctx context.Context, pool *db.Pool, tenantID uuid.UUID) (string, error) {
 	var tz string

@@ -66,7 +66,7 @@ func main() {
 	// On-call auto-assign is enabled only here, not in cmd/api -- it's a
 	// property of the ingest path (see AlertService.Ingest), not something
 	// the analyst-facing API needs to know about.
-	onCallShiftService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	onCallShiftService := service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
 	alertService.EnableOnCallAutoAssign(onCallShiftService)
 
 	// Auto-analysis is enabled only here too, for the same reason -- see

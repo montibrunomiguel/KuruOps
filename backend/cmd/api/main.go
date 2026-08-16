@@ -142,9 +142,6 @@ func main() {
 	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
 	mcpServerHandlers := handlers.NewMCPServerHandlers(mcpServerService, mcpToolService)
 
-	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), secretStore)
-	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
-
 	auditExportService := service.NewAuditExportService(pool, repository.NewAuditRepository())
 	auditExportHandlers := handlers.NewAuditExportHandlers(auditExportService)
 
@@ -171,8 +168,10 @@ func main() {
 	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, mcpToolService)
 
 	// AlertHandlers needs IncidentService for the escalate-to-incident route
-	// (see AlertHandlers.escalate), so it's constructed after incidentService.
-	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService)
+	// (see AlertHandlers.escalate), so it's constructed after incidentService
+	// -- and now also needs escalationPolicyService for that same route's
+	// manual-escalation side effect, so its own construction moved down
+	// below onCallShiftService/escalationPolicyService (see there).
 
 	playbookRepo := repository.NewPlaybookRepository()
 	playbookService := service.NewPlaybookService(pool, playbookRepo, alertRepo, cfg.AppBaseURL)
@@ -208,8 +207,19 @@ func main() {
 	smtpConfigHandlers := handlers.NewSMTPConfigHandlers(smtpConfigService)
 
 	tenantRepo := repository.NewTenantRepository()
-	onCallShiftService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), userRepo, tenantRepo)
-	onCallShiftHandlers := handlers.NewOnCallShiftHandlers(onCallShiftService)
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallShiftService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, tenantRepo)
+	onCallShiftHandlers := handlers.NewOnCallScheduleHandlers(onCallShiftService)
+
+	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallShiftService, userService, secretStore)
+	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
+
+	// AlertHandlers needs IncidentService for the escalate-to-incident route
+	// and EscalationPolicyService for that same route's manual-escalation
+	// side effect (see AlertHandlers.escalate), so it's constructed here,
+	// after both.
+	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService, escalationPolicyService, cfg.AppBaseURL)
+
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)
 	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), roleService, issuer)
@@ -257,7 +267,7 @@ func main() {
 		UploadHandlers:               uploadHandlers,
 		StorageConfigHandlers:        storageConfigHandlers,
 		SMTPConfigHandlers:           smtpConfigHandlers,
-		OnCallShiftHandlers:          onCallShiftHandlers,
+		OnCallScheduleHandlers:       onCallShiftHandlers,
 		IncidentSLAHandlers:          incidentSLAHandlers,
 		EscalationPolicyHandlers:     escalationPolicyHandlers,
 		AuditExportHandlers:          auditExportHandlers,

@@ -41,7 +41,10 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
 	userSvc := service.NewUserService(pool, repository.NewUserRepository())
-	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc)
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh,
@@ -136,7 +139,11 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
+	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
@@ -201,7 +208,11 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, service.NewUserService(pool, repository.NewUserRepository()))
+	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),

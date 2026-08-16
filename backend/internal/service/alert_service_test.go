@@ -161,6 +161,46 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, alert.AssignedAnalystID)
 	})
+
+	// Regression: dedup and on-call auto-assign are independent features,
+	// but a groupKey being non-empty (dedup configured + the payload has
+	// the field) used to be treated as "this alert is a duplicate, skip
+	// assignment" even for a payload that turns out to be the FIRST
+	// occurrence -- silently losing auto-assign for every alert on any
+	// dedup-enabled endpoint. See AlertService.Ingest's comment on why the
+	// resolution is no longer gated on groupKey.
+	t.Run("dedup configured but this alert is a fresh, non-duplicate occurrence -- still auto-assigned", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
+
+		alert, deduped, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: hostPayload("dedup-assign-fresh"),
+		}, []string{"host.name"}, 30)
+		require.NoError(t, err)
+		require.False(t, deduped)
+		require.NotNil(t, alert.AssignedAnalystID)
+		assert.Equal(t, analystID, *alert.AssignedAnalystID)
+	})
+
+	t.Run("dedup configured and this alert IS a duplicate -- suppressed, no new alert to assign", func(t *testing.T) {
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
+		payload := hostPayload("dedup-assign-repeat")
+
+		first, deduped1, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, []string{"host.name"}, 30)
+		require.NoError(t, err)
+		require.False(t, deduped1)
+		require.NotNil(t, first.AssignedAnalystID, "the first occurrence must still get auto-assigned")
+
+		second, deduped2, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, []string{"host.name"}, 30)
+		require.NoError(t, err)
+		require.True(t, deduped2)
+		assert.Equal(t, first.ID, second.ID, "a suppressed duplicate must resolve to the existing alert, not a new one")
+	})
 }
 
 // TestAlertService_EnableAutoAnalysis guards the fire-and-forget hook

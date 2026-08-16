@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
@@ -42,9 +44,21 @@ func (s *TagService) Create(ctx context.Context, tenantID, actorID uuid.UUID, na
 		return s.repo.Create(ctx, tx, t)
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("a tag named %q already exists", name)
+		}
 		return nil, fmt.Errorf("create tag: %w", err)
 	}
 	return t, nil
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation (SQLSTATE 23505) -- used to translate a raw constraint error
+// (e.g. tags_tenant_name_uq) into a message a user can act on, instead of
+// letting the driver's own wording reach the API response.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (s *TagService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {

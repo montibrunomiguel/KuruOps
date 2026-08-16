@@ -20,7 +20,7 @@ export function TagsPanel() {
   const [showCreate, setShowCreate] = useState(false);
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
-  // made delete look like it does nothing (see OnCallShiftsPanel).
+  // made delete look like it does nothing (see OnCallScheduleDetailPage).
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);

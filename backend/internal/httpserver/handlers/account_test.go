@@ -86,13 +86,30 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 
 	t.Run("valid update -- 200 with the updated user", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
-			"name": "New Name", "email": "changed2@test.local", "currentPassword": testutil.TestPassword,
+			"name": "New Name", "email": "changed2@test.local", "phone": "+15550100199", "currentPassword": testutil.TestPassword,
 		})
 		req := withClaims(httptest.NewRequest("PUT", "/profile", bytes.NewReader(body)), tenantID, userID, nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), "New Name")
 		assert.Contains(t, rec.Body.String(), "changed2@test.local")
+		assert.Contains(t, rec.Body.String(), "+15550100199")
+	})
+
+	t.Run("a request that omits phone entirely leaves the previously-set phone untouched", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"name": "Another Name", "email": "changed2@test.local"})
+		req := withClaims(httptest.NewRequest("PUT", "/profile", bytes.NewReader(body)), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Another Name")
+		assert.Contains(t, rec.Body.String(), "+15550100199", "phone must survive a request that never mentioned it")
+	})
+
+	t.Run("a phone without a country code is rejected with 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"name": "New Name", "email": "changed2@test.local", "phone": "5511912345678"})
+		req := withClaims(httptest.NewRequest("PUT", "/profile", bytes.NewReader(body)), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 

@@ -20,7 +20,7 @@ import (
 )
 
 // OnCallResolver resolves who's on shift right now -- satisfied by
-// *OnCallShiftService. Defined as an interface here (rather than AlertService
+// *OnCallScheduleService. Defined as an interface here (rather than AlertService
 // depending on the on-call schema directly) so most construction sites
 // (cmd/api, every test) can leave it nil and Ingest just skips auto-assign;
 // only cmd/ingest wires a real one via EnableOnCallAutoAssign.
@@ -189,6 +189,21 @@ func (s *AlertService) ChangeStatus(ctx context.Context, tenantID, alertID, acto
 	return err
 }
 
+// AdvanceManualEscalation advances alertID's manual-escalation counter
+// (entirely independent of the automatic SLA loop cmd/worker's
+// sweepEscalations drives) and returns which 0-indexed escalation chain
+// step to fire this call -- see AlertRepository.AdvanceManualEscalation and
+// AlertHandlers.escalate, the only caller.
+func (s *AlertService) AdvanceManualEscalation(ctx context.Context, tenantID, alertID uuid.UUID, maxSteps int) (int, error) {
+	var position int
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		p, err := s.repo.AdvanceManualEscalation(ctx, tx, alertID, maxSteps)
+		position = p
+		return err
+	})
+	return position, err
+}
+
 // UpdateTags replaces an alert's tags with the given set, filtered down to
 // whatever's actually registered in Settings -> Tags (see
 // TagService.FilterKnown) -- an analyst can only attach a tag that already
@@ -291,8 +306,15 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 	// it's a read-only lookup against a different table/tx, no need to
 	// share a transaction with the insert below. No match (or on-call
 	// disabled) just leaves the alert unassigned; it never blocks ingest.
-	// Skipped entirely for a duplicate -- there's no new alert to assign.
-	if s.onCall != nil && groupKey == "" {
+	// Deliberately NOT gated on groupKey being empty: a non-empty groupKey
+	// only means this endpoint has dedup configured and the payload has the
+	// field, not that this particular alert IS a duplicate -- that's only
+	// known once FindAndIncrementDuplicate runs below. Resolving here
+	// unconditionally means a genuine duplicate wastes one read-only lookup
+	// (in.AssignedAnalystID is simply never used for the early-return
+	// dedup path below), but a fresh, non-duplicate alert on a dedup-enabled
+	// endpoint no longer silently loses its on-call assignment.
+	if s.onCall != nil {
 		analystID, resolveErr := s.onCall.ResolveCurrentAnalyst(ctx, tenantID, in.ReceivedAt)
 		if resolveErr != nil {
 			return nil, false, fmt.Errorf("resolve on-call analyst: %w", resolveErr)

@@ -86,6 +86,45 @@ describe("UsersPanel", () => {
     );
   });
 
+  it("Save only appears next to phone after it's changed, and PUTs the phone update", async () => {
+    const fetchMock = routeFetch([userFixture()]);
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await screen.findByText("Ana Lyst");
+
+    const phoneInput = screen.getByLabelText("Phone");
+    await userEvent.type(phoneInput, "+5511912345678");
+    // Two "Save" buttons could exist (role save + phone save) -- the phone
+    // one is the last one to appear since phoneDirty only just became true.
+    const saveButtons = screen.getAllByRole("button", { name: "Save" });
+    await userEvent.click(saveButtons[saveButtons.length - 1]);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/settings/users/u1/phone",
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ phone: "+5511912345678" }) }),
+      ),
+    );
+  });
+
+  it("shows the server's error when an invalid phone is rejected", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith("/phone") && init?.method === "PUT") {
+        return Promise.resolve(jsonResponse({ error: "phone must include a country code, e.g. +5511912345678" }, 400));
+      }
+      return routeFetch([userFixture()])(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await screen.findByText("Ana Lyst");
+
+    await userEvent.type(screen.getByLabelText("Phone"), "5511912345678");
+    const saveButtons = screen.getAllByRole("button", { name: "Save" });
+    await userEvent.click(saveButtons[saveButtons.length - 1]);
+
+    expect(await screen.findByText(/phone must include a country code/)).toBeInTheDocument();
+  });
+
   it("Deactivate posts to the deactivate endpoint", async () => {
     const fetchMock = routeFetch([userFixture()]);
     vi.stubGlobal("fetch", fetchMock);
@@ -234,6 +273,7 @@ describe("UsersPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "+ New User" }));
     await userEvent.type(screen.getByLabelText("Email"), "new@test.local");
     await userEvent.type(screen.getByLabelText("Name"), "New Hire");
+    await userEvent.type(screen.getByLabelText(/Phone \(optional/), "+5511912345678");
     await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
     await waitFor(() =>
@@ -242,6 +282,10 @@ describe("UsersPanel", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+    const postCall = fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/v1/settings/users" && (c[1] as RequestInit | undefined)?.method === "POST",
+    );
+    expect(JSON.parse((postCall![1] as RequestInit).body as string)).toMatchObject({ phone: "+5511912345678" });
     expect(await screen.findByText("New Hire created")).toBeInTheDocument();
     expect(screen.getByText("sup3r-secret-once")).toBeInTheDocument();
   });

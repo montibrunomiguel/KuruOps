@@ -22,7 +22,7 @@ func NewUserRepository() *UserRepository {
 // not a second lazy-loaded query.
 const userColumns = `
 	u.id, u.tenant_id, u.email, u.name, u.auth_provider, u.external_id, u.password_hash,
-	u.role_id, u.mfa_totp_secret, u.is_active, u.must_change_password, u.last_login_at,
+	u.role_id, u.mfa_totp_secret, u.is_active, u.must_change_password, u.phone, u.last_login_at,
 	u.created_at, u.updated_at,
 	r.id, r.tenant_id, r.name, r.is_admin, r.resource_access, r.allowed_tags, r.created_at, r.updated_at`
 
@@ -127,10 +127,10 @@ func (r *UserRepository) UpsertFederated(ctx context.Context, tx pgx.Tx, u *doma
 // temp password (see UserService.CreateLocal), never the user's real one.
 func (r *UserRepository) CreateLocal(ctx context.Context, tx pgx.Tx, u *domain.User, passwordHash string) error {
 	row := tx.QueryRow(ctx, `
-		insert into users (tenant_id, email, name, auth_provider, password_hash, role_id, must_change_password)
-		values ($1,$2,$3,'local',$4,$5,true)
+		insert into users (tenant_id, email, name, auth_provider, password_hash, role_id, must_change_password, phone)
+		values ($1,$2,$3,'local',$4,$5,true,$6)
 		returning id, is_active, must_change_password, created_at, updated_at`,
-		u.TenantID, u.Email, u.Name, passwordHash, u.RoleID,
+		u.TenantID, u.Email, u.Name, passwordHash, u.RoleID, u.Phone,
 	)
 	if err := row.Scan(&u.ID, &u.IsActive, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		return fmt.Errorf("insert local user: %w", err)
@@ -174,18 +174,32 @@ func (r *UserRepository) SetPasswordAndForceChange(ctx context.Context, tx pgx.T
 	return err
 }
 
-// UpdateProfile updates a local user's own name/email -- the self-service
-// path, not the admin UpdateAccess path (role_id stays untouched here). See
-// AuthService.UpdateProfile for the email-change password-confirmation
-// guard that runs before this is ever called.
-func (r *UserRepository) UpdateProfile(ctx context.Context, tx pgx.Tx, id uuid.UUID, name, email string) error {
+// UpdateProfile updates a local user's own name/email/phone -- the
+// self-service path, not the admin UpdateAccess path (role_id stays
+// untouched here). See AuthService.UpdateProfile for the email-change
+// password-confirmation guard that runs before this is ever called (phone,
+// unlike email, is not a login identifier, so it carries no such guard).
+func (r *UserRepository) UpdateProfile(ctx context.Context, tx pgx.Tx, id uuid.UUID, name, email string, phone *string) error {
 	_, err := tx.Exec(ctx, `
-		update users set name = $2, email = $3, updated_at = now()
+		update users set name = $2, email = $3, phone = $4, updated_at = now()
 		where id = $1`,
-		id, name, email,
+		id, name, email, phone,
 	)
 	if err != nil {
 		return fmt.Errorf("update profile: %w", err)
+	}
+	return nil
+}
+
+// UpdatePhone sets (or clears, if phone is nil) a user's phone -- the admin
+// "edit an existing user's phone" path (Settings -> Users & Roles). Unlike
+// UpdateProfile, this only ever touches the phone column, so it's safe to
+// call for an LDAP/SAML user too: phone doesn't come from the identity
+// source the way name/email do for federated users.
+func (r *UserRepository) UpdatePhone(ctx context.Context, tx pgx.Tx, id uuid.UUID, phone *string) error {
+	_, err := tx.Exec(ctx, `update users set phone = $2, updated_at = now() where id = $1`, id, phone)
+	if err != nil {
+		return fmt.Errorf("update phone: %w", err)
 	}
 	return nil
 }
@@ -246,7 +260,7 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 	var role domain.Role
 	err := row.Scan(
 		&u.ID, &u.TenantID, &u.Email, &u.Name, &u.AuthProvider, &u.ExternalID, &u.PasswordHash,
-		&u.RoleID, &u.MFATOTPSecret, &u.IsActive, &u.MustChangePassword, &u.LastLoginAt,
+		&u.RoleID, &u.MFATOTPSecret, &u.IsActive, &u.MustChangePassword, &u.Phone, &u.LastLoginAt,
 		&u.CreatedAt, &u.UpdatedAt,
 		&role.ID, &role.TenantID, &role.Name, &role.IsAdmin, &role.ResourceAccess, &role.AllowedTags, &role.CreatedAt, &role.UpdatedAt,
 	)

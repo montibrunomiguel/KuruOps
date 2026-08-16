@@ -90,6 +90,11 @@ function GroupByFieldsEditor({
             className="input"
             value={windowMinutes}
             onChange={(e) => onWindowChange(e.target.value)}
+            // select-on-focus: this field starts pre-filled with
+            // DEFAULT_DEDUP_WINDOW_MINUTES, so clicking in and typing a new
+            // value without clearing first appends instead of replacing
+            // (e.g. "30" + "10" -> "3010").
+            onFocus={(e) => e.target.select()}
           />
         </div>
       )}
