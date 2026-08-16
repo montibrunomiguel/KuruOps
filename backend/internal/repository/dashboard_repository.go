@@ -407,13 +407,28 @@ func (r *DashboardRepository) incidentTrend(ctx context.Context, tx pgx.Tx, tena
 	return points, rows.Err()
 }
 
+// countGroupedByAllowedTables/countGroupedByAllowedColumns are the only
+// values countGroupedBy will ever interpolate into a query -- table/column
+// are always call-site constants today (never user-supplied), but this
+// allowlist means a future caller can't accidentally turn that into a SQL
+// injection vector by passing something derived from a request. Kept as an
+// explicit list (not just "trust the caller") specifically because this is
+// the one place in the repository layer that builds a query with
+// fmt.Sprintf instead of full parameterization.
+var (
+	countGroupedByAllowedTables  = map[string]bool{"alerts": true, "incidents": true}
+	countGroupedByAllowedColumns = map[string]bool{"severity": true, "status": true, "priority": true, "phase": true}
+)
+
 // countGroupedBy is a small helper for the "distribution across every row
 // matching the current filter" breakdown charts (severity, status,
-// priority, phase) -- table/column are always call-site constants (never
-// user-supplied), so building the query with fmt.Sprintf here is safe; the
-// where/args pair came from alertFilterClause/incidentFilterClause, which
-// already parameterize the one truly user-supplied part.
+// priority, phase) -- the where/args pair came from
+// alertFilterClause/incidentFilterClause, which already parameterize the
+// one truly user-supplied part.
 func countGroupedBy(ctx context.Context, tx pgx.Tx, table, column, where string, args []any) (map[string]int, error) {
+	if !countGroupedByAllowedTables[table] || !countGroupedByAllowedColumns[column] {
+		return nil, fmt.Errorf("countGroupedBy: table %q / column %q is not in the allowlist", table, column)
+	}
 	rows, err := tx.Query(ctx, fmt.Sprintf(`select %s, count(*) from %s%s group by %s`, column, table, where, column), args...)
 	if err != nil {
 		return nil, err

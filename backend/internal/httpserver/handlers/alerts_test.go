@@ -44,7 +44,8 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
 	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
-	h = handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
+	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
+	h = handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh,
@@ -143,7 +144,8 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
 	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
+	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
+	h := handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
@@ -212,7 +214,8 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
 	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
-	h := handlers.NewAlertHandlers(alertSvc, incidentSvc, aiSvc, mcpToolSvc, userSvc, escalationPolicySvc, "http://localhost:3000")
+	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
+	h := handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),

@@ -167,12 +167,6 @@ func main() {
 	postmortemService := service.NewPostmortemService(incidentService, aiAnalysisService)
 	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, mcpToolService)
 
-	// AlertHandlers needs IncidentService for the escalate-to-incident route
-	// (see AlertHandlers.escalate), so it's constructed after incidentService
-	// -- and now also needs escalationPolicyService for that same route's
-	// manual-escalation side effect, so its own construction moved down
-	// below onCallShiftService/escalationPolicyService (see there).
-
 	playbookRepo := repository.NewPlaybookRepository()
 	playbookService := service.NewPlaybookService(pool, playbookRepo, alertRepo, cfg.AppBaseURL)
 	playbookHandlers := handlers.NewPlaybookHandlers(playbookService)
@@ -214,11 +208,13 @@ func main() {
 	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallShiftService, userService, secretStore)
 	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
 
-	// AlertHandlers needs IncidentService for the escalate-to-incident route
-	// and EscalationPolicyService for that same route's manual-escalation
-	// side effect (see AlertHandlers.escalate), so it's constructed here,
-	// after both.
-	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService, escalationPolicyService, cfg.AppBaseURL)
+	// Escalate (POST /alerts/{id}/escalate) needs IncidentService to
+	// create+link the promoted incident and EscalationPolicyService for its
+	// manual-escalation side effect (see AlertService.Escalate) -- wired
+	// here, after both are constructed, rather than as constructor
+	// parameters (see EnableEscalation's doc comment).
+	alertService.EnableEscalation(incidentService, escalationPolicyService, cfg.AppBaseURL)
+	alertHandlers := handlers.NewAlertHandlers(alertService, aiAnalysisService, mcpToolService, userService)
 
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)

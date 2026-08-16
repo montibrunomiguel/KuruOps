@@ -598,47 +598,11 @@ func (h *IncidentHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.R
 }
 
 func (h *IncidentHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	h.resolveAnalysisToolCall(w, r, true)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", true)
 }
 
 func (h *IncidentHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	h.resolveAnalysisToolCall(w, r, false)
-}
-
-func (h *IncidentHandlers) resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, approve bool) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid tool call id")
-		return
-	}
-
-	call, err := h.mcpTools.GetToolCall(r.Context(), tenantID, callID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if call == nil || call.ContextType != "incident" || call.ContextID != id {
-		writeError(w, http.StatusNotFound, "tool call not found for this incident")
-		return
-	}
-
-	if approve {
-		err = h.mcpTools.ApproveToolCall(r.Context(), tenantID, callID, userID)
-	} else {
-		err = h.mcpTools.RejectToolCall(r.Context(), tenantID, callID, userID)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", false)
 }
 
 // postmortemDoc streams a generated Markdown postmortem for the incident --

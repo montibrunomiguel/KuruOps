@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/jsonpath"
+	"github.com/argusops/argusops/internal/notifier"
 	"github.com/argusops/argusops/internal/repository"
 )
 
@@ -37,6 +39,12 @@ type AlertService struct {
 	publish     func(tenantID uuid.UUID, eventType string, payload any)
 	autoAnalyze func(tenantID, alertID uuid.UUID)
 	runs        *repository.AIAnalysisRunRepository
+	// incidents/escalationPolicies/appBaseURL back Escalate -- see
+	// EnableEscalation's doc comment for why these are wired via a setter
+	// rather than a constructor parameter.
+	incidents          *IncidentService
+	escalationPolicies *EscalationPolicyService
+	appBaseURL         string
 }
 
 func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService, playbooks *repository.PlaybookRepository) *AlertService {
@@ -82,6 +90,21 @@ func (s *AlertService) EnableAutoAnalysis(trigger func(tenantID, alertID uuid.UU
 // exactly what "no completed analysis yet" should look like.
 func (s *AlertService) EnableAnalysisLookup(runs *repository.AIAnalysisRunRepository) {
 	s.runs = runs
+}
+
+// EnableEscalation wires Escalate's cross-aggregate dependencies --
+// incidents (to create and link the promoted incident) and
+// escalationPolicies + appBaseURL (to fire the alert's severity's next
+// manual-escalation chain step, see fireManualEscalationStep). Optional,
+// same post-construction-setter reasoning as EnableOnCallAutoAssign:
+// Escalate is only ever reached via the HTTP handler layer (an
+// analyst-triggered action), so only cmd/api wires this -- cmd/ingest,
+// cmd/worker, and most test constructions never call Escalate and leave it
+// unset.
+func (s *AlertService) EnableEscalation(incidents *IncidentService, escalationPolicies *EscalationPolicyService, appBaseURL string) {
+	s.incidents = incidents
+	s.escalationPolicies = escalationPolicies
+	s.appBaseURL = appBaseURL
 }
 
 func (s *AlertService) publishEvent(tenantID uuid.UUID, alertID uuid.UUID, action string) {
@@ -634,6 +657,102 @@ func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uui
 			Data:      data,
 		})
 	})
+}
+
+// Escalate creates a new incident from the alert (title/severity/tags
+// copied over, priority seeded from the alert's severity via
+// domain.DefaultPriorityForSeverity -- an analyst can still override it on
+// the incident's NIST matrix afterward), links the alert to it, and marks
+// the alert 'escalated' -- the one place that legitimately touches both
+// aggregates. Requires EnableEscalation to have been called first (see its
+// doc comment); returns an error otherwise, since a caller reaching this
+// without wiring it is a construction bug, not a runtime condition to
+// handle gracefully.
+func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID uuid.UUID, allowedTags []string) (*domain.Incident, error) {
+	if s.incidents == nil {
+		return nil, fmt.Errorf("escalation is not enabled on this AlertService instance")
+	}
+
+	alert, err := s.Get(ctx, tenantID, alertID, allowedTags)
+	if err != nil {
+		return nil, err
+	}
+	if alert == nil {
+		return nil, fmt.Errorf("alert %s not found", alertID)
+	}
+
+	incident, err := s.incidents.Create(ctx, tenantID, actorID, domain.CreateIncidentInput{
+		Title:    alert.Title,
+		Severity: alert.Severity,
+		Priority: domain.DefaultPriorityForSeverity(alert.Severity),
+		Tags:     alert.Tags,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.incidents.LinkAlert(ctx, tenantID, incident.ID, alert.ID, actorID); err != nil {
+		return nil, err
+	}
+
+	if err := s.ChangeStatus(ctx, tenantID, alertID, actorID, domain.AlertStatusEscalated, allowedTags); err != nil {
+		return nil, err
+	}
+
+	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
+	// Ingest uses) so a slow/unreachable escalation-chain destination never
+	// delays this response -- see fireManualEscalationStep.
+	go s.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
+
+	return incident, nil
+}
+
+// fireManualEscalationStep is Escalate's manual-escalation side effect: if
+// the alert's severity has a configured Escala de Acionamento chain, fires
+// its next step exactly once -- AlertRepository.AdvanceManualEscalation's
+// counter is entirely independent of cmd/worker's automatic SLA loop (see
+// alerts.manual_escalation_step), so this never wraps back to step 0 and
+// never interferes with the SLA loop's own progress through the chain.
+// Every failure (no chain configured, resolve/send errors) is only logged
+// -- this must never surface as a failure of Escalate itself, which has
+// already promoted the alert to an incident by the time this runs.
+func (s *AlertService) fireManualEscalationStep(ctx context.Context, tenantID, alertID uuid.UUID, severity domain.Severity, title string) {
+	policy, err := s.escalationPolicies.Get(ctx, tenantID, severity)
+	if err != nil {
+		slog.Warn("manual escalation step skipped: load chain failed", "alert_id", alertID, "error", err)
+		return
+	}
+	if policy == nil || len(policy.Steps) == 0 {
+		return
+	}
+
+	position, err := s.AdvanceManualEscalation(ctx, tenantID, alertID, len(policy.Steps))
+	if err != nil {
+		slog.Warn("manual escalation step skipped: advance counter failed", "alert_id", alertID, "error", err)
+		return
+	}
+	step := policy.Steps[position]
+
+	sender, err := notifier.NewForPolicy(string(step.ChannelType), step.WebhookPayloadTemplate)
+	if err != nil {
+		slog.Warn("manual escalation step skipped: unknown channel", "alert_id", alertID, "channel", step.ChannelType, "error", err)
+		return
+	}
+
+	notification, destination, err := s.escalationPolicies.ResolveStepNotification(ctx, tenantID, step, notifier.Notification{
+		Title: title, Severity: string(severity), AlertID: alertID.String(),
+		URL: s.appBaseURL + "/alerts/" + alertID.String(),
+	})
+	if err != nil {
+		slog.Warn("manual escalation step skipped: resolve notification failed", "alert_id", alertID, "error", err)
+		return
+	}
+
+	if err := sender.Send(ctx, destination, notification); err != nil {
+		slog.Warn("manual escalation step send failed", "alert_id", alertID, "step", position, "channel", step.ChannelType, "error", err)
+		return
+	}
+	slog.Info("manual escalation step fired", "alert_id", alertID, "step", position, "channel", step.ChannelType)
 }
 
 // AddComment/Comments back Team Notes on an alert -- same shape as
