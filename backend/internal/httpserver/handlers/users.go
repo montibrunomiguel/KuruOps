@@ -114,15 +114,9 @@ func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
-		return
-	}
-
 	var req updateAccessRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "user", &req)
+	if !ok {
 		return
 	}
 
@@ -145,15 +139,9 @@ func (h *UserHandlers) updatePhone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
-		return
-	}
-
 	var req updatePhoneRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "user", &req)
+	if !ok {
 		return
 	}
 

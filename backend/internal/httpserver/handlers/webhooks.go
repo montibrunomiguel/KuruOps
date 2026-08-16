@@ -137,15 +137,9 @@ func (h *WebhookHandlers) setFieldMappingTemplate(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid endpoint id")
-		return
-	}
-
 	var req setFieldMappingTemplateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "endpoint", &req)
+	if !ok {
 		return
 	}
 
@@ -169,15 +163,9 @@ func (h *WebhookHandlers) setGroupByFields(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid endpoint id")
-		return
-	}
-
 	var req setGroupByFieldsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "endpoint", &req)
+	if !ok {
 		return
 	}
 

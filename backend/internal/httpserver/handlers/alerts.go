@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -132,15 +131,9 @@ func (h *AlertHandlers) changeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req changeStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -163,15 +156,9 @@ func (h *AlertHandlers) close(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req closeAlertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -197,15 +184,9 @@ func (h *AlertHandlers) updateTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req updateTagsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -226,15 +207,9 @@ func (h *AlertHandlers) overrideSeverity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req overrideSeverityRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -255,15 +230,9 @@ func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req reassignAlertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -444,15 +413,9 @@ func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req continueMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 	if strings.TrimSpace(req.Text) == "" {
@@ -460,7 +423,7 @@ func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err = h.ai.ContinueAlertAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
+	err := h.ai.ContinueAlertAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
 	if err != nil {
 		if errors.Is(err, service.ErrAnalysisInProgress) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -515,15 +478,9 @@ func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-
 	var req addAlertCommentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 	if req.Body == "" {

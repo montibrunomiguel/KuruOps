@@ -129,15 +129,9 @@ func (h *OnCallScheduleHandlers) update(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid schedule id")
-		return
-	}
-
 	var req saveOnCallScheduleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "schedule", &req)
+	if !ok {
 		return
 	}
 

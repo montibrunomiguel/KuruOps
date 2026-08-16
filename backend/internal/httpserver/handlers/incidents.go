@@ -182,15 +182,9 @@ func (h *IncidentHandlers) changePhase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req changePhaseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 
@@ -231,15 +225,9 @@ func (h *IncidentHandlers) setSeverityPriority(w http.ResponseWriter, r *http.Re
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req setSeverityPriorityRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 
@@ -260,15 +248,9 @@ func (h *IncidentHandlers) updateDescription(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req updateDescriptionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 
@@ -289,15 +271,9 @@ func (h *IncidentHandlers) updateTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req updateIncidentTagsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 
@@ -318,15 +294,9 @@ func (h *IncidentHandlers) setAssignees(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req setAssigneesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 
@@ -471,15 +441,9 @@ func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req addCommentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 	if req.Body == "" {
@@ -628,15 +592,9 @@ func (h *IncidentHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.R
 		return
 	}
 	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid incident id")
-		return
-	}
-
 	var req continueMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
 		return
 	}
 	if strings.TrimSpace(req.Text) == "" {
@@ -644,7 +602,7 @@ func (h *IncidentHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	err = h.ai.ContinueIncidentAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
+	err := h.ai.ContinueIncidentAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
 	if err != nil {
 		if errors.Is(err, service.ErrAnalysisInProgress) {
 			writeError(w, http.StatusConflict, err.Error())

@@ -75,15 +75,9 @@ func (h *FieldMappingTemplateHandlers) update(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
-		return
-	}
-
 	var req fieldMappingTemplateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "template", &req)
+	if !ok {
 		return
 	}
 
