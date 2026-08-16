@@ -19,7 +19,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/ingest ./cmd/ingest
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
 
 FROM alpine:3.20 AS base
-RUN apk add --no-cache ca-certificates && adduser -D -H argusops
+# tzdata: alpine ships with no /usr/share/zoneinfo at all, so
+# time.LoadLocation fails for every IANA name except the hardcoded "UTC" --
+# needed by all three binaries wherever a tenant's configured timezone
+# (Settings -> On-Call Schedule, or any other non-UTC tenant timezone) gets
+# resolved (OnCallScheduleService.ResolveCurrentAnalyst and friends).
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -H argusops
 USER argusops
 
 FROM base AS api

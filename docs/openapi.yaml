@@ -56,8 +56,8 @@ tags:
     description: Admin-only S3/GCS evidence-storage configuration.
   - name: Settings - SMTP
     description: Admin-only outbound email configuration.
-  - name: Settings - On-Call Shifts
-    description: Admin-only weekly on-call schedule.
+  - name: Settings - On-Call Schedules
+    description: Admin-only on-call rotation schedules, working hours, and per-date overrides.
   - name: Settings - Incident SLA
     description: Admin-only per-severity/priority SLA policy.
   - name: Settings - Escalation Policies
@@ -2618,23 +2618,22 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
-  # ------------------------------------------------- Settings: On-Call Shifts
-  /api/v1/settings/on-call-shifts:
+  # --------------------------------------------- Settings: On-Call Schedules
+  /api/v1/settings/on-call-schedules:
     get:
-      tags: [Settings - On-Call Shifts]
-      summary: Get the on-call schedule (timezone + shifts)
+      tags: [Settings - On-Call Schedules]
+      summary: List on-call schedules
+      description: >
+        A tenant always has at least one schedule to edit -- a default one is
+        auto-created on first visit if none exist yet.
       responses:
         "200":
-          description: Schedule
+          description: On-call schedules
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  timezone: { type: string }
-                  shifts:
-                    type: array
-                    items: { $ref: '#/components/schemas/OnCallShift' }
+                type: array
+                items: { $ref: '#/components/schemas/OnCallSchedule' }
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
@@ -2642,31 +2641,19 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     post:
-      tags: [Settings - On-Call Shifts]
-      summary: Create a weekly recurring shift
+      tags: [Settings - On-Call Schedules]
+      summary: Create an on-call schedule
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              properties:
-                userId: { type: string, format: uuid }
-                weekday:
-                  type: integer
-                  description: 0=Sunday .. 6=Saturday
-                startMinute:
-                  type: integer
-                  description: Minutes since midnight, tenant timezone.
-                endMinute:
-                  type: integer
-              required: [userId, weekday, startMinute, endMinute]
+            schema: { $ref: '#/components/schemas/SaveOnCallScheduleRequest' }
       responses:
         "201":
-          description: Shift created
+          description: Schedule created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/OnCallShift' }
+              schema: { $ref: '#/components/schemas/OnCallSchedule' }
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -2674,15 +2661,56 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/settings/on-call-shifts/{id}:
-    delete:
-      tags: [Settings - On-Call Shifts]
-      summary: Delete a shift
+  /api/v1/settings/on-call-schedules/{id}:
+    get:
+      tags: [Settings - On-Call Schedules]
+      summary: Get an on-call schedule
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/OnCallScheduleId'
+      responses:
+        "200":
+          description: Schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnCallSchedule' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - On-Call Schedules]
+      summary: Update an on-call schedule
+      description: The whole rotation (participants, handover, working hours) is wholesale-replaced on every save.
+      parameters:
+        - $ref: '#/components/parameters/OnCallScheduleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveOnCallScheduleRequest' }
+      responses:
+        "200":
+          description: Schedule updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnCallSchedule' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - On-Call Schedules]
+      summary: Delete an on-call schedule
+      parameters:
+        - $ref: '#/components/parameters/OnCallScheduleId'
       responses:
         "204":
           description: Deleted
@@ -2693,10 +2721,30 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/settings/on-call-shifts/timezone:
+  /api/v1/settings/on-call-schedules/{id}/default:
+    post:
+      tags: [Settings - On-Call Schedules]
+      summary: Mark a schedule as the tenant default
+      description: >
+        The default schedule is the one automatic alert assignment and
+        escalation resolve the on-call analyst against.
+      parameters:
+        - $ref: '#/components/parameters/OnCallScheduleId'
+      responses:
+        "204":
+          description: Default set
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/on-call-schedules/timezone:
     put:
-      tags: [Settings - On-Call Shifts]
+      tags: [Settings - On-Call Schedules]
       summary: Set the tenant's on-call timezone
+      description: Shared across every schedule -- read from tenants.timezone, not a per-schedule column.
       requestBody:
         required: true
         content:
@@ -2709,6 +2757,55 @@ paths:
       responses:
         "204":
           description: Timezone set
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/on-call-schedules/{id}/overrides:
+    post:
+      tags: [Settings - On-Call Schedules]
+      summary: Pin a calendar date to a specific analyst
+      description: Overrides whatever the rotation would otherwise compute for that whole day.
+      parameters:
+        - $ref: '#/components/parameters/OnCallScheduleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userId: { type: string, format: uuid }
+                date:
+                  type: string
+                  description: YYYY-MM-DD, in the tenant's timezone.
+              required: [userId, date]
+      responses:
+        "201":
+          description: Override created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OnCallOverride' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/on-call-schedules/{id}/overrides/{overrideId}:
+    delete:
+      tags: [Settings - On-Call Schedules]
+      summary: Remove a date override
+      parameters:
+        - $ref: '#/components/parameters/OnCallScheduleId'
+        - $ref: '#/components/parameters/OnCallOverrideId'
+      responses:
+        "204":
+          description: Deleted
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -2805,6 +2902,9 @@ paths:
     put:
       tags: [Settings - Escalation Policies]
       summary: Create or update the escalation policy for a severity
+      description: >
+        The whole ordered chain of steps is resubmitted and wholesale-replaced
+        on every save, same idiom playbook steps use.
       requestBody:
         required: true
         content:
@@ -2813,12 +2913,10 @@ paths:
               type: object
               properties:
                 severity: { $ref: '#/components/schemas/Severity' }
-                unacknowledgedAfterMinutes: { type: integer }
-                channelType: { $ref: '#/components/schemas/EscalationChannelType' }
-                destination:
-                  type: string
-                  description: Plaintext destination (e.g. Slack webhook URL, PagerDuty routing key); empty on update keeps the existing one.
-              required: [severity, unacknowledgedAfterMinutes, channelType]
+                steps:
+                  type: array
+                  items: { $ref: '#/components/schemas/SaveEscalationStepRequest' }
+              required: [severity, steps]
       responses:
         "200":
           description: Policy saved
@@ -2852,6 +2950,42 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/escalation-policies/test:
+    post:
+      tags: [Settings - Escalation Policies]
+      summary: Send a real test notification through one step of an already-saved chain
+      description: >
+        Lets an admin confirm a destination (and, for webhook, a custom
+        payload template with the analyst placeholders) actually works
+        without waiting for a real alert to escalate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity: { $ref: '#/components/schemas/Severity' }
+                stepPosition:
+                  type: integer
+                  description: 0-indexed, matching EscalationStep.position.
+              required: [severity, stepPosition]
+      responses:
+        "200":
+          description: Test notification sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   # ------------------------------------------------- Settings: Audit Export
   /api/v1/settings/audit-export/cef:
@@ -3012,6 +3146,16 @@ components:
       schema: { type: integer, format: int64 }
     UserId:
       name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OnCallScheduleId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OnCallOverrideId:
+      name: overrideId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -3518,19 +3662,99 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
-    OnCallShift:
+    OnCallWorkingHoursMode:
+      type: string
+      enum: [all_day, specific_times]
+
+    OnCallParticipant:
       type: object
+      description: One member of the rotation, in order. userName is denormalized via a join.
+      properties:
+        userId: { type: string, format: uuid }
+        userName: { type: string }
+
+    OnCallWorkingHoursInterval:
+      type: object
+      description: >
+        Restricts the rotation to specific weekdays and a time-of-day window
+        -- only consulted when the schedule's workingHoursMode is
+        specific_times.
+      properties:
+        id: { type: string, format: uuid }
+        weekdays:
+          type: array
+          items: { type: integer }
+          description: 0=Sunday .. 6=Saturday
+        startMinute:
+          type: integer
+          description: Minutes since midnight, tenant timezone.
+        endMinute: { type: integer }
+
+    OnCallOverride:
+      type: object
+      description: Pins a single calendar date to a specific analyst, overriding the computed rotation for that whole day.
+      properties:
+        id: { type: string, format: uuid }
+        date:
+          type: string
+          description: YYYY-MM-DD, in the tenant's timezone.
+        userId: { type: string, format: uuid }
+        userName: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    OnCallSchedule:
+      type: object
+      description: >
+        Any number per tenant (e.g. one rotation per team) -- exactly one is
+        marked isDefault, which automatic alert assignment and escalation
+        resolve the on-call analyst against.
       properties:
         id: { type: string, format: uuid }
         tenantId: { type: string, format: uuid }
-        userId: { type: string, format: uuid }
-        userName: { type: string }
-        weekday:
-          type: integer
-          description: 0=Sunday .. 6=Saturday
-        startMinute: { type: integer }
-        endMinute: { type: integer }
+        name: { type: string }
+        isDefault: { type: boolean }
+        timezone:
+          type: string
+          description: Denormalized from the tenant's configured timezone, not per-schedule.
+        participants:
+          type: array
+          items: { $ref: '#/components/schemas/OnCallParticipant' }
+        handoverAt: { type: string, format: date-time }
+        periodDays: { type: integer }
+        concurrentShifts: { type: integer }
+        workingHoursMode: { $ref: '#/components/schemas/OnCallWorkingHoursMode' }
+        workingHours:
+          type: array
+          items: { $ref: '#/components/schemas/OnCallWorkingHoursInterval' }
+        overrides:
+          type: array
+          items: { $ref: '#/components/schemas/OnCallOverride' }
         createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SaveOnCallScheduleRequest:
+      type: object
+      properties:
+        name: { type: string }
+        participantIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: Ordered -- rotation groups are formed from this order.
+        handoverAt: { type: string, format: date-time }
+        periodDays: { type: integer }
+        concurrentShifts: { type: integer }
+        workingHoursMode: { $ref: '#/components/schemas/OnCallWorkingHoursMode' }
+        workingHours:
+          type: array
+          items:
+            type: object
+            properties:
+              weekdays:
+                type: array
+                items: { type: integer }
+              startMinute: { type: integer }
+              endMinute: { type: integer }
+      required: [name, participantIds, handoverAt, periodDays, concurrentShifts, workingHoursMode]
 
     IncidentSLAPolicy:
       type: object
@@ -3543,15 +3767,53 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 
+    EscalationStep:
+      type: object
+      description: >
+        One link in an escalation policy's chain. position is 0-indexed and
+        dense (0..len(steps)-1). destinationSecretRef is never serialized --
+        resolved server-side only.
+      properties:
+        id: { type: string, format: uuid }
+        policyId: { type: string, format: uuid }
+        position: { type: integer }
+        scheduleId:
+          type: string
+          format: uuid
+          description: Which on-call schedule this step resolves the on-call analyst against -- not necessarily the tenant's default schedule.
+        scheduleName: { type: string }
+        delayMinutes:
+          type: integer
+          description: How long to wait after the previous event before this step fires.
+        channelType: { $ref: '#/components/schemas/EscalationChannelType' }
+        webhookPayloadTemplate:
+          type: string
+          nullable: true
+          description: Only meaningful when channelType is webhook; omitted/null means send the default fixed JSON payload shape.
+
+    SaveEscalationStepRequest:
+      type: object
+      properties:
+        scheduleId: { type: string, format: uuid }
+        delayMinutes: { type: integer }
+        channelType: { $ref: '#/components/schemas/EscalationChannelType' }
+        destination:
+          type: string
+          description: Plaintext destination (e.g. Slack webhook URL, PagerDuty routing key); empty on update keeps the existing one for that position.
+        webhookPayloadTemplate:
+          type: string
+          description: Only applies when channelType is webhook; empty means send the default fixed payload shape.
+      required: [scheduleId, delayMinutes, channelType]
+
     EscalationPolicy:
       type: object
-      description: DestinationSecretRef is never serialized -- resolved server-side only.
       properties:
         id: { type: string, format: uuid }
         tenantId: { type: string, format: uuid }
         severity: { $ref: '#/components/schemas/Severity' }
-        unacknowledgedAfterMinutes: { type: integer }
-        channelType: { $ref: '#/components/schemas/EscalationChannelType' }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/EscalationStep' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

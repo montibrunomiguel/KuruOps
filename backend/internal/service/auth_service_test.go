@@ -150,20 +150,58 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("rejects a missing name", func(t *testing.T) {
-		_, err := svc.UpdateProfile(t.Context(), tenantID, userID, "  ", "someone@test.local", "")
+		_, err := svc.UpdateProfile(t.Context(), tenantID, userID, "  ", "someone@test.local", nil, "")
 		assert.ErrorContains(t, err, "name is required")
 	})
 
 	t.Run("name-only change succeeds without a password", func(t *testing.T) {
 		email := emailFor(t, tenantID, userID)
-		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, "")
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, nil, "")
 		require.NoError(t, err)
 		assert.Equal(t, "New Display Name", user.Name)
 		assert.Equal(t, email, user.Email)
 	})
 
+	t.Run("an explicit phone change succeeds without a password, same as name", func(t *testing.T) {
+		email := emailFor(t, tenantID, userID)
+		phone := "+15550100199"
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, &phone, "")
+		require.NoError(t, err)
+		require.NotNil(t, user.Phone)
+		assert.Equal(t, "+15550100199", *user.Phone)
+	})
+
+	t.Run("omitting phone (nil) leaves a previously-set phone untouched", func(t *testing.T) {
+		email := emailFor(t, tenantID, userID)
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "Yet Another Name", email, nil, "")
+		require.NoError(t, err)
+		require.NotNil(t, user.Phone, "the phone set in the previous subtest must survive a name-only update")
+		assert.Equal(t, "+15550100199", *user.Phone)
+	})
+
+	t.Run("a phone without a country code is rejected", func(t *testing.T) {
+		email := emailFor(t, tenantID, userID)
+		bad := "5511912345678"
+		_, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, &bad, "")
+		assert.ErrorContains(t, err, "country code")
+
+		// the previously-set phone must survive the rejected update
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, nil, "")
+		require.NoError(t, err)
+		require.NotNil(t, user.Phone)
+		assert.Equal(t, "+15550100199", *user.Phone)
+	})
+
+	t.Run("an explicit empty phone clears it", func(t *testing.T) {
+		email := emailFor(t, tenantID, userID)
+		empty := ""
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", email, &empty, "")
+		require.NoError(t, err)
+		assert.Nil(t, user.Phone)
+	})
+
 	t.Run("email change without the correct current password is rejected", func(t *testing.T) {
-		_, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", "changed@test.local", "wrong-password")
+		_, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", "changed@test.local", nil, "wrong-password")
 		assert.ErrorContains(t, err, "incorrect")
 
 		// the email must not have changed
@@ -172,7 +210,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	})
 
 	t.Run("email change with the correct current password succeeds", func(t *testing.T) {
-		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", "changed@test.local", testutil.TestPassword)
+		user, err := svc.UpdateProfile(t.Context(), tenantID, userID, "New Display Name", "changed@test.local", nil, testutil.TestPassword)
 		require.NoError(t, err)
 		assert.Equal(t, "changed@test.local", user.Email)
 	})
@@ -184,7 +222,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 		fedUser, _, _, err := fedSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed2,dc=example,dc=com", "fed2@example.com", "Fed User", nil)
 		require.NoError(t, err)
 
-		_, err = svc.UpdateProfile(t.Context(), tenantID, fedUser.ID, "New Name", "fed2@example.com", "")
+		_, err = svc.UpdateProfile(t.Context(), tenantID, fedUser.ID, "New Name", "fed2@example.com", nil, "")
 		assert.ErrorContains(t, err, "local accounts")
 	})
 }

@@ -73,6 +73,42 @@ func TestUserHandlers_ListAndUpdateAccess(t *testing.T) {
 	})
 }
 
+func TestUserHandlers_UpdatePhone(t *testing.T) {
+	h, tenantID, targetUserID := newUserHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("valid phone -- 204, reflected in the list", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"phone": "+5511912345678"})
+		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/phone", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, uuid.New(), nil)
+		listRec := doRequest(r, listReq)
+		var users []domain.User
+		require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &users))
+		require.Len(t, users, 1)
+		require.NotNil(t, users[0].Phone)
+		assert.Equal(t, "+5511912345678", *users[0].Phone)
+	})
+
+	t.Run("phone without a country code -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"phone": "5511912345678"})
+		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/phone", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"phone": "+5511912345678"})
+		req := withClaims(httptest.NewRequest("PUT", "/not-a-uuid/phone", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("invalid JSON body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/"+targetUserID.String()+"/phone", bytes.NewReader([]byte("{not-json"))), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
 func TestUserHandlers_Create(t *testing.T) {
 	h, tenantID, _ := newUserHandlerFixture(t)
 	r := newRouter(h.Routes)
@@ -91,7 +127,7 @@ func TestUserHandlers_Create(t *testing.T) {
 
 	t.Run("valid create -- 201 with a temp password that isn't stored anywhere else", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
-			"email": "newuser@test.local", "name": "New User", "roleId": roleID.String(),
+			"email": "newuser@test.local", "name": "New User", "phone": "+15550100199", "roleId": roleID.String(),
 		})
 		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, uuid.New(), nil)
 		rec := doRequest(r, req)
@@ -105,6 +141,8 @@ func TestUserHandlers_Create(t *testing.T) {
 		assert.Equal(t, "newuser@test.local", resp.User.Email)
 		assert.Equal(t, domain.AuthProviderLocal, resp.User.AuthProvider)
 		assert.NotEmpty(t, resp.TemporaryPassword)
+		require.NotNil(t, resp.User.Phone)
+		assert.Equal(t, "+15550100199", *resp.User.Phone)
 
 		// the new user now shows up in the regular list
 		listReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, uuid.New(), nil)

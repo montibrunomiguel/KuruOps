@@ -70,14 +70,22 @@ func (s *UserService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.
 // the new user to set their own on first login (same flow as the seeded
 // default admin from 0013_seed_default_admin.up.sql). The plaintext
 // password is returned once here and never stored or logged anywhere else.
-func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name string, roleID uuid.UUID) (*domain.User, string, error) {
+func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name, phone string, roleID uuid.UUID) (*domain.User, string, error) {
 	email = strings.TrimSpace(email)
 	name = strings.TrimSpace(name)
+	phone = strings.TrimSpace(phone)
 	if email == "" {
 		return nil, "", fmt.Errorf("email is required")
 	}
 	if name == "" {
 		return nil, "", fmt.Errorf("name is required")
+	}
+	if err := domain.ValidatePhone(phone); err != nil {
+		return nil, "", err
+	}
+	var phonePtr *string
+	if phone != "" {
+		phonePtr = &phone
 	}
 
 	tempPassword, err := generateTempPassword()
@@ -95,6 +103,7 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email
 		Name:         name,
 		AuthProvider: domain.AuthProviderLocal,
 		RoleID:       roleID,
+		Phone:        phonePtr,
 	}
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.CreateLocal(ctx, tx, u, hash)
@@ -125,6 +134,25 @@ func generateTempPassword() (string, error) {
 func (s *UserService) UpdateAccess(ctx context.Context, tenantID, id, roleID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.repo.UpdateAccess(ctx, tx, id, roleID)
+	})
+}
+
+// UpdatePhone is the admin "edit an existing user's phone" action --
+// Settings -> Users & Roles has no general edit-user form (see
+// UpdateAccess's own doc comment on why name/email aren't editable there),
+// but phone is ArgusOps-local metadata, not identity-sourced, so an admin
+// can set or clear it for any user regardless of auth provider.
+func (s *UserService) UpdatePhone(ctx context.Context, tenantID, id uuid.UUID, phone string) error {
+	phone = strings.TrimSpace(phone)
+	if err := domain.ValidatePhone(phone); err != nil {
+		return err
+	}
+	var phonePtr *string
+	if phone != "" {
+		phonePtr = &phone
+	}
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.UpdatePhone(ctx, tx, id, phonePtr)
 	})
 }
 

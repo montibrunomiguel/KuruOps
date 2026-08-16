@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver"
 	"github.com/argusops/argusops/internal/mailer"
 	"github.com/argusops/argusops/internal/repository"
@@ -22,16 +24,76 @@ import (
 	"github.com/argusops/argusops/internal/testutil"
 )
 
-// noOnCallDeps builds the on-call/SMTP dependencies sweepEscalations needs,
-// bound to pool -- for tests that don't configure a shift or SMTP,
-// notifyOnCallAnalyst simply fails its best-effort lookup every time
-// (logged, never asserted on), same as it does in production for a tenant
-// that hasn't set either up.
-func noOnCallDeps(pool *db.Pool) (*service.OnCallShiftService, *repository.UserRepository, *service.SMTPConfigService) {
+// newEscalationPolicyServiceForPool builds an EscalationPolicyService bound
+// to pool and store -- used both on the setup side (an RLS-scoped app pool,
+// via EscalationPolicyService.Save/OnCallScheduleService.Create) and on the
+// sweep side (workerPool, matching what cmd/worker actually wires up). store
+// must be the same instance across both sides for a secret Put on the setup
+// side to Resolve correctly on the sweep side.
+func newEscalationPolicyServiceForPool(pool *db.Pool, store secrets.Store) (*service.EscalationPolicyService, *service.OnCallScheduleService) {
 	users := repository.NewUserRepository()
-	onCall := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), users, repository.NewTenantRepository())
-	smtp := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), mailer.SMTPSender{})
-	return onCall, users, smtp
+	userSvc := service.NewUserService(pool, users)
+	scheduleRepo := repository.NewOnCallScheduleRepository()
+	onCall := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository())
+	escalationPolicies := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCall, userSvc, store)
+	return escalationPolicies, onCall
+}
+
+// sweepTestStep is one step of a newSweepTestChain-built chain: its own
+// httptest server plus a hit counter, so a test can assert exactly which
+// step(s) fired and how many times.
+type sweepTestStep struct {
+	server *httptest.Server
+	hits   *int32
+}
+
+func (s *sweepTestStep) Hits() int32 { return atomic.LoadInt32(s.hits) }
+
+// newSweepTestChain creates an all-day, always-on-call schedule for tenantID
+// (optionally covering participantIDs) via appPool's RLS-scoped services,
+// then saves a severity's escalation chain with the given per-step delays,
+// each step firing to its own httptest server -- returns the steps in order
+// so callers can assert which one(s) fired.
+func newSweepTestChain(t *testing.T, appPool *db.Pool, store secrets.Store, tenantID uuid.UUID, severity domain.Severity, participantIDs []uuid.UUID, delayMinutes ...int) []*sweepTestStep {
+	t.Helper()
+	ctx := context.Background()
+
+	escalationPolicies, onCall := newEscalationPolicyServiceForPool(appPool, store)
+	sched, err := onCall.Create(ctx, tenantID, domain.SaveOnCallScheduleInput{
+		Name: "Primary", ParticipantIDs: participantIDs, HandoverAt: time.Now().Add(-24 * time.Hour),
+		PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
+	})
+	require.NoError(t, err)
+
+	steps := make([]*sweepTestStep, len(delayMinutes))
+	saveSteps := make([]domain.SaveEscalationStepInput, len(delayMinutes))
+	for i, delay := range delayMinutes {
+		hits := new(int32)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(hits, 1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(srv.Close)
+		steps[i] = &sweepTestStep{server: srv, hits: hits}
+		saveSteps[i] = domain.SaveEscalationStepInput{ScheduleID: sched.ID, DelayMinutes: delay, ChannelType: domain.EscalationChannelWebhook, Destination: srv.URL}
+	}
+	_, err = escalationPolicies.Save(ctx, tenantID, domain.SaveEscalationPolicyInput{Severity: severity, Steps: saveSteps})
+	require.NoError(t, err)
+	return steps
+}
+
+func slaEscalationStepFor(t *testing.T, pool *db.Pool, alertID uuid.UUID) int {
+	t.Helper()
+	var step int
+	err := pool.QueryRow(context.Background(), `select sla_escalation_step from alerts where id = $1`, alertID).Scan(&step)
+	require.NoError(t, err)
+	return step
+}
+
+func setEscalationProgress(t *testing.T, pool *db.Pool, alertID uuid.UUID, slaStep int, escalatedAt time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `update alerts set sla_escalation_step = $2, escalated_at = $3 where id = $1`, alertID, slaStep, escalatedAt)
+	require.NoError(t, err)
 }
 
 // fakeMailSender is a mailer.Sender test double that records every message
@@ -160,14 +222,36 @@ func TestRefreshMaterializedViews(t *testing.T) {
 // insertSweepTestTenant is escalation-sweep tests' equivalent of
 // insertSweepTestIncident's inline tenant insert -- pulled into its own
 // helper since every escalation test needs a fresh tenant plus at least one
-// alert and policy row, not just one incident.
+// alert and policy row, not just one incident. Registers cleanupTenant --
+// unlike most fixtures in this codebase, an escalation-sweep tenant's alert
+// deliberately has NO terminal "already escalated" state to age out of the
+// sweep's candidate query (that's the whole point of the automatic loop),
+// so an uncleaned tenant would stay a live candidate for every future sweep
+// call for the rest of this test binary's run (and, since Postgres test
+// data isn't reset between `task backend:test:integration` invocations,
+// every run after this one too) -- each of those tries to resolve a secret
+// ref through a `secrets.EnvStore` instance that only ever lived in this
+// one process, silently resolving to "" and failing every retry attempt.
 func insertSweepTestTenant(t *testing.T, pool *db.Pool) uuid.UUID {
 	t.Helper()
 	tenantID := uuid.New()
 	_, err := pool.Exec(context.Background(), `insert into tenants (id, name, slug) values ($1, $2, $3)`,
 		tenantID, "sweep-"+tenantID.String(), tenantID.String())
 	require.NoError(t, err)
+	cleanupTenant(t, pool, tenantID)
 	return tenantID
+}
+
+// cleanupTenant deletes tenantID (cascading to every row that references
+// it -- alerts, escalation_policies/_steps, on_call_schedules, etc, see
+// their tenant_id foreign keys' `on delete cascade`) once the current test
+// finishes. See insertSweepTestTenant's doc comment for why escalation-sweep
+// tests in particular need this where most fixtures elsewhere don't bother.
+func cleanupTenant(t *testing.T, pool *db.Pool, tenantID uuid.UUID) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `delete from tenants where id = $1`, tenantID)
+	})
 }
 
 func insertSweepTestAlert(t *testing.T, pool *db.Pool, tenantID uuid.UUID, severity, status string, receivedAt time.Time) uuid.UUID {
@@ -193,126 +277,122 @@ func escalatedAtFor(t *testing.T, pool *db.Pool, alertID uuid.UUID) *time.Time {
 func TestSweepEscalations(t *testing.T) {
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
+	appPool := testutil.RequireTestDB(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	ctx := context.Background()
-	store := secrets.NewEnvStore()
-	onCall, users, smtp := noOnCallDeps(workerPool)
 
-	t.Run("an overdue open alert with a configured policy fires a notification and stamps escalated_at", func(t *testing.T) {
-		var notified bool
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			notified = true
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		tenantID := insertSweepTestTenant(t, adminPool)
-		ref, err := store.Put(ctx, tenantID.String(), "escalation:high", srv.URL)
-		require.NoError(t, err)
-		_, err = adminPool.Exec(ctx, `
-			insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-			values ($1, 'high', 15, 'webhook', $2)`,
-			tenantID, ref,
-		)
-		require.NoError(t, err)
+	t.Run("an overdue open alert with a configured chain fires its first step and advances sla_escalation_step", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
+		steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityHigh, nil, 15)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
 
-		assert.True(t, notified, "the webhook destination must have been called")
+		assert.Equal(t, int32(1), steps[0].Hits(), "step 0's destination must have been called exactly once")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
+		assert.Equal(t, 1, slaEscalationStepFor(t, adminPool, alertID))
 	})
 
-	t.Run("an alert not yet past the policy's threshold is left alone", func(t *testing.T) {
-		var notified bool
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			notified = true
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		tenantID := insertSweepTestTenant(t, adminPool)
-		ref, err := store.Put(ctx, tenantID.String(), "escalation:high", srv.URL)
-		require.NoError(t, err)
-		_, err = adminPool.Exec(ctx, `
-			insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-			values ($1, 'high', 60, 'webhook', $2)`,
-			tenantID, ref,
-		)
-		require.NoError(t, err)
+	t.Run("an alert not yet past the first step's delay is left alone", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
+		steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityHigh, nil, 60)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-5*time.Minute))
 
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
 
-		assert.False(t, notified)
+		assert.Equal(t, int32(0), steps[0].Hits())
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
+		assert.Equal(t, 0, slaEscalationStepFor(t, adminPool, alertID))
 	})
 
-	t.Run("an alert already acknowledged (investigating) is left alone even if overdue", func(t *testing.T) {
-		var notified bool
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			notified = true
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		tenantID := insertSweepTestTenant(t, adminPool)
-		ref, err := store.Put(ctx, tenantID.String(), "escalation:critical", srv.URL)
-		require.NoError(t, err)
-		_, err = adminPool.Exec(ctx, `
-			insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-			values ($1, 'critical', 15, 'webhook', $2)`,
-			tenantID, ref,
-		)
-		require.NoError(t, err)
+	t.Run("an already-acknowledged (investigating) alert still escalates -- the loop runs until attended, not just until acknowledged", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
+		steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityCritical, nil, 15)
 		insertSweepTestAlert(t, adminPool, tenantID, "critical", "investigating", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
 
-		assert.False(t, notified, "an already-acknowledged alert must not escalate")
+		assert.Equal(t, int32(1), steps[0].Hits(), "an alert stuck in investigating must keep escalating, per \"roda as escalas até ser atendido\"")
 	})
 
-	t.Run("a severity with no configured policy is left alone", func(t *testing.T) {
-		tenantID := insertSweepTestTenant(t, adminPool)
+	t.Run("a severity with no configured chain is left alone", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "low", "open", time.Now().Add(-24*time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
 
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
 	})
 
-	t.Run("an already-escalated alert does not fire twice", func(t *testing.T) {
-		var callCount int
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			callCount++
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		tenantID := insertSweepTestTenant(t, adminPool)
-		ref, err := store.Put(ctx, tenantID.String(), "escalation:high", srv.URL)
-		require.NoError(t, err)
-		_, err = adminPool.Exec(ctx, `
-			insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-			values ($1, 'high', 15, 'webhook', $2)`,
-			tenantID, ref,
-		)
-		require.NoError(t, err)
+	t.Run("a second tick before the next step is due does not re-fire", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
+		steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityHigh, nil, 15)
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
-		sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
 
-		assert.Equal(t, 1, callCount, "a second sweep tick must not re-notify an already-escalated alert")
+		assert.Equal(t, int32(1), steps[0].Hits(), "a second sweep tick must not re-fire a step whose own delay hasn't elapsed since the last fire")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
+	})
+
+	t.Run("a 2-step chain advances to step 1 once step 0's delay has passed since the last fire, then wraps back to step 0", func(t *testing.T) {
+		store := secrets.NewEnvStore()
+		tenantID := testutil.NewTenant(t)
+		cleanupTenant(t, adminPool, tenantID)
+		steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityHigh, nil, 15, 30)
+		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-2*time.Hour))
+		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
+
+		// Simulate step 0 having already fired 40 minutes ago -- step 1's own
+		// 30-minute delay (since the last fire) has now elapsed, so this tick
+		// must fire step 1, not step 0 again.
+		setEscalationProgress(t, adminPool, alertID, 1, time.Now().Add(-40*time.Minute))
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+
+		assert.Equal(t, int32(0), steps[0].Hits(), "step 0 must not re-fire")
+		assert.Equal(t, int32(1), steps[1].Hits(), "step 1 must fire")
+		assert.Equal(t, 2, slaEscalationStepFor(t, adminPool, alertID))
+
+		// Simulate step 1 having fired 40 minutes ago too -- the chain has
+		// only 2 steps, so `2 % 2 == 0` must wrap back around to step 0.
+		setEscalationProgress(t, adminPool, alertID, 2, time.Now().Add(-40*time.Minute))
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+
+		assert.Equal(t, int32(1), steps[0].Hits(), "step 0 must fire again -- this is the wraparound, \"roda as escalas até ser atendido\"")
+		assert.Equal(t, 3, slaEscalationStepFor(t, adminPool, alertID))
 	})
 }
 
+// noOnCallSMTP builds the SMTPConfigService sweepEscalations needs, bound to
+// pool/store -- for tests that don't configure SMTP, the best-effort
+// on-call email step simply fails its lookup every time (logged, never
+// asserted on), same as it does in production for a tenant that hasn't set
+// SMTP up.
+func noOnCallSMTP(pool *db.Pool, store secrets.Store) *service.SMTPConfigService {
+	return service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, mailer.SMTPSender{})
+}
+
 // TestSweepEscalations_NotifiesOnCallAnalyst confirms the additive on-call
-// email step (see notifyOnCallAnalyst): when the tenant has both a shift
-// covering right now and SMTP configured, the analyst on that shift gets
-// emailed alongside the normal webhook firing -- neither replaces the
-// other.
+// email step (see emailOnCallAnalyst): when the tenant has both a shift
+// covering right now (on the step's own schedule) and SMTP configured, the
+// analyst on that shift gets emailed alongside the normal webhook firing --
+// neither replaces the other.
 func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
@@ -321,33 +401,14 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	ctx := context.Background()
 	store := secrets.NewEnvStore()
 
-	var webhookNotified bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		webhookNotified = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
 	tenantID := testutil.NewTenant(t)
+	cleanupTenant(t, adminPool, tenantID)
 	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
-
-	ref, err := store.Put(ctx, tenantID.String(), "escalation:critical", srv.URL)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `
-		insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-		values ($1, 'critical', 15, 'webhook', $2)`,
-		tenantID, ref,
-	)
-	require.NoError(t, err)
-	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
 
 	// On shift every day, all day -- irrelevant of when this test actually
 	// runs, "now" always resolves to analystID.
-	setupOnCall := service.NewOnCallShiftService(appPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
-	for weekday := 0; weekday <= 6; weekday++ {
-		_, err := setupOnCall.Create(ctx, tenantID, analystID, weekday, 0, 1439)
-		require.NoError(t, err)
-	}
+	steps := newSweepTestChain(t, appPool, store, tenantID, domain.SeverityCritical, []uuid.UUID{analystID}, 15)
+	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
 
 	fake := &fakeMailSender{}
 	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
@@ -355,13 +416,12 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
 	}))
 
-	onCall := service.NewOnCallShiftService(workerPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
-	users := repository.NewUserRepository()
+	escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
 	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
 
-	sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+	sweepEscalations(ctx, workerPool, escalationPolicies, smtp, "https://argusops.example", logger)
 
-	assert.True(t, webhookNotified, "the configured webhook channel must still fire")
+	assert.Equal(t, int32(1), steps[0].Hits(), "the configured webhook channel must still fire")
 	require.Len(t, fake.sent, 1, "the on-call analyst must also be emailed")
 	assert.Contains(t, fake.sent[0].To, "@test.local")
 	assert.Contains(t, fake.sent[0].Body, alertID.String())
@@ -370,12 +430,12 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 
 // TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall is the
 // regression test for reordering escalated_at's stamp to happen right after
-// a successful Send instead of after notifyOnCallAnalyst (see
-// sweepEscalations' doc comment): the stamp must still be gated on Send
-// actually succeeding, not unconditional -- a destination that's down
-// (retried by notifier.RetryingSender and still failing every attempt) must
-// leave the alert un-escalated so the next sweep tick retries it, and must
-// never reach the best-effort on-call email step either.
+// a successful Send instead of after the best-effort on-call email step:
+// the stamp must still be gated on Send actually succeeding, not
+// unconditional -- a destination that's down (retried by
+// notifier.RetryingSender and still failing every attempt) must leave the
+// alert's sla_escalation_step/escalated_at untouched so the next sweep tick
+// retries the same step, and must never reach the on-call email step either.
 func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
@@ -384,45 +444,41 @@ func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 	ctx := context.Background()
 	store := secrets.NewEnvStore()
 
+	tenantID := testutil.NewTenant(t)
+	cleanupTenant(t, adminPool, tenantID)
+	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	// A chain whose sole step points at a destination that always 500s.
+	escalationPolicies, onCall := newEscalationPolicyServiceForPool(appPool, store)
+	sched, err := onCall.Create(ctx, tenantID, domain.SaveOnCallScheduleInput{
+		Name: "Primary", ParticipantIDs: []uuid.UUID{analystID}, HandoverAt: time.Now().Add(-24 * time.Hour),
+		PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
+	})
+	require.NoError(t, err)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-
-	tenantID := testutil.NewTenant(t)
-	analystID := testutil.NewUser(t, tenantID, "analyst", nil)
-
-	ref, err := store.Put(ctx, tenantID.String(), "escalation:critical", srv.URL)
-	require.NoError(t, err)
-	_, err = adminPool.Exec(ctx, `
-		insert into escalation_policies (tenant_id, severity, unacknowledged_after_minutes, channel_type, destination_secret_ref)
-		values ($1, 'critical', 15, 'webhook', $2)`,
-		tenantID, ref,
-	)
+	_, err = escalationPolicies.Save(ctx, tenantID, domain.SaveEscalationPolicyInput{
+		Severity: domain.SeverityCritical,
+		Steps:    []domain.SaveEscalationStepInput{{ScheduleID: sched.ID, DelayMinutes: 15, ChannelType: domain.EscalationChannelWebhook, Destination: srv.URL}},
+	})
 	require.NoError(t, err)
 	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
 
-	// On shift every day, all day, with SMTP configured too -- if the
-	// reordering somehow made the stamp (or the on-call email) unconditional
-	// on Send's outcome, this fixture would be enough to observe it.
-	setupOnCall := service.NewOnCallShiftService(appPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
-	for weekday := 0; weekday <= 6; weekday++ {
-		_, err := setupOnCall.Create(ctx, tenantID, analystID, weekday, 0, 1439)
-		require.NoError(t, err)
-	}
 	fake := &fakeMailSender{}
 	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
 	require.NoError(t, setupSMTP.Save(ctx, tenantID, service.SaveSMTPInput{
 		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
 	}))
 
-	onCall := service.NewOnCallShiftService(workerPool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
-	users := repository.NewUserRepository()
+	workerEscalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
 	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
 
-	sweepEscalations(ctx, workerPool, store, onCall, users, smtp, "https://argusops.example", logger)
+	sweepEscalations(ctx, workerPool, workerEscalationPolicies, smtp, "https://argusops.example", logger)
 
 	assert.Nil(t, escalatedAtFor(t, adminPool, alertID), "a failed Send must leave the alert un-escalated so the next tick retries it")
+	assert.Equal(t, 0, slaEscalationStepFor(t, adminPool, alertID))
 	assert.Empty(t, fake.sent, "the on-call email step must never run when the primary Send failed")
 }
 

@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
+	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver"
 	"github.com/argusops/argusops/internal/mailer"
 	"github.com/argusops/argusops/internal/notifier"
@@ -81,13 +81,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Only needed for sweepEscalations' best-effort "also email whoever's on
-	// shift" step -- see notifyOnCallAnalyst. Every constructor here is the
-	// same one cmd/api uses, just wired to the worker's own BYPASSRLS pool
-	// (each call is still scoped to one tenant via pool.WithTenant, same as
-	// cmd/api's per-request scoping).
-	onCallService := service.NewOnCallShiftService(pool, repository.NewOnCallShiftRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	// Every constructor here is the same one cmd/api uses, just wired to the
+	// worker's own BYPASSRLS pool (each call is still scoped to one tenant
+	// via pool.WithTenant, same as cmd/api's per-request scoping).
 	userRepo := repository.NewUserRepository()
+	userService := service.NewUserService(pool, userRepo)
+	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, repository.NewTenantRepository())
+	// escalationPolicyService.ResolveStepNotification is sweepEscalations'
+	// bridge from "which step, on which schedule" to a ready-to-send
+	// notifier.Notification -- resolves the on-call analyst for that
+	// specific step's schedule (not necessarily the tenant's default) and
+	// their contact info, same helper AlertHandlers.escalate uses for a
+	// manual escalation.
+	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallService, userService, secretStore)
 	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{})
 
 	logger.Info("worker started")
@@ -144,7 +151,7 @@ func main() {
 			})
 		case <-escalationTicker.C:
 			runLocked(ctx, pool, lockKeySweepEscalations, "sweep_escalations", logger, func() {
-				sweepEscalations(ctx, pool, secretStore, onCallService, userRepo, smtpService, cfg.AppBaseURL, logger)
+				sweepEscalations(ctx, pool, escalationPolicyService, smtpService, cfg.AppBaseURL, logger)
 			})
 		case <-staleAIRunTicker.C:
 			runLocked(ctx, pool, lockKeySweepStaleAIRuns, "sweep_stale_ai_runs", logger, func() {
@@ -294,53 +301,60 @@ func sweepStaleAIRuns(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
 // escalationCandidate is one open, unacknowledged, un-escalated alert whose
 // severity has a configured escalation policy that's now overdue.
 type escalationCandidate struct {
-	alertID         uuid.UUID
-	tenantID        uuid.UUID
-	title           string
-	severity        string
+	alertID    uuid.UUID
+	tenantID   uuid.UUID
+	title      string
+	severity   string
+	receivedAt time.Time
+	// slaStep is alerts.sla_escalation_step as it currently reads -- the
+	// automatic loop's own counter, entirely independent of
+	// manual_escalation_step (see AlertHandlers.escalate). Never reset,
+	// wrapped via `% len(steps)` at read time instead, so the stored value
+	// simply keeps counting up across the alert's whole open lifetime.
+	slaStep     int
+	escalatedAt *time.Time
+}
+
+type escalationStepRow struct {
+	scheduleID      uuid.UUID
+	delayMinutes    int
 	channelType     string
 	destinationRef  string
 	webhookTemplate *string
 }
 
-// sweepEscalations fires an on-call notification for every alert that's
-// stayed 'open' (never even acknowledged into 'investigating') past its
-// severity's escalation_policies.unacknowledged_after_minutes, then stamps
-// alerts.escalated_at so it never fires twice for the same alert. Runs
-// cross-tenant (no Pool.WithTenant), same BYPASSRLS reasoning as
+// sweepEscalations advances every open/investigating alert's automatic SLA
+// escalation loop: for each alert whose severity has a configured chain,
+// finds the step its sla_escalation_step currently points at (wrapping back
+// to the first step once the chain is exhausted -- `% len(steps)`, "roda as
+// escalas até ser atendido"), and fires it once the configured delay since
+// the previous event (the alert opening, for step 0; the last automatic
+// fire, for later steps) has elapsed. Runs cross-tenant (no Pool.WithTenant
+// at the query level -- escalationPolicyService's own calls scope
+// themselves per alert), same BYPASSRLS reasoning as
 // refreshMaterializedViews/sweepSLABreaches -- see
 // db/init/argusops_worker_role.sql.
 //
 // A single failed Send (already retried with backoff inside
 // notifier.RetryingSender -- see internal/notifier/retry.go) is logged and
-// skipped, not retried across sweep ticks here -- the alert stays
-// un-escalated (escalated_at stays null), so the very next tick will simply
-// try it again.
+// skipped, not retried across sweep ticks here -- sla_escalation_step/
+// escalated_at are only advanced after Send succeeds, so the very next tick
+// simply tries the same step again.
 //
-// escalated_at is stamped immediately after Send succeeds, before the
-// best-effort on-call-analyst email below -- not before Send is called.
-// Stamping before Send would close the crash window entirely, but at the
-// cost of a worse one: a real (not just crash-timing) Send failure would
-// then never be retried on a later tick either, since the row would already
-// read as escalated. Stamping right after a successful Send keeps that
-// retry-until-it-works behavior for genuine failures intact, and shrinks the
-// crash window down to the time between Send returning and the next
-// pool.Exec actually reaching Postgres -- as opposed to also covering
-// notifyOnCallAnalyst's own DB/SMTP round trips, which used to sit in
-// between the two.
-//
-// Beyond the configured channel, this also makes a best-effort attempt to
-// email whoever's actually on shift right now (see notifyOnCallAnalyst) --
-// additive only: no on-call analyst resolved, or no SMTP configured for the
-// tenant, never blocks or fails the primary escalation.
-func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.Store, onCall *service.OnCallShiftService, users *repository.UserRepository, smtp *service.SMTPConfigService, appBaseURL string, logger *slog.Logger) {
+// This loop is entirely independent of AlertHandlers.escalate's manual
+// escalation path (see alerts.manual_escalation_step) -- a human escalating
+// an alert never advances sla_escalation_step, and this sweep never
+// advances manual_escalation_step.
+func sweepEscalations(ctx context.Context, pool *db.Pool, escalationPolicies *service.EscalationPolicyService, smtp *service.SMTPConfigService, appBaseURL string, logger *slog.Logger) {
 	rows, err := pool.Query(ctx, `
-		select a.id, a.tenant_id, a.title, a.severity::text, ep.channel_type, ep.destination_secret_ref, ep.webhook_payload_template
+		select a.id, a.tenant_id, a.title, a.severity::text, a.received_at, a.sla_escalation_step, a.escalated_at
 		from alerts a
-		join escalation_policies ep on ep.tenant_id = a.tenant_id and ep.severity = a.severity
-		where a.status = 'open'
-		  and a.escalated_at is null
-		  and a.received_at < now() - (ep.unacknowledged_after_minutes || ' minutes')::interval`,
+		where a.status in ('open', 'investigating')
+		  and exists (
+		    select 1 from escalation_policies ep
+		    join escalation_policy_steps s on s.policy_id = ep.id
+		    where ep.tenant_id = a.tenant_id and ep.severity = a.severity
+		  )`,
 	)
 	if err != nil {
 		logger.Error("query escalation candidates failed", "error", err)
@@ -349,7 +363,7 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 	var candidates []escalationCandidate
 	for rows.Next() {
 		var c escalationCandidate
-		if err := rows.Scan(&c.alertID, &c.tenantID, &c.title, &c.severity, &c.channelType, &c.destinationRef, &c.webhookTemplate); err != nil {
+		if err := rows.Scan(&c.alertID, &c.tenantID, &c.title, &c.severity, &c.receivedAt, &c.slaStep, &c.escalatedAt); err != nil {
 			logger.Error("scan escalation candidate failed", "error", err)
 			continue
 		}
@@ -361,82 +375,121 @@ func sweepEscalations(ctx context.Context, pool *db.Pool, secretStore secrets.St
 		return
 	}
 
+	// Cached per (tenant, severity) within this tick -- many candidates
+	// commonly share the same chain (e.g. every open Critical alert across
+	// a tenant), so this avoids re-querying the same steps once per alert.
+	stepsCache := map[string][]escalationStepRow{}
+
 	for _, c := range candidates {
-		sender, err := notifier.NewForPolicy(c.channelType, c.webhookTemplate)
-		if err != nil {
-			logger.Error("unknown escalation channel", "alert_id", c.alertID, "channel", c.channelType, "error", err)
-			continue
+		key := c.tenantID.String() + "|" + c.severity
+		steps, ok := stepsCache[key]
+		if !ok {
+			steps, err = loadEscalationSteps(ctx, pool, c.tenantID, c.severity)
+			if err != nil {
+				logger.Error("load escalation steps failed", "alert_id", c.alertID, "error", err)
+				continue
+			}
+			stepsCache[key] = steps
 		}
-		destination, err := secretStore.Resolve(ctx, c.destinationRef)
-		if err != nil {
-			logger.Error("resolve escalation destination failed", "alert_id", c.alertID, "error", err)
+		if len(steps) == 0 {
 			continue
 		}
 
-		notification := notifier.Notification{
+		idx := c.slaStep % len(steps)
+		step := steps[idx]
+
+		baseline := c.receivedAt
+		if c.slaStep > 0 && c.escalatedAt != nil {
+			baseline = *c.escalatedAt
+		}
+		if time.Now().Before(baseline.Add(time.Duration(step.delayMinutes) * time.Minute)) {
+			continue
+		}
+
+		sender, err := notifier.NewForPolicy(step.channelType, step.webhookTemplate)
+		if err != nil {
+			logger.Error("unknown escalation channel", "alert_id", c.alertID, "channel", step.channelType, "error", err)
+			continue
+		}
+
+		notification, destination, err := escalationPolicies.ResolveStepNotification(ctx, c.tenantID, domain.EscalationStep{
+			ScheduleID: step.scheduleID, ChannelType: domain.EscalationChannelType(step.channelType),
+			DestinationSecretRef: step.destinationRef, WebhookPayloadTemplate: step.webhookTemplate,
+		}, notifier.Notification{
 			Title: c.title, Severity: c.severity, AlertID: c.alertID.String(),
 			URL: appBaseURL + "/alerts/" + c.alertID.String(),
-		}
-		err = sender.Send(ctx, destination, notification)
+		})
 		if err != nil {
-			logger.Error("send escalation notification failed", "alert_id", c.alertID, "channel", c.channelType, "error", err)
+			logger.Error("resolve escalation step notification failed", "alert_id", c.alertID, "error", err)
 			continue
 		}
 
-		if _, err := pool.Exec(ctx, `update alerts set escalated_at = now() where id = $1`, c.alertID); err != nil {
-			logger.Error("stamp escalated_at failed", "alert_id", c.alertID, "error", err)
+		if err := sender.Send(ctx, destination, notification); err != nil {
+			logger.Error("send escalation notification failed", "alert_id", c.alertID, "channel", step.channelType, "error", err)
 			continue
 		}
-		logger.Info("alert escalated", "alert_id", c.alertID, "channel", c.channelType)
 
-		if err := notifyOnCallAnalyst(ctx, pool, onCall, users, smtp, c, appBaseURL); err != nil {
-			logger.Warn("on-call analyst email skipped", "alert_id", c.alertID, "error", err)
+		next := c.slaStep + 1
+		if _, err := pool.Exec(ctx, `update alerts set sla_escalation_step = $2, escalated_at = now() where id = $1`, c.alertID, next); err != nil {
+			logger.Error("stamp sla_escalation_step failed", "alert_id", c.alertID, "error", err)
+			continue
+		}
+		logger.Info("alert escalation step fired", "alert_id", c.alertID, "step", idx, "channel", step.channelType)
+
+		// Beyond the step's configured channel, also make a best-effort
+		// attempt to email the analyst ResolveStepNotification resolved for
+		// this step's schedule -- additive only: no analyst resolved (empty
+		// AnalystEmail), or no SMTP configured for the tenant, never blocks
+		// or fails the primary escalation.
+		if notification.AnalystEmail != "" {
+			if err := emailOnCallAnalyst(ctx, smtp, c.tenantID, notification.AnalystEmail, c.title, c.severity, c.alertID, appBaseURL); err != nil {
+				logger.Warn("on-call analyst email skipped", "alert_id", c.alertID, "error", err)
+			}
 		}
 	}
 }
 
-// notifyOnCallAnalyst resolves whoever's on shift for c.tenantID right now
-// and, if SMTP is configured for that tenant, emails them -- the escalation
-// policy's own channel (PagerDuty/Slack/webhook) is a fixed external
+func loadEscalationSteps(ctx context.Context, pool *db.Pool, tenantID uuid.UUID, severity string) ([]escalationStepRow, error) {
+	rows, err := pool.Query(ctx, `
+		select s.schedule_id, s.delay_minutes, s.channel_type, s.destination_secret_ref, s.webhook_payload_template
+		from escalation_policy_steps s
+		join escalation_policies ep on ep.id = s.policy_id
+		where ep.tenant_id = $1 and ep.severity = $2
+		order by s.position asc`,
+		tenantID, severity,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query escalation steps: %w", err)
+	}
+	defer rows.Close()
+
+	var steps []escalationStepRow
+	for rows.Next() {
+		var s escalationStepRow
+		if err := rows.Scan(&s.scheduleID, &s.delayMinutes, &s.channelType, &s.destinationRef, &s.webhookTemplate); err != nil {
+			return nil, fmt.Errorf("scan escalation step: %w", err)
+		}
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+
+// emailOnCallAnalyst sends a best-effort email to analystEmail (already
+// resolved by EscalationPolicyService.ResolveStepNotification against the
+// firing step's own schedule) if SMTP is configured for tenantID -- the
+// step's own channel (PagerDuty/Slack/webhook) is a fixed external
 // destination that has no idea who's actually on the schedule; this closes
-// that gap without changing what the configured channel does. Returns a
-// non-nil error only to describe why nothing was sent (no shift covers
-// right now, no SMTP configured, delivery failed) -- callers treat every
-// case as best-effort, never a reason to fail the escalation itself.
-func notifyOnCallAnalyst(ctx context.Context, pool *db.Pool, onCall *service.OnCallShiftService, users *repository.UserRepository, smtp *service.SMTPConfigService, c escalationCandidate, appBaseURL string) error {
-	analystID, err := onCall.ResolveCurrentAnalyst(ctx, c.tenantID, time.Now())
-	if err != nil {
-		return fmt.Errorf("resolve on-call analyst: %w", err)
-	}
-	if analystID == nil {
-		return fmt.Errorf("no analyst currently on shift")
-	}
-
-	var analystEmail string
-	err = pool.WithTenant(ctx, c.tenantID, func(tx pgx.Tx) error {
-		u, err := users.Get(ctx, tx, *analystID)
-		if err != nil {
-			return err
-		}
-		if u == nil {
-			return fmt.Errorf("on-call analyst %s not found", *analystID)
-		}
-		analystEmail = u.Email
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("load on-call analyst: %w", err)
-	}
-
+// that gap without changing what the configured channel does.
+func emailOnCallAnalyst(ctx context.Context, smtp *service.SMTPConfigService, tenantID uuid.UUID, analystEmail, title, severity string, alertID uuid.UUID, appBaseURL string) error {
 	msg := mailer.Message{
 		To:      analystEmail,
-		Subject: fmt.Sprintf("[ArgusOps] Alerta escalado: %s", c.title),
+		Subject: fmt.Sprintf("[ArgusOps] Alerta escalado: %s", title),
 		Body: fmt.Sprintf(
 			"O alerta \"%s\" (severidade %s) ficou sem reconhecimento além do tempo configurado para escalonamento e você está de plantão agora.\n\n%s/alerts/%s",
-			c.title, c.severity, appBaseURL, c.alertID,
+			title, severity, appBaseURL, alertID,
 		),
 	}
-	if err := smtp.Send(ctx, c.tenantID, msg); err != nil {
+	if err := smtp.Send(ctx, tenantID, msg); err != nil {
 		return fmt.Errorf("send on-call email: %w", err)
 	}
 	return nil

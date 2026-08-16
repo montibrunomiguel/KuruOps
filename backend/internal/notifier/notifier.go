@@ -33,6 +33,15 @@ type Notification struct {
 	// through -- optional; some channels render it as a link, others just
 	// pass it through as a field.
 	URL string
+	// AnalystName/AnalystEmail/AnalystPhone are the on-call analyst resolved
+	// against the escalation step's OnCallSchedule at the moment it fired --
+	// empty when no one is currently on shift for that schedule. Only
+	// WebhookSender's custom-template path substitutes these in (see
+	// WebhookPlaceholders); the fixed webhook JSON shape and the
+	// PagerDuty/Slack senders don't reference them.
+	AnalystName  string
+	AnalystEmail string
+	AnalystPhone string
 }
 
 // Sender delivers one Notification to destination -- a PagerDuty routing

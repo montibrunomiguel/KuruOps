@@ -126,6 +126,8 @@
     "detailsTitle": "Profile",
     "name": "Name",
     "email": "Email",
+    "phone": "Phone (optional)",
+    "phoneHint": "Include country code, e.g. +5511912345678",
     "currentPassword": "Current password",
     "currentPasswordHint": "(required to change your email)",
     "passwordTitle": "Change Password",
@@ -455,9 +457,9 @@
       "identityProviders": "Identity Providers",
       "storage": "Storage Integration",
       "smtp": "SMTP",
-      "onCallShifts": "On-Call Schedule",
+      "onCallSchedule": "On-Call Schedule",
       "incidentSla": "Incident SLAs",
-      "escalationPolicies": "On-Call Escalation",
+      "escalationPolicies": "Escalation Chain",
       "auditExport": "Audit Export",
       "databaseMigration": "External Database"
     },
@@ -640,9 +642,13 @@
       "form": {
         "email": "Email",
         "name": "Name",
+        "phone": "Phone (optional, include country code, e.g. +5511912345678)",
         "role": "Role",
         "noRolesYet": "No roles configured yet -- create one in Settings -> Roles first."
       },
+      "phoneLabel": "Phone",
+      "phoneHint": "Include country code, e.g. +5511912345678",
+      "phonePlaceholder": "+5511912345678",
       "groupMappings": {
         "title": "LDAP/SAML Group Mapping",
         "helper": "Applied on every federated login — change the group in your directory, access here changes on the next login, no need to edit the user manually.",
@@ -782,14 +788,18 @@
       "testSent": "Test email sent to {{to}}.",
       "testFailed": "Test email failed: {{error}}"
     },
-    "onCallShifts": {
-      "title": "On-Call Schedule",
-      "helper": "A weekly recurring roster. New alerts are automatically assigned to whoever is on shift at the moment they're received.",
-      "newShift": "+ New Shift",
-      "noShifts": "No shifts configured -- new alerts stay unassigned.",
-      "delete": "Delete",
-      "deleteConfirm": "Remove this shift?",
-      "timezone": "Timezone (IANA name, e.g. America/Sao_Paulo)",
+    "onCallSchedule": {
+      "title": "On-Call Schedules",
+      "helper": "An automatic rotation. New alerts are assigned to whoever the default schedule computes is on call at the moment they're received.",
+      "newSchedule": "+ New Schedule",
+      "noSchedules": "No on-call schedules yet.",
+      "default": "Default",
+      "setDefault": "Set as default",
+      "respondersCount_one": "{{count}} responder",
+      "respondersCount_other": "{{count}} responders",
+      "backToList": "← Back to On-Call Schedules",
+      "notFound": "Schedule not found.",
+      "deleteSchedule": "Delete schedule",
       "weekday": {
         "sunday": "Sunday",
         "monday": "Monday",
@@ -800,10 +810,45 @@
         "saturday": "Saturday"
       },
       "form": {
+        "name": "Name",
+        "nameRequired": "Schedule name is required.",
+        "handoverAt": "Handover time",
+        "timezone": "Timezone",
+        "concurrentShifts": "Analysts on duty",
+        "cadence": "Change shifts",
+        "cadenceOption": {
+          "daily": "Daily",
+          "weekly": "Weekly",
+          "custom": "Custom (days)"
+        },
+        "customPeriodDays": "Number of days",
+        "responders": "Responders",
+        "respondersHelp": "The order matters -- it's the order the rotation cycles through. Use the arrows to reorder.",
+        "addResponder": "Add",
+        "removeResponder": "Remove",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "workingHours": "Working hours",
+        "allDay": "All day",
+        "specificTimes": "Specific times",
+        "addInterval": "+ Add interval",
+        "removeInterval": "Remove interval"
+      },
+      "timeline": {
+        "title": "Preview",
+        "today": "Today",
+        "previous": "Previous",
+        "next": "Next",
+        "zoom": "Zoom",
+        "zoomWeeks_one": "{{count}} week",
+        "zoomWeeks_other": "{{count}} weeks",
+        "noResponders": "Add responders above to see the rotation preview."
+      },
+      "override": {
+        "title": "Override -- {{date}}",
         "analyst": "Analyst",
-        "weekday": "Weekday",
-        "start": "Start time",
-        "end": "End time"
+        "create": "Assign",
+        "remove": "Remove override"
       }
     },
     "incidentSla": {
@@ -814,8 +859,8 @@
       "saved": "Changes saved."
     },
     "escalation": {
-      "title": "On-Call Escalation",
-      "helper": "Notify whoever's on shift when an alert of a given severity stays unacknowledged (still \"open\") too long. A background job checks every minute and never re-notifies for the same alert twice. The analyst currently on shift (Settings -> On-Call Schedule) is also emailed automatically when SMTP is configured, alongside the channel below.",
+      "title": "Escalation Chain",
+      "helper": "Per severity, an ordered chain of steps -- each one notifying whoever's on shift on a chosen On-Call Schedule. An alert that stays unacknowledged (\"open\" or \"investigating\") triggers the chain automatically, advancing to the next step after its own delay and looping back to the first step once the chain is exhausted, until the alert is attended to. Manually escalating an alert (the \"Escalate\" button on an alert) advances the chain by exactly one step instead, independent of the automatic loop.",
       "notConfigured": "Not configured",
       "configured": "Configured",
       "configure": "Configure",
@@ -824,14 +869,21 @@
       "testOk": "Test notification sent.",
       "testFailed": "Test failed: {{error}}",
       "removeConfirm": "Stop escalating this severity?",
+      "noSchedules": "No On-Call Schedules configured yet -- create one in Settings -> On-Call Schedules first.",
+      "stepSummary": "{{minutes}}min -- {{channel}}",
       "columns": {
         "severity": "Severity",
         "status": "Status",
-        "channel": "Channel",
-        "minutes": "Minutes"
+        "chain": "Chain"
       },
       "form": {
-        "minutes": "Minutes unacknowledged",
+        "step": "Step {{num}}",
+        "addStep": "+ Add step",
+        "removeStep": "Remove step",
+        "moveUp": "Move up",
+        "moveDown": "Move down",
+        "schedule": "On-Call Schedule",
+        "delayMinutes": "Delay (minutes)",
         "channel": "Channel",
         "channelOption": {
           "pagerduty": "PagerDuty",

@@ -134,11 +134,13 @@ func TestUserRepository_CreateLocal(t *testing.T) {
 	tx := testutil.BeginTx(t, pool, tenantID)
 
 	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
+	phone := "+1 555-0100"
 	u := &domain.User{
 		TenantID: tenantID,
 		Email:    "newlocal@test.local",
 		Name:     "New Local User",
 		RoleID:   roleID,
+		Phone:    &phone,
 	}
 	require.NoError(t, repo.CreateLocal(t.Context(), tx, u, "$argon2id$fake-hash"))
 	require.NotEqual(t, [16]byte{}, u.ID)
@@ -152,6 +154,8 @@ func TestUserRepository_CreateLocal(t *testing.T) {
 	assert.Equal(t, roleID, got.RoleID)
 	require.NotNil(t, got.PasswordHash)
 	assert.Equal(t, "$argon2id$fake-hash", *got.PasswordHash)
+	require.NotNil(t, got.Phone)
+	assert.Equal(t, phone, *got.Phone)
 
 	t.Run("duplicate email within the same tenant fails", func(t *testing.T) {
 		dupe := &domain.User{
@@ -190,12 +194,44 @@ func TestUserRepository_UpdateProfile(t *testing.T) {
 	repo := repository.NewUserRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
-	require.NoError(t, repo.UpdateProfile(t.Context(), tx, userID, "Renamed User", "renamed@test.local"))
+	phone := "+1 555-0100"
+	require.NoError(t, repo.UpdateProfile(t.Context(), tx, userID, "Renamed User", "renamed@test.local", &phone))
 
 	got, err := repo.Get(t.Context(), tx, userID)
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed User", got.Name)
 	assert.Equal(t, "renamed@test.local", got.Email)
+	require.NotNil(t, got.Phone)
+	assert.Equal(t, phone, *got.Phone)
+}
+
+// TestUserRepository_UpdatePhone confirms the narrow phone-only update
+// doesn't touch name/email/role -- unlike UpdateProfile, which requires
+// resending all three.
+func TestUserRepository_UpdatePhone(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", nil)
+	repo := repository.NewUserRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	before, err := repo.Get(t.Context(), tx, userID)
+	require.NoError(t, err)
+
+	phone := "+5511912345678"
+	require.NoError(t, repo.UpdatePhone(t.Context(), tx, userID, &phone))
+
+	got, err := repo.Get(t.Context(), tx, userID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Phone)
+	assert.Equal(t, phone, *got.Phone)
+	assert.Equal(t, before.Name, got.Name)
+	assert.Equal(t, before.Email, got.Email)
+
+	require.NoError(t, repo.UpdatePhone(t.Context(), tx, userID, nil))
+	cleared, err := repo.Get(t.Context(), tx, userID)
+	require.NoError(t, err)
+	assert.Nil(t, cleared.Phone)
 }
 
 func TestUserRepository_SetPassword(t *testing.T) {

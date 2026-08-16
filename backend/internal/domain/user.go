@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +54,26 @@ func ValidateResourceAccess(ra ResourceAccess) error {
 	return nil
 }
 
+// phonePattern is E.164-like: a leading '+', then 7-15 digits, first digit
+// non-zero (a bare national number with no country code, e.g. "5511...",
+// is rejected -- the whole point is Escala de Acionamento's webhook
+// payload needs a dialable, unambiguous number).
+var phonePattern = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
+
+// ValidatePhone rejects a non-empty phone that doesn't include a country
+// code in E.164-ish shape. Called wherever User.Phone is written
+// (UserService.CreateLocal/UpdatePhone, AuthService.UpdateProfile) --
+// empty stays valid, since phone remains optional.
+func ValidatePhone(phone string) error {
+	if phone == "" {
+		return nil
+	}
+	if !phonePattern.MatchString(phone) {
+		return fmt.Errorf("phone must include a country code, e.g. +5511912345678")
+	}
+	return nil
+}
+
 // User mirrors `users`. PasswordHash and MFATOTPSecret are tagged
 // json:"-" so they can never leak through an API response even if a
 // handler accidentally serializes the whole struct.
@@ -80,9 +101,14 @@ type User struct {
 	// rotated. Set true for the seeded default admin (0013_seed_default_admin.up.sql)
 	// and never cleared except by a successful password change.
 	MustChangePassword bool       `json:"mustChangePassword"`
-	LastLoginAt        *time.Time `json:"lastLoginAt,omitempty"`
-	CreatedAt          time.Time  `json:"createdAt"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
+	// Phone is optional but, when set, must pass ValidatePhone (E.164-ish,
+	// country code required) -- surfaced in Escala de Acionamento's webhook
+	// payload placeholders as {{analystPhone}} once a step resolves who's on
+	// call, where an ambiguous number without a country code isn't useful.
+	Phone       *string    `json:"phone,omitempty"`
+	LastLoginAt *time.Time `json:"lastLoginAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 // UserSummary is the minimal, non-admin-safe projection of User -- id and

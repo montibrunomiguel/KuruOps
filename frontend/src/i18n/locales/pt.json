@@ -126,6 +126,8 @@
     "detailsTitle": "Perfil",
     "name": "Nome",
     "email": "E-mail",
+    "phone": "Telefone (opcional)",
+    "phoneHint": "Inclua o código do país, ex: +5511912345678",
     "currentPassword": "Senha atual",
     "currentPasswordHint": "(necessária para alterar seu e-mail)",
     "passwordTitle": "Alterar Senha",
@@ -455,9 +457,9 @@
       "identityProviders": "Provedores de Identidade",
       "storage": "Integração de Armazenamento",
       "smtp": "SMTP",
-      "onCallShifts": "Escala de Atendimento",
+      "onCallSchedule": "Escala de Atendimento",
       "incidentSla": "SLAs de Incidentes",
-      "escalationPolicies": "Escalonamento de Plantão",
+      "escalationPolicies": "Escala de Acionamento",
       "auditExport": "Exportação de Auditoria",
       "databaseMigration": "Banco de Dados Externo"
     },
@@ -640,9 +642,13 @@
       "form": {
         "email": "E-mail",
         "name": "Nome",
+        "phone": "Telefone (opcional, inclua o código do país, ex: +5511912345678)",
         "role": "Papel",
         "noRolesYet": "Nenhum papel configurado ainda -- crie um em Configurações -> Papéis primeiro."
       },
+      "phoneLabel": "Telefone",
+      "phoneHint": "Inclua o código do país, ex: +5511912345678",
+      "phonePlaceholder": "+5511912345678",
       "groupMappings": {
         "title": "Mapeamento de grupos LDAP/SAML",
         "helper": "Aplicado a cada login federado — mudou o grupo no seu diretório, muda o acesso aqui no próximo login, sem precisar editar o usuário manualmente.",
@@ -782,14 +788,18 @@
       "testSent": "E-mail de teste enviado para {{to}}.",
       "testFailed": "Falha no e-mail de teste: {{error}}"
     },
-    "onCallShifts": {
-      "title": "Escala de Atendimento",
-      "helper": "Uma escala semanal recorrente. Novos alertas são automaticamente atribuídos a quem estiver de plantão no momento em que forem recebidos.",
-      "newShift": "+ Novo Turno",
-      "noShifts": "Nenhum turno configurado -- novos alertas ficam sem responsável.",
-      "delete": "Excluir",
-      "deleteConfirm": "Remover este turno?",
-      "timezone": "Fuso horário (nome IANA, ex: America/Sao_Paulo)",
+    "onCallSchedule": {
+      "title": "Escalas de Atendimento",
+      "helper": "Uma rotação automática. Novos alertas são atribuídos a quem a escala padrão calcula estar de plantão no momento em que forem recebidos.",
+      "newSchedule": "+ Nova Escala",
+      "noSchedules": "Nenhuma escala de atendimento cadastrada ainda.",
+      "default": "Padrão",
+      "setDefault": "Definir como padrão",
+      "respondersCount_one": "{{count}} respondente",
+      "respondersCount_other": "{{count}} respondentes",
+      "backToList": "← Voltar para Escalas de Atendimento",
+      "notFound": "Escala não encontrada.",
+      "deleteSchedule": "Excluir escala",
       "weekday": {
         "sunday": "Domingo",
         "monday": "Segunda-feira",
@@ -800,10 +810,45 @@
         "saturday": "Sábado"
       },
       "form": {
+        "name": "Nome",
+        "nameRequired": "O nome da escala é obrigatório.",
+        "handoverAt": "Horário de transição",
+        "timezone": "Fuso horário",
+        "concurrentShifts": "Qtd. de analistas no plantão",
+        "cadence": "Trocar turnos",
+        "cadenceOption": {
+          "daily": "Diariamente",
+          "weekly": "Semanalmente",
+          "custom": "Personalizado (dias)"
+        },
+        "customPeriodDays": "Número de dias",
+        "responders": "Respondentes",
+        "respondersHelp": "A ordem importa -- é a ordem em que a rotação percorre a lista. Use as setas para reordenar.",
+        "addResponder": "Adicionar",
+        "removeResponder": "Remover",
+        "moveUp": "Mover para cima",
+        "moveDown": "Mover para baixo",
+        "workingHours": "Horário de funcionamento",
+        "allDay": "Dia inteiro",
+        "specificTimes": "Horários específicos",
+        "addInterval": "+ Adicionar intervalo",
+        "removeInterval": "Remover intervalo"
+      },
+      "timeline": {
+        "title": "Pré-visualização",
+        "today": "Hoje",
+        "previous": "Anterior",
+        "next": "Próximo",
+        "zoom": "Zoom",
+        "zoomWeeks_one": "{{count}} semana",
+        "zoomWeeks_other": "{{count}} semanas",
+        "noResponders": "Adicione respondentes acima para ver a pré-visualização da rotação."
+      },
+      "override": {
+        "title": "Substituição -- {{date}}",
         "analyst": "Analista",
-        "weekday": "Dia da semana",
-        "start": "Horário de início",
-        "end": "Horário de término"
+        "create": "Atribuir",
+        "remove": "Remover substituição"
       }
     },
     "incidentSla": {
@@ -814,8 +859,8 @@
       "saved": "Alterações salvas."
     },
     "escalation": {
-      "title": "Escalonamento de Plantão",
-      "helper": "Notifica quem está de plantão quando um alerta de uma dada severidade fica sem reconhecimento (ainda \"aberto\") por tempo demais. Uma tarefa em segundo plano verifica a cada minuto e nunca notifica duas vezes o mesmo alerta. O analista atualmente de plantão (Configurações -> Escala de Plantão) também recebe um e-mail automaticamente quando o SMTP está configurado, além do canal abaixo.",
+      "title": "Escala de Acionamento",
+      "helper": "Por severidade, uma cadeia ordenada de passos -- cada um notificando quem está de plantão em uma Escala de Atendimento escolhida. Um alerta que fica sem reconhecimento (\"aberto\" ou \"investigando\") aciona a cadeia automaticamente, avançando para o próximo passo após o atraso configurado e voltando ao primeiro passo quando a cadeia se esgota, até o alerta ser atendido. Escalonar um alerta manualmente (botão \"Escalonar\" no alerta) avança a cadeia em exatamente um passo, independente do loop automático.",
       "notConfigured": "Não configurado",
       "configured": "Configurado",
       "configure": "Configurar",
@@ -824,14 +869,21 @@
       "testOk": "Notificação de teste enviada.",
       "testFailed": "Teste falhou: {{error}}",
       "removeConfirm": "Parar de escalar esta severidade?",
+      "noSchedules": "Nenhuma Escala de Atendimento cadastrada ainda -- crie uma em Configurações -> Escalas de Atendimento primeiro.",
+      "stepSummary": "{{minutes}}min -- {{channel}}",
       "columns": {
         "severity": "Severidade",
         "status": "Status",
-        "channel": "Canal",
-        "minutes": "Minutos"
+        "chain": "Cadeia"
       },
       "form": {
-        "minutes": "Minutos sem reconhecimento",
+        "step": "Passo {{num}}",
+        "addStep": "+ Adicionar passo",
+        "removeStep": "Remover passo",
+        "moveUp": "Mover para cima",
+        "moveDown": "Mover para baixo",
+        "schedule": "Escala de Atendimento",
+        "delayMinutes": "Atraso (minutos)",
         "channel": "Canal",
         "channelOption": {
           "pagerduty": "PagerDuty",

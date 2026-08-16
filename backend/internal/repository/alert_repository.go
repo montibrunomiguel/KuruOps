@@ -277,6 +277,26 @@ func (r *AlertRepository) UpdateStatus(ctx context.Context, tx pgx.Tx, id uuid.U
 	return err
 }
 
+// AdvanceManualEscalation atomically advances the alert's manual-escalation
+// counter (entirely independent of the automatic SLA loop cmd/worker's
+// sweepEscalations drives, see migration 0049) and returns which 0-indexed
+// chain step to fire this call -- clamped to maxSteps-1 so repeated manual
+// escalations after the chain is exhausted keep re-firing the last step
+// instead of wrapping back to the first (unlike the automatic loop, which
+// does wrap).
+func (r *AlertRepository) AdvanceManualEscalation(ctx context.Context, tx pgx.Tx, id uuid.UUID, maxSteps int) (position int, err error) {
+	err = tx.QueryRow(ctx, `
+		update alerts set manual_escalation_step = least(manual_escalation_step + 1, $2)
+		where id = $1
+		returning least(manual_escalation_step - 1, $2 - 1)`,
+		id, maxSteps,
+	).Scan(&position)
+	if err != nil {
+		return 0, fmt.Errorf("advance manual escalation: %w", err)
+	}
+	return position, nil
+}
+
 func (r *AlertRepository) UpdateTags(ctx context.Context, tx pgx.Tx, id uuid.UUID, tags []string) error {
 	_, err := tx.Exec(ctx, `update alerts set tags = $2, updated_at = now() where id = $1`, id, tags)
 	return err

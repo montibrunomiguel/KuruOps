@@ -37,6 +37,7 @@ export interface User {
   name: string;
   authProvider: AuthProviderKind;
   externalId?: string;
+  phone?: string;
   roleId: string;
   role: Role;
   isActive: boolean;
@@ -167,27 +168,66 @@ export interface AIToolCall {
 
 export type EscalationChannelType = "pagerduty" | "slack" | "webhook";
 
-// EscalationPolicy mirrors backend domain.EscalationPolicy -- Settings ->
-// On-Call Escalation's per-severity rule for notifying whoever's on shift
-// when an alert has stayed 'open' too long. No row for a severity means
-// unconfigured, not "never escalate" as an explicit setting.
-export interface EscalationPolicy {
+// EscalationStep mirrors backend domain.EscalationStep -- one link in an
+// Escala de Acionamento chain, referencing an OnCallSchedule (not
+// necessarily the tenant's default) to resolve the on-call analyst against
+// when it fires.
+export interface EscalationStep {
   id: string;
-  tenantId: string;
-  severity: Severity;
-  unacknowledgedAfterMinutes: number;
+  policyId: string;
+  position: number;
+  scheduleId: string;
+  scheduleName: string;
+  delayMinutes: number;
   channelType: EscalationChannelType;
   // Only meaningful when channelType is "webhook" -- undefined means the
   // default fixed payload shape (see backend notifier.WebhookSender).
   webhookPayloadTemplate?: string;
+}
+
+// EscalationPolicy mirrors backend domain.EscalationPolicy -- Settings ->
+// Escala de Acionamento's per-severity ordered chain of steps, fired either
+// by the automatic SLA loop (cmd/worker's sweepEscalations, wraps back to
+// step 0 once the chain is exhausted) or by manually escalating an alert
+// (advances exactly one step, independent counter, never wraps). No row for
+// a severity means unconfigured, not "never escalate" as an explicit
+// setting.
+export interface EscalationPolicy {
+  id: string;
+  tenantId: string;
+  severity: Severity;
+  steps: EscalationStep[];
   createdAt: string;
   updatedAt: string;
 }
 
-// The placeholders a webhook payload template can use -- mirrors backend
-// notifier.WebhookPlaceholders exactly, kept here rather than fetched so
-// the panel can show them without an extra round trip.
+// SaveEscalationStepRequest mirrors backend handlers' saveEscalationStepRequest
+// -- Destination is plaintext; "" for a position that already had a step
+// saved there means keep the existing secret (see EscalationPolicyService.Save).
+export interface SaveEscalationStepRequest {
+  scheduleId: string;
+  delayMinutes: number;
+  channelType: EscalationChannelType;
+  destination: string;
+  webhookPayloadTemplate: string;
+}
+
+// The placeholders a playbook step's webhook payload template can use --
+// mirrors the alert-only subset of backend notifier.WebhookPlaceholders,
+// kept here rather than fetched so the panel can show them without an extra
+// round trip. Deliberately excludes the analyst placeholders below: a
+// playbook step trigger has no on-call schedule to resolve an analyst
+// against, so those would always render empty here.
 export const WEBHOOK_PAYLOAD_PLACEHOLDERS = ["{{title}}", "{{description}}", "{{severity}}", "{{alertId}}", "{{url}}"] as const;
+
+// The placeholders an Escala de Acionamento step's webhook payload template
+// can use -- the alert placeholders above, plus the resolved on-call
+// analyst's name/email/phone (empty if no one's currently on shift for the
+// step's schedule). Mirrors backend notifier.WebhookPlaceholders exactly.
+export const ESCALATION_WEBHOOK_PLACEHOLDERS = [
+  ...WEBHOOK_PAYLOAD_PLACEHOLDERS,
+  "{{analystName}}", "{{analystEmail}}", "{{analystPhone}}",
+] as const;
 
 // TargetDatabaseConfig is the request body for both
 // /settings/database-migration/test-connection and .../migrate -- mirrors
@@ -316,6 +356,7 @@ export interface LoginResponse {
     id: string;
     email: string;
     name: string;
+    phone?: string;
     // The assigned Role's display name (see backend loginUser.Role) --
     // authorization itself is decided from the JWT's is_admin/
     // resource_access claims (see AuthContext.decodeTokenClaims), never

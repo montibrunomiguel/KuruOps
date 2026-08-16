@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/argusops/argusops/internal/notifier"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/service"
 )
@@ -33,10 +36,21 @@ type AlertHandlers struct {
 	// users resolves the acting user's display name for addComment -- same
 	// reasoning as IncidentHandlers.users (see domain.AlertComment.AuthorName).
 	users *service.UserService
+	// escalationPolicies backs escalate's manual-escalation side effect
+	// (fires the alert severity's next chain step exactly once, see
+	// fireManualEscalationStep) -- best-effort, never blocks or fails the
+	// incident promotion above it.
+	escalationPolicies *service.EscalationPolicyService
+	// appBaseURL fills the {{url}} placeholder in fireManualEscalationStep's
+	// notification, same as cmd/worker's sweepEscalations -- without it, a
+	// manually-escalated step's webhook template would always resolve
+	// {{url}} to empty while the automatic SLA loop's own fires resolve it
+	// correctly.
+	appBaseURL string
 }
 
-func NewAlertHandlers(svc *service.AlertService, incidents *service.IncidentService, ai *service.AIAnalysisService, mcpTools *service.MCPToolService, users *service.UserService) *AlertHandlers {
-	return &AlertHandlers{svc: svc, incidents: incidents, ai: ai, mcpTools: mcpTools, users: users}
+func NewAlertHandlers(svc *service.AlertService, incidents *service.IncidentService, ai *service.AIAnalysisService, mcpTools *service.MCPToolService, users *service.UserService, escalationPolicies *service.EscalationPolicyService, appBaseURL string) *AlertHandlers {
+	return &AlertHandlers{svc: svc, incidents: incidents, ai: ai, mcpTools: mcpTools, users: users, escalationPolicies: escalationPolicies, appBaseURL: appBaseURL}
 }
 
 func (h *AlertHandlers) Routes(r chi.Router) {
@@ -375,7 +389,60 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
+	// AlertService.Ingest uses) so a slow/unreachable escalation-chain
+	// destination never delays this response -- see fireManualEscalationStep.
+	go h.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
+
 	writeJSON(w, http.StatusOK, escalateResponse{IncidentID: incident.ID})
+}
+
+// fireManualEscalationStep is escalate's manual-escalation side effect: if
+// the alert's severity has a configured Escala de Acionamento chain, fires
+// its next step exactly once -- AlertRepository.AdvanceManualEscalation's
+// counter is entirely independent of cmd/worker's automatic SLA loop (see
+// alerts.manual_escalation_step), so this never wraps back to step 0 and
+// never interferes with the SLA loop's own progress through the chain.
+// Every failure (no chain configured, resolve/send errors) is only logged
+// -- this must never surface as a failure of the escalate action itself,
+// which has already promoted the alert to an incident by the time this runs.
+func (h *AlertHandlers) fireManualEscalationStep(ctx context.Context, tenantID, alertID uuid.UUID, severity domain.Severity, title string) {
+	policy, err := h.escalationPolicies.Get(ctx, tenantID, severity)
+	if err != nil {
+		slog.Warn("manual escalation step skipped: load chain failed", "alert_id", alertID, "error", err)
+		return
+	}
+	if policy == nil || len(policy.Steps) == 0 {
+		return
+	}
+
+	position, err := h.svc.AdvanceManualEscalation(ctx, tenantID, alertID, len(policy.Steps))
+	if err != nil {
+		slog.Warn("manual escalation step skipped: advance counter failed", "alert_id", alertID, "error", err)
+		return
+	}
+	step := policy.Steps[position]
+
+	sender, err := notifier.NewForPolicy(string(step.ChannelType), step.WebhookPayloadTemplate)
+	if err != nil {
+		slog.Warn("manual escalation step skipped: unknown channel", "alert_id", alertID, "channel", step.ChannelType, "error", err)
+		return
+	}
+
+	notification, destination, err := h.escalationPolicies.ResolveStepNotification(ctx, tenantID, step, notifier.Notification{
+		Title: title, Severity: string(severity), AlertID: alertID.String(),
+		URL: h.appBaseURL + "/alerts/" + alertID.String(),
+	})
+	if err != nil {
+		slog.Warn("manual escalation step skipped: resolve notification failed", "alert_id", alertID, "error", err)
+		return
+	}
+
+	if err := sender.Send(ctx, destination, notification); err != nil {
+		slog.Warn("manual escalation step send failed", "alert_id", alertID, "step", position, "channel", step.ChannelType, "error", err)
+		return
+	}
+	slog.Info("manual escalation step fired", "alert_id", alertID, "step", position, "channel", step.ChannelType)
 }
 
 type analyzeStartedResponse struct {

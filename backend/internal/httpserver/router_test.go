@@ -36,7 +36,7 @@ func nilOptions() Options {
 		UploadHandlers:               &handlers.UploadHandlers{},
 		StorageConfigHandlers:        &handlers.StorageConfigHandlers{},
 		SMTPConfigHandlers:           &handlers.SMTPConfigHandlers{},
-		OnCallShiftHandlers:          &handlers.OnCallShiftHandlers{},
+		OnCallScheduleHandlers:       &handlers.OnCallScheduleHandlers{},
 		IncidentSLAHandlers:          &handlers.IncidentSLAHandlers{},
 		EscalationPolicyHandlers:     &handlers.EscalationPolicyHandlers{},
 		AuditExportHandlers:          &handlers.AuditExportHandlers{},

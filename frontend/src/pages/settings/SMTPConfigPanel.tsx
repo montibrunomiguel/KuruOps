@@ -30,7 +30,7 @@ export function SMTPConfigPanel() {
   const [saved, setSaved] = useState(false);
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
-  // made delete look like it does nothing (see OnCallShiftsPanel/TagsPanel).
+  // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const [testTo, setTestTo] = useState("");

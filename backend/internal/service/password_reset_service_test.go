@@ -47,7 +47,7 @@ func TestPasswordResetService_RequestReset(t *testing.T) {
 		assert.Empty(t, sender.sent)
 	})
 
-	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme@test.local", "Reset Me", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
+	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
 	require.NoError(t, err)
 
 	t.Run("known user but SMTP not configured still succeeds, sends nothing", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 		Host: "smtp.example.com", Port: 587, UseTLS: true, FromAddress: "no-reply@example.com", Password: "x",
 	}))
 
-	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme2@test.local", "Reset Me", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
+	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme2@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
 	require.NoError(t, err)
 
 	t.Run("rejects an unknown token", func(t *testing.T) {

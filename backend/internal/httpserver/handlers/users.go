@@ -30,6 +30,7 @@ func (h *UserHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
 	r.Put("/{id}/access", h.updateAccess)
+	r.Put("/{id}/phone", h.updatePhone)
 	r.Post("/{id}/deactivate", h.deactivate)
 	r.Post("/{id}/activate", h.activate)
 	r.Post("/{id}/reset-password", h.resetPassword)
@@ -75,6 +76,7 @@ func (h *UserHandlers) list(w http.ResponseWriter, r *http.Request) {
 type createUserRequest struct {
 	Email  string    `json:"email"`
 	Name   string    `json:"name"`
+	Phone  string    `json:"phone"`
 	RoleID uuid.UUID `json:"roleId"`
 }
 
@@ -99,7 +101,7 @@ func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, req.Email, req.Name, req.RoleID)
+	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, req.Email, req.Name, req.Phone, req.RoleID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -126,6 +128,34 @@ func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.UpdateAccess(r.Context(), tenantID, id, req.RoleID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type updatePhoneRequest struct {
+	Phone string `json:"phone"`
+}
+
+// updatePhone is the admin "edit an existing user's phone" action -- see
+// UserService.UpdatePhone's doc comment for why this is separate from
+// updateAccess (phone isn't identity-sourced the way role/name/email are).
+func (h *UserHandlers) updatePhone(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := middleware.TenantID(r.Context())
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	var req updatePhoneRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.UpdatePhone(r.Context(), tenantID, id, req.Phone); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -66,14 +66,19 @@ func (h *AccountHandlers) changePassword(w http.ResponseWriter, r *http.Request)
 }
 
 type updateProfileRequest struct {
-	Name            string `json:"name"`
-	Email           string `json:"email"`
-	CurrentPassword string `json:"currentPassword"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	// Phone is a pointer so a request that omits the field entirely (e.g. a
+	// client that only knows about name/email) leaves the stored phone
+	// number untouched, rather than silently clearing it -- see
+	// AuthService.UpdateProfile. An explicit "phone": "" clears it.
+	Phone           *string `json:"phone"`
+	CurrentPassword string  `json:"currentPassword"`
 }
 
-// updateProfile lets the caller change their own name/email -- see
+// updateProfile lets the caller change their own name/email/phone -- see
 // AuthService.UpdateProfile for the local-only guard and the
-// email-change-requires-password rule.
+// email-change-requires-password rule (phone carries no such guard).
 func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := middleware.TenantID(r.Context())
 	userID, _ := middleware.UserID(r.Context())
@@ -84,7 +89,7 @@ func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	user, err := h.auth.UpdateProfile(r.Context(), tenantID, userID, req.Name, req.Email, req.CurrentPassword)
+	user, err := h.auth.UpdateProfile(r.Context(), tenantID, userID, req.Name, req.Email, req.Phone, req.CurrentPassword)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

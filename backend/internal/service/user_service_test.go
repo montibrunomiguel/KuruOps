@@ -21,22 +21,23 @@ func TestUserService_CreateLocal(t *testing.T) {
 	roleID := testutil.NewRole(t, tenantID, false, []string{"alerts"})
 
 	t.Run("rejects a missing email", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "", "Someone", roleID)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "", "Someone", "", roleID)
 		assert.ErrorContains(t, err, "email is required")
 	})
 
 	t.Run("rejects a missing name", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "someone@test.local", "  ", roleID)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "someone@test.local", "  ", "", roleID)
 		assert.ErrorContains(t, err, "name is required")
 	})
 
 	t.Run("creates a local user with a temp password that verifies against the stored hash", func(t *testing.T) {
-		user, tempPassword, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "New Hire", roleID)
+		user, tempPassword, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "New Hire", "", roleID)
 		require.NoError(t, err)
 		require.NotEmpty(t, tempPassword)
 		assert.Equal(t, domain.AuthProviderLocal, user.AuthProvider)
 		assert.True(t, user.MustChangePassword)
 		assert.Equal(t, roleID, user.RoleID)
+		assert.Nil(t, user.Phone)
 
 		got, err := svc.Get(t.Context(), tenantID, user.ID)
 		require.NoError(t, err)
@@ -46,8 +47,25 @@ func TestUserService_CreateLocal(t *testing.T) {
 		assert.True(t, ok, "the returned temp password must verify against the stored hash")
 	})
 
+	t.Run("creates a local user with an optional phone number", func(t *testing.T) {
+		user, _, err := svc.CreateLocal(t.Context(), tenantID, "withphone@test.local", "Has Phone", "+15550100199", roleID)
+		require.NoError(t, err)
+		require.NotNil(t, user.Phone)
+		assert.Equal(t, "+15550100199", *user.Phone)
+
+		got, err := svc.Get(t.Context(), tenantID, user.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.Phone)
+		assert.Equal(t, "+15550100199", *got.Phone)
+	})
+
+	t.Run("rejects a phone without a country code", func(t *testing.T) {
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "badphone@test.local", "Bad Phone", "5511912345678", roleID)
+		assert.ErrorContains(t, err, "country code")
+	})
+
 	t.Run("rejects a duplicate email within the same tenant", func(t *testing.T) {
-		_, _, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "Duplicate", roleID)
+		_, _, err := svc.CreateLocal(t.Context(), tenantID, "newhire@test.local", "Duplicate", "", roleID)
 		assert.Error(t, err)
 	})
 }
@@ -76,7 +94,7 @@ func TestUserService_ResetPassword(t *testing.T) {
 	})
 
 	t.Run("resets a local user's password and forces a change on next login", func(t *testing.T) {
-		user, originalPassword, err := svc.CreateLocal(t.Context(), tenantID, "reset-me@test.local", "Reset Me", roleID)
+		user, originalPassword, err := svc.CreateLocal(t.Context(), tenantID, "reset-me@test.local", "Reset Me", "", roleID)
 		require.NoError(t, err)
 
 		tempPassword, err := svc.ResetPassword(t.Context(), tenantID, user.ID)
@@ -126,6 +144,38 @@ func TestUserService_UpdateAccess(t *testing.T) {
 	assert.Equal(t, newRoleID, list[0].RoleID)
 	assert.True(t, list[0].Role.IsAdmin)
 	assert.Equal(t, domain.ResourceAccess{"alerts", "followup"}, list[0].Role.ResourceAccess)
+}
+
+func TestUserService_UpdatePhone(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "viewer", nil)
+	svc := service.NewUserService(pool, repository.NewUserRepository())
+
+	t.Run("sets a valid phone", func(t *testing.T) {
+		require.NoError(t, svc.UpdatePhone(t.Context(), tenantID, userID, "+5511912345678"))
+		got, err := svc.Get(t.Context(), tenantID, userID)
+		require.NoError(t, err)
+		require.NotNil(t, got.Phone)
+		assert.Equal(t, "+5511912345678", *got.Phone)
+	})
+
+	t.Run("rejects a phone without a country code", func(t *testing.T) {
+		err := svc.UpdatePhone(t.Context(), tenantID, userID, "5511912345678")
+		assert.ErrorContains(t, err, "country code")
+
+		got, err := svc.Get(t.Context(), tenantID, userID)
+		require.NoError(t, err)
+		require.NotNil(t, got.Phone, "the previously-set phone must survive the rejected update")
+		assert.Equal(t, "+5511912345678", *got.Phone)
+	})
+
+	t.Run("clears the phone with an empty string", func(t *testing.T) {
+		require.NoError(t, svc.UpdatePhone(t.Context(), tenantID, userID, ""))
+		got, err := svc.Get(t.Context(), tenantID, userID)
+		require.NoError(t, err)
+		assert.Nil(t, got.Phone)
+	})
 }
 
 func TestUserService_SetActive(t *testing.T) {
