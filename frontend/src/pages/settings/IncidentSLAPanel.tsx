@@ -21,7 +21,7 @@ function cellKey(severity: Severity, priority: IncidentPriority) {
 export function IncidentSLAPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data, loading, error, reload } = useList<IncidentSLAPolicy>((tok) =>
+  const { data, loading, error, reload } = useList<IncidentSLAPolicy>(["incident-sla"], (tok) =>
     api.get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", tok),
   );
   const policies = data ?? [];

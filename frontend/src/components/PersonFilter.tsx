@@ -17,7 +17,7 @@ export function PersonFilter({
   allLabel: string;
   ariaLabel?: string;
 }) {
-  const { data: directory } = useList<UserSummary>((tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
+  const { data: directory } = useList<UserSummary>(["users-directory"], (tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
   return (
     <select className="select" aria-label={ariaLabel} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{allLabel}</option>

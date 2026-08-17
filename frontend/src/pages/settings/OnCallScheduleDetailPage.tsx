@@ -29,15 +29,15 @@ export function OnCallScheduleDetailPage() {
     error,
     reload,
   } = useList<OnCallSchedule>(
+    ["on-call-schedule-detail", id],
     async (tk) => {
       if (isNew || !id) return [];
       return [await api.get<OnCallSchedule>(`/api/v1/settings/on-call-schedules/${id}`, tk)];
     },
-    [id],
   );
   const schedule = loaded?.[0] ?? null;
 
-  const { data: directory } = useList<UserSummary>((tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
+  const { data: directory } = useList<UserSummary>(["users-directory"], (tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
 
   if (!isNew && loading) {
     return (

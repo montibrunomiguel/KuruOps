@@ -10,7 +10,7 @@ export function PlaybooksListPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
 
-  const { data: playbooks, loading, error } = useList<Playbook>((tk) =>
+  const { data: playbooks, loading, error } = useList<Playbook>(["playbooks"], (tk) =>
     api.get<Playbook[]>("/api/v1/playbooks", tk),
   );
 

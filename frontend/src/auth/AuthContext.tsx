@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError, setRefreshHandler } from "../api/client";
 import type { LoginResponse } from "../types/api";
 
@@ -80,6 +81,10 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(loadStoredSession);
+  // Owned by AuthProvider (rather than at main.tsx's top level) so that the
+  // ~30 test files that already do render(<AuthProvider><Component/></AuthProvider>)
+  // get a working query client for free, with no test-file changes needed.
+  const [queryClient] = useState(() => new QueryClient());
   // refreshAccessToken (below) is registered once with api/client.ts as a
   // module-level callback -- it can't close over `state` directly (it would
   // capture whatever refreshToken existed at registration time), so it
@@ -185,7 +190,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [state, loginLocal, applyNewToken, updateProfile, logout],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

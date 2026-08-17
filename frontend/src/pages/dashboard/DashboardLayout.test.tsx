@@ -228,7 +228,11 @@ describe("AlertsTabPanel", () => {
     );
 
     renderDashboard("/dashboard/alerts");
-    await waitFor(() => expect(screen.getByText("Alerts by Analyst")).toBeInTheDocument());
+    // "Alerts by Analyst" is a static heading rendered before the stats
+    // fetch resolves -- wait for the breakdown's own (data-dependent)
+    // content instead, since the heading being present doesn't mean the
+    // fetch has settled yet.
+    await screen.findByText("Marina Alves");
     const panel = within(screen.getByText("Alerts by Analyst").closest(".panel") as HTMLElement);
     expect(panel.getByText("Marina Alves")).toBeInTheDocument();
     expect(panel.getByText("Unassigned")).toBeInTheDocument();
@@ -417,7 +421,11 @@ describe("IncidentsTabPanel", () => {
     );
 
     renderDashboard("/dashboard/incidents");
-    await waitFor(() => expect(screen.getByText("Incidents by Commander")).toBeInTheDocument());
+    // "Incidents by Commander" is a static heading rendered before the
+    // stats fetch resolves -- wait for the breakdown's own (data-dependent)
+    // content instead, since the heading being present doesn't mean the
+    // fetch has settled yet.
+    await screen.findByText("Diego Costa");
     const panel = within(screen.getByText("Incidents by Commander").closest(".panel") as HTMLElement);
     expect(panel.getByText("Diego Costa")).toBeInTheDocument();
     expect(panel.getByText("No commander")).toBeInTheDocument();
@@ -598,8 +606,11 @@ describe("IncidentsTabPanel", () => {
     );
 
     renderDashboard("/dashboard/incidents");
-    expect(await screen.findByText("SLA Breached")).toBeInTheDocument();
-    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+    // "SLA Breached" is a static label rendered before the stats fetch
+    // resolves -- wait for the data-dependent copy instead, since the label
+    // being present doesn't mean the fetch has settled yet.
+    expect(await screen.findByText("Needs attention")).toBeInTheDocument();
+    expect(screen.getByText("SLA Breached")).toBeInTheDocument();
   });
 
   it("renders the recent incidents table with joined assignee names, and a dash when unassigned", async () => {

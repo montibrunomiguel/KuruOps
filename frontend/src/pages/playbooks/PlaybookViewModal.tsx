@@ -17,8 +17,8 @@ export function PlaybookViewModal({ playbookId, alertId, onClose }: { playbookId
   const { t } = useTranslation();
   const { token } = useAuth();
   const { data: playbook, loading, error: loadError } = useObject<Playbook>(
+    ["playbook-view", playbookId],
     (tok) => api.get<Playbook>(`/api/v1/playbooks/${playbookId}`, tok),
-    [playbookId],
   );
   const [triggeringStepId, setTriggeringStepId] = useState<string | null>(null);
   const [triggerResults, setTriggerResults] = useState<Record<string, { success: boolean; message: string }>>({});

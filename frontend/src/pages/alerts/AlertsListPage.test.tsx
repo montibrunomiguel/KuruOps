@@ -289,9 +289,16 @@ describe("AlertsListPage", () => {
         start(controller) {
           // An "incident" event should be ignored (no reload) -- only "alert"
           // events reload this page's list -- while the following "alert"
-          // event should trigger exactly one reload.
-          controller.enqueue(encoder.encode('event: incident\ndata: {"id":"i1"}\n\nevent: alert\ndata: {"id":"a1"}\n\n'));
-          controller.close();
+          // event should trigger exactly one reload. Deferred a macrotask so
+          // the frame lands after the initial /api/v1/alerts GET has already
+          // resolved -- react-query dedupes a reload() that lands while the
+          // initial fetch is still in flight (no second request needed, it
+          // just rides the existing one), same as a real SSE frame arriving
+          // after the page has already loaded.
+          setTimeout(() => {
+            controller.enqueue(encoder.encode('event: incident\ndata: {"id":"i1"}\n\nevent: alert\ndata: {"id":"a1"}\n\n'));
+            controller.close();
+          }, 0);
         },
       }),
       { status: 200 },

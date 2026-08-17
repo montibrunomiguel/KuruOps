@@ -397,7 +397,13 @@ describe("AlertDetailPage", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderDetail();
 
-    await userEvent.selectOptions(await screen.findByLabelText("Assigned Analyst"), "u1");
+    await screen.findByLabelText("Assigned Analyst");
+    // The directory (a separate fetch from the alert itself) may still be
+    // in flight when the select first mounts -- wait for its option before
+    // interacting with it, rather than assuming both fetches resolved
+    // together.
+    await waitFor(() => expect(screen.getByRole("option", { name: "Marina Alves" })).toBeInTheDocument());
+    await userEvent.selectOptions(screen.getByLabelText("Assigned Analyst"), "u1");
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(

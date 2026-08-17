@@ -223,8 +223,15 @@ describe("IncidentsListPage", () => {
     const streamResponse = new Response(
       new ReadableStream({
         start(controller) {
-          controller.enqueue(encoder.encode('event: alert\ndata: {"id":"a1"}\n\nevent: incident\ndata: {"id":"i1"}\n\n'));
-          controller.close();
+          // Deferred a macrotask so the frame lands after the initial
+          // /api/v1/incidents GET has already resolved -- react-query
+          // dedupes a reload() that lands while the initial fetch is still
+          // in flight (no second request needed, it just rides the existing
+          // one), same as a real SSE frame arriving after the page loaded.
+          setTimeout(() => {
+            controller.enqueue(encoder.encode('event: alert\ndata: {"id":"a1"}\n\nevent: incident\ndata: {"id":"i1"}\n\n'));
+            controller.close();
+          }, 0);
         },
       }),
       { status: 200 },

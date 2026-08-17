@@ -16,7 +16,7 @@ import { useConfirm } from "./useConfirm";
 // the boilerplate for the panels that fit it exactly.
 export function useAdminCrud<T>(basePath: string, listPath: string = basePath) {
   const { token } = useAuth();
-  const { data, loading, error, reload } = useList<T>((tk) => api.get<T[]>(listPath, tk));
+  const { data, loading, error, reload } = useList<T>(["admin-crud", listPath], (tk) => api.get<T[]>(listPath, tk));
   const [showCreate, setShowCreate] = useState(false);
   const { confirming, confirm, cancel } = useConfirm<string>();
   const [deletingId, setDeletingId] = useState<string | null>(null);

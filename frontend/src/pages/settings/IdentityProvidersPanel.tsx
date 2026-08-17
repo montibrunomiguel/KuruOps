@@ -18,7 +18,7 @@ export function IdentityProvidersPanel() {
 function LDAPPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<LDAPConfig | null>((tok) =>
+  const { data: existing, loading, error, reload } = useObject<LDAPConfig | null>(["identity-provider-ldap"], (tok) =>
     api.get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", tok),
   );
 
@@ -194,7 +194,7 @@ function LDAPPanel() {
 function SAMLPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<SAMLConfig | null>((tok) =>
+  const { data: existing, loading, error, reload } = useObject<SAMLConfig | null>(["identity-provider-saml"], (tok) =>
     api.get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", tok),
   );
 

@@ -16,7 +16,7 @@ export function OnCallSchedulesListPage() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const navigate = useNavigate();
-  const { data: schedules, loading, error, reload } = useList<OnCallSchedule>((tk) =>
+  const { data: schedules, loading, error, reload } = useList<OnCallSchedule>(["on-call-schedules"], (tk) =>
     api.get<OnCallSchedule[]>("/api/v1/settings/on-call-schedules", tk),
   );
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);

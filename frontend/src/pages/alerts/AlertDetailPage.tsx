@@ -30,11 +30,11 @@ export function AlertDetailPage() {
   const navigate = useNavigate();
 
   const { data: alert, loading, error, reload } = useList<Alert>(
+    ["alert", id],
     async (tk) => {
       const a = await api.get<Alert>(`/api/v1/alerts/${id}`, tk);
       return [a];
     },
-    [id],
   );
   const current = alert?.[0];
 
@@ -50,8 +50,8 @@ export function AlertDetailPage() {
   });
 
   const { data: comments, reload: reloadComments } = useList<AlertComment>(
+    ["alert-comments", id],
     (tk) => api.get<AlertComment[]>(`/api/v1/alerts/${id}/comments`, tk),
-    [id],
   );
 
   const [actionError, setActionError] = useState<string | null>(null);
