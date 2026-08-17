@@ -49,7 +49,7 @@ describe("useList", () => {
     const { result } = renderHook(() => useList(fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.error).toBe("Falha ao carregar dados");
+    expect(result.current.error).toBe("Failed to load data");
   });
 
   it("a 401 logs the session out instead of showing an error", async () => {
@@ -196,7 +196,7 @@ describe("mutationErrorMessage", () => {
   });
 
   it("falls back to a generic message for anything else", () => {
-    expect(mutationErrorMessage(new Error("boom"))).toBe("Falha ao salvar");
-    expect(mutationErrorMessage("a string")).toBe("Falha ao salvar");
+    expect(mutationErrorMessage(new Error("boom"))).toBe("Failed to save");
+    expect(mutationErrorMessage("a string")).toBe("Failed to save");
   });
 });

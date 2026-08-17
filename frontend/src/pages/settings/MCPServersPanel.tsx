@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useList, useObject, mutationErrorMessage } from "../../api/hooks";
 import type { AIToolCall, DiscoveredTool, MCPServer, MCPTransport } from "../../types/api";
 
 function parseCsv(v: string): string[] {
@@ -460,20 +460,14 @@ function DiscoverToolsPanel({
 }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [tools, setTools] = useState<DiscoveredTool[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: tools, loading, error } = useObject<DiscoveredTool[]>(
+    (tok) => api.post<DiscoveredTool[]>(`/api/v1/settings/mcp-servers/${server.id}/discover-tools`, {}, tok),
+    [server.id],
+  );
   const [allowed, setAllowed] = useState<Set<string>>(new Set(server.allowedTools));
   const [sideEffecting, setSideEffecting] = useState<Set<string>>(new Set(server.sideEffectingTools));
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    api
-      .post<DiscoveredTool[]>(`/api/v1/settings/mcp-servers/${server.id}/discover-tools`, {}, token)
-      .then(setTools)
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }, [server.id, token]);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   function toggleAllowed(name: string) {
     setAllowed((prev) => {
@@ -503,7 +497,7 @@ function DiscoverToolsPanel({
 
   async function save() {
     setSaving(true);
-    setError(null);
+    setSaveError(null);
     try {
       await api.put(
         `/api/v1/settings/mcp-servers/${server.id}`,
@@ -519,7 +513,7 @@ function DiscoverToolsPanel({
       );
       onSaved();
     } catch (err) {
-      setError(mutationErrorMessage(err));
+      setSaveError(mutationErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -528,6 +522,7 @@ function DiscoverToolsPanel({
   return (
     <div className="panel" style={{ width: "100%", marginTop: 10, background: "var(--surface-2)" }}>
       {error && <div className="error-banner">{error}</div>}
+      {saveError && <div className="error-banner">{saveError}</div>}
       {loading && <div className="empty-state">{t("settings.mcp.discover.querying")}</div>}
       {!loading && tools && tools.length === 0 && (
         <div className="empty-state">{t("settings.mcp.discover.noTools")}</div>

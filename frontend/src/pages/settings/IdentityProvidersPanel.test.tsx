@@ -98,14 +98,22 @@ describe("IdentityProvidersPanel", () => {
   });
 
   it("shows a Remove button once configured, and removing clears the form back to Configure", async () => {
+    let ldapRemoved = false;
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      if (init?.method === "DELETE") {
+        ldapRemoved = true;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
       if (url.includes("/ldap")) {
         return Promise.resolve(
-          jsonResponse({
-            host: "ldap.example.com", port: 636, useTls: true, bindDn: "cn=svc",
-            userBaseDn: "ou=people", userFilter: "(mail=%s)", groupBaseDn: "", groupAttribute: "memberOf",
-          }),
+          jsonResponse(
+            ldapRemoved
+              ? null
+              : {
+                  host: "ldap.example.com", port: 636, useTls: true, bindDn: "cn=svc",
+                  userBaseDn: "ou=people", userFilter: "(mail=%s)", groupBaseDn: "", groupAttribute: "memberOf",
+                },
+          ),
         );
       }
       return Promise.resolve(

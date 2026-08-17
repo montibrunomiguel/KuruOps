@@ -1,16 +1,13 @@
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useTranslation } from "react-i18next";
 import type { IncidentTrendPoint } from "../../types/dashboard";
+import { currentLocale } from "../../lib/format";
 
 // Plain bar chart: incident volume per day -- the Dashboard Incidents tab's
 // counterpart of TrendChart, without a combined MTTR line since incident
 // MTTA/MTTR are already shown tenant-wide as a KPI card, not per-day.
 export function IncidentTrendChart({ points }: { points: IncidentTrendPoint[] }) {
-  const { i18n } = useTranslation();
-  const locale = i18n.language === "en" ? "en-US" : "pt-BR";
-
   const data = points.map((p) => ({
-    day: new Date(p.day + "T00:00:00").toLocaleDateString(locale, { day: "2-digit", month: "2-digit" }),
+    day: new Date(p.day + "T00:00:00").toLocaleDateString(currentLocale(), { day: "2-digit", month: "2-digit" }),
     incidentCount: p.incidentCount,
   }));
 

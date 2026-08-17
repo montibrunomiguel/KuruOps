@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
 import type { SMTPConfig } from "../../types/api";
 
 // Settings -> SMTP: lets an admin point outbound transactional email
@@ -13,9 +13,9 @@ import type { SMTPConfig } from "../../types/api";
 export function SMTPConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<SMTPConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<SMTPConfig | null>((tok) =>
+    api.get<SMTPConfig | null>("/api/v1/settings/smtp", tok),
+  );
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState("587");
@@ -37,26 +37,16 @@ export function SMTPConfigPanel() {
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  function load() {
-    setLoading(true);
-    api
-      .get<SMTPConfig | null>("/api/v1/settings/smtp", token)
-      .then((cfg) => {
-        setExisting(cfg);
-        if (cfg) {
-          setHost(cfg.host);
-          setPort(String(cfg.port));
-          setUseTls(cfg.useTls);
-          setUsername(cfg.username);
-          setFromAddress(cfg.fromAddress);
-          setFromName(cfg.fromName ?? "");
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(load, [token]);
+  useEffect(() => {
+    if (existing) {
+      setHost(existing.host);
+      setPort(String(existing.port));
+      setUseTls(existing.useTls);
+      setUsername(existing.username);
+      setFromAddress(existing.fromAddress);
+      setFromName(existing.fromName ?? "");
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -71,7 +61,7 @@ export function SMTPConfigPanel() {
       );
       setPassword("");
       setSaved(true);
-      load();
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -84,13 +74,13 @@ export function SMTPConfigPanel() {
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/smtp", token);
-      setExisting(null);
       setHost("");
       setPort("587");
       setUseTls(true);
       setUsername("");
       setFromAddress("");
       setFromName("");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {

@@ -4,7 +4,7 @@ import i18n from "../i18n";
 // 47 locale for Intl formatters -- i18next itself is happy with bare "en"/
 // "pt", but Intl.DateTimeFormat/RelativeTimeFormat want a region for
 // sensible defaults (date order, AM/PM, etc).
-function currentLocale(): string {
+export function currentLocale(): string {
   return i18n.language === "en" ? "en-US" : "pt-BR";
 }
 

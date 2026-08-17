@@ -65,6 +65,7 @@ export type AlertEventType =
   | "tags_changed"
   | "linked"
   | "ai_analysis_run"
+  | "assignee_changed"
   | "duplicate_suppressed"
   | "playbook_webhook_triggered";
 

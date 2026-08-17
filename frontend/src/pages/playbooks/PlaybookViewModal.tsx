@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import type { Playbook } from "../../types/playbooks";
 
@@ -16,30 +16,12 @@ import type { Playbook } from "../../types/playbooks";
 export function PlaybookViewModal({ playbookId, alertId, onClose }: { playbookId: string; alertId: string; onClose: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [playbook, setPlaybook] = useState<Playbook | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { data: playbook, loading, error: loadError } = useObject<Playbook>(
+    (tok) => api.get<Playbook>(`/api/v1/playbooks/${playbookId}`, tok),
+    [playbookId],
+  );
   const [triggeringStepId, setTriggeringStepId] = useState<string | null>(null);
   const [triggerResults, setTriggerResults] = useState<Record<string, { success: boolean; message: string }>>({});
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    api
-      .get<Playbook>(`/api/v1/playbooks/${playbookId}`, token)
-      .then((pb) => {
-        if (!cancelled) setPlaybook(pb);
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(mutationErrorMessage(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [playbookId, token]);
 
   async function trigger(stepId: string) {
     setTriggeringStepId(stepId);

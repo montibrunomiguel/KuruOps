@@ -1,11 +1,14 @@
 package domain_test
 
 import (
+	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/argusops/argusops/internal/domain"
 )
@@ -164,4 +167,46 @@ func TestResolveOnCallSet_OverrideWinsEvenDuringAGap(t *testing.T) {
 
 	got := domain.ResolveOnCallSet([]domain.OnCallParticipant{alice}, handover, 7, 1, domain.OnCallWorkingHoursSpecificTimes, businessHours, &override, outsideHours)
 	assert.Equal(t, []string{"Carol"}, names(got))
+}
+
+type onCallRotationFixture struct {
+	Name             string                              `json:"name"`
+	Participants     []domain.OnCallParticipant          `json:"participants"`
+	HandoverAt       time.Time                           `json:"handoverAt"`
+	PeriodDays       int                                 `json:"periodDays"`
+	ConcurrentShifts int                                 `json:"concurrentShifts"`
+	WorkingHoursMode domain.OnCallWorkingHoursMode       `json:"workingHoursMode"`
+	WorkingHours     []domain.OnCallWorkingHoursInterval `json:"workingHours"`
+	Override         *domain.OnCallParticipant           `json:"override"`
+	LocalNow         time.Time                           `json:"localNow"`
+	ExpectedUserIDs  []string                            `json:"expectedUserIds"`
+}
+
+// TestResolveOnCallSet_CrossLanguageFixtures reads
+// docs/oncall-rotation-fixtures.json -- the same file
+// frontend/src/lib/onCallRotation.test.ts reads -- so a handful of concrete
+// cases are asserted identical against both the Go original and its
+// hand-maintained TS port, cheap insurance against silent drift between
+// the two.
+func TestResolveOnCallSet_CrossLanguageFixtures(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/oncall-rotation-fixtures.json")
+	require.NoError(t, err)
+
+	var fixtures []onCallRotationFixture
+	require.NoError(t, json.Unmarshal(raw, &fixtures))
+	require.NotEmpty(t, fixtures)
+
+	for _, f := range fixtures {
+		t.Run(f.Name, func(t *testing.T) {
+			got := domain.ResolveOnCallSet(
+				f.Participants, f.HandoverAt, f.PeriodDays, f.ConcurrentShifts,
+				f.WorkingHoursMode, f.WorkingHours, f.Override, f.LocalNow,
+			)
+			gotIDs := make([]string, len(got))
+			for i, p := range got {
+				gotIDs[i] = p.UserID.String()
+			}
+			assert.Equal(t, f.ExpectedUserIDs, gotIDs)
+		})
+	}
 }

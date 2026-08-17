@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useList } from "../../api/hooks";
 import type { IncidentSLAPolicy, IncidentPriority } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
 import { PRIORITY_ORDER } from "../../lib/chartColors";
@@ -21,30 +21,23 @@ function cellKey(severity: Severity, priority: IncidentPriority) {
 export function IncidentSLAPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [policies, setPolicies] = useState<IncidentSLAPolicy[]>([]);
+  const { data, loading, error, reload } = useList<IncidentSLAPolicy>((tok) =>
+    api.get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", tok),
+  );
+  const policies = data ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  function load() {
-    setLoading(true);
-    api
-      .get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", token)
-      .then((list) => {
-        setPolicies(list);
-        const next: Record<string, string> = {};
-        for (const p of list) {
-          next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
-        }
-        setValues(next);
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(load, [token]);
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const p of policies) {
+      next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
+    }
+    setValues(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   function original(key: string): string {
     const p = policies.find((p) => cellKey(p.severity, p.priority) === key);
@@ -60,7 +53,7 @@ export function IncidentSLAPanel() {
 
   async function handleSave() {
     setSaving(true);
-    setError(null);
+    setSaveError(null);
     setSaved(false);
     try {
       for (const key of dirtyKeys) {
@@ -76,9 +69,9 @@ export function IncidentSLAPanel() {
         await api.put("/api/v1/settings/incident-sla", { severity, priority, dueWithinMinutes: Number(value) }, token);
       }
       setSaved(true);
-      load();
+      reload();
     } catch (err) {
-      setError(mutationErrorMessage(err));
+      setSaveError(mutationErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -96,6 +89,7 @@ export function IncidentSLAPanel() {
       </p>
 
       {error && <div className="error-banner">{error}</div>}
+      {saveError && <div className="error-banner">{saveError}</div>}
       {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.incidentSla.saved")}</div>}
 
       <SeverityPriorityGrid

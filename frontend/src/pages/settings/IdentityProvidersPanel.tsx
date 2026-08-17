@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
 import type { LDAPConfig, SAMLConfig } from "../../types/api";
 
 export function IdentityProvidersPanel() {
@@ -17,9 +17,9 @@ export function IdentityProvidersPanel() {
 function LDAPPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<LDAPConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<LDAPConfig | null>((tok) =>
+    api.get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", tok),
+  );
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState(636);
@@ -39,24 +39,17 @@ function LDAPPanel() {
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
-    api
-      .get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", token)
-      .then((cfg) => {
-        if (cfg) {
-          setExisting(cfg);
-          setHost(cfg.host);
-          setPort(cfg.port);
-          setUseTls(cfg.useTls);
-          setBindDn(cfg.bindDn);
-          setUserBaseDn(cfg.userBaseDn);
-          setUserFilter(cfg.userFilter);
-          setGroupBaseDn(cfg.groupBaseDn);
-          setGroupAttribute(cfg.groupAttribute);
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }, [token]);
+    if (existing) {
+      setHost(existing.host);
+      setPort(existing.port);
+      setUseTls(existing.useTls);
+      setBindDn(existing.bindDn);
+      setUserBaseDn(existing.userBaseDn);
+      setUserFilter(existing.userFilter);
+      setGroupBaseDn(existing.groupBaseDn);
+      setGroupAttribute(existing.groupAttribute);
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,7 +77,6 @@ function LDAPPanel() {
     setSaveError(null);
     try {
       await api.del("/api/v1/settings/identity-providers/ldap", token);
-      setExisting(null);
       setHost("");
       setPort(636);
       setUseTls(true);
@@ -94,6 +86,7 @@ function LDAPPanel() {
       setUserFilter("(mail=%s)");
       setGroupBaseDn("");
       setGroupAttribute("memberOf");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -200,9 +193,9 @@ function LDAPPanel() {
 function SAMLPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<SAMLConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<SAMLConfig | null>((tok) =>
+    api.get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", tok),
+  );
 
   const [metadataMode, setMetadataMode] = useState<"url" | "xml">("url");
   const [idpMetadataUrl, setIdpMetadataUrl] = useState("");
@@ -219,26 +212,19 @@ function SAMLPanel() {
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   useEffect(() => {
-    api
-      .get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", token)
-      .then((cfg) => {
-        if (cfg) {
-          setExisting(cfg);
-          if (cfg.idpMetadataUrl) {
-            setMetadataMode("url");
-            setIdpMetadataUrl(cfg.idpMetadataUrl);
-          } else if (cfg.idpMetadataXml) {
-            setMetadataMode("xml");
-            setIdpMetadataXml(cfg.idpMetadataXml);
-          }
-          setSpEntityId(cfg.spEntityId);
-          setAcsUrl(cfg.acsUrl);
-          if (cfg.groupAttribute) setGroupAttribute(cfg.groupAttribute);
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }, [token]);
+    if (existing) {
+      if (existing.idpMetadataUrl) {
+        setMetadataMode("url");
+        setIdpMetadataUrl(existing.idpMetadataUrl);
+      } else if (existing.idpMetadataXml) {
+        setMetadataMode("xml");
+        setIdpMetadataXml(existing.idpMetadataXml);
+      }
+      setSpEntityId(existing.spEntityId);
+      setAcsUrl(existing.acsUrl);
+      if (existing.groupAttribute) setGroupAttribute(existing.groupAttribute);
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -271,13 +257,13 @@ function SAMLPanel() {
     setSaveError(null);
     try {
       await api.del("/api/v1/settings/identity-providers/saml", token);
-      setExisting(null);
       setMetadataMode("url");
       setIdpMetadataUrl("");
       setIdpMetadataXml("");
       setSpEntityId(`${window.location.origin}/auth/saml`);
       setAcsUrl(`${window.location.origin}/auth/saml/acs`);
       setGroupAttribute("groups");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
