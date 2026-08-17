@@ -393,7 +393,10 @@ describe("IncidentDetailPage", () => {
 
     await screen.findByText("Team Roles");
     expect(screen.getByText("Incident Commander")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Marina Alves")).toBeInTheDocument();
+    // The directory (a separate fetch from the incident itself) may still be
+    // in flight when "Team Roles" first renders -- wait for it rather than
+    // assuming both fetches resolved together.
+    expect(await screen.findByDisplayValue("Marina Alves")).toBeInTheDocument();
 
     const handlerPanel = within(screen.getByText("Incident Handler(s)").closest("div") as HTMLElement);
     expect(handlerPanel.getByText("Diego Costa")).toBeInTheDocument();
@@ -412,6 +415,9 @@ describe("IncidentDetailPage", () => {
 
     await screen.findByText("Team Roles");
     const commanderSelect = screen.getByLabelText("Incident Commander");
+    // Wait for the directory-populated option before selecting it -- it's a
+    // separate fetch from the incident itself and may still be in flight.
+    await waitFor(() => expect(within(commanderSelect).getByText("Marina Alves")).toBeInTheDocument());
     await userEvent.selectOptions(commanderSelect, "Marina Alves");
 
     await waitFor(() =>
@@ -435,6 +441,9 @@ describe("IncidentDetailPage", () => {
 
     await screen.findByText("Team Roles");
     const privacyPanel = within(screen.getByText("Privacy Officer").closest("div") as HTMLElement);
+    // Wait for the directory-populated option before selecting it -- it's a
+    // separate fetch from the incident itself and may still be in flight.
+    await waitFor(() => expect(privacyPanel.getByText("Marina Alves")).toBeInTheDocument());
     await userEvent.selectOptions(privacyPanel.getByDisplayValue("+ Add assignee..."), "Marina Alves");
 
     await waitFor(() =>

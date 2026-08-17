@@ -18,7 +18,7 @@ export function TagPicker({
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const { data: catalog } = useList<Tag>((tk) => api.get<Tag[]>("/api/v1/tags", tk));
+  const { data: catalog } = useList<Tag>(["tags"], (tk) => api.get<Tag[]>("/api/v1/tags", tk));
   const available = (catalog ?? []).filter((tag) => !value.includes(tag.name));
 
   function remove(name: string) {

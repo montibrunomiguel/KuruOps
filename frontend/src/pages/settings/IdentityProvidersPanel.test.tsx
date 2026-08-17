@@ -60,7 +60,10 @@ describe("IdentityProvidersPanel", () => {
     );
     renderPanel();
 
-    expect(await screen.findAllByRole("button", { name: "Update" })).toHaveLength(2);
+    // LDAP and SAML fetch independently and may resolve in separate React
+    // commits -- wait for both "Update" buttons to be present (not just the
+    // first) rather than assuming they land in the same render.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Update" })).toHaveLength(2));
     expect(screen.getAllByText("configured")).toHaveLength(2);
     expect(screen.getByLabelText(/Bind password/)).not.toBeRequired();
   });
@@ -126,7 +129,10 @@ describe("IdentityProvidersPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
 
-    expect(await screen.findAllByRole("button", { name: "Remove configuration" })).toHaveLength(2);
+    // LDAP and SAML fetch independently and may resolve in separate React
+    // commits -- wait for both "Remove configuration" buttons rather than
+    // assuming they land in the same render.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Remove configuration" })).toHaveLength(2));
 
     const [ldapRemove] = screen.getAllByRole("button", { name: "Remove configuration" });
     await userEvent.click(ldapRemove);
@@ -174,6 +180,9 @@ describe("IdentityProvidersPanel", () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ error: "internal error" }, 500))));
     renderPanel();
 
-    expect(await screen.findAllByText("internal error")).toHaveLength(2);
+    // LDAP and SAML fetch independently and may resolve in separate React
+    // commits -- wait for both error banners rather than assuming they land
+    // in the same render.
+    await waitFor(() => expect(screen.getAllByText("internal error")).toHaveLength(2));
   });
 });

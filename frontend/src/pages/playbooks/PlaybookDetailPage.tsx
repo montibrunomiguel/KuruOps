@@ -47,11 +47,11 @@ export function PlaybookDetailPage() {
   const navigate = useNavigate();
 
   const { data: pbData, loading, error } = useList<Playbook>(
+    ["playbook-detail", id],
     async (t) => {
       if (isNew || !id) return [];
       return [await api.get<Playbook>(`/api/v1/playbooks/${id}`, t)];
     },
-    [id],
   );
   const playbook = pbData?.[0];
 

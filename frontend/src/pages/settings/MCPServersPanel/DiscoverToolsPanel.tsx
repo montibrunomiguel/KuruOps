@@ -17,8 +17,8 @@ export function DiscoverToolsPanel({
   const { t } = useTranslation();
   const { token } = useAuth();
   const { data: tools, loading, error } = useObject<DiscoveredTool[]>(
+    ["mcp-discover-tools", server.id],
     (tok) => api.post<DiscoveredTool[]>(`/api/v1/settings/mcp-servers/${server.id}/discover-tools`, {}, tok),
-    [server.id],
   );
   const [allowed, setAllowed] = useState<Set<string>>(new Set(server.allowedTools));
   const [sideEffecting, setSideEffecting] = useState<Set<string>>(new Set(server.sideEffectingTools));

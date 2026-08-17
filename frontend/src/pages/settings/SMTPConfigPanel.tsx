@@ -14,7 +14,7 @@ import { useConfirm } from "../../hooks/useConfirm";
 export function SMTPConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<SMTPConfig | null>((tok) =>
+  const { data: existing, loading, error, reload } = useObject<SMTPConfig | null>(["smtp-config"], (tok) =>
     api.get<SMTPConfig | null>("/api/v1/settings/smtp", tok),
   );
 

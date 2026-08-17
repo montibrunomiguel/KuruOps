@@ -45,6 +45,7 @@ export function IncidentsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Incident>(
+    ["incidents", severity, priority, phase, sla, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
@@ -57,7 +58,6 @@ export function IncidentsListPage() {
       params.set("offset", String(offset));
       return api.getPaged<Incident>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity, priority, phase, sla, range.since, range.until],
   );
 
   // Live updates: another analyst (or the same one, in another tab)

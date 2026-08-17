@@ -230,6 +230,7 @@ function PasswordSection() {
 function APITokensSection() {
   const { t } = useTranslation();
   const { data: tokens, loading, error, reload } = useList<UserAPIToken>(
+    ["api-tokens"],
     (tk) => api.get<UserAPIToken[]>("/api/v1/account/api-tokens", tk),
   );
 

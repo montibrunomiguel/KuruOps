@@ -21,10 +21,10 @@ const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informatio
 // alert to escalate.
 export function EscalationPoliciesPanel() {
   const { t } = useTranslation();
-  const { data: policies, loading, error, reload } = useList<EscalationPolicy>((tk) =>
+  const { data: policies, loading, error, reload } = useList<EscalationPolicy>(["escalation-policies"], (tk) =>
     api.get<EscalationPolicy[]>("/api/v1/settings/escalation-policies", tk),
   );
-  const { data: schedules } = useList<OnCallSchedule>((tk) => api.get<OnCallSchedule[]>("/api/v1/settings/on-call-schedules", tk));
+  const { data: schedules } = useList<OnCallSchedule>(["on-call-schedules"], (tk) => api.get<OnCallSchedule[]>("/api/v1/settings/on-call-schedules", tk));
   const [editingSeverity, setEditingSeverity] = useState<Severity | null>(null);
 
   return (

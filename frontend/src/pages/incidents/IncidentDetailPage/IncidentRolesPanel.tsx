@@ -17,7 +17,7 @@ import { AssigneePicker } from "../../../components/AssigneePicker";
 export function IncidentRolesPanel({ incident, onSaved }: { incident: Incident; onSaved: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: directory } = useList<UserSummary>((tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
+  const { data: directory } = useList<UserSummary>(["users-directory"], (tk) => api.get<UserSummary[]>("/api/v1/users/directory", tk));
   const [error, setError] = useState<string | null>(null);
   const [submittingRole, setSubmittingRole] = useState<IncidentRole | null>(null);
 

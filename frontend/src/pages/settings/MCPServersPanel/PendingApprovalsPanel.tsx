@@ -12,7 +12,7 @@ import { PendingApprovalRow } from "./PendingApprovalRow";
 // own server) just to resolve a friendly server name next to each call.
 export function PendingApprovalsPanel({ servers }: { servers: MCPServer[] }) {
   const { t } = useTranslation();
-  const { data: calls, loading, error, reload } = useList<AIToolCall>((tk) =>
+  const { data: calls, loading, error, reload } = useList<AIToolCall>(["mcp-pending-tool-calls"], (tk) =>
     api.get<AIToolCall[]>("/api/v1/settings/mcp-servers/tool-calls", tk),
   );
 

@@ -26,7 +26,7 @@ describe("useList", () => {
 
   it("loads data on mount and exposes it once resolved", async () => {
     const fetcher = vi.fn().mockResolvedValue([{ id: 1 }, { id: 2 }]);
-    const { result } = renderHook(() => useList(fetcher), { wrapper });
+    const { result } = renderHook(() => useList(["test-list-1"], fetcher), { wrapper });
 
     expect(result.current.loading).toBe(true);
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -37,7 +37,7 @@ describe("useList", () => {
 
   it("surfaces an ApiError's message on failure", async () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(400, "bad filter"));
-    const { result } = renderHook(() => useList(fetcher), { wrapper });
+    const { result } = renderHook(() => useList(["test-list-2"], fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("bad filter");
@@ -46,7 +46,7 @@ describe("useList", () => {
 
   it("falls back to a generic message for a non-ApiError failure", async () => {
     const fetcher = vi.fn().mockRejectedValue(new Error("network down"));
-    const { result } = renderHook(() => useList(fetcher), { wrapper });
+    const { result } = renderHook(() => useList(["test-list-3"], fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("Failed to load data");
@@ -58,7 +58,7 @@ describe("useList", () => {
 
     const { result } = renderHook(
       () => {
-        const list = useList(fetcher);
+        const list = useList(["test-list-401"], fetcher);
         const auth = useAuth();
         return { list, auth };
       },
@@ -72,7 +72,7 @@ describe("useList", () => {
 
   it("reload() re-invokes the fetcher", async () => {
     const fetcher = vi.fn().mockResolvedValue([]);
-    const { result } = renderHook(() => useList(fetcher), { wrapper });
+    const { result } = renderHook(() => useList(["test-list-reload"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe("usePagedList", () => {
   it("fetches page 1 with the default page size (20) on mount", async () => {
     withLoggedInSession();
     const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 1 });
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-1"], fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(fetcher).toHaveBeenCalledWith("tok", 20, 0);
@@ -103,7 +103,7 @@ describe("usePagedList", () => {
 
   it("totalPages is computed from total/pageSize, minimum 1", async () => {
     const fetcher = vi.fn().mockResolvedValue({ items: [], total: 45 });
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-2"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.totalPages).toBe(3); // ceil(45/20)
 
@@ -117,7 +117,7 @@ describe("usePagedList", () => {
 
   it("setPage fetches the requested page's offset", async () => {
     const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 100 });
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-3"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     fetcher.mockResolvedValueOnce({ items: [{ id: 2 }], total: 100 });
@@ -125,14 +125,17 @@ describe("usePagedList", () => {
       result.current.setPage(3);
     });
     await waitFor(() => expect(result.current.page).toBe(3));
+    // page flips synchronously on setPage(), but the new page's data is a
+    // separate async fetch -- wait for it rather than assuming it landed in
+    // the same tick as the page-number update.
+    await waitFor(() => expect(result.current.items).toEqual([{ id: 2 }]));
 
     expect(fetcher).toHaveBeenLastCalledWith(null, 20, 40);
-    expect(result.current.items).toEqual([{ id: 2 }]);
   });
 
   it("setPageSize resets to page 1 and refetches with the new limit", async () => {
     const fetcher = vi.fn().mockResolvedValue({ items: [], total: 100 });
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-4"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
@@ -151,7 +154,7 @@ describe("usePagedList", () => {
 
   it("reload() re-fetches the current page, not page 1", async () => {
     const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 100 });
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-5"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
@@ -168,9 +171,26 @@ describe("usePagedList", () => {
     expect(fetcher).toHaveBeenLastCalledWith(null, 20, 20);
   });
 
+  it("resets to page 1 when the caller's queryKey prefix changes", async () => {
+    const fetcher = vi.fn().mockResolvedValue({ items: [{ id: 1 }], total: 100 });
+    const { result, rerender } = renderHook(({ key }: { key: string }) => usePagedList([key], fetcher), {
+      wrapper,
+      initialProps: { key: "filter-a" },
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.setPage(3);
+    });
+    await waitFor(() => expect(result.current.page).toBe(3));
+
+    rerender({ key: "filter-b" });
+    await waitFor(() => expect(result.current.page).toBe(1));
+  });
+
   it("a failure surfaces the ApiError message", async () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(500, "server exploded"));
-    const { result } = renderHook(() => usePagedList(fetcher), { wrapper });
+    const { result } = renderHook(() => usePagedList(["test-paged-error"], fetcher), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.error).toBe("server exploded");
   });
@@ -180,7 +200,7 @@ describe("usePagedList", () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(401, "expired"));
     const { result } = renderHook(
       () => {
-        const list = usePagedList(fetcher);
+        const list = usePagedList(["test-paged-401"], fetcher);
         const auth = useAuth();
         return { list, auth };
       },

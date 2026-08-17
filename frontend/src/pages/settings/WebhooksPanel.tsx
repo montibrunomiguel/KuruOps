@@ -10,11 +10,12 @@ import { EditWebhookModal } from "./WebhooksPanel/EditWebhookModal";
 export function WebhooksPanel() {
   const { t } = useTranslation();
   const { data: endpoints, loading, error, reload } = useList<WebhookEndpoint>(
+    ["webhooks"],
     (tk) => api.get<WebhookEndpoint[]>("/api/v1/settings/webhooks", tk),
   );
   // Fetched once here and passed down to both modals, instead of each of
   // them fetching its own copy.
-  const { data: templates } = useList<FieldMappingTemplate>((tk) =>
+  const { data: templates } = useList<FieldMappingTemplate>(["field-mapping-templates"], (tk) =>
     api.get<FieldMappingTemplate[]>("/api/v1/settings/field-mapping-templates", tk),
   );
 

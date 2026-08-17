@@ -10,7 +10,7 @@ import { GroupMappingForm } from "./GroupMappingForm";
 export function GroupMappingsPanel({ roles }: { roles: Role[] }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: mappings, loading, error, reload } = useList<AuthGroupMapping>((tk) =>
+  const { data: mappings, loading, error, reload } = useList<AuthGroupMapping>(["group-mappings"], (tk) =>
     api.get<AuthGroupMapping[]>("/api/v1/settings/users/group-mappings", tk),
   );
   const [showCreate, setShowCreate] = useState(false);

@@ -16,7 +16,7 @@ import type { StorageConfig } from "../../types/api";
 export function StorageIntegrationPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<StorageConfig | null>((tok) =>
+  const { data: existing, loading, error, reload } = useObject<StorageConfig | null>(["storage-config"], (tok) =>
     api.get<StorageConfig | null>("/api/v1/settings/storage", tok),
   );
 

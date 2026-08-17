@@ -10,8 +10,8 @@ import { LinkSearchPicker } from "../../../components/LinkSearchPicker";
 export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: linked, reload } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts/${alertId}/alerts`, tk), [alertId]);
-  const { data: candidates } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
+  const { data: linked, reload } = useList<Alert>(["alert-linked-alerts", alertId], (tk) => api.get<Alert[]>(`/api/v1/alerts/${alertId}/alerts`, tk));
+  const { data: candidates } = useList<Alert>(["alert-link-candidates"], (tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
   const [error, setError] = useState<string | null>(null);
 
   const excludeIds = new Set([alertId, ...(linked ?? []).map((l) => l.id)]);
