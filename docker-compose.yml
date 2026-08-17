@@ -195,7 +195,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: .
+      dockerfile: frontend/Dockerfile
     mem_limit: 128m
     cpus: 0.5
     ports:
