@@ -494,6 +494,34 @@ func TestAlertHandlers_Get_MissingTenantContext(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
+// TestAlertHandlers_ResolveAnalysisToolCall covers resolveAnalysisToolCall's
+// error branches (internal/httpserver/handlers/analysis_tool_calls.go),
+// shared by AlertHandlers and IncidentHandlers -- the happy-path approve/
+// reject flow is exercised elsewhere via the full AnalysisChat flow, but
+// nothing previously hit these guard clauses directly.
+func TestAlertHandlers_ResolveAnalysisToolCall(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("non-numeric call id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/analyze/tool-calls/not-a-number/approve", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("unknown call id -- 404", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/analyze/tool-calls/999999/approve", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("unknown call id -- reject also 404", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/analyze/tool-calls/999999/reject", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
 func TestAlertHandlers_Comments(t *testing.T) {
 	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
 	r := newRouter(h.Routes)

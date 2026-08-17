@@ -99,3 +99,25 @@ func TestLoad_InvalidDurationFallsBackToDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 15*time.Second, cfg.ShutdownTimeout, "an unparsable duration must fall back, not propagate as an error")
 }
+
+func TestLoad_InvalidInt32FallsBackToDefault(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("LOGIN_RATE_LIMIT_PER_MINUTE", "not-a-number")
+
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 20, cfg.LoginRateLimitPerMinute, "an unparsable int must fall back, not propagate as an error")
+}
+
+func TestLoad_RateLimitOverridesFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("LOGIN_RATE_LIMIT_PER_MINUTE", "5")
+	t.Setenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "120")
+
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 5, cfg.LoginRateLimitPerMinute)
+	assert.Equal(t, 120, cfg.WebhookRateLimitPerMinute)
+}

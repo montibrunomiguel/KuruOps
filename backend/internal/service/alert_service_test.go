@@ -3,7 +3,10 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/repository"
+	"github.com/argusops/argusops/internal/secrets"
 	"github.com/argusops/argusops/internal/service"
 	"github.com/argusops/argusops/internal/testutil"
 )
@@ -714,5 +718,94 @@ func TestAlertService_Ingest_Dedup(t *testing.T) {
 		}
 		assert.Equal(t, 1, newCount, "exactly one of the concurrent calls must have created the alert")
 		assert.Equal(t, n-1, dedupedCount, "every other concurrent call must have been suppressed, not created its own alert")
+	})
+}
+
+// TestAlertService_Escalate exercises Escalate directly at the service
+// layer -- TestAlertHandlers_Escalate (handlers package) already covers the
+// same success path end-to-end through the HTTP layer, but Go's default
+// per-package coverage only credits statements to the package whose own
+// tests call them, so Escalate/fireManualEscalationStep need a direct
+// caller here too, not just indirect exercise through a different
+// package's test binary.
+func TestAlertService_Escalate(t *testing.T) {
+	pool, alertSvc, tagSvc := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+
+	t.Run("escalation not enabled on this instance -- error", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		_, err = alertSvc.Escalate(t.Context(), tenantID, actorID, alert.ID, nil)
+		assert.ErrorContains(t, err, "escalation is not enabled")
+	})
+
+	incidentRepo := repository.NewIncidentRepository()
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	store := secrets.NewEnvStore()
+	users := repository.NewUserRepository()
+	userSvc := service.NewUserService(pool, users)
+	scheduleRepo := repository.NewOnCallScheduleRepository()
+	onCallSvc := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCallSvc, userSvc, store)
+	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "https://argusops.example")
+
+	t.Run("unknown alert id -- nil, nil", func(t *testing.T) {
+		incident, err := alertSvc.Escalate(t.Context(), tenantID, actorID, uuid.New(), nil)
+		require.NoError(t, err)
+		assert.Nil(t, incident)
+	})
+
+	t.Run("creates and links an incident, marks the alert escalated, and fires the chain's first step", func(t *testing.T) {
+		var hits int32
+		step := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(step.Close)
+
+		_, err := onCallSvc.Create(t.Context(), tenantID, domain.SaveOnCallScheduleInput{
+			Name: "Primary", HandoverAt: time.Now().Add(-24 * time.Hour),
+			PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
+		})
+		require.NoError(t, err)
+		schedules, err := onCallSvc.List(t.Context(), tenantID)
+		require.NoError(t, err)
+		require.Len(t, schedules, 1)
+		_, err = escalationPolicySvc.Save(t.Context(), tenantID, domain.SaveEscalationPolicyInput{
+			Severity: domain.SeverityHigh,
+			Steps: []domain.SaveEscalationStepInput{
+				{ScheduleID: schedules[0].ID, DelayMinutes: 15, ChannelType: domain.EscalationChannelWebhook, Destination: step.URL},
+			},
+		})
+		require.NoError(t, err)
+
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Escalate me", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		incident, err := alertSvc.Escalate(t.Context(), tenantID, actorID, alert.ID, nil)
+		require.NoError(t, err)
+		require.NotNil(t, incident)
+		assert.Equal(t, alert.Title, incident.Title)
+		assert.Equal(t, domain.PriorityP2, incident.Priority, "the fixture alert is domain.SeverityHigh")
+
+		got, err := alertSvc.Get(t.Context(), tenantID, alert.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, domain.AlertStatusEscalated, got.Status)
+
+		linked, err := incidentSvc.LinkedAlerts(t.Context(), tenantID, incident.ID)
+		require.NoError(t, err)
+		require.Len(t, linked, 1)
+		assert.Equal(t, alert.ID, linked[0].ID)
+
+		require.Eventually(t, func() bool {
+			return atomic.LoadInt32(&hits) == 1
+		}, 2*time.Second, 20*time.Millisecond, "fireManualEscalationStep must fire the chain's step exactly once, in the background")
 	})
 }
