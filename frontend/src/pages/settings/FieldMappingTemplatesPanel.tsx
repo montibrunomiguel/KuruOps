@@ -2,8 +2,8 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { useList, mutationErrorMessage } from "../../api/hooks";
-import { useConfirm } from "../../hooks/useConfirm";
+import { mutationErrorMessage } from "../../api/hooks";
+import { useAdminCrud } from "../../hooks/useAdminCrud";
 import type { FieldMappingRule, FieldMappingTemplate } from "../../types/api";
 
 // A Settings-managed catalog of JSON-path -> display-label rules (see
@@ -15,29 +15,21 @@ import type { FieldMappingRule, FieldMappingTemplate } from "../../types/api";
 // internal/ingest/field_mapping.go's applyFieldMappingTemplate).
 export function FieldMappingTemplatesPanel() {
   const { t } = useTranslation();
-  const { token } = useAuth();
-  const { data: templates, loading, error, reload } = useList<FieldMappingTemplate>((tk) =>
-    api.get<FieldMappingTemplate[]>("/api/v1/settings/field-mapping-templates", tk),
-  );
-  const [showCreate, setShowCreate] = useState(false);
+  const {
+    data: templates,
+    loading,
+    error,
+    reload,
+    showCreate,
+    setShowCreate,
+    confirming: confirmingId,
+    confirm,
+    cancel,
+    deletingId,
+    deleteError,
+    remove,
+  } = useAdminCrud<FieldMappingTemplate>("/api/v1/settings/field-mapping-templates");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const { confirming: confirmingId, confirm, cancel } = useConfirm<string>();
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  async function remove(id: string) {
-    setDeletingId(id);
-    setDeleteError(null);
-    try {
-      await api.del(`/api/v1/settings/field-mapping-templates/${id}`, token);
-      cancel();
-      reload();
-    } catch (err) {
-      setDeleteError(mutationErrorMessage(err));
-    } finally {
-      setDeletingId(null);
-    }
-  }
 
   return (
     <div className="panel">

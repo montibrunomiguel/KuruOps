@@ -6,13 +6,28 @@ import { mutationErrorMessage } from "../../../api/hooks";
 import type { MCPServer } from "../../../types/api";
 import { DiscoverToolsPanel } from "./DiscoverToolsPanel";
 
-export function ServerRow({ server, onChanged }: { server: MCPServer; onChanged: () => void }) {
+export function ServerRow({
+  server,
+  onChanged,
+  confirming,
+  deleting,
+  onConfirm,
+  onCancel,
+  onRemove,
+}: {
+  server: MCPServer;
+  onChanged: () => void;
+  confirming: boolean;
+  deleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
 
   async function toggle() {
     setBusy(true);
@@ -20,20 +35,6 @@ export function ServerRow({ server, onChanged }: { server: MCPServer; onChanged:
     try {
       const action = server.isEnabled ? "disable" : "enable";
       await api.post(`/api/v1/settings/mcp-servers/${server.id}/${action}`, {}, token);
-      onChanged();
-    } catch (err) {
-      setError(mutationErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.del(`/api/v1/settings/mcp-servers/${server.id}`, token);
-      setConfirming(false);
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -85,15 +86,15 @@ export function ServerRow({ server, onChanged }: { server: MCPServer; onChanged:
               <span className="helper-text" style={{ flexBasis: "100%" }}>
                 {t("settings.mcp.removeConfirm", { name: server.name })}
               </span>
-              <button className="btn btn-danger btn-sm" onClick={remove} disabled={busy}>
-                {busy ? t("common.saving") : t("common.confirmDelete")}
+              <button className="btn btn-danger btn-sm" onClick={onRemove} disabled={deleting}>
+                {deleting ? t("common.saving") : t("common.confirmDelete")}
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>
                 {t("common.cancel")}
               </button>
             </>
           ) : (
-            <button className="btn btn-danger btn-sm" onClick={() => setConfirming(true)} disabled={busy}>
+            <button className="btn btn-danger btn-sm" onClick={onConfirm} disabled={deleting}>
               {t("common.remove")}
             </button>
           )}

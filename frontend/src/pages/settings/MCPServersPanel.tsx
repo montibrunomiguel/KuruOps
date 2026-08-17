@@ -1,18 +1,26 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api } from "../../api/client";
-import { useList } from "../../api/hooks";
 import type { MCPServer } from "../../types/api";
+import { useAdminCrud } from "../../hooks/useAdminCrud";
 import { PendingApprovalsPanel } from "./MCPServersPanel/PendingApprovalsPanel";
 import { ServerForm } from "./MCPServersPanel/ServerForm";
 import { ServerRow } from "./MCPServersPanel/ServerRow";
 
 export function MCPServersPanel() {
   const { t } = useTranslation();
-  const { data: servers, loading, error, reload } = useList<MCPServer>((tk) =>
-    api.get<MCPServer[]>("/api/v1/settings/mcp-servers", tk),
-  );
-  const [showCreate, setShowCreate] = useState(false);
+  const {
+    data: servers,
+    loading,
+    error,
+    reload,
+    showCreate,
+    setShowCreate,
+    confirming,
+    confirm,
+    cancel,
+    deletingId,
+    deleteError,
+    remove,
+  } = useAdminCrud<MCPServer>("/api/v1/settings/mcp-servers");
 
   return (
     <>
@@ -32,6 +40,7 @@ export function MCPServersPanel() {
         </p>
 
         {error && <div className="error-banner">{error}</div>}
+        {deleteError && <div className="error-banner">{deleteError}</div>}
 
         {showCreate && (
           <ServerForm
@@ -47,7 +56,20 @@ export function MCPServersPanel() {
         {!loading && servers && servers.length === 0 && (
           <div className="empty-state">{t("settings.mcp.noServers")}</div>
         )}
-        {!loading && servers && servers.map((s) => <ServerRow key={s.id} server={s} onChanged={reload} />)}
+        {!loading &&
+          servers &&
+          servers.map((s) => (
+            <ServerRow
+              key={s.id}
+              server={s}
+              onChanged={reload}
+              confirming={confirming === s.id}
+              deleting={deletingId === s.id}
+              onConfirm={() => confirm(s.id)}
+              onCancel={cancel}
+              onRemove={() => remove(s.id)}
+            />
+          ))}
       </div>
     </>
   );

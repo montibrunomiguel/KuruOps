@@ -2,8 +2,8 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { useList, mutationErrorMessage } from "../../api/hooks";
-import { useConfirm } from "../../hooks/useConfirm";
+import { mutationErrorMessage } from "../../api/hooks";
+import { useAdminCrud } from "../../hooks/useAdminCrud";
 import { TagPicker } from "../../components/TagPicker";
 import type { ResourceCapability, Role } from "../../types/api";
 import { RESOURCE_CAPABILITIES } from "../../types/api";
@@ -45,10 +45,20 @@ function ResourceAccessCheckboxes({
 // user individually.
 export function RolesPanel() {
   const { t } = useTranslation();
-  const { data: roles, loading, error, reload } = useList<Role>((tk) =>
-    api.get<Role[]>("/api/v1/settings/roles", tk),
-  );
-  const [creating, setCreating] = useState(false);
+  const {
+    data: roles,
+    loading,
+    error,
+    reload,
+    showCreate: creating,
+    setShowCreate: setCreating,
+    confirming,
+    confirm,
+    cancel,
+    deletingId,
+    deleteError,
+    remove,
+  } = useAdminCrud<Role>("/api/v1/settings/roles");
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
@@ -68,6 +78,7 @@ export function RolesPanel() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {deleteError && <div className="error-banner">{deleteError}</div>}
 
       {creating && (
         <RoleForm
@@ -97,33 +108,40 @@ export function RolesPanel() {
               }}
             />
           ) : (
-            <RoleRow key={role.id} role={role} onEdit={() => setEditingId(role.id)} onChanged={reload} />
+            <RoleRow
+              key={role.id}
+              role={role}
+              onEdit={() => setEditingId(role.id)}
+              confirming={confirming === role.id}
+              deleting={deletingId === role.id}
+              onConfirm={() => confirm(role.id)}
+              onCancel={cancel}
+              onRemove={() => remove(role.id)}
+            />
           ),
         )}
     </div>
   );
 }
 
-function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; onChanged: () => void }) {
+function RoleRow({
+  role,
+  onEdit,
+  confirming,
+  deleting,
+  onConfirm,
+  onCancel,
+  onRemove,
+}: {
+  role: Role;
+  onEdit: () => void;
+  confirming: boolean;
+  deleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
   const { t } = useTranslation();
-  const { token } = useAuth();
-  const { confirming, confirm, cancel } = useConfirm();
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function remove() {
-    setDeleting(true);
-    setError(null);
-    try {
-      await api.del(`/api/v1/settings/roles/${role.id}`, token);
-      cancel();
-      onChanged();
-    } catch (err) {
-      setError(mutationErrorMessage(err));
-    } finally {
-      setDeleting(false);
-    }
-  }
 
   return (
     <div className="row" style={{ alignItems: "flex-start", flexWrap: "wrap" }}>
@@ -138,7 +156,6 @@ function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; 
           {" · "}
           {t("settings.roles.tagsLabel")}: {role.allowedTags.length ? role.allowedTags.join(", ") : t("settings.roles.allTags")}
         </p>
-        {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
       </div>
 
       <div className="row-actions">
@@ -148,15 +165,15 @@ function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; 
         {confirming ? (
           <>
             <span className="helper-text">{t("settings.roles.removeConfirm")}</span>
-            <button className="btn btn-danger btn-sm" onClick={remove} disabled={deleting}>
+            <button className="btn btn-danger btn-sm" onClick={onRemove} disabled={deleting}>
               {deleting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={cancel} disabled={deleting}>
+            <button className="btn btn-ghost btn-sm" onClick={onCancel} disabled={deleting}>
               {t("common.cancel")}
             </button>
           </>
         ) : (
-          <button className="btn btn-danger btn-sm" onClick={() => confirm()}>
+          <button className="btn btn-danger btn-sm" onClick={onConfirm}>
             {t("common.remove")}
           </button>
         )}
