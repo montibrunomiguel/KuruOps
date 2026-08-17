@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import { WEBHOOK_PAYLOAD_PLACEHOLDERS } from "../../types/api";
 import type { IncidentPhase } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
@@ -64,7 +65,7 @@ export function PlaybookDetailPage() {
   const [steps, setSteps] = useState<StepsState>(emptySteps);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const { confirming: confirmingDelete, confirm: confirmDelete, cancel: cancelDelete } = useConfirm();
 
   function loadFromPlaybook(pb: Playbook) {
     setTitle(pb.title);
@@ -150,7 +151,7 @@ export function PlaybookDetailPage() {
       navigate("/playbooks", { replace: true });
     } catch (err) {
       setFormError(mutationErrorMessage(err));
-      setConfirmingDelete(false);
+      cancelDelete();
       setSubmitting(false);
     }
   }
@@ -203,12 +204,12 @@ export function PlaybookDetailPage() {
                   <button className="btn btn-danger btn-sm" onClick={handleDelete} disabled={submitting}>
                     {submitting ? t("common.saving") : t("common.confirmDelete")}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmingDelete(false)}>
+                  <button className="btn btn-ghost btn-sm" onClick={cancelDelete}>
                     {t("common.cancel")}
                   </button>
                 </>
               ) : (
-                <button className="btn btn-danger btn-sm" onClick={() => setConfirmingDelete(true)} disabled={submitting}>
+                <button className="btn btn-danger btn-sm" onClick={() => confirmDelete()} disabled={submitting}>
                   {t("playbooks.detail.delete")}
                 </button>
               )}

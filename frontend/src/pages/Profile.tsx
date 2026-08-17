@@ -5,7 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { useList, mutationErrorMessage } from "../api/hooks";
 import type { UserAPIToken } from "../types/api";
-import { formatDateTime } from "../lib/format";
+import { formatDateTime, validateNewPassword, expiryOptions, expiryToDays } from "../lib/format";
 
 // Self-service "my account" page -- name/email (email change requires
 // current-password confirmation, mirroring AuthService.UpdateProfile's
@@ -141,12 +141,9 @@ function PasswordSection() {
     e.preventDefault();
     setError(null);
     setSaved(false);
-    if (newPassword !== confirmPassword) {
-      setError(t("changePassword.mismatch"));
-      return;
-    }
-    if (newPassword.length < 8) {
-      setError(t("changePassword.tooShort"));
+    const validationError = validateNewPassword(newPassword, confirmPassword, t);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 
@@ -223,26 +220,6 @@ function PasswordSection() {
       </div>
     </form>
   );
-}
-
-function apiTokenExpiryOptions(t: (k: string) => string): { value: string; label: string }[] {
-  return [
-    { value: "30", label: t("settings.webhooks.expiry.30") },
-    { value: "90", label: t("settings.webhooks.expiry.90") },
-    { value: "180", label: t("settings.webhooks.expiry.180") },
-    { value: "365", label: t("settings.webhooks.expiry.365") },
-    { value: "never", label: t("settings.webhooks.expiry.never") },
-  ];
-}
-
-function apiTokenExpiryToDays(value: string): number | undefined {
-  // undefined -> let the backend apply its own default (90d); "never" -> 0,
-  // which service.resolveExpiry treats as an explicit opt-out. Reuses the
-  // webhook expiry copy (settings.webhooks.expiry.*) rather than adding a
-  // near-identical i18n block just for this second, unrelated use of the
-  // exact same "30/90/180/365/never" choice set.
-  if (value === "never") return 0;
-  return Number(value);
 }
 
 // Self-service personal API tokens -- an alternative to a JWT session for
@@ -331,7 +308,7 @@ function CreateAPITokenForm({
     try {
       const res = await api.post<{ token: UserAPIToken; plaintext: string }>(
         "/api/v1/account/api-tokens",
-        { name, expiresInDays: apiTokenExpiryToDays(expiresInDays) },
+        { name, expiresInDays: expiryToDays(expiresInDays) },
         token,
       );
       onCreated(name, res.plaintext);
@@ -342,7 +319,7 @@ function CreateAPITokenForm({
     }
   }
 
-  const options = apiTokenExpiryOptions(t);
+  const options = expiryOptions(t);
 
   return (
     <form onSubmit={handleSubmit} className="panel" style={{ marginBottom: 14 }}>

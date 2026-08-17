@@ -4,24 +4,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
 import type { FieldMappingTemplate, WebhookEndpoint } from "../../types/api";
-import { formatDateTime } from "../../lib/format";
-
-function expiryOptions(t: (k: string) => string): { value: string; label: string }[] {
-  return [
-    { value: "30", label: t("settings.webhooks.expiry.30") },
-    { value: "90", label: t("settings.webhooks.expiry.90") },
-    { value: "180", label: t("settings.webhooks.expiry.180") },
-    { value: "365", label: t("settings.webhooks.expiry.365") },
-    { value: "never", label: t("settings.webhooks.expiry.never") },
-  ];
-}
-
-function expiryToDays(value: string): number | undefined {
-  // undefined -> let the backend apply its own default (90d); "never" -> 0,
-  // which service.resolveExpiry treats as an explicit opt-out.
-  if (value === "never") return 0;
-  return Number(value);
-}
+import { formatDateTime, expiryOptions, expiryToDays } from "../../lib/format";
 
 const DEFAULT_DEDUP_WINDOW_MINUTES = "30";
 

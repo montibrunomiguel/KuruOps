@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import i18n from "../i18n";
 
 // currentLocale maps our two supported i18next language codes to a full BCP
@@ -66,4 +67,35 @@ export function initials(name?: string): string {
   const first = parts[0]?.[0] ?? "";
   const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
   return (first + last).toUpperCase();
+}
+
+// validateNewPassword is the "set a new password" check shared by
+// ChangePassword, ResetPassword, and Profile's password section --
+// duplicated three times before this. Returns a translated error message,
+// or null when the pair is valid.
+export function validateNewPassword(newPassword: string, confirmPassword: string, t: TFunction): string | null {
+  if (newPassword !== confirmPassword) return t("changePassword.mismatch");
+  if (newPassword.length < 8) return t("changePassword.tooShort");
+  return null;
+}
+
+// expiryOptions/expiryToDays back both the webhook-endpoint token expiry
+// dropdown and the personal API token expiry dropdown -- same options
+// (settings.webhooks.expiry.* copy is reused for both rather than adding a
+// near-identical second i18n block).
+export function expiryOptions(t: TFunction): { value: string; label: string }[] {
+  return [
+    { value: "30", label: t("settings.webhooks.expiry.30") },
+    { value: "90", label: t("settings.webhooks.expiry.90") },
+    { value: "180", label: t("settings.webhooks.expiry.180") },
+    { value: "365", label: t("settings.webhooks.expiry.365") },
+    { value: "never", label: t("settings.webhooks.expiry.never") },
+  ];
+}
+
+export function expiryToDays(value: string): number | undefined {
+  // undefined -> let the backend apply its own default (90d); "never" -> 0,
+  // which service.resolveExpiry treats as an explicit opt-out.
+  if (value === "never") return 0;
+  return Number(value);
 }

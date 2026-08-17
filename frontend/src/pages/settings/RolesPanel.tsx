@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import { TagPicker } from "../../components/TagPicker";
 import type { ResourceCapability, Role } from "../../types/api";
 import { RESOURCE_CAPABILITIES } from "../../types/api";
@@ -106,7 +107,7 @@ export function RolesPanel() {
 function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; onChanged: () => void }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [confirming, setConfirming] = useState(false);
+  const { confirming, confirm, cancel } = useConfirm();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,7 +116,7 @@ function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; 
     setError(null);
     try {
       await api.del(`/api/v1/settings/roles/${role.id}`, token);
-      setConfirming(false);
+      cancel();
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -150,12 +151,12 @@ function RoleRow({ role, onEdit, onChanged }: { role: Role; onEdit: () => void; 
             <button className="btn btn-danger btn-sm" onClick={remove} disabled={deleting}>
               {deleting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)} disabled={deleting}>
+            <button className="btn btn-ghost btn-sm" onClick={cancel} disabled={deleting}>
               {t("common.cancel")}
             </button>
           </>
         ) : (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirming(true)}>
+          <button className="btn btn-danger btn-sm" onClick={() => confirm()}>
             {t("common.remove")}
           </button>
         )}

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { MigrationResult, TargetDatabaseConfig } from "../../types/api";
 
 const SSL_MODES = ["disable", "require", "verify-full"];
@@ -30,7 +31,7 @@ export function DatabaseMigrationPanel() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  const [confirming, setConfirming] = useState(false);
+  const { confirming, confirm, cancel } = useConfirm();
   const [migrating, setMigrating] = useState(false);
   const [migrateError, setMigrateError] = useState<string | null>(null);
   const [result, setResult] = useState<MigrationResult | null>(null);
@@ -54,7 +55,7 @@ export function DatabaseMigrationPanel() {
   }
 
   async function handleMigrate() {
-    setConfirming(false);
+    cancel();
     setMigrating(true);
     setMigrateError(null);
     setResult(null);
@@ -130,7 +131,7 @@ export function DatabaseMigrationPanel() {
           </button>
 
           {!confirming ? (
-            <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirming(true)} disabled={formDisabled}>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => confirm()} disabled={formDisabled}>
               {t("settings.databaseMigration.migrateButton")}
             </button>
           ) : (
@@ -139,7 +140,7 @@ export function DatabaseMigrationPanel() {
               <button type="button" className="btn btn-danger btn-sm" onClick={handleMigrate} disabled={formDisabled}>
                 {migrating ? t("settings.databaseMigration.migrating") : t("common.confirm")}
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)} disabled={formDisabled}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={cancel} disabled={formDisabled}>
                 {t("common.cancel")}
               </button>
             </>

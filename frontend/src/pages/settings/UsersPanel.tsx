@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { AuthGroupMapping, CreatedUser, Role, User } from "../../types/api";
 
 // RoleSelect is the one control every user/group-mapping edit needs now --
@@ -246,7 +247,7 @@ function UserRow({
   // browser contexts, the same reason every other destructive action in
   // Settings uses this pattern. Only one of reset/revoke can be pending
   // confirmation at a time per row.
-  const [confirming, setConfirming] = useState<"reset" | "revoke" | null>(null);
+  const { confirming, confirm, cancel } = useConfirm<"reset" | "revoke">();
 
   async function save() {
     setSaving(true);
@@ -290,7 +291,7 @@ function UserRow({
   }
 
   async function resetPassword() {
-    setConfirming(null);
+    cancel();
     setResetting(true);
     setError(null);
     try {
@@ -313,7 +314,7 @@ function UserRow({
   // with still works until its own 15-minute expiry; this only stops it
   // from being renewed via POST /auth/refresh.
   async function revokeSessions() {
-    setConfirming(null);
+    cancel();
     setRevoking(true);
     setError(null);
     try {
@@ -382,7 +383,7 @@ function UserRow({
           <>
             <button
               className="btn btn-sm"
-              onClick={() => setConfirming("reset")}
+              onClick={() => confirm("reset")}
               disabled={resetting || user.authProvider !== "local"}
               title={
                 user.authProvider !== "local"
@@ -392,7 +393,7 @@ function UserRow({
             >
               {resetting ? t("settings.users.resetting") : t("settings.users.resetPassword")}
             </button>
-            <button className="btn btn-sm" onClick={() => setConfirming("revoke")} disabled={revoking}>
+            <button className="btn btn-sm" onClick={() => confirm("revoke")} disabled={revoking}>
               {revoking ? t("settings.users.revoking") : t("settings.users.revokeSessions")}
             </button>
           </>
@@ -404,7 +405,7 @@ function UserRow({
             <button className="btn btn-danger btn-sm" onClick={resetPassword} disabled={resetting}>
               {resetting ? t("common.saving") : t("common.confirm")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(null)}>
+            <button className="btn btn-ghost btn-sm" onClick={cancel}>
               {t("common.cancel")}
             </button>
           </>
@@ -416,7 +417,7 @@ function UserRow({
             <button className="btn btn-danger btn-sm" onClick={revokeSessions} disabled={revoking}>
               {revoking ? t("common.saving") : t("common.confirm")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(null)}>
+            <button className="btn btn-ghost btn-sm" onClick={cancel}>
               {t("common.cancel")}
             </button>
           </>
@@ -435,7 +436,7 @@ function GroupMappingsPanel({ roles }: { roles: Role[] }) {
     api.get<AuthGroupMapping[]>("/api/v1/settings/users/group-mappings", tk),
   );
   const [showCreate, setShowCreate] = useState(false);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const { confirming: confirmingId, confirm: confirmId, cancel: cancelId } = useConfirm<string>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -444,7 +445,7 @@ function GroupMappingsPanel({ roles }: { roles: Role[] }) {
     setDeleteError(null);
     try {
       await api.del(`/api/v1/settings/users/group-mappings/${id}`, token);
-      setConfirmingId(null);
+      cancelId();
       reload();
     } catch (err) {
       setDeleteError(mutationErrorMessage(err));
@@ -513,12 +514,12 @@ function GroupMappingsPanel({ roles }: { roles: Role[] }) {
                   >
                     {deletingId === m.id ? t("common.saving") : t("common.confirmDelete")}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmingId(null)}>
+                  <button className="btn btn-ghost btn-sm" onClick={cancelId}>
                     {t("common.cancel")}
                   </button>
                 </>
               ) : (
-                <button className="btn btn-danger btn-sm" onClick={() => setConfirmingId(m.id)}>
+                <button className="btn btn-danger btn-sm" onClick={() => confirmId(m.id)}>
                   {t("common.remove")}
                 </button>
               )}

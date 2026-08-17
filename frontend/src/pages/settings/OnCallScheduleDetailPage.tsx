@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { OnCallSchedule, OnCallWorkingHoursInterval, OnCallWorkingHoursMode, SaveOnCallScheduleRequest } from "../../types/onCallSchedule";
 import type { UserSummary } from "../../types/users";
 import { personColor } from "../../lib/personColor";
@@ -153,7 +154,7 @@ function ScheduleForm({
   const [workingHours, setWorkingHours] = useState<OnCallWorkingHoursInterval[]>(schedule?.workingHours ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const { confirming: confirmingDelete, confirm: confirmDelete, cancel: cancelDelete } = useConfirm();
 
   const participantsById = new Map(directory.map((u) => [u.id, u]));
   const availableToAdd = directory.filter((u) => !participantIds.includes(u.id));
@@ -253,7 +254,7 @@ function ScheduleForm({
       navigate("/settings/on-call-schedules", { replace: true });
     } catch (err) {
       setError(mutationErrorMessage(err));
-      setConfirmingDelete(false);
+      cancelDelete();
       setSubmitting(false);
     }
   }
@@ -496,12 +497,12 @@ function ScheduleForm({
               <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={remove}>
                 {submitting ? t("common.saving") : t("common.confirmDelete")}
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingDelete(false)}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={cancelDelete}>
                 {t("common.cancel")}
               </button>
             </>
           ) : (
-            <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={() => setConfirmingDelete(true)}>
+            <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={() => confirmDelete()}>
               {t("settings.onCallSchedule.deleteSchedule")}
             </button>
           ))}

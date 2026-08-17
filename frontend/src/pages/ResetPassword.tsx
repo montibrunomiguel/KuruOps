@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { mutationErrorMessage } from "../api/hooks";
 import { BrandMark } from "../components/BrandMark";
+import { validateNewPassword } from "../lib/format";
 
 // Public, unauthenticated page reached from the link in the reset email
 // (?token=...). POST /auth/password-reset/confirm is single-use -- see
@@ -23,12 +24,9 @@ export function ResetPasswordPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword !== confirmPassword) {
-      setError(t("changePassword.mismatch"));
-      return;
-    }
-    if (newPassword.length < 8) {
-      setError(t("changePassword.tooShort"));
+    const validationError = validateNewPassword(newPassword, confirmPassword, t);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 

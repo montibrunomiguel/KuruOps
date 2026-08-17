@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { LDAPConfig, SAMLConfig } from "../../types/api";
 
 export function IdentityProvidersPanel() {
@@ -36,7 +37,7 @@ function LDAPPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   useEffect(() => {
     if (existing) {
@@ -72,7 +73,7 @@ function LDAPPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -170,7 +171,7 @@ function LDAPPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.ldap.remove")}
           </button>
         )}
@@ -180,7 +181,7 @@ function LDAPPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>
@@ -209,7 +210,7 @@ function SAMLPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   useEffect(() => {
     if (existing) {
@@ -252,7 +253,7 @@ function SAMLPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -380,7 +381,7 @@ function SAMLPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.saml.remove")}
           </button>
         )}
@@ -390,7 +391,7 @@ function SAMLPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>

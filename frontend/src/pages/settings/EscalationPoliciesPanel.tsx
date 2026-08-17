@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import { ESCALATION_WEBHOOK_PLACEHOLDERS, type EscalationChannelType, type EscalationPolicy, type EscalationStep, type SaveEscalationStepRequest } from "../../types/api";
 import type { Severity } from "../../types/alerts";
 import type { OnCallSchedule } from "../../types/onCallSchedule";
@@ -127,7 +128,7 @@ function EscalationRow({
 }) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm, cancel } = useConfirm();
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [testingPosition, setTestingPosition] = useState<number | null>(null);
@@ -139,7 +140,7 @@ function EscalationRow({
     setRemoveError(null);
     try {
       await api.del(`/api/v1/settings/escalation-policies/${policy.id}`, token);
-      setConfirmingRemove(false);
+      cancel();
       onChanged();
     } catch (err) {
       setRemoveError(mutationErrorMessage(err));
@@ -233,12 +234,12 @@ function EscalationRow({
                 <button className="btn btn-danger btn-sm" onClick={remove} disabled={removing}>
                   {removing ? t("common.saving") : t("common.confirm")}
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)}>
+                <button className="btn btn-ghost btn-sm" onClick={cancel}>
                   {t("common.cancel")}
                 </button>
               </>
             ) : (
-              <button className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={removing}>
+              <button className="btn btn-danger btn-sm" onClick={() => confirm()} disabled={removing}>
                 {t("common.remove")}
               </button>
             ))}

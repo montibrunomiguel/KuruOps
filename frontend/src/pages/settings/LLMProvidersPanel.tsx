@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { LLMProvider, LLMProviderKind } from "../../types/api";
 
 const KIND_ORDER: LLMProviderKind[] = ["anthropic", "openai_compatible", "azure_openai", "self_hosted"];
@@ -171,7 +172,7 @@ function ProviderRow({ provider, onChanged }: { provider: LLMProvider; onChanged
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const { confirming, confirm, cancel } = useConfirm();
 
   async function setDefault() {
     setBusy(true);
@@ -191,7 +192,7 @@ function ProviderRow({ provider, onChanged }: { provider: LLMProvider; onChanged
     setError(null);
     try {
       await api.del(`/api/v1/settings/llm-providers/${provider.id}`, token);
-      setConfirming(false);
+      cancel();
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -227,12 +228,12 @@ function ProviderRow({ provider, onChanged }: { provider: LLMProvider; onChanged
             <button className="btn btn-danger btn-sm" onClick={remove} disabled={busy}>
               {busy ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+            <button className="btn btn-ghost btn-sm" onClick={cancel}>
               {t("common.cancel")}
             </button>
           </>
         ) : (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirming(true)} disabled={busy}>
+          <button className="btn btn-danger btn-sm" onClick={() => confirm()} disabled={busy}>
             {t("common.remove")}
           </button>
         )}

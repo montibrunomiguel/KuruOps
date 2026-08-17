@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { StorageConfig } from "../../types/api";
 
 // Settings -> Storage Integration: lets an admin point alert/incident
@@ -36,7 +37,7 @@ export function StorageIntegrationPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   useEffect(() => {
     if (existing) {
@@ -83,7 +84,7 @@ export function StorageIntegrationPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/storage", token);
@@ -194,7 +195,7 @@ export function StorageIntegrationPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.storage.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.storage.remove")}
           </button>
         )}
@@ -204,7 +205,7 @@ export function StorageIntegrationPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>

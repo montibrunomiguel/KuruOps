@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useList, mutationErrorMessage } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { FieldMappingRule, FieldMappingTemplate } from "../../types/api";
 
 // A Settings-managed catalog of JSON-path -> display-label rules (see
@@ -20,7 +21,7 @@ export function FieldMappingTemplatesPanel() {
   );
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const { confirming: confirmingId, confirm, cancel } = useConfirm<string>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -29,7 +30,7 @@ export function FieldMappingTemplatesPanel() {
     setDeleteError(null);
     try {
       await api.del(`/api/v1/settings/field-mapping-templates/${id}`, token);
-      setConfirmingId(null);
+      cancel();
       reload();
     } catch (err) {
       setDeleteError(mutationErrorMessage(err));
@@ -103,7 +104,7 @@ export function FieldMappingTemplatesPanel() {
                     >
                       {deletingId === tmpl.id ? t("common.saving") : t("common.confirmDelete")}
                     </button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => setConfirmingId(null)}>
+                    <button className="btn btn-ghost btn-sm" onClick={cancel}>
                       {t("common.cancel")}
                     </button>
                   </>
@@ -112,7 +113,7 @@ export function FieldMappingTemplatesPanel() {
                     <button className="btn btn-sm" onClick={() => setEditingId(tmpl.id)}>
                       {t("settings.fieldMappingTemplates.edit")}
                     </button>
-                    <button className="btn btn-danger btn-sm" onClick={() => setConfirmingId(tmpl.id)}>
+                    <button className="btn btn-danger btn-sm" onClick={() => confirm(tmpl.id)}>
                       {t("settings.fieldMappingTemplates.delete")}
                     </button>
                   </>

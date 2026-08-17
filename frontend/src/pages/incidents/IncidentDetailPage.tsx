@@ -11,6 +11,7 @@ import { NIST_PHASE_ORDER } from "../../types/incidents";
 import { SeverityBadge, PriorityBadge, AlertStatusBadge } from "../../components/badges";
 import { TagPicker } from "../../components/TagPicker";
 import { AttachmentPreview } from "../../components/AttachmentButton";
+import { AddNoteForm } from "../../components/AddNoteForm";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
@@ -19,7 +20,6 @@ import { IncidentRolesPanel } from "./IncidentDetailPage/IncidentRolesPanel";
 import { NistMatrixPanel } from "./IncidentDetailPage/NistMatrixPanel";
 import { DescriptionPanel } from "./IncidentDetailPage/DescriptionPanel";
 import { StatusHistoryPanel } from "./IncidentDetailPage/StatusHistoryPanel";
-import { AddCommentForm } from "./IncidentDetailPage/AddCommentForm";
 import { LinkAlertForm } from "./IncidentDetailPage/LinkAlertForm";
 
 export function IncidentDetailPage() {
@@ -316,7 +316,7 @@ export function IncidentDetailPage() {
                   </div>
                 </div>
               ))}
-            <AddCommentForm incidentId={incident.id} onAdded={reloadComments} />
+            <AddNoteForm kind="incident" id={incident.id} onAdded={reloadComments} />
           </div>
         </div>
 
