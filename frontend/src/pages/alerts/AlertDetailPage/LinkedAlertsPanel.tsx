@@ -5,28 +5,21 @@ import { api } from "../../../api/client";
 import { useList, mutationErrorMessage } from "../../../api/hooks";
 import type { Alert } from "../../../types/alerts";
 import { shortId } from "../../../lib/format";
+import { LinkSearchPicker } from "../../../components/LinkSearchPicker";
 
 export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const { data: linked, reload } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts/${alertId}/alerts`, tk), [alertId]);
   const { data: candidates } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
-  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const results = (Array.isArray(candidates) ? candidates : []).filter(
-    (a) =>
-      a.id !== alertId &&
-      !(linked ?? []).some((l) => l.id === a.id) &&
-      query.length > 0 &&
-      (a.id.toLowerCase().includes(query.toLowerCase()) || a.title.toLowerCase().includes(query.toLowerCase())),
-  );
+  const excludeIds = new Set([alertId, ...(linked ?? []).map((l) => l.id)]);
 
   async function link(otherId: string) {
     setError(null);
     try {
       await api.put(`/api/v1/alerts/${alertId}/alerts/${otherId}`, {}, token);
-      setQuery("");
       reload();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -62,22 +55,12 @@ export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
           ))}
         </div>
       )}
-      <input
-        className="input"
-        style={{ width: "100%" }}
+      <LinkSearchPicker
+        candidates={candidates ?? []}
+        excludeIds={excludeIds}
+        onLink={link}
         placeholder={t("alerts.detail.linkSearchPlaceholder")}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
       />
-      {results.length > 0 && (
-        <div className="search-result-list">
-          {results.map((a) => (
-            <div className="search-result-item" key={a.id} onClick={() => link(a.id)}>
-              <span className="mono">{shortId(a.id)}</span> · {a.title}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { useList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertComment } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge, ClassificationBadge } from "../../components/badges";
-import { TagPicker } from "../../components/TagPicker";
+import { AutoSaveTagPicker } from "../../components/AutoSaveTagPicker";
 import { AttachmentPreview } from "../../components/AttachmentButton";
 import { AddNoteForm } from "../../components/AddNoteForm";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
@@ -162,7 +162,7 @@ export function AlertDetailPage() {
         />
       )}
 
-      <AlertTagsRow current={current} onSaved={reload} />
+      <AutoSaveTagPicker resourcePath={`/api/v1/alerts/${current.id}/tags`} value={current.tags} onSaved={reload} />
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
@@ -266,41 +266,3 @@ export function AlertDetailPage() {
   );
 }
 
-function AlertTagsRow({ current, onSaved }: { current: Alert; onSaved: () => void }) {
-  const { token } = useAuth();
-  const { t } = useTranslation();
-  const [tags, setTags] = useState<string[]>(current.tags);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty = tags.length !== current.tags.length || tags.some((tg) => !current.tags.includes(tg));
-
-  async function save(next: string[]) {
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.put(`/api/v1/alerts/${current.id}/tags`, { tags: next }, token);
-      onSaved();
-    } catch (err) {
-      setTags(current.tags);
-      setError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <TagPicker
-        value={tags}
-        onChange={(next) => {
-          setTags(next);
-          void save(next);
-        }}
-        disabled={submitting}
-      />
-      {dirty && submitting && <span className="helper-text">{t("common.saving")}</span>}
-      {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
-    </div>
-  );
-}
