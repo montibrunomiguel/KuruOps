@@ -6,8 +6,7 @@ import { mutationErrorMessage } from "../../api/hooks";
 import type { IncidentSLAPolicy, IncidentPriority } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
 import { PRIORITY_ORDER } from "../../lib/chartColors";
-
-const MATRIX_SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informational"];
+import { SeverityPriorityGrid, SEVERITY_PRIORITY_GRID_SEVERITIES } from "../../components/SeverityPriorityGrid";
 
 function cellKey(severity: Severity, priority: IncidentPriority) {
   return `${severity}-${priority}`;
@@ -56,7 +55,7 @@ export function IncidentSLAPanel() {
     return (values[key] ?? "") !== original(key);
   }
 
-  const allKeys = MATRIX_SEVERITIES.flatMap((sev) => PRIORITY_ORDER.map((p) => cellKey(sev, p)));
+  const allKeys = SEVERITY_PRIORITY_GRID_SEVERITIES.flatMap((sev) => PRIORITY_ORDER.map((p) => cellKey(sev, p)));
   const dirtyKeys = allKeys.filter(isDirty);
 
   async function handleSave() {
@@ -99,53 +98,40 @@ export function IncidentSLAPanel() {
       {error && <div className="error-banner">{error}</div>}
       {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.incidentSla.saved")}</div>}
 
-      <div className="nist-matrix">
-        <span />
-        {PRIORITY_ORDER.map((p) => (
-          <span className="nist-matrix-header-cell" key={p}>
-            {p.toUpperCase()}
-          </span>
-        ))}
-        {MATRIX_SEVERITIES.map((sev) => (
-          <>
-            <span className="nist-matrix-row-label" key={`label-${sev}`}>
-              {t(`common.severity.${sev}`)}
-            </span>
-            {PRIORITY_ORDER.map((p) => {
-              const key = cellKey(sev, p);
-              return (
-                <div key={key} style={{ position: "relative" }}>
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    style={{ width: "100%", textAlign: "center", paddingRight: values[key] ? 28 : undefined }}
-                    placeholder={t("settings.incidentSla.unconfigured") ?? undefined}
-                    aria-label={`${t(`common.severity.${sev}`)} / ${p.toUpperCase()}`}
-                    value={values[key] ?? ""}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                  />
-                  {values[key] && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        right: 8,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        fontSize: 10,
-                        color: "var(--text-muted)",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {t("settings.incidentSla.unit")}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </>
-        ))}
-      </div>
+      <SeverityPriorityGrid
+        renderCell={(sev, p) => {
+          const key = cellKey(sev, p);
+          return (
+            <div style={{ position: "relative" }}>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                style={{ width: "100%", textAlign: "center", paddingRight: values[key] ? 28 : undefined }}
+                placeholder={t("settings.incidentSla.unconfigured") ?? undefined}
+                aria-label={`${t(`common.severity.${sev}`)} / ${p.toUpperCase()}`}
+                value={values[key] ?? ""}
+                onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+              />
+              {values[key] && (
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    fontSize: 10,
+                    color: "var(--text-muted)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  {t("settings.incidentSla.unit")}
+                </span>
+              )}
+            </div>
+          );
+        }}
+      />
 
       <div className="row-actions" style={{ marginTop: 14 }}>
         <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving || dirtyKeys.length === 0}>

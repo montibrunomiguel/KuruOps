@@ -86,6 +86,10 @@
     "openMenu": "Open menu",
     "closeMenu": "Close menu"
   },
+  "commandPalette": {
+    "placeholder": "Type a command or search...",
+    "noResults": "No matching commands"
+  },
   "login": {
     "email": "E-mail",
     "password": "Password",

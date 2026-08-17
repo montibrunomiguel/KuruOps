@@ -34,19 +34,6 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setIsOpen((prev) => !prev);
-      } else if (e.key === "Escape" && isOpen) {
-        setIsOpen(false);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen]);
-
   const filteredCommands = COMMANDS.filter((cmd) => {
     const label = t(cmd.labelKey).toLowerCase();
     return label.includes(query.toLowerCase()) || cmd.id.includes(query.toLowerCase());
@@ -57,6 +44,36 @@ export function CommandPalette() {
     setQuery("");
     navigate(path);
   }
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsOpen((prev) => !prev);
+        return;
+      }
+      if (!isOpen) return;
+      if (e.key === "Escape") {
+        setIsOpen(false);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((prev) => (filteredCommands.length === 0 ? 0 : (prev + 1) % filteredCommands.length));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((prev) =>
+          filteredCommands.length === 0 ? 0 : (prev - 1 + filteredCommands.length) % filteredCommands.length,
+        );
+      } else if (e.key === "Enter") {
+        const selected = filteredCommands[selectedIndex];
+        if (selected) {
+          e.preventDefault();
+          handleSelect(selected.path);
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, filteredCommands, selectedIndex]);
 
   if (!isOpen) return null;
 
@@ -89,7 +106,7 @@ export function CommandPalette() {
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ padding: "16px", borderBottom: "1px solid var(--border-color, #2d3748)" }}>
+        <div style={{ padding: "16px", borderBottom: "1px solid var(--border)" }}>
           <input
             type="text"
             placeholder={t("commandPalette.placeholder", "Type a command or search...")}
@@ -130,7 +147,7 @@ export function CommandPalette() {
                     padding: "10px 12px",
                     borderRadius: "6px",
                     cursor: "pointer",
-                    backgroundColor: isSelected ? "var(--hover-bg, rgba(255, 255, 255, 0.08))" : "transparent",
+                    backgroundColor: isSelected ? "var(--surface-hover)" : "transparent",
                   }}
                 >
                   <IconComp />
