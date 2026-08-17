@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import { useList } from "../api/hooks";
+import { LiveRegion } from "./LiveRegion";
 import type { Tag } from "../types/tags";
 
 // Sources its options from the Settings-managed tag catalog (GET
@@ -20,14 +22,25 @@ export function TagPicker({
   const { t } = useTranslation();
   const { data: catalog } = useList<Tag>(["tags"], (tk) => api.get<Tag[]>("/api/v1/tags", tk));
   const available = (catalog ?? []).filter((tag) => !value.includes(tag.name));
+  // Visually the chip list already updates the moment value/onChange change
+  // -- this is purely for screen-reader users, who get no other signal that
+  // anything happened (see LiveRegion's doc comment).
+  const [announcement, setAnnouncement] = useState("");
 
   function remove(name: string) {
     onChange(value.filter((v) => v !== name));
+    setAnnouncement(t("common.tagRemoved", { name }));
+  }
+
+  function add(name: string) {
+    onChange([...value, name]);
+    setAnnouncement(t("common.tagAdded", { name }));
   }
 
   return (
     <div>
-      <div className="tag-picker">
+      <LiveRegion message={announcement} />
+      <div className="tag-picker" role="group" aria-label={t("common.tagPickerGroupLabel")}>
         {value.map((name) => (
           <span className="tag-chip" key={name}>
             {name}
@@ -44,7 +57,7 @@ export function TagPicker({
             value=""
             aria-label={t("common.addTagOption")}
             onChange={(e) => {
-              if (e.target.value) onChange([...value, e.target.value]);
+              if (e.target.value) add(e.target.value);
             }}
           >
             <option value="">{t("common.addTagOption")}</option>

@@ -38,7 +38,6 @@ export function useList<T>(queryKey: QueryKey, fetcher: (token: string | null) =
 
   useEffect(() => {
     if (query.error) resolveListError(query.error, logout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.error, logout]);
 
   const message = query.error ? resolveListError(query.error, () => {}) : null;
@@ -65,7 +64,6 @@ export function useObject<T>(queryKey: QueryKey, fetcher: (token: string | null)
 
   useEffect(() => {
     if (query.error) resolveListError(query.error, logout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.error, logout]);
 
   const message = query.error ? resolveListError(query.error, () => {}) : null;
@@ -104,7 +102,6 @@ export function usePagedList<T>(
   const keyString = JSON.stringify(queryKey);
   useEffect(() => {
     setPageState(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyString]);
 
   const fullKey = [...queryKey, page, pageSize];
@@ -117,7 +114,6 @@ export function usePagedList<T>(
 
   useEffect(() => {
     if (query.error) resolveListError(query.error, logout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.error, logout]);
 
   const message = query.error ? resolveListError(query.error, () => {}) : null;
@@ -144,11 +140,7 @@ export function usePagedList<T>(
     totalPages: Math.max(1, Math.ceil(total / pageSize)),
     setPage,
     setPageSize,
-    reload: () => {
-      // eslint-disable-next-line no-console
-      console.log("DEBUG reload() called, isFetching=", query.isFetching, "fullKey=", fullKey);
-      return query.refetch();
-    },
+    reload: () => query.refetch(),
   };
 }
 
