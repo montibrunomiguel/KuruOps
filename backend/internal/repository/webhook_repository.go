@@ -63,26 +63,11 @@ func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tok
 const webhookColumns = `id, tenant_id, name, source, token_hash, token_last4, status, rotated_at, expires_at, created_by, created_at, field_mapping_template_id, group_by_fields, dedup_window_minutes`
 
 func (r *WebhookRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.WebhookEndpoint, error) {
-	rows, err := tx.Query(ctx, `select `+webhookColumns+` from webhook_endpoints order by created_at desc`)
-	if err != nil {
-		return nil, fmt.Errorf("query webhook endpoints: %w", err)
-	}
-	defer rows.Close()
-
-	endpoints := []domain.WebhookEndpoint{}
-	for rows.Next() {
-		ep, err := scanWebhookEndpoint(rows)
-		if err != nil {
-			return nil, err
-		}
-		endpoints = append(endpoints, *ep)
-	}
-	return endpoints, rows.Err()
+	return queryList(ctx, tx, `select `+webhookColumns+` from webhook_endpoints order by created_at desc`, scanWebhookEndpoint)
 }
 
 func (r *WebhookRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.WebhookEndpoint, error) {
-	row := tx.QueryRow(ctx, `select `+webhookColumns+` from webhook_endpoints where id = $1`, id)
-	return scanWebhookEndpoint(row)
+	return queryOne(ctx, tx, `select `+webhookColumns+` from webhook_endpoints where id = $1`, scanWebhookEndpoint, id)
 }
 
 // Insert creates the endpoint record. The caller has already generated the

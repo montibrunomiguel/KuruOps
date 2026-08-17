@@ -36,7 +36,7 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(logger)
 	if err != nil {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
@@ -167,12 +167,6 @@ func main() {
 	postmortemService := service.NewPostmortemService(incidentService, aiAnalysisService)
 	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, mcpToolService)
 
-	// AlertHandlers needs IncidentService for the escalate-to-incident route
-	// (see AlertHandlers.escalate), so it's constructed after incidentService
-	// -- and now also needs escalationPolicyService for that same route's
-	// manual-escalation side effect, so its own construction moved down
-	// below onCallShiftService/escalationPolicyService (see there).
-
 	playbookRepo := repository.NewPlaybookRepository()
 	playbookService := service.NewPlaybookService(pool, playbookRepo, alertRepo, cfg.AppBaseURL)
 	playbookHandlers := handlers.NewPlaybookHandlers(playbookService)
@@ -214,11 +208,13 @@ func main() {
 	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallShiftService, userService, secretStore)
 	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
 
-	// AlertHandlers needs IncidentService for the escalate-to-incident route
-	// and EscalationPolicyService for that same route's manual-escalation
-	// side effect (see AlertHandlers.escalate), so it's constructed here,
-	// after both.
-	alertHandlers := handlers.NewAlertHandlers(alertService, incidentService, aiAnalysisService, mcpToolService, userService, escalationPolicyService, cfg.AppBaseURL)
+	// Escalate (POST /alerts/{id}/escalate) needs IncidentService to
+	// create+link the promoted incident and EscalationPolicyService for its
+	// manual-escalation side effect (see AlertService.Escalate) -- wired
+	// here, after both are constructed, rather than as constructor
+	// parameters (see EnableEscalation's doc comment).
+	alertService.EnableEscalation(incidentService, escalationPolicyService, cfg.AppBaseURL)
+	alertHandlers := handlers.NewAlertHandlers(alertService, aiAnalysisService, mcpToolService, userService)
 
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)
@@ -234,7 +230,7 @@ func main() {
 	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
-	authHandlers := handlers.NewAuthHandlers(pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
+	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 
@@ -246,7 +242,7 @@ func main() {
 	// Login endpoints are unauthenticated by definition -- rate limited to
 	// prevent brute force attacks. Built here (not inside httpserver.NewRouter)
 	// because it needs pool -- see middleware.NewRateLimiter.
-	loginRateLimiter := middleware.NewRateLimiter(pool.Pool, "login_ip", 20, time.Minute)
+	loginRateLimiter := middleware.NewRateLimiter(ctx, pool.Pool, "login_ip", cfg.LoginRateLimitPerMinute, time.Minute)
 
 	router := httpserver.NewRouter(httpserver.Options{
 		AlertHandlers:                alertHandlers,
@@ -277,6 +273,7 @@ func main() {
 		Logger:                       logger,
 		HealthCheck:                  httpserver.HealthCheck(pool.Pool),
 		HTTPRequestTimeout:           cfg.HTTPRequestTimeout,
+		DatabaseMigrationTimeout:     cfg.DatabaseMigrationTimeout,
 	})
 
 	srv := &http.Server{

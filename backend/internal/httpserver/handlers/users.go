@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -46,9 +45,8 @@ func (h *UserHandlers) Routes(r chi.Router) {
 // (e.g. domain.Incident.Assignees) or to populate an assignee picker,
 // without being handed the full admin user list (role/resourceAccess/email/etc).
 func (h *UserHandlers) Directory(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	summaries, err := h.svc.ListSummaries(r.Context(), tenantID)
@@ -60,9 +58,8 @@ func (h *UserHandlers) Directory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	users, err := h.svc.List(r.Context(), tenantID)
@@ -89,9 +86,8 @@ type createUserResponse struct {
 }
 
 func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 
@@ -114,16 +110,13 @@ type updateAccessRequest struct {
 }
 
 func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req updateAccessRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "user", &req)
+	if !ok {
 		return
 	}
 
@@ -142,16 +135,13 @@ type updatePhoneRequest struct {
 // UserService.UpdatePhone's doc comment for why this is separate from
 // updateAccess (phone isn't identity-sourced the way role/name/email are).
 func (h *UserHandlers) updatePhone(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid user id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req updatePhoneRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "user", &req)
+	if !ok {
 		return
 	}
 
@@ -171,7 +161,10 @@ func (h *UserHandlers) activate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandlers) setActive(w http.ResponseWriter, r *http.Request, active bool) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid user id")
@@ -197,7 +190,10 @@ func (h *UserHandlers) setActive(w http.ResponseWriter, r *http.Request, active 
 // The user's current access token still works until its own 15-minute
 // expiry; this only stops it from being renewed via POST /auth/refresh.
 func (h *UserHandlers) revokeSessions(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid user id")
@@ -217,7 +213,10 @@ type resetPasswordResponse struct {
 }
 
 func (h *UserHandlers) resetPassword(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid user id")
@@ -233,9 +232,8 @@ func (h *UserHandlers) resetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandlers) listGroupMappings(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	mappings, err := h.svc.ListGroupMappings(r.Context(), tenantID)
@@ -247,7 +245,10 @@ func (h *UserHandlers) listGroupMappings(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *UserHandlers) saveGroupMapping(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	provider := domain.AuthProvider(chi.URLParam(r, "provider"))
 	group := chi.URLParam(r, "group")
 
@@ -266,7 +267,10 @@ func (h *UserHandlers) saveGroupMapping(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *UserHandlers) deleteGroupMapping(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mapping id")

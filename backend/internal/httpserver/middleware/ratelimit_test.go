@@ -28,7 +28,7 @@ func uniqueScope(prefix string) string {
 
 func TestKeyedLimiter_Allow(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	limiter := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_keyed_limiter_allow"), 2, time.Minute)
+	limiter := middleware.NewKeyedLimiter(t.Context(), pool.Pool, uniqueScope("test_keyed_limiter_allow"), 2, time.Minute)
 
 	assert.True(t, limiter.Allow("a@test.local"), "1st request for this key is allowed")
 	assert.True(t, limiter.Allow("a@test.local"), "2nd request for this key is allowed")
@@ -46,8 +46,8 @@ func TestKeyedLimiter_ScopesAreIndependent(t *testing.T) {
 	// Same key, two different limiter scopes -- proves an IP string used by
 	// one limiter (e.g. login-by-ip) can never collide with the same string
 	// used as a key by a different limiter (e.g. webhook-by-ip).
-	limiterA := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_scope_a"), 1, time.Minute)
-	limiterB := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_scope_b"), 1, time.Minute)
+	limiterA := middleware.NewKeyedLimiter(t.Context(), pool.Pool, uniqueScope("test_scope_a"), 1, time.Minute)
+	limiterB := middleware.NewKeyedLimiter(t.Context(), pool.Pool, uniqueScope("test_scope_b"), 1, time.Minute)
 
 	assert.True(t, limiterA.Allow("shared-key"))
 	assert.False(t, limiterA.Allow("shared-key"), "scope A's own budget is now exhausted")
@@ -62,8 +62,8 @@ func TestKeyedLimiter_ScopesAreIndependent(t *testing.T) {
 func TestKeyedLimiter_SharedAcrossReplicas(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	scope := uniqueScope("test_shared_across_replicas")
-	replicaA := middleware.NewKeyedLimiter(pool.Pool, scope, 2, time.Minute)
-	replicaB := middleware.NewKeyedLimiter(pool.Pool, scope, 2, time.Minute)
+	replicaA := middleware.NewKeyedLimiter(t.Context(), pool.Pool, scope, 2, time.Minute)
+	replicaB := middleware.NewKeyedLimiter(t.Context(), pool.Pool, scope, 2, time.Minute)
 
 	assert.True(t, replicaA.Allow("10.0.0.9"), "1st request, seen by replica A")
 	assert.True(t, replicaB.Allow("10.0.0.9"), "2nd request, seen by replica B -- still within the combined limit of 2")
@@ -84,7 +84,7 @@ func TestKeyedLimiter_SharedAcrossReplicas(t *testing.T) {
 // exceeds it.
 func TestKeyedLimiter_Allow_ConcurrentRequestsNeverExceedLimit(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	limiter := middleware.NewKeyedLimiter(pool.Pool, uniqueScope("test_concurrent_allow"), 3, time.Minute)
+	limiter := middleware.NewKeyedLimiter(t.Context(), pool.Pool, uniqueScope("test_concurrent_allow"), 3, time.Minute)
 
 	const concurrency = 20
 	start := make(chan struct{})
@@ -109,7 +109,7 @@ func TestKeyedLimiter_Allow_ConcurrentRequestsNeverExceedLimit(t *testing.T) {
 
 func TestNewRateLimiter_PerIP(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_per_ip"), 2, time.Minute)
+	limiter := middleware.NewRateLimiter(t.Context(), pool.Pool, uniqueScope("test_per_ip"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	newReq := func(ip string) *httptest.ResponseRecorder {
@@ -129,7 +129,7 @@ func TestNewRateLimiter_PerIP(t *testing.T) {
 
 func TestNewRateLimiter_IgnoresSpoofedXForwardedFor(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_ignores_xff"), 2, time.Minute)
+	limiter := middleware.NewRateLimiter(t.Context(), pool.Pool, uniqueScope("test_ignores_xff"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	// Same RemoteAddr (as if a single client connected to nginx once), but a
@@ -152,7 +152,7 @@ func TestNewRateLimiter_IgnoresSpoofedXForwardedFor(t *testing.T) {
 
 func TestNewRateLimiter_TrustsXRealIPFromProxy(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
-	limiter := middleware.NewRateLimiter(pool.Pool, uniqueScope("test_trusts_x_real_ip"), 2, time.Minute)
+	limiter := middleware.NewRateLimiter(t.Context(), pool.Pool, uniqueScope("test_trusts_x_real_ip"), 2, time.Minute)
 	handler := limiter(okHandler())
 
 	// nginx.conf sets X-Real-IP unconditionally, so it's the trusted signal

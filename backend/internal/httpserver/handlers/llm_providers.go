@@ -28,9 +28,8 @@ func (h *LLMProviderHandlers) Routes(r chi.Router) {
 }
 
 func (h *LLMProviderHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	providers, err := h.svc.List(r.Context(), tenantID)
@@ -52,7 +51,10 @@ type saveLLMProviderRequest struct {
 }
 
 func (h *LLMProviderHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req saveLLMProviderRequest
@@ -76,16 +78,13 @@ func (h *LLMProviderHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LLMProviderHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid provider id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req saveLLMProviderRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "provider", &req)
+	if !ok {
 		return
 	}
 
@@ -100,7 +99,10 @@ func (h *LLMProviderHandlers) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LLMProviderHandlers) setDefault(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid provider id")
@@ -114,7 +116,10 @@ func (h *LLMProviderHandlers) setDefault(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *LLMProviderHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid provider id")

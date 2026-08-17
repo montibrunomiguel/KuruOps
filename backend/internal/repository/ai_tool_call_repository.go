@@ -35,31 +35,16 @@ func (r *AIToolCallRepository) Insert(ctx context.Context, tx pgx.Tx, c *domain.
 }
 
 func (r *AIToolCallRepository) Get(ctx context.Context, tx pgx.Tx, id int64) (*domain.AIToolCall, error) {
-	row := tx.QueryRow(ctx, `select `+aiToolCallColumns+` from ai_tool_calls where id = $1`, id)
-	return scanAIToolCall(row)
+	return queryOne(ctx, tx, `select `+aiToolCallColumns+` from ai_tool_calls where id = $1`, scanAIToolCall, id)
 }
 
 // ListPending returns tool calls awaiting analyst approval ('proposed'),
 // oldest first — what an "Approvals" queue in Settings/incident detail
 // would show.
 func (r *AIToolCallRepository) ListPending(ctx context.Context, tx pgx.Tx) ([]domain.AIToolCall, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select `+aiToolCallColumns+` from ai_tool_calls
-		where status = 'proposed' order by created_at asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query pending tool calls: %w", err)
-	}
-	defer rows.Close()
-
-	calls := []domain.AIToolCall{}
-	for rows.Next() {
-		c, err := scanAIToolCall(rows)
-		if err != nil {
-			return nil, err
-		}
-		calls = append(calls, *c)
-	}
-	return calls, rows.Err()
+		where status = 'proposed' order by created_at asc`, scanAIToolCall)
 }
 
 func (r *AIToolCallRepository) SetStatus(ctx context.Context, tx pgx.Tx, id int64, status domain.ToolCallStatus, approvedBy *uuid.UUID) error {

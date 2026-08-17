@@ -20,39 +20,15 @@ func NewIncidentSLARepository() *IncidentSLARepository {
 const incidentSLAPolicyColumns = `id, tenant_id, severity, priority, due_within_minutes, created_at, updated_at`
 
 func (r *IncidentSLARepository) List(ctx context.Context, tx pgx.Tx) ([]domain.IncidentSLAPolicy, error) {
-	rows, err := tx.Query(ctx, `select `+incidentSLAPolicyColumns+` from incident_sla_policies order by severity, priority`)
-	if err != nil {
-		return nil, fmt.Errorf("query incident sla policies: %w", err)
-	}
-	defer rows.Close()
-
-	policies := []domain.IncidentSLAPolicy{}
-	for rows.Next() {
-		p, err := scanIncidentSLAPolicy(rows)
-		if err != nil {
-			return nil, err
-		}
-		policies = append(policies, *p)
-	}
-	return policies, rows.Err()
+	return queryList(ctx, tx, `select `+incidentSLAPolicyColumns+` from incident_sla_policies order by severity, priority`, scanIncidentSLAPolicy)
 }
 
 // Lookup returns nil (not an error) when no policy is configured for the
 // pair -- unconfigured is a valid, common state, not a failure.
 func (r *IncidentSLARepository) Lookup(ctx context.Context, tx pgx.Tx, severity domain.Severity, priority domain.IncidentPriority) (*domain.IncidentSLAPolicy, error) {
-	row := tx.QueryRow(ctx, `
+	return queryOne(ctx, tx, `
 		select `+incidentSLAPolicyColumns+` from incident_sla_policies
-		where severity = $1 and priority = $2`,
-		severity, priority,
-	)
-	p, err := scanIncidentSLAPolicy(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return p, nil
+		where severity = $1 and priority = $2`, scanIncidentSLAPolicy, severity, priority)
 }
 
 // Upsert creates or replaces the policy for one (severity, priority) pair.
@@ -83,6 +59,9 @@ func scanIncidentSLAPolicy(row pgx.Row) (*domain.IncidentSLAPolicy, error) {
 	var p domain.IncidentSLAPolicy
 	err := row.Scan(&p.ID, &p.TenantID, &p.Severity, &p.Priority, &p.DueWithinMinutes, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &p, nil

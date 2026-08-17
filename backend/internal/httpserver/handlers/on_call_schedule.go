@@ -37,9 +37,8 @@ func (h *OnCallScheduleHandlers) Routes(r chi.Router) {
 }
 
 func (h *OnCallScheduleHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	schedules, err := h.svc.List(r.Context(), tenantID)
@@ -51,9 +50,8 @@ func (h *OnCallScheduleHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OnCallScheduleHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -107,7 +105,10 @@ func (req saveOnCallScheduleRequest) toInput() domain.SaveOnCallScheduleInput {
 }
 
 func (h *OnCallScheduleHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveOnCallScheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -124,16 +125,13 @@ func (h *OnCallScheduleHandlers) create(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *OnCallScheduleHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid schedule id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req saveOnCallScheduleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "schedule", &req)
+	if !ok {
 		return
 	}
 
@@ -146,7 +144,10 @@ func (h *OnCallScheduleHandlers) update(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *OnCallScheduleHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule id")
@@ -160,7 +161,10 @@ func (h *OnCallScheduleHandlers) delete(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *OnCallScheduleHandlers) setDefault(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule id")
@@ -178,7 +182,10 @@ type setTimezoneRequest struct {
 }
 
 func (h *OnCallScheduleHandlers) setTimezone(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req setTimezoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -199,7 +206,10 @@ type createOverrideRequest struct {
 }
 
 func (h *OnCallScheduleHandlers) createOverride(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	scheduleID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -222,7 +232,10 @@ func (h *OnCallScheduleHandlers) createOverride(w http.ResponseWriter, r *http.R
 }
 
 func (h *OnCallScheduleHandlers) deleteOverride(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "overrideId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid override id")

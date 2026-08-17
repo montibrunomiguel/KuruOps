@@ -30,9 +30,8 @@ func (h *WebhookHandlers) Routes(r chi.Router) {
 }
 
 func (h *WebhookHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	endpoints, err := h.svc.List(r.Context(), tenantID)
@@ -62,7 +61,10 @@ type createWebhookRequest struct {
 }
 
 func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req createWebhookRequest
@@ -93,7 +95,10 @@ type regenerateWebhookRequest struct {
 }
 
 func (h *WebhookHandlers) regenerate(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid endpoint id")
@@ -128,16 +133,13 @@ type setFieldMappingTemplateRequest struct {
 }
 
 func (h *WebhookHandlers) setFieldMappingTemplate(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid endpoint id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req setFieldMappingTemplateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "endpoint", &req)
+	if !ok {
 		return
 	}
 
@@ -157,16 +159,13 @@ type setGroupByFieldsRequest struct {
 }
 
 func (h *WebhookHandlers) setGroupByFields(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid endpoint id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req setGroupByFieldsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "endpoint", &req)
+	if !ok {
 		return
 	}
 
@@ -178,7 +177,10 @@ func (h *WebhookHandlers) setGroupByFields(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *WebhookHandlers) setStatus(w http.ResponseWriter, r *http.Request, status string) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid endpoint id")

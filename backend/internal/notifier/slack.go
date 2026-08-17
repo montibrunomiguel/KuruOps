@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // SlackSender posts to a Slack "Incoming Webhook" -- destination is the
@@ -46,8 +45,7 @@ func (SlackSender) Send(ctx context.Context, destination string, n Notification)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("slack request failed: %w", err)
 	}

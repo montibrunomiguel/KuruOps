@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -28,9 +27,8 @@ func (h *IncidentSLAHandlers) Routes(r chi.Router) {
 }
 
 func (h *IncidentSLAHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	policies, err := h.svc.List(r.Context(), tenantID)
@@ -48,7 +46,10 @@ type saveIncidentSLARequest struct {
 }
 
 func (h *IncidentSLAHandlers) save(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveIncidentSLARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -65,7 +66,10 @@ func (h *IncidentSLAHandlers) save(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *IncidentSLAHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid policy id")

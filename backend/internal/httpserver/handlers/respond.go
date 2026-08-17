@@ -4,6 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -14,6 +19,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// mustTenantID reads the tenant ID out of the request context, writing a 401
+// and returning ok=false if it's missing -- every handler entry point should
+// call this instead of middleware.TenantID directly, so a missing tenant
+// context is always rejected rather than silently proceeding with a zero
+// uuid.UUID.
+func mustTenantID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	tenantID, ok := middleware.TenantID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing tenant context")
+		return uuid.UUID{}, false
+	}
+	return tenantID, true
+}
+
+// decodeAndParseID parses the "id" URL param and decodes the request body
+// into req, writing the matching 400 and returning ok=false on either
+// failure -- entity names the resource in the parse-error message (e.g.
+// "alert" -> "invalid alert id"), matching what each handler already said
+// before this was factored out.
+func decodeAndParseID[T any](w http.ResponseWriter, r *http.Request, entity string, req *T) (uuid.UUID, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid "+entity+" id")
+		return uuid.UUID{}, false
+	}
+	if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return uuid.UUID{}, false
+	}
+	return id, true
 }
 
 // maxPageLimit mirrors the cap already enforced independently in

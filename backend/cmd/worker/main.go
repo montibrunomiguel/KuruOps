@@ -32,7 +32,7 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(logger)
 	if err != nil {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
@@ -111,25 +111,25 @@ func main() {
 	staleAIRunTicker := time.NewTicker(1 * time.Minute)
 	defer staleAIRunTicker.Stop()
 
-	// Análise por IA na ingestão NÃO passa por este worker -- ficou resolvida
-	// de um jeito mais simples do que a fila via `ai_analysis_jobs` que este
-	// comentário cogitava originalmente: AlertService.Ingest (cmd/ingest)
-	// dispara `go s.autoAnalyze(...)` -- uma goroutine fire-and-forget no
-	// próprio processo de ingest, sem fila persistida, sem retry automático
-	// se a chamada à LLM falhar (fica só logado). Isso é aceitável para o
-	// volume atual; se isso um dia virar gargalo (rajada de alertas
-	// derrubando o throughput de ingest, ou precisar de retry/backoff em
-	// falha de LLM), uma fila consumida aqui pelo worker (mesmo desenho
-	// cogitado abaixo: tabela + `SELECT ... FOR UPDATE SKIP LOCKED`) resolve
-	// isso sem tocar em `AlertService.Ingest` de novo.
+	// AI analysis on ingest does NOT go through this worker -- it ended up
+	// solved a simpler way than the `ai_analysis_jobs` queue this comment
+	// originally considered: AlertService.Ingest (cmd/ingest) fires
+	// `go s.autoAnalyze(...)` -- a fire-and-forget goroutine in the ingest
+	// process itself, no persisted queue, no automatic retry if the LLM call
+	// fails (just logged). That's acceptable at current volume; if this ever
+	// becomes a bottleneck (a burst of alerts dragging down ingest
+	// throughput, or needing retry/backoff on an LLM failure), a queue
+	// consumed here by the worker (same design considered below: a table +
+	// `SELECT ... FOR UPDATE SKIP LOCKED`) would solve it without touching
+	// `AlertService.Ingest` again.
 	//
-	// IMPORTANT se isso for implementado: cfg.DatabaseURL aqui conecta como
-	// argusops_worker, que tem BYPASSRLS (necessário só para o refresh das
-	// materialized views e os sweeps abaixo -- ver
-	// db/init/argusops_worker_role.sql). Processar jobs de IA por tenant
-	// usando essa MESMA pool seria um bypass silencioso de RLS; abra uma
-	// pool separada conectada como argusops_app + Pool.WithTenant para esse
-	// consumo, do jeito que api/ingest já fazem.
+	// IMPORTANT if this ever gets built: cfg.DatabaseURL here connects as
+	// argusops_worker, which has BYPASSRLS (needed only for the materialized
+	// view refresh and the sweeps below -- see
+	// db/init/argusops_worker_role.sql). Processing AI jobs per-tenant using
+	// this SAME pool would be a silent RLS bypass; open a separate pool
+	// connected as argusops_app + Pool.WithTenant for that consumption, the
+	// way api/ingest already do.
 
 	for {
 		select {

@@ -191,16 +191,24 @@ func buildTranscript(run *domain.AIAnalysisRun) (*ChatTranscript, error) {
 // refetch-on-SSE-event -- same visibility rule as StartAlertAnalysis (must
 // exist, must be tag-visible).
 func (s *AIAnalysisService) GetAlertTranscript(ctx context.Context, tenantID, alertID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
+	return s.getTranscript(ctx, tenantID, "alert", alertID, allowedTags)
+}
+
+// GetIncidentTranscript is GetAlertTranscript's counterpart for incidents.
+func (s *AIAnalysisService) GetIncidentTranscript(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
+	return s.getTranscript(ctx, tenantID, "incident", incidentID, allowedTags)
+}
+
+// getTranscript is GetAlertTranscript/GetIncidentTranscript's shared core --
+// see resolveAnalysisSubject for the one piece that differs between the two
+// context types.
+func (s *AIAnalysisService) getTranscript(ctx context.Context, tenantID uuid.UUID, contextType string, contextID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
 	var transcript *ChatTranscript
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		a, err := s.alerts.Get(ctx, tx, alertID)
-		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
+		if _, err := s.resolveAnalysisSubject(ctx, tx, contextType, contextID, allowedTags); err != nil {
+			return err
 		}
-		if a == nil || !tagsVisible(allowedTags, a.Tags) {
-			return fmt.Errorf("alert %s not found", alertID)
-		}
-		run, err := s.runs.LatestRun(ctx, tx, "alert", alertID)
+		run, err := s.runs.LatestRun(ctx, tx, contextType, contextID)
 		if err != nil {
 			return fmt.Errorf("load latest analysis: %w", err)
 		}
@@ -210,26 +218,37 @@ func (s *AIAnalysisService) GetAlertTranscript(ctx context.Context, tenantID, al
 	return transcript, err
 }
 
-// GetIncidentTranscript is GetAlertTranscript's counterpart for incidents
-// -- no tag-visibility guard, same asymmetry as StartIncidentAnalysis.
-func (s *AIAnalysisService) GetIncidentTranscript(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (*ChatTranscript, error) {
-	var transcript *ChatTranscript
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		inc, err := s.incidents.Get(ctx, tx, incidentID)
+// resolveAnalysisSubject loads and tag-checks the alert or incident
+// (whichever contextType names) StartAlertAnalysis/StartIncidentAnalysis,
+// ContinueAlertAnalysis/ContinueIncidentAnalysis, and GetAlertTranscript/
+// GetIncidentTranscript all need, and returns the one piece of that load
+// that actually differs between the two context types: the prompt text
+// (alertPrompt/incidentPrompt). Both context types apply the exact same
+// tagsVisible rule -- there is no asymmetry between them here despite some
+// historical comments in this file claiming otherwise.
+func (s *AIAnalysisService) resolveAnalysisSubject(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID, allowedTags []string) (string, error) {
+	switch contextType {
+	case "alert":
+		a, err := s.alerts.Get(ctx, tx, contextID)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return "", fmt.Errorf("load alert: %w", err)
+		}
+		if a == nil || !tagsVisible(allowedTags, a.Tags) {
+			return "", fmt.Errorf("alert %s not found", contextID)
+		}
+		return alertPrompt(a), nil
+	case "incident":
+		inc, err := s.incidents.Get(ctx, tx, contextID)
+		if err != nil {
+			return "", fmt.Errorf("load incident: %w", err)
 		}
 		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
-			return fmt.Errorf("incident %s not found", incidentID)
+			return "", fmt.Errorf("incident %s not found", contextID)
 		}
-		run, err := s.runs.LatestRun(ctx, tx, "incident", incidentID)
-		if err != nil {
-			return fmt.Errorf("load latest analysis: %w", err)
-		}
-		transcript, err = buildTranscript(run)
-		return err
-	})
-	return transcript, err
+		return incidentPrompt(inc), nil
+	default:
+		return "", fmt.Errorf("unknown analysis context type %q", contextType)
+	}
 }
 
 const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst assistant. Given the details of a security alert or incident, provide a concise triage analysis: likely nature of the activity, whether it appears to be a true or false positive, and recommended next steps. Keep the response focused and actionable, a few short paragraphs at most. You may have tools available to look up additional context (e.g. threat intel, asset info) before answering -- use them when they would materially improve your analysis, but you don't have to use every tool offered.`
@@ -262,73 +281,28 @@ const pausedForApprovalMessage = "Analysis paused: a tool call requires analyst 
 // AlertService.EnableAutoAnalysis) -- a human clicking "Analyze with AI"
 // always passes their own id.
 func (s *AIAnalysisService) StartAlertAnalysis(ctx context.Context, tenantID, alertID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
-	var alert *domain.Alert
-	var client llmclient.Client
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		a, err := s.alerts.Get(ctx, tx, alertID)
-		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
-		}
-		if a == nil || !tagsVisible(allowedTags, a.Tags) {
-			return fmt.Errorf("alert %s not found", alertID)
-		}
-		alert = a
-
-		if err := s.checkNotAlreadyRunning(ctx, tx, "alert", alertID); err != nil {
-			return err
-		}
-
-		c, err := s.buildClient(ctx, tx)
-		if err != nil {
-			return err
-		}
-		client = c
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	tools, routes, err := s.resolveAgentTools(ctx, tenantID, "alert_analysis")
-	if err != nil {
-		return err
-	}
-
-	prompt := alertPrompt(alert)
-	run, messages, err := s.startRun(ctx, tenantID, actorID, "alert", alertID, tools, routes, prompt)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		bgCtx := context.Background()
-		if len(tools) == 0 {
-			s.finishSimpleRun(bgCtx, run, client, prompt)
-		} else {
-			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
-		}
-		s.notifyAnalyzed(tenantID, "alert", alertID)
-	}()
-	return nil
+	return s.startAnalysis(ctx, tenantID, "alert", alertID, actorID, allowedTags)
 }
 
 // StartIncidentAnalysis is StartAlertAnalysis's counterpart for incidents.
-// Incidents have no tag-visibility guard on Get elsewhere in this codebase
-// (see IncidentService.Get), so this doesn't apply one either.
 func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID, incidentID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
-	var incident *domain.Incident
+	return s.startAnalysis(ctx, tenantID, "incident", incidentID, actorID, allowedTags)
+}
+
+// startAnalysis is StartAlertAnalysis/StartIncidentAnalysis's shared core --
+// see resolveAnalysisSubject for the one piece that differs between the two
+// context types.
+func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUID, contextType string, contextID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
+	var prompt string
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		inc, err := s.incidents.Get(ctx, tx, incidentID)
+		p, err := s.resolveAnalysisSubject(ctx, tx, contextType, contextID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
-			return fmt.Errorf("incident %s not found", incidentID)
-		}
-		incident = inc
+		prompt = p
 
-		if err := s.checkNotAlreadyRunning(ctx, tx, "incident", incidentID); err != nil {
+		if err := s.checkNotAlreadyRunning(ctx, tx, contextType, contextID); err != nil {
 			return err
 		}
 
@@ -343,13 +317,12 @@ func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID,
 		return err
 	}
 
-	tools, routes, err := s.resolveAgentTools(ctx, tenantID, "incident_analysis")
+	tools, routes, err := s.resolveAgentTools(ctx, tenantID, contextType+"_analysis")
 	if err != nil {
 		return err
 	}
 
-	prompt := incidentPrompt(incident)
-	run, messages, err := s.startRun(ctx, tenantID, actorID, "incident", incidentID, tools, routes, prompt)
+	run, messages, err := s.startRun(ctx, tenantID, actorID, contextType, contextID, tools, routes, prompt)
 	if err != nil {
 		return err
 	}
@@ -361,7 +334,7 @@ func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID,
 		} else {
 			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
 		}
-		s.notifyAnalyzed(tenantID, "incident", incidentID)
+		s.notifyAnalyzed(tenantID, contextType, contextID)
 	}()
 	return nil
 }
@@ -373,70 +346,30 @@ func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID,
 // exists yet or the last one failed. Still rejects outright if the latest
 // run is running/paused -- never two loop instances driving the same run.
 func (s *AIAnalysisService) ContinueAlertAnalysis(ctx context.Context, tenantID, alertID, actorID uuid.UUID, allowedTags []string, text string) error {
-	var alert *domain.Alert
-	var client llmclient.Client
-	var latest *domain.AIAnalysisRun
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		a, err := s.alerts.Get(ctx, tx, alertID)
-		if err != nil {
-			return fmt.Errorf("load alert: %w", err)
-		}
-		if a == nil || !tagsVisible(allowedTags, a.Tags) {
-			return fmt.Errorf("alert %s not found", alertID)
-		}
-		alert = a
-
-		r, err := s.runs.LatestRun(ctx, tx, "alert", alertID)
-		if err != nil {
-			return fmt.Errorf("check existing analysis: %w", err)
-		}
-		if err := blockIfRunning(r); err != nil {
-			return err
-		}
-		latest = r
-
-		c, err := s.buildClient(ctx, tx)
-		if err != nil {
-			return err
-		}
-		client = c
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	run, messages, tools, routes, err := s.continueRun(ctx, tenantID, actorID, "alert", alertID, latest, alertPrompt(alert), text)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		bgCtx := context.Background()
-		_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
-		s.notifyAnalyzed(tenantID, "alert", alertID)
-	}()
-	return nil
+	return s.continueAnalysis(ctx, tenantID, "alert", alertID, actorID, allowedTags, text)
 }
 
 // ContinueIncidentAnalysis is ContinueAlertAnalysis's counterpart for
-// incidents -- see that method's doc comment. No tag-visibility guard, same
-// asymmetry as StartIncidentAnalysis vs StartAlertAnalysis.
+// incidents -- see that method's doc comment.
 func (s *AIAnalysisService) ContinueIncidentAnalysis(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, allowedTags []string, text string) error {
-	var incident *domain.Incident
+	return s.continueAnalysis(ctx, tenantID, "incident", incidentID, actorID, allowedTags, text)
+}
+
+// continueAnalysis is ContinueAlertAnalysis/ContinueIncidentAnalysis's
+// shared core -- see resolveAnalysisSubject for the one piece that differs
+// between the two context types.
+func (s *AIAnalysisService) continueAnalysis(ctx context.Context, tenantID uuid.UUID, contextType string, contextID, actorID uuid.UUID, allowedTags []string, text string) error {
+	var prompt string
 	var client llmclient.Client
 	var latest *domain.AIAnalysisRun
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		inc, err := s.incidents.Get(ctx, tx, incidentID)
+		p, err := s.resolveAnalysisSubject(ctx, tx, contextType, contextID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
-			return fmt.Errorf("incident %s not found", incidentID)
-		}
-		incident = inc
+		prompt = p
 
-		r, err := s.runs.LatestRun(ctx, tx, "incident", incidentID)
+		r, err := s.runs.LatestRun(ctx, tx, contextType, contextID)
 		if err != nil {
 			return fmt.Errorf("check existing analysis: %w", err)
 		}
@@ -456,7 +389,7 @@ func (s *AIAnalysisService) ContinueIncidentAnalysis(ctx context.Context, tenant
 		return err
 	}
 
-	run, messages, tools, routes, err := s.continueRun(ctx, tenantID, actorID, "incident", incidentID, latest, incidentPrompt(incident), text)
+	run, messages, tools, routes, err := s.continueRun(ctx, tenantID, actorID, contextType, contextID, latest, prompt, text)
 	if err != nil {
 		return err
 	}
@@ -464,7 +397,7 @@ func (s *AIAnalysisService) ContinueIncidentAnalysis(ctx context.Context, tenant
 	go func() {
 		bgCtx := context.Background()
 		_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
-		s.notifyAnalyzed(tenantID, "incident", incidentID)
+		s.notifyAnalyzed(tenantID, contextType, contextID)
 	}()
 	return nil
 }
@@ -748,7 +681,7 @@ func (s *AIAnalysisService) ResumeAnalysisRun(ctx context.Context, tenantID uuid
 	}
 	messages = append(messages, toolResultMessage(toolCall, toolCallID))
 
-	client, err := s.buildClientForTenant(ctx, tenantID)
+	client, err := s.BuildClient(ctx, tenantID)
 	if err != nil {
 		s.failRun(ctx, tenantID, run.ID, err)
 		return
@@ -906,10 +839,13 @@ func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx) (llmclie
 	return client, nil
 }
 
-// buildClientForTenant is buildClient's standalone-transaction variant, for
-// ResumeAnalysisRun which doesn't already have a tx open at the point it
-// needs a client.
-func (s *AIAnalysisService) buildClientForTenant(ctx context.Context, tenantID uuid.UUID) (llmclient.Client, error) {
+// BuildClient is buildClient's standalone-transaction variant, for callers
+// that don't already have a tx open at the point they need an LLM client --
+// ResumeAnalysisRun (below) and PostmortemService.Generate, which reuses
+// this tenant's configured LLM provider rather than resolving its own.
+// Exported for that second, cross-service caller; every other use of the
+// unexported buildClient stays internal to this file.
+func (s *AIAnalysisService) BuildClient(ctx context.Context, tenantID uuid.UUID) (llmclient.Client, error) {
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		c, err := s.buildClient(ctx, tx)

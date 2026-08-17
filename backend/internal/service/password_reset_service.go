@@ -2,10 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -42,19 +38,6 @@ func NewPasswordResetService(pool *db.Pool, repo *repository.PasswordResetReposi
 	return &PasswordResetService{pool: pool, repo: repo, users: users, smtp: smtp, appBaseURL: appBaseURL}
 }
 
-func generatePasswordResetToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return passwordResetTokenPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-func hashPasswordResetToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
 // RequestReset always succeeds from the caller's perspective -- it never
 // distinguishes "unknown email" from "not a local account" from "SMTP not
 // configured" from "email actually sent", logging the real reason
@@ -71,14 +54,14 @@ func (s *PasswordResetService) RequestReset(ctx context.Context, tenantID uuid.U
 			return nil
 		}
 
-		plaintext, err := generatePasswordResetToken()
+		plaintext, err := generatePrefixedToken(passwordResetTokenPrefix, 32)
 		if err != nil {
 			return fmt.Errorf("generate reset token: %w", err)
 		}
 		t := &domain.PasswordResetToken{
 			TenantID:  tenantID,
 			UserID:    u.ID,
-			TokenHash: hashPasswordResetToken(plaintext),
+			TokenHash: hashToken(plaintext),
 			ExpiresAt: time.Now().Add(passwordResetTokenTTL),
 		}
 		if err := s.repo.Insert(ctx, tx, t); err != nil {
@@ -110,7 +93,7 @@ func (s *PasswordResetService) ConfirmReset(ctx context.Context, tenantID uuid.U
 		return fmt.Errorf("new password must be at least 8 characters")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		t, err := s.repo.GetByHash(ctx, tx, hashPasswordResetToken(token))
+		t, err := s.repo.GetByHash(ctx, tx, hashToken(token))
 		if err != nil {
 			return fmt.Errorf("load reset token: %w", err)
 		}

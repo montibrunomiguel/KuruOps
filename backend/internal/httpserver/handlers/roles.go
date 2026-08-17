@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -31,9 +30,8 @@ func (h *RoleHandlers) Routes(r chi.Router) {
 }
 
 func (h *RoleHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	roles, err := h.svc.List(r.Context(), tenantID)
@@ -59,9 +57,8 @@ func (req saveRoleRequest) toInput() domain.SaveRoleInput {
 }
 
 func (h *RoleHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 
@@ -80,16 +77,13 @@ func (h *RoleHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoleHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid role id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req saveRoleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "role", &req)
+	if !ok {
 		return
 	}
 
@@ -102,7 +96,10 @@ func (h *RoleHandlers) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoleHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid role id")

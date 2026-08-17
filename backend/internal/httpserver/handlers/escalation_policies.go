@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -29,9 +28,8 @@ func (h *EscalationPolicyHandlers) Routes(r chi.Router) {
 }
 
 func (h *EscalationPolicyHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	policies, err := h.svc.List(r.Context(), tenantID)
@@ -60,7 +58,10 @@ type saveEscalationPolicyRequest struct {
 }
 
 func (h *EscalationPolicyHandlers) save(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveEscalationPolicyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -97,7 +98,10 @@ type testEscalationPolicyRequest struct {
 // waiting for a real alert to escalate. Mirrors SMTPConfigHandlers' "send
 // test email" endpoint.
 func (h *EscalationPolicyHandlers) test(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req testEscalationPolicyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -113,7 +117,10 @@ func (h *EscalationPolicyHandlers) test(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *EscalationPolicyHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid policy id")

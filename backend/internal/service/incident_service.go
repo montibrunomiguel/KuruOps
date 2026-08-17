@@ -99,6 +99,21 @@ func (s *IncidentService) Get(ctx context.Context, tenantID, id uuid.UUID, allow
 	return inc, err
 }
 
+// loadVisible loads id inside tx and returns it only if it exists and is
+// visible under allowedTags -- nil, nil for either case, same reasoning as
+// AlertService.loadVisible. Every mutating method below calls this instead
+// of repeating the load-then-check block by hand.
+func (s *IncidentService) loadVisible(ctx context.Context, tx pgx.Tx, id uuid.UUID, allowedTags []string) (*domain.Incident, error) {
+	v, err := s.repo.Get(ctx, tx, id)
+	if err != nil {
+		return nil, fmt.Errorf("load incident: %w", err)
+	}
+	if v == nil || !tagsVisible(allowedTags, v.Tags) {
+		return nil, nil
+	}
+	return v, nil
+}
+
 func (s *IncidentService) List(ctx context.Context, tenantID uuid.UUID, f repository.ListIncidentsFilter) ([]domain.Incident, error) {
 	var incidents []domain.Incident
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -187,11 +202,11 @@ func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUI
 func (s *IncidentService) ChangePhase(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, newPhase domain.IncidentPhase, allowedTags []string) error {
 	changed := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		if current.Phase == newPhase {
@@ -285,11 +300,11 @@ func isForwardSkip(from, to domain.IncidentPhase) bool {
 // whole call is rejected if any is unknown (see resolveAssignees).
 func (s *IncidentService) SetAssignees(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, userIDs []uuid.UUID, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
@@ -330,11 +345,11 @@ func (s *IncidentService) SetRole(ctx context.Context, tenantID, incidentID, act
 	}
 
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
@@ -369,11 +384,11 @@ func (s *IncidentService) SetRole(ctx context.Context, tenantID, incidentID, act
 // always sets both fields together, never one alone.
 func (s *IncidentService) SetSeverityAndPriority(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, severity domain.Severity, priority domain.IncidentPriority, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		dueAt, err := s.sla.DueAt(ctx, tx, severity, priority)
@@ -397,11 +412,11 @@ func (s *IncidentService) SetSeverityAndPriority(ctx context.Context, tenantID, 
 
 func (s *IncidentService) UpdateDescription(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, description string, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		if err := s.repo.UpdateDescription(ctx, tx, incidentID, description); err != nil {
@@ -430,11 +445,11 @@ func (s *IncidentService) UpdateTags(ctx context.Context, tenantID, incidentID, 
 	known = orEmptySlice(known)
 
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		current, err := s.repo.Get(ctx, tx, incidentID)
+		current, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
 		if err != nil {
-			return fmt.Errorf("load incident: %w", err)
+			return err
 		}
-		if current == nil || !tagsVisible(allowedTags, current.Tags) {
+		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
 		if err := s.repo.UpdateTags(ctx, tx, incidentID, known); err != nil {

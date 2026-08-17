@@ -17,7 +17,18 @@ package notifier
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 )
+
+// httpClient is shared by every Sender that speaks plain HTTP (WebhookSender,
+// SlackSender, PagerDutySender) -- one client/timeout definition instead of
+// three independent copies, so a future change to timeout/retry/transport
+// behavior only needs to happen once. http.Client is safe for concurrent use
+// by multiple goroutines, which is exactly how these Senders are used (one
+// shared instance, called from cmd/worker's escalation sweep and any
+// synchronous "send test notification" handler).
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 // Notification is a channel-agnostic escalation payload -- each Sender
 // translates it into its own wire format.

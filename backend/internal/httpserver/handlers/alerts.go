@@ -1,10 +1,7 @@
 package handlers
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,20 +11,13 @@ import (
 
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/notifier"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/service"
 )
 
 type AlertHandlers struct {
 	svc *service.AlertService
-	// incidents is used only by escalate, which is the one place in the
-	// codebase that legitimately needs to know about both aggregates --
-	// creating an incident from an alert and linking the two together. Kept
-	// at this handler seam (same two-service pattern as MCPServerHandlers)
-	// rather than adding cross-service coupling into AlertService/IncidentService.
-	incidents *service.IncidentService
-	ai        *service.AIAnalysisService
+	ai  *service.AIAnalysisService
 	// mcpTools backs the AnalysisChat's inline tool-call approve/reject --
 	// same underlying service Settings -> MCP Servers' pending-approvals
 	// panel already calls, just also reachable from here so an analyst
@@ -36,21 +26,10 @@ type AlertHandlers struct {
 	// users resolves the acting user's display name for addComment -- same
 	// reasoning as IncidentHandlers.users (see domain.AlertComment.AuthorName).
 	users *service.UserService
-	// escalationPolicies backs escalate's manual-escalation side effect
-	// (fires the alert severity's next chain step exactly once, see
-	// fireManualEscalationStep) -- best-effort, never blocks or fails the
-	// incident promotion above it.
-	escalationPolicies *service.EscalationPolicyService
-	// appBaseURL fills the {{url}} placeholder in fireManualEscalationStep's
-	// notification, same as cmd/worker's sweepEscalations -- without it, a
-	// manually-escalated step's webhook template would always resolve
-	// {{url}} to empty while the automatic SLA loop's own fires resolve it
-	// correctly.
-	appBaseURL string
 }
 
-func NewAlertHandlers(svc *service.AlertService, incidents *service.IncidentService, ai *service.AIAnalysisService, mcpTools *service.MCPToolService, users *service.UserService, escalationPolicies *service.EscalationPolicyService, appBaseURL string) *AlertHandlers {
-	return &AlertHandlers{svc: svc, incidents: incidents, ai: ai, mcpTools: mcpTools, users: users, escalationPolicies: escalationPolicies, appBaseURL: appBaseURL}
+func NewAlertHandlers(svc *service.AlertService, ai *service.AIAnalysisService, mcpTools *service.MCPToolService, users *service.UserService) *AlertHandlers {
+	return &AlertHandlers{svc: svc, ai: ai, mcpTools: mcpTools, users: users}
 }
 
 func (h *AlertHandlers) Routes(r chi.Router) {
@@ -75,9 +54,8 @@ func (h *AlertHandlers) Routes(r chi.Router) {
 }
 
 func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 
@@ -121,9 +99,8 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -149,17 +126,14 @@ type changeStatusRequest struct {
 }
 
 func (h *AlertHandlers) changeStatus(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req changeStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -177,17 +151,14 @@ type closeAlertRequest struct {
 }
 
 func (h *AlertHandlers) close(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req closeAlertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -208,17 +179,14 @@ type updateTagsRequest struct {
 }
 
 func (h *AlertHandlers) updateTags(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req updateTagsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -234,17 +202,14 @@ type overrideSeverityRequest struct {
 }
 
 func (h *AlertHandlers) overrideSeverity(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req overrideSeverityRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -260,17 +225,14 @@ type reassignAlertRequest struct {
 }
 
 func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req reassignAlertRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 
@@ -282,7 +244,10 @@ func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) listLinkedAlerts(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -298,7 +263,10 @@ func (h *AlertHandlers) listLinkedAlerts(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *AlertHandlers) linkAlert(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -319,7 +287,10 @@ func (h *AlertHandlers) linkAlert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AlertHandlers) unlinkAlert(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -342,14 +313,14 @@ type escalateResponse struct {
 	IncidentID uuid.UUID `json:"incidentId"`
 }
 
-// escalate creates a new incident from the alert (title/severity/tags
-// copied over, priority seeded from the alert's severity via
-// domain.DefaultPriorityForSeverity -- an analyst can still override it on
-// the incident's NIST matrix afterward), links the alert to it, and marks
-// the alert 'escalated' -- the one place that legitimately touches both
-// aggregates, see the doc comment on AlertHandlers.incidents.
+// escalate delegates to AlertService.Escalate -- see its doc comment for
+// what actually happens (creates+links an incident, marks the alert
+// escalated, fires the next manual-escalation chain step).
 func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	allowedTags := middleware.AllowedTags(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -358,91 +329,17 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	alert, err := h.svc.Get(r.Context(), tenantID, id, allowedTags)
+	incident, err := h.svc.Escalate(r.Context(), tenantID, userID, id, allowedTags)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if alert == nil {
+	if incident == nil {
 		writeError(w, http.StatusNotFound, "alert not found")
 		return
 	}
 
-	incident, err := h.incidents.Create(r.Context(), tenantID, userID, domain.CreateIncidentInput{
-		Title:    alert.Title,
-		Severity: alert.Severity,
-		Priority: domain.DefaultPriorityForSeverity(alert.Severity),
-		Tags:     alert.Tags,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := h.incidents.LinkAlert(r.Context(), tenantID, incident.ID, alert.ID, userID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := h.svc.ChangeStatus(r.Context(), tenantID, id, userID, domain.AlertStatusEscalated, allowedTags); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
-	// AlertService.Ingest uses) so a slow/unreachable escalation-chain
-	// destination never delays this response -- see fireManualEscalationStep.
-	go h.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
-
 	writeJSON(w, http.StatusOK, escalateResponse{IncidentID: incident.ID})
-}
-
-// fireManualEscalationStep is escalate's manual-escalation side effect: if
-// the alert's severity has a configured Escala de Acionamento chain, fires
-// its next step exactly once -- AlertRepository.AdvanceManualEscalation's
-// counter is entirely independent of cmd/worker's automatic SLA loop (see
-// alerts.manual_escalation_step), so this never wraps back to step 0 and
-// never interferes with the SLA loop's own progress through the chain.
-// Every failure (no chain configured, resolve/send errors) is only logged
-// -- this must never surface as a failure of the escalate action itself,
-// which has already promoted the alert to an incident by the time this runs.
-func (h *AlertHandlers) fireManualEscalationStep(ctx context.Context, tenantID, alertID uuid.UUID, severity domain.Severity, title string) {
-	policy, err := h.escalationPolicies.Get(ctx, tenantID, severity)
-	if err != nil {
-		slog.Warn("manual escalation step skipped: load chain failed", "alert_id", alertID, "error", err)
-		return
-	}
-	if policy == nil || len(policy.Steps) == 0 {
-		return
-	}
-
-	position, err := h.svc.AdvanceManualEscalation(ctx, tenantID, alertID, len(policy.Steps))
-	if err != nil {
-		slog.Warn("manual escalation step skipped: advance counter failed", "alert_id", alertID, "error", err)
-		return
-	}
-	step := policy.Steps[position]
-
-	sender, err := notifier.NewForPolicy(string(step.ChannelType), step.WebhookPayloadTemplate)
-	if err != nil {
-		slog.Warn("manual escalation step skipped: unknown channel", "alert_id", alertID, "channel", step.ChannelType, "error", err)
-		return
-	}
-
-	notification, destination, err := h.escalationPolicies.ResolveStepNotification(ctx, tenantID, step, notifier.Notification{
-		Title: title, Severity: string(severity), AlertID: alertID.String(),
-		URL: h.appBaseURL + "/alerts/" + alertID.String(),
-	})
-	if err != nil {
-		slog.Warn("manual escalation step skipped: resolve notification failed", "alert_id", alertID, "error", err)
-		return
-	}
-
-	if err := sender.Send(ctx, destination, notification); err != nil {
-		slog.Warn("manual escalation step send failed", "alert_id", alertID, "step", position, "channel", step.ChannelType, "error", err)
-		return
-	}
-	slog.Info("manual escalation step fired", "alert_id", alertID, "step", position, "channel", step.ChannelType)
 }
 
 type analyzeStartedResponse struct {
@@ -455,7 +352,10 @@ type analyzeStartedResponse struct {
 // connected AlertDetailPage to reload (see AIAnalysisService's doc
 // comment). 409 if one's already running/paused for this alert.
 func (h *AlertHandlers) analyze(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -485,7 +385,10 @@ type continueMessageRequest struct {
 // getAnalysisChat backs AnalysisChat's initial load and its
 // refetch-on-SSE-event -- see AIAnalysisService.GetAlertTranscript.
 func (h *AlertHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -505,17 +408,14 @@ func (h *AlertHandlers) getAnalysisChat(w http.ResponseWriter, r *http.Request) 
 // why the analyst's own message is already persisted by the time this
 // returns, even though the LLM's reply isn't yet).
 func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req continueMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 	if strings.TrimSpace(req.Text) == "" {
@@ -523,7 +423,7 @@ func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	err = h.ai.ContinueAlertAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
+	err := h.ai.ContinueAlertAnalysis(r.Context(), tenantID, id, userID, middleware.AllowedTags(r.Context()), req.Text)
 	if err != nil {
 		if errors.Is(err, service.ErrAnalysisInProgress) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -541,51 +441,18 @@ func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Requ
 // PendingApprovalRow already makes (see mcp_servers.go), gated here by
 // confirming the call actually belongs to this alert before touching it.
 func (h *AlertHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	h.resolveAnalysisToolCall(w, r, true)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", true)
 }
 
 func (h *AlertHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	h.resolveAnalysisToolCall(w, r, false)
-}
-
-func (h *AlertHandlers) resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, approve bool) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
-		return
-	}
-	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid tool call id")
-		return
-	}
-
-	call, err := h.mcpTools.GetToolCall(r.Context(), tenantID, callID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if call == nil || call.ContextType != "alert" || call.ContextID != id {
-		writeError(w, http.StatusNotFound, "tool call not found for this alert")
-		return
-	}
-
-	if approve {
-		err = h.mcpTools.ApproveToolCall(r.Context(), tenantID, callID, userID)
-	} else {
-		err = h.mcpTools.RejectToolCall(r.Context(), tenantID, callID, userID)
-	}
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", false)
 }
 
 func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
@@ -606,17 +473,14 @@ type addAlertCommentRequest struct {
 }
 
 func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	userID, _ := middleware.UserID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid alert id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
+	userID, _ := middleware.UserID(r.Context())
 	var req addAlertCommentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "alert", &req)
+	if !ok {
 		return
 	}
 	if req.Body == "" {

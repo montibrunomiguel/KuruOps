@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -39,9 +38,8 @@ func (h *AuditExportHandlers) Routes(r chi.Router) {
 // headers to keep paging until a response with no next-cursor header
 // (X-Next-Cursor-Created-At absent) signals the end.
 func (h *AuditExportHandlers) exportCEF(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 

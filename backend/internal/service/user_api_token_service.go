@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -17,11 +15,11 @@ import (
 
 // UserAPITokenService backs self-service personal API tokens (Profile ->
 // API Tokens) -- a user's own bearer-token alternative to a JWT session.
-// Token generation/hashing/expiry reuse the exact same helpers
-// WebhookService already established (generateToken's shape via
-// generateAPIToken below, hashToken, lastN, resolveExpiry) -- same
-// tradeoffs, just a different prefix so the two token families are visually
-// distinguishable and middleware.JWTAuth can route between them.
+// Token generation/hashing/expiry reuse the exact same shared helpers
+// (generatePrefixedToken, hashToken, lastN, resolveExpiry) WebhookService
+// also uses -- same tradeoffs, just a different prefix so the two token
+// families are visually distinguishable and middleware.JWTAuth can route
+// between them.
 type UserAPITokenService struct {
 	pool   *db.Pool
 	tokens *repository.UserAPITokenRepository
@@ -44,7 +42,7 @@ type CreateAPITokenResult struct {
 // resolveExpiry's convention: nil defaults to 90 days, 0/negative means the
 // user explicitly opted this token out of expiring.
 func (s *UserAPITokenService) Create(ctx context.Context, tenantID, userID uuid.UUID, name string, expiresInDays *int) (*CreateAPITokenResult, error) {
-	plaintext, err := generateAPIToken()
+	plaintext, err := generatePrefixedToken(apiTokenPrefix, 24)
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -149,16 +147,3 @@ func (s *UserAPITokenService) Resolve(ctx context.Context, plaintext string) (*R
 }
 
 const apiTokenPrefix = "pat_"
-
-// generateAPIToken mirrors webhook_service.go's generateToken exactly (24
-// random bytes, base64url) with a distinct prefix -- pat_ vs whk_ -- so the
-// two token families are visually distinguishable and middleware.JWTAuth
-// can route an incoming bearer token to the right verifier without probing
-// both.
-func generateAPIToken() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return apiTokenPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
-}

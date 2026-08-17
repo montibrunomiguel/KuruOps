@@ -32,9 +32,8 @@ func (h *FieldMappingTemplateHandlers) Routes(r chi.Router) {
 }
 
 func (h *FieldMappingTemplateHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	templates, err := h.svc.List(r.Context(), tenantID)
@@ -51,7 +50,10 @@ type fieldMappingTemplateRequest struct {
 }
 
 func (h *FieldMappingTemplateHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req fieldMappingTemplateRequest
@@ -69,16 +71,13 @@ func (h *FieldMappingTemplateHandlers) create(w http.ResponseWriter, r *http.Req
 }
 
 func (h *FieldMappingTemplateHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid template id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req fieldMappingTemplateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "template", &req)
+	if !ok {
 		return
 	}
 
@@ -91,7 +90,10 @@ func (h *FieldMappingTemplateHandlers) update(w http.ResponseWriter, r *http.Req
 }
 
 func (h *FieldMappingTemplateHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid template id")

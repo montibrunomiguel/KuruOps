@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -28,9 +27,8 @@ func (h *SMTPConfigHandlers) Routes(r chi.Router) {
 }
 
 func (h *SMTPConfigHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	cfg, err := h.svc.Get(r.Context(), tenantID)
@@ -52,7 +50,10 @@ type saveSMTPConfigRequest struct {
 }
 
 func (h *SMTPConfigHandlers) save(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 
 	var req saveSMTPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,9 +74,8 @@ func (h *SMTPConfigHandlers) save(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SMTPConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	if err := h.svc.Delete(r.Context(), tenantID); err != nil {
@@ -90,9 +90,8 @@ type sendTestEmailRequest struct {
 }
 
 func (h *SMTPConfigHandlers) sendTest(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 

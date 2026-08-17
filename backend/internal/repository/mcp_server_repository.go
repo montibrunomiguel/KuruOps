@@ -22,26 +22,11 @@ const mcpServerColumns = `
 	allowed_tools, enabled_for, side_effecting_tools, is_enabled, created_by, created_at, updated_at`
 
 func (r *MCPServerRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.MCPServer, error) {
-	rows, err := tx.Query(ctx, `select `+mcpServerColumns+` from mcp_servers order by created_at asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query mcp servers: %w", err)
-	}
-	defer rows.Close()
-
-	servers := []domain.MCPServer{}
-	for rows.Next() {
-		s, err := scanMCPServer(rows)
-		if err != nil {
-			return nil, err
-		}
-		servers = append(servers, *s)
-	}
-	return servers, rows.Err()
+	return queryList(ctx, tx, `select `+mcpServerColumns+` from mcp_servers order by created_at asc`, scanMCPServer)
 }
 
 func (r *MCPServerRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.MCPServer, error) {
-	row := tx.QueryRow(ctx, `select `+mcpServerColumns+` from mcp_servers where id = $1`, id)
-	return scanMCPServer(row)
+	return queryOne(ctx, tx, `select `+mcpServerColumns+` from mcp_servers where id = $1`, scanMCPServer, id)
 }
 
 func (r *MCPServerRepository) Insert(ctx context.Context, tx pgx.Tx, s *domain.MCPServer) error {

@@ -31,9 +31,8 @@ func (h *PlaybookHandlers) Routes(r chi.Router) {
 }
 
 func (h *PlaybookHandlers) list(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "missing tenant context")
 		return
 	}
 	playbooks, err := h.svc.List(r.Context(), tenantID)
@@ -45,7 +44,10 @@ func (h *PlaybookHandlers) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlaybookHandlers) get(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid playbook id")
@@ -69,7 +71,10 @@ func (h *PlaybookHandlers) get(w http.ResponseWriter, r *http.Request) {
 // by AlertDetailPage now comes from the alert's own stored playbookId/
 // playbookTitle (set once at ingest time), not a live call to this route.
 func (h *PlaybookHandlers) match(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	title := r.URL.Query().Get("title")
 	if title == "" {
 		writeError(w, http.StatusBadRequest, "title query param is required")
@@ -123,7 +128,10 @@ func toStepInputs(req map[domain.IncidentPhase][]savePlaybookStepRequest) map[do
 }
 
 func (h *PlaybookHandlers) create(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 
 	var req savePlaybookRequest
@@ -153,16 +161,13 @@ func (h *PlaybookHandlers) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlaybookHandlers) update(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid playbook id")
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
 		return
 	}
-
 	var req savePlaybookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	id, ok := decodeAndParseID(w, r, "playbook", &req)
+	if !ok {
 		return
 	}
 
@@ -183,7 +188,10 @@ func (h *PlaybookHandlers) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PlaybookHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid playbook id")
@@ -207,7 +215,10 @@ type triggerStepWebhookRequest struct {
 // "the downstream automation didn't go through", not a client-request
 // problem, once the request itself is well-formed.
 func (h *PlaybookHandlers) triggerStepWebhook(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := middleware.TenantID(r.Context())
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
 	userID, _ := middleware.UserID(r.Context())
 	stepID, err := uuid.Parse(chi.URLParam(r, "stepId"))
 	if err != nil {

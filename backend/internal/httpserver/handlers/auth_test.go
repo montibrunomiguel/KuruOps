@@ -59,7 +59,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{})
 	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, smtpSvc, "http://localhost:3000")
 
-	return handlers.NewAuthHandlers(pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc)
+	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc)
 }
 
 func TestAuthHandlers_LoginLocal(t *testing.T) {

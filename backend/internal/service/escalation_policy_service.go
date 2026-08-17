@@ -118,15 +118,13 @@ func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, 
 				return fmt.Errorf("step %d: on-call schedule not found", i+1)
 			}
 
-			ref := ""
-			if st.Destination != "" {
-				r, err := s.secrets.Put(ctx, tenantID.String(), fmt.Sprintf("escalation:%s:%d", in.Severity, i), st.Destination)
-				if err != nil {
-					return fmt.Errorf("step %d: store destination: %w", i+1, err)
-				}
-				ref = r
-			} else if existing != nil && i < len(existing.Steps) {
-				ref = existing.Steps[i].DestinationSecretRef
+			existingRef := ""
+			if existing != nil && i < len(existing.Steps) {
+				existingRef = existing.Steps[i].DestinationSecretRef
+			}
+			ref, err := secrets.PutOrKeepExisting(ctx, s.secrets, tenantID.String(), fmt.Sprintf("escalation:%s:%d", in.Severity, i), st.Destination, existingRef)
+			if err != nil {
+				return fmt.Errorf("step %d: store destination: %w", i+1, err)
 			}
 			if ref == "" {
 				return fmt.Errorf("step %d: destination is required", i+1)
