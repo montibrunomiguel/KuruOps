@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
@@ -7,8 +7,9 @@ import { useList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import type { Alert, AlertComment } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge, ClassificationBadge } from "../../components/badges";
-import { TagPicker } from "../../components/TagPicker";
-import { AttachmentButton, AttachmentPreview } from "../../components/AttachmentButton";
+import { AutoSaveTagPicker } from "../../components/AutoSaveTagPicker";
+import { AttachmentPreview } from "../../components/AttachmentButton";
+import { AddNoteForm } from "../../components/AddNoteForm";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
@@ -161,7 +162,7 @@ export function AlertDetailPage() {
         />
       )}
 
-      <AlertTagsRow current={current} onSaved={reload} />
+      <AutoSaveTagPicker resourcePath={`/api/v1/alerts/${current.id}/tags`} value={current.tags} onSaved={reload} />
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
@@ -201,7 +202,7 @@ export function AlertDetailPage() {
                   </div>
                 </div>
               ))}
-            <AddAlertCommentForm alertId={current.id} onAdded={reloadComments} />
+            <AddNoteForm kind="alert" id={current.id} onAdded={reloadComments} />
           </div>
         </div>
 
@@ -265,84 +266,3 @@ export function AlertDetailPage() {
   );
 }
 
-function AddAlertCommentForm({ alertId, onAdded }: { alertId: string; onAdded: () => void }) {
-  const { t } = useTranslation();
-  const { token } = useAuth();
-  const [body, setBody] = useState("");
-  const [attachmentUrl, setAttachmentUrl] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!body.trim()) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.post(`/api/v1/alerts/${alertId}/comments`, { body, attachmentUrl }, token);
-      setBody("");
-      setAttachmentUrl(null);
-      onAdded();
-    } catch (err) {
-      setError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} style={{ marginTop: 14, display: "flex", gap: 8, alignItems: "flex-start" }}>
-      {error && <div className="error-banner">{error}</div>}
-      <input
-        className="input"
-        style={{ flex: 1 }}
-        placeholder={t("alerts.detail.addNotePlaceholder")}
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-      />
-      <AttachmentButton kind="alert" id={alertId} value={attachmentUrl} onChange={setAttachmentUrl} disabled={submitting} />
-      <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-        {submitting ? t("alerts.detail.posting") : t("alerts.detail.post")}
-      </button>
-    </form>
-  );
-}
-
-function AlertTagsRow({ current, onSaved }: { current: Alert; onSaved: () => void }) {
-  const { token } = useAuth();
-  const { t } = useTranslation();
-  const [tags, setTags] = useState<string[]>(current.tags);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty = tags.length !== current.tags.length || tags.some((tg) => !current.tags.includes(tg));
-
-  async function save(next: string[]) {
-    setSubmitting(true);
-    setError(null);
-    try {
-      await api.put(`/api/v1/alerts/${current.id}/tags`, { tags: next }, token);
-      onSaved();
-    } catch (err) {
-      setTags(current.tags);
-      setError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <TagPicker
-        value={tags}
-        onChange={(next) => {
-          setTags(next);
-          void save(next);
-        }}
-        disabled={submitting}
-      />
-      {dirty && submitting && <span className="helper-text">{t("common.saving")}</span>}
-      {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
-    </div>
-  );
-}

@@ -88,9 +88,13 @@ describe("SMTPConfigPanel", () => {
   });
 
   it("removing the configuration DELETEs and clears the configured badge", async () => {
+    let removed = false;
     const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
-      return Promise.resolve(jsonResponse(configured));
+      if (init?.method === "DELETE") {
+        removed = true;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(jsonResponse(removed ? null : configured));
     });
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();

@@ -39,7 +39,7 @@ describe("describeActivity", () => {
   });
 
   it("falls back to a readable event-type string for an unknown alert event type", () => {
-    const result = describeActivity(eventFixture({ eventType: "something_new" }), i18n.t);
+    const result = describeActivity(eventFixture({ eventType: "something_new" as ActivityEvent["eventType"] }), i18n.t);
     expect(result.text).toContain("something new");
   });
 
@@ -62,7 +62,7 @@ describe("describeActivity", () => {
   });
 
   it("falls back to a readable event-type string for an unknown incident event type", () => {
-    const result = describeActivity(eventFixture({ kind: "incident", eventType: "something_new" }), i18n.t);
+    const result = describeActivity(eventFixture({ kind: "incident", eventType: "something_new" as ActivityEvent["eventType"] }), i18n.t);
     expect(result.text).toContain("something new");
   });
 

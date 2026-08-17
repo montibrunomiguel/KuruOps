@@ -9,8 +9,10 @@ import type { Alert } from "../../types/alerts";
 import type { Incident, IncidentComment, IncidentEvent, IncidentPhase, IncidentStatusHistoryEntry } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import { SeverityBadge, PriorityBadge, AlertStatusBadge } from "../../components/badges";
-import { TagPicker } from "../../components/TagPicker";
+import { AutoSaveTagPicker } from "../../components/AutoSaveTagPicker";
 import { AttachmentPreview } from "../../components/AttachmentButton";
+import { AddNoteForm } from "../../components/AddNoteForm";
+import { LinkSearchPicker } from "../../components/LinkSearchPicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
@@ -19,8 +21,6 @@ import { IncidentRolesPanel } from "./IncidentDetailPage/IncidentRolesPanel";
 import { NistMatrixPanel } from "./IncidentDetailPage/NistMatrixPanel";
 import { DescriptionPanel } from "./IncidentDetailPage/DescriptionPanel";
 import { StatusHistoryPanel } from "./IncidentDetailPage/StatusHistoryPanel";
-import { AddCommentForm } from "./IncidentDetailPage/AddCommentForm";
-import { LinkAlertForm } from "./IncidentDetailPage/LinkAlertForm";
 
 export function IncidentDetailPage() {
   const { t } = useTranslation();
@@ -42,6 +42,7 @@ export function IncidentDetailPage() {
     (tk) => api.get<Alert[]>(`/api/v1/incidents/${id}/alerts`, tk),
     [id],
   );
+  const { data: alertCandidates } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
   const { data: timeline, reload: reloadTimeline } = useList<IncidentEvent>(
     (tk) => api.get<IncidentEvent[]>(`/api/v1/incidents/${id}/timeline`, tk),
     [id],
@@ -107,6 +108,18 @@ export function IncidentDetailPage() {
       setActionError(mutationErrorMessage(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function linkAlert(alertId: string) {
+    if (!id) return;
+    setActionError(null);
+    try {
+      await api.put(`/api/v1/incidents/${id}/alerts/${alertId}`, {}, token);
+      reloadLinkedAlerts();
+      reloadTimeline();
+    } catch (err) {
+      setActionError(mutationErrorMessage(err));
     }
   }
 
@@ -199,7 +212,11 @@ export function IncidentDetailPage() {
         </div>
       </div>
 
-      <IncidentTagsRow incident={incident} onSaved={reloadIncidentAndTimeline} />
+      <AutoSaveTagPicker
+        resourcePath={`/api/v1/incidents/${incident.id}/tags`}
+        value={incident.tags}
+        onSaved={reloadIncidentAndTimeline}
+      />
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
@@ -262,13 +279,11 @@ export function IncidentDetailPage() {
             <h2 className="panel-title" style={{ marginBottom: 10 }}>
               {t("incidents.detail.correlatedAlertsTitle")}
             </h2>
-            <LinkAlertForm
-              incidentId={incident.id}
-              linkedAlerts={linkedAlerts ?? []}
-              onLinked={() => {
-                reloadLinkedAlerts();
-                reloadTimeline();
-              }}
+            <LinkSearchPicker
+              candidates={alertCandidates ?? []}
+              excludeIds={new Set((linkedAlerts ?? []).map((a) => a.id))}
+              onLink={linkAlert}
+              placeholder={t("incidents.detail.linkAlertPlaceholder")}
             />
             {linkedAlerts && linkedAlerts.length === 0 && (
               <div className="empty-state">{t("incidents.detail.noCorrelatedAlerts")}</div>
@@ -316,7 +331,7 @@ export function IncidentDetailPage() {
                   </div>
                 </div>
               ))}
-            <AddCommentForm incidentId={incident.id} onAdded={reloadComments} />
+            <AddNoteForm kind="incident" id={incident.id} onAdded={reloadComments} />
           </div>
         </div>
 
@@ -334,31 +349,6 @@ export function IncidentDetailPage() {
           />
         </div>
       </div>
-    </div>
-  );
-}
-
-function IncidentTagsRow({ incident, onSaved }: { incident: Incident; onSaved: () => void }) {
-  const [tags, setTags] = useState<string[]>(incident.tags);
-  const [error, setError] = useState<string | null>(null);
-  const { token } = useAuth();
-
-  async function save(next: string[]) {
-    setTags(next);
-    setError(null);
-    try {
-      await api.put(`/api/v1/incidents/${incident.id}/tags`, { tags: next }, token);
-      onSaved();
-    } catch (err) {
-      setTags(incident.tags);
-      setError(mutationErrorMessage(err));
-    }
-  }
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <TagPicker value={tags} onChange={save} />
-      {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
     </div>
   );
 }

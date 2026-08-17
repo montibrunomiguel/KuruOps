@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { StorageConfig } from "../../types/api";
 
 // Settings -> Storage Integration: lets an admin point alert/incident
@@ -15,9 +16,9 @@ import type { StorageConfig } from "../../types/api";
 export function StorageIntegrationPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<StorageConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<StorageConfig | null>((tok) =>
+    api.get<StorageConfig | null>("/api/v1/settings/storage", tok),
+  );
 
   const [provider, setProvider] = useState<"s3" | "gcs">("s3");
 
@@ -36,31 +37,21 @@ export function StorageIntegrationPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
-  function load() {
-    setLoading(true);
-    api
-      .get<StorageConfig | null>("/api/v1/settings/storage", token)
-      .then((cfg) => {
-        setExisting(cfg);
-        if (cfg) {
-          setProvider(cfg.provider);
-          if (cfg.provider === "s3") {
-            setS3Bucket(cfg.s3Bucket ?? "");
-            setS3Region(cfg.s3Region ?? "");
-            setS3AccessKeyId(cfg.s3AccessKeyId ?? "");
-          } else {
-            setGcsBucket(cfg.gcsBucket ?? "");
-            setGcsProjectId(cfg.gcsProjectId ?? "");
-          }
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(load, [token]);
+  useEffect(() => {
+    if (existing) {
+      setProvider(existing.provider);
+      if (existing.provider === "s3") {
+        setS3Bucket(existing.s3Bucket ?? "");
+        setS3Region(existing.s3Region ?? "");
+        setS3AccessKeyId(existing.s3AccessKeyId ?? "");
+      } else {
+        setGcsBucket(existing.gcsBucket ?? "");
+        setGcsProjectId(existing.gcsProjectId ?? "");
+      }
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -84,7 +75,7 @@ export function StorageIntegrationPanel() {
         setGcsCredentialsJson("");
       }
       setSaved(true);
-      load();
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -93,16 +84,16 @@ export function StorageIntegrationPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/storage", token);
-      setExisting(null);
       setS3Bucket("");
       setS3Region("");
       setS3AccessKeyId("");
       setGcsBucket("");
       setGcsProjectId("");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -204,7 +195,7 @@ export function StorageIntegrationPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.storage.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.storage.remove")}
           </button>
         )}
@@ -214,7 +205,7 @@ export function StorageIntegrationPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>

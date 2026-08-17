@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { LDAPConfig, SAMLConfig } from "../../types/api";
 
 export function IdentityProvidersPanel() {
@@ -17,9 +18,9 @@ export function IdentityProvidersPanel() {
 function LDAPPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<LDAPConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<LDAPConfig | null>((tok) =>
+    api.get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", tok),
+  );
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState(636);
@@ -36,27 +37,20 @@ function LDAPPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   useEffect(() => {
-    api
-      .get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", token)
-      .then((cfg) => {
-        if (cfg) {
-          setExisting(cfg);
-          setHost(cfg.host);
-          setPort(cfg.port);
-          setUseTls(cfg.useTls);
-          setBindDn(cfg.bindDn);
-          setUserBaseDn(cfg.userBaseDn);
-          setUserFilter(cfg.userFilter);
-          setGroupBaseDn(cfg.groupBaseDn);
-          setGroupAttribute(cfg.groupAttribute);
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }, [token]);
+    if (existing) {
+      setHost(existing.host);
+      setPort(existing.port);
+      setUseTls(existing.useTls);
+      setBindDn(existing.bindDn);
+      setUserBaseDn(existing.userBaseDn);
+      setUserFilter(existing.userFilter);
+      setGroupBaseDn(existing.groupBaseDn);
+      setGroupAttribute(existing.groupAttribute);
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -79,12 +73,11 @@ function LDAPPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     setSaveError(null);
     try {
       await api.del("/api/v1/settings/identity-providers/ldap", token);
-      setExisting(null);
       setHost("");
       setPort(636);
       setUseTls(true);
@@ -94,6 +87,7 @@ function LDAPPanel() {
       setUserFilter("(mail=%s)");
       setGroupBaseDn("");
       setGroupAttribute("memberOf");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -177,7 +171,7 @@ function LDAPPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.ldap.remove")}
           </button>
         )}
@@ -187,7 +181,7 @@ function LDAPPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>
@@ -200,9 +194,9 @@ function LDAPPanel() {
 function SAMLPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<SAMLConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<SAMLConfig | null>((tok) =>
+    api.get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", tok),
+  );
 
   const [metadataMode, setMetadataMode] = useState<"url" | "xml">("url");
   const [idpMetadataUrl, setIdpMetadataUrl] = useState("");
@@ -216,29 +210,22 @@ function SAMLPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   useEffect(() => {
-    api
-      .get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", token)
-      .then((cfg) => {
-        if (cfg) {
-          setExisting(cfg);
-          if (cfg.idpMetadataUrl) {
-            setMetadataMode("url");
-            setIdpMetadataUrl(cfg.idpMetadataUrl);
-          } else if (cfg.idpMetadataXml) {
-            setMetadataMode("xml");
-            setIdpMetadataXml(cfg.idpMetadataXml);
-          }
-          setSpEntityId(cfg.spEntityId);
-          setAcsUrl(cfg.acsUrl);
-          if (cfg.groupAttribute) setGroupAttribute(cfg.groupAttribute);
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }, [token]);
+    if (existing) {
+      if (existing.idpMetadataUrl) {
+        setMetadataMode("url");
+        setIdpMetadataUrl(existing.idpMetadataUrl);
+      } else if (existing.idpMetadataXml) {
+        setMetadataMode("xml");
+        setIdpMetadataXml(existing.idpMetadataXml);
+      }
+      setSpEntityId(existing.spEntityId);
+      setAcsUrl(existing.acsUrl);
+      if (existing.groupAttribute) setGroupAttribute(existing.groupAttribute);
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -266,18 +253,18 @@ function SAMLPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     setSaveError(null);
     try {
       await api.del("/api/v1/settings/identity-providers/saml", token);
-      setExisting(null);
       setMetadataMode("url");
       setIdpMetadataUrl("");
       setIdpMetadataXml("");
       setSpEntityId(`${window.location.origin}/auth/saml`);
       setAcsUrl(`${window.location.origin}/auth/saml/acs`);
       setGroupAttribute("groups");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -394,7 +381,7 @@ function SAMLPanel() {
           {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
         </button>
         {existing && !confirmingRemove && (
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+          <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.saml.remove")}
           </button>
         )}
@@ -404,7 +391,7 @@ function SAMLPanel() {
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
               {submitting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
               {t("common.cancel")}
             </button>
           </>

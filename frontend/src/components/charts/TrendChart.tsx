@@ -1,6 +1,6 @@
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useTranslation } from "react-i18next";
 import type { AlertTrendPoint } from "../../types/dashboard";
+import { currentLocale } from "../../lib/format";
 
 // Bar+line combo: alert volume per day (bars, left axis) against MTTR in
 // hours (dots/line, right axis) -- the Dashboard Alerts tab's "Alert Volume
@@ -8,14 +8,11 @@ import type { AlertTrendPoint } from "../../types/dashboard";
 // closed alerts has nothing to average), so the line only plots where data
 // exists rather than drawing a misleading zero.
 export function TrendChart({ points }: { points: AlertTrendPoint[] }) {
-  const { i18n } = useTranslation();
-  const locale = i18n.language === "en" ? "en-US" : "pt-BR";
-
   const data = points.map((p) => ({
     // "day/month" (e.g. "07/08") rather than a single-letter weekday --
     // narrow weekday labels repeat within a 14-day window (two Mondays both
     // render "S"/"M"), which reads as duplicate/wrong data on the x-axis.
-    day: new Date(p.day + "T00:00:00").toLocaleDateString(locale, { day: "2-digit", month: "2-digit" }),
+    day: new Date(p.day + "T00:00:00").toLocaleDateString(currentLocale(), { day: "2-digit", month: "2-digit" }),
     alertCount: p.alertCount,
     mttrHours: p.avgMttrSeconds != null ? Math.round((p.avgMttrSeconds / 3600) * 10) / 10 : undefined,
   }));

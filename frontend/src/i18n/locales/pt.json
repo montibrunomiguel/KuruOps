@@ -1,5 +1,8 @@
 {
   "common": {
+    "unexpectedError": "Erro inesperado",
+    "loadFailed": "Falha ao carregar dados",
+    "saveFailed": "Falha ao salvar",
     "loading": "Carregando...",
     "save": "Salvar",
     "saving": "Salvando...",
@@ -85,6 +88,10 @@
     "logout": "Sair",
     "openMenu": "Abrir menu",
     "closeMenu": "Fechar menu"
+  },
+  "commandPalette": {
+    "placeholder": "Digite um comando ou pesquise...",
+    "noResults": "Nenhum comando encontrado"
   },
   "login": {
     "email": "E-mail",

@@ -1,5 +1,5 @@
-import type { Alert } from "./alerts";
-import type { Incident } from "./incidents";
+import type { Alert, AlertEventType } from "./alerts";
+import type { Incident, IncidentEventType } from "./incidents";
 
 // Mirrors domain.AlertTrendPoint -- one day of mv_alert_daily_stats, for the
 // Dashboard Alerts tab's trend chart.
@@ -16,13 +16,19 @@ export interface IncidentTrendPoint {
   incidentCount: number;
 }
 
+// "comment_added" isn't a real AlertEventType/IncidentEventType constant --
+// the dashboard repository's activity-feed query synthesizes it with that
+// literal string when it UNIONs in the comments tables alongside the real
+// alert_events/incident_events log (see dashboard_repository.go).
+export type ActivityEventType = AlertEventType | IncidentEventType | "comment_added";
+
 // Mirrors domain.ActivityEvent -- one row of the Dashboard's Recent Activity
 // feed, a union of alert_events and incident_events.
 export interface ActivityEvent {
   kind: "alert" | "incident";
   contextId: string;
   contextTitle: string;
-  eventType: string;
+  eventType: ActivityEventType;
   actorType: "user" | "system" | "ai";
   actorId?: string;
   data: unknown;

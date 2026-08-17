@@ -2,17 +2,28 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { useList, mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage } from "../../api/hooks";
+import { useAdminCrud } from "../../hooks/useAdminCrud";
 import type { LLMProvider, LLMProviderKind } from "../../types/api";
 
 const KIND_ORDER: LLMProviderKind[] = ["anthropic", "openai_compatible", "azure_openai", "self_hosted"];
 
 export function LLMProvidersPanel() {
   const { t } = useTranslation();
-  const { data: providers, loading, error, reload } = useList<LLMProvider>((tk) =>
-    api.get<LLMProvider[]>("/api/v1/settings/llm-providers", tk),
-  );
-  const [showCreate, setShowCreate] = useState(false);
+  const {
+    data: providers,
+    loading,
+    error,
+    reload,
+    showCreate,
+    setShowCreate,
+    confirming,
+    confirm,
+    cancel,
+    deletingId,
+    deleteError,
+    remove,
+  } = useAdminCrud<LLMProvider>("/api/v1/settings/llm-providers");
 
   return (
     <div className="panel">
@@ -29,6 +40,7 @@ export function LLMProvidersPanel() {
       </p>
 
       {error && <div className="error-banner">{error}</div>}
+      {deleteError && <div className="error-banner">{deleteError}</div>}
 
       {showCreate && (
         <ProviderForm
@@ -46,7 +58,18 @@ export function LLMProvidersPanel() {
       )}
       {!loading &&
         providers &&
-        providers.map((p) => <ProviderRow key={p.id} provider={p} onChanged={reload} />)}
+        providers.map((p) => (
+          <ProviderRow
+            key={p.id}
+            provider={p}
+            onChanged={reload}
+            confirming={confirming === p.id}
+            deleting={deletingId === p.id}
+            onConfirm={() => confirm(p.id)}
+            onCancel={cancel}
+            onRemove={() => remove(p.id)}
+          />
+        ))}
     </div>
   );
 }
@@ -166,32 +189,33 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
   );
 }
 
-function ProviderRow({ provider, onChanged }: { provider: LLMProvider; onChanged: () => void }) {
+function ProviderRow({
+  provider,
+  onChanged,
+  confirming,
+  deleting,
+  onConfirm,
+  onCancel,
+  onRemove,
+}: {
+  provider: LLMProvider;
+  onChanged: () => void;
+  confirming: boolean;
+  deleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onRemove: () => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
 
   async function setDefault() {
     setBusy(true);
     setError(null);
     try {
       await api.post(`/api/v1/settings/llm-providers/${provider.id}/default`, {}, token);
-      onChanged();
-    } catch (err) {
-      setError(mutationErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.del(`/api/v1/settings/llm-providers/${provider.id}`, token);
-      setConfirming(false);
       onChanged();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -224,15 +248,15 @@ function ProviderRow({ provider, onChanged }: { provider: LLMProvider; onChanged
             <span className="helper-text" style={{ flexBasis: "100%" }}>
               {t("settings.llm.removeConfirm", { name: provider.name })}
             </span>
-            <button className="btn btn-danger btn-sm" onClick={remove} disabled={busy}>
-              {busy ? t("common.saving") : t("common.confirmDelete")}
+            <button className="btn btn-danger btn-sm" onClick={onRemove} disabled={deleting}>
+              {deleting ? t("common.saving") : t("common.confirmDelete")}
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setConfirming(false)}>
+            <button className="btn btn-ghost btn-sm" onClick={onCancel}>
               {t("common.cancel")}
             </button>
           </>
         ) : (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirming(true)} disabled={busy}>
+          <button className="btn btn-danger btn-sm" onClick={onConfirm} disabled={deleting}>
             {t("common.remove")}
           </button>
         )}

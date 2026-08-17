@@ -2,9 +2,10 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { useList, mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage } from "../../api/hooks";
 import type { Tag } from "../../types/tags";
 import { formatDateTime } from "../../lib/format";
+import { useAdminCrud } from "../../hooks/useAdminCrud";
 
 // Tags are governed here, not typed freely on an alert/incident -- an
 // analyst can only attach a tag that already exists in this catalog (see
@@ -15,29 +16,20 @@ import { formatDateTime } from "../../lib/format";
 // governs.
 export function TagsPanel() {
   const { t } = useTranslation();
-  const { token } = useAuth();
-  const { data: tags, loading, error, reload } = useList<Tag>((tk) => api.get<Tag[]>("/api/v1/tags", tk));
-  const [showCreate, setShowCreate] = useState(false);
-  // Inline confirm/cancel instead of window.confirm() -- some embedded
-  // browser contexts silently auto-dismiss native confirm() dialogs, which
-  // made delete look like it does nothing (see OnCallScheduleDetailPage).
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  async function remove(id: string) {
-    setDeletingId(id);
-    setDeleteError(null);
-    try {
-      await api.del(`/api/v1/settings/tags/${id}`, token);
-      setConfirmingId(null);
-      reload();
-    } catch (err) {
-      setDeleteError(mutationErrorMessage(err));
-    } finally {
-      setDeletingId(null);
-    }
-  }
+  const {
+    data: tags,
+    loading,
+    error,
+    reload,
+    showCreate,
+    setShowCreate,
+    confirming,
+    confirm,
+    cancel,
+    deletingId,
+    deleteError,
+    remove,
+  } = useAdminCrud<Tag>("/api/v1/settings/tags", "/api/v1/tags");
 
   return (
     <div className="panel">
@@ -87,7 +79,7 @@ export function TagsPanel() {
               <p className="row-sub">{t("settings.tags.createdOn", { date: formatDateTime(tag.createdAt) })}</p>
             </div>
             <div className="row-actions">
-              {confirmingId === tag.id ? (
+              {confirming === tag.id ? (
                 <>
                   <span className="helper-text" style={{ flexBasis: "100%" }}>
                     {t("settings.tags.deleteConfirm")}
@@ -99,12 +91,12 @@ export function TagsPanel() {
                   >
                     {deletingId === tag.id ? t("common.saving") : t("common.confirmDelete")}
                   </button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmingId(null)}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => cancel()}>
                     {t("common.cancel")}
                   </button>
                 </>
               ) : (
-                <button className="btn btn-danger btn-sm" onClick={() => setConfirmingId(tag.id)}>
+                <button className="btn btn-danger btn-sm" onClick={() => confirm(tag.id)}>
                   {t("settings.tags.delete")}
                 </button>
               )}

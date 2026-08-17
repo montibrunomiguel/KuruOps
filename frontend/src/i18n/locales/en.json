@@ -1,5 +1,8 @@
 {
   "common": {
+    "unexpectedError": "Unexpected error",
+    "loadFailed": "Failed to load data",
+    "saveFailed": "Failed to save",
     "loading": "Loading...",
     "save": "Save",
     "saving": "Saving...",
@@ -85,6 +88,10 @@
     "logout": "Log out",
     "openMenu": "Open menu",
     "closeMenu": "Close menu"
+  },
+  "commandPalette": {
+    "placeholder": "Type a command or search...",
+    "noResults": "No matching commands"
   },
   "login": {
     "email": "E-mail",

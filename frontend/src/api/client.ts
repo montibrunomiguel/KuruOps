@@ -3,6 +3,8 @@
 // that these endpoints are authenticated -- see useAuth() for where the
 // token actually comes from.
 
+import i18n from "../i18n";
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -44,15 +46,45 @@ function refreshOnce(): Promise<string | null> {
   return inFlight;
 }
 
-async function request<T>(path: string, opts: RequestOptions, isRetry = false): Promise<T> {
+// parseErrorMessage extracts a user-facing message from a failed response:
+// the backend's own {error: "..."} body when present, falling back to the
+// HTTP status text, falling back to a generic translated message.
+function parseErrorMessage(res: Response, payload: unknown): string {
+  const backendMessage = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : "";
+  return backendMessage || res.statusText || String(i18n.t("common.unexpectedError"));
+}
+
+// fetchWithAuth is request/requestPaged's shared core: attaches the bearer
+// token and transparently retries once on a 401 after a token refresh (see
+// refreshOnce above). Only authenticated requests (token set) are eligible
+// -- login/refresh itself pass token: null, so this can't loop back into
+// refreshing off of a refresh failure.
+async function fetchWithAuth(path: string, init: RequestInit, token: string | null, isRetry = false): Promise<Response> {
   const res = await fetch(path, {
-    method: opts.method ?? "GET",
-    headers: {
-      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-    },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    ...init,
+    headers: { ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
   });
+
+  if (res.status === 401 && !isRetry && token) {
+    const newToken = await refreshOnce();
+    if (newToken) {
+      return fetchWithAuth(path, init, newToken, true);
+    }
+  }
+
+  return res;
+}
+
+async function request<T>(path: string, opts: RequestOptions): Promise<T> {
+  const res = await fetchWithAuth(
+    path,
+    {
+      method: opts.method ?? "GET",
+      headers: opts.body !== undefined ? { "Content-Type": "application/json" } : {},
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    },
+    opts.token,
+  );
 
   if (res.status === 204) {
     return undefined as T;
@@ -62,20 +94,7 @@ async function request<T>(path: string, opts: RequestOptions, isRetry = false): 
   const payload = isJson ? await res.json().catch(() => undefined) : undefined;
 
   if (!res.ok) {
-    // Only authenticated requests (opts.token set) are eligible for a
-    // refresh-and-retry -- login/refresh itself pass token: null, so this
-    // can't loop back into refreshing off of a refresh failure.
-    if (res.status === 401 && !isRetry && opts.token) {
-      const newToken = await refreshOnce();
-      if (newToken) {
-        return request<T>(path, { ...opts, token: newToken }, true);
-      }
-    }
-    const message =
-      (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
-      res.statusText ||
-      "Erro inesperado";
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, parseErrorMessage(res, payload));
   }
 
   return payload as T;
@@ -86,29 +105,14 @@ async function request<T>(path: string, opts: RequestOptions, isRetry = false): 
 // callers) -- kept as a separate function rather than growing request<T>'s
 // return shape, since every other caller of request<T> expects a bare body
 // and would otherwise need updating to unwrap {items, total}.
-async function requestPaged<T>(path: string, opts: RequestOptions, isRetry = false): Promise<{ items: T[]; total: number }> {
-  const res = await fetch(path, {
-    method: opts.method ?? "GET",
-    headers: {
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-    },
-  });
+async function requestPaged<T>(path: string, opts: RequestOptions): Promise<{ items: T[]; total: number }> {
+  const res = await fetchWithAuth(path, { method: opts.method ?? "GET" }, opts.token);
 
   const isJson = res.headers.get("content-type")?.includes("application/json");
   const payload = isJson ? await res.json().catch(() => undefined) : undefined;
 
   if (!res.ok) {
-    if (res.status === 401 && !isRetry && opts.token) {
-      const newToken = await refreshOnce();
-      if (newToken) {
-        return requestPaged<T>(path, { ...opts, token: newToken }, true);
-      }
-    }
-    const message =
-      (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
-      res.statusText ||
-      "Erro inesperado";
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, parseErrorMessage(res, payload));
   }
 
   const items = (payload as T[] | undefined) ?? [];
@@ -151,11 +155,7 @@ export const api = {
     });
     const payload = await res.json().catch(() => undefined);
     if (!res.ok) {
-      const message =
-        (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
-        res.statusText ||
-        "Erro inesperado";
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, parseErrorMessage(res, payload));
     }
     return payload as { url: string };
   },
@@ -169,11 +169,7 @@ export const api = {
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => undefined);
-      const message =
-        (payload && typeof payload === "object" && "error" in payload && String(payload.error)) ||
-        res.statusText ||
-        "Erro inesperado";
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, parseErrorMessage(res, payload));
     }
     const disposition = res.headers.get("content-disposition") ?? "";
     const match = /filename="([^"]+)"/.exec(disposition);

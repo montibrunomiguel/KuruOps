@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { mutationErrorMessage } from "../api/hooks";
+import { validateNewPassword } from "../lib/format";
 
 // Shown whenever the session's mustChangePassword flag is set -- always
 // true right after a fresh deploy's first login (see
@@ -23,12 +24,9 @@ export function ChangePasswordPage() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword !== confirmPassword) {
-      setError(t("changePassword.mismatch"));
-      return;
-    }
-    if (newPassword.length < 8) {
-      setError(t("changePassword.tooShort"));
+    const validationError = validateNewPassword(newPassword, confirmPassword, t);
+    if (validationError) {
+      setError(validationError);
       return;
     }
 

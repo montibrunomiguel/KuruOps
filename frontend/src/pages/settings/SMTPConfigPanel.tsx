@@ -2,8 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useObject } from "../../api/hooks";
 import type { SMTPConfig } from "../../types/api";
+import { useConfirm } from "../../hooks/useConfirm";
 
 // Settings -> SMTP: lets an admin point outbound transactional email
 // (password reset, and any future notification) at a real relay. Same
@@ -13,9 +14,9 @@ import type { SMTPConfig } from "../../types/api";
 export function SMTPConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [existing, setExisting] = useState<SMTPConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: existing, loading, error, reload } = useObject<SMTPConfig | null>((tok) =>
+    api.get<SMTPConfig | null>("/api/v1/settings/smtp", tok),
+  );
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState("587");
@@ -31,32 +32,22 @@ export function SMTPConfigPanel() {
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   const [testTo, setTestTo] = useState("");
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  function load() {
-    setLoading(true);
-    api
-      .get<SMTPConfig | null>("/api/v1/settings/smtp", token)
-      .then((cfg) => {
-        setExisting(cfg);
-        if (cfg) {
-          setHost(cfg.host);
-          setPort(String(cfg.port));
-          setUseTls(cfg.useTls);
-          setUsername(cfg.username);
-          setFromAddress(cfg.fromAddress);
-          setFromName(cfg.fromName ?? "");
-        }
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(load, [token]);
+  useEffect(() => {
+    if (existing) {
+      setHost(existing.host);
+      setPort(String(existing.port));
+      setUseTls(existing.useTls);
+      setUsername(existing.username);
+      setFromAddress(existing.fromAddress);
+      setFromName(existing.fromName ?? "");
+    }
+  }, [existing]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -71,7 +62,7 @@ export function SMTPConfigPanel() {
       );
       setPassword("");
       setSaved(true);
-      load();
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -80,17 +71,17 @@ export function SMTPConfigPanel() {
   }
 
   async function handleRemove() {
-    setConfirmingRemove(false);
+    cancelRemove();
     setSubmitting(true);
     try {
       await api.del("/api/v1/settings/smtp", token);
-      setExisting(null);
       setHost("");
       setPort("587");
       setUseTls(true);
       setUsername("");
       setFromAddress("");
       setFromName("");
+      reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));
     } finally {
@@ -179,7 +170,7 @@ export function SMTPConfigPanel() {
             {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.smtp.configureButton")}
           </button>
           {existing && !confirmingRemove && (
-            <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmingRemove(true)} disabled={submitting}>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
               {t("settings.smtp.remove")}
             </button>
           )}
@@ -189,7 +180,7 @@ export function SMTPConfigPanel() {
               <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
                 {submitting ? t("common.saving") : t("common.confirmDelete")}
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRemove(false)} disabled={submitting}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelRemove()} disabled={submitting}>
                 {t("common.cancel")}
               </button>
             </>

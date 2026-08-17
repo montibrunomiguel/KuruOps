@@ -18,6 +18,7 @@ import {
 import { BrandMark } from "./BrandMark";
 import { applyTheme, getStoredTheme, type Theme } from "../theme";
 import { setLanguage } from "../i18n";
+import { initials } from "../lib/format";
 
 export function Sidebar() {
   const { t, i18n } = useTranslation();
@@ -149,14 +150,6 @@ export function Sidebar() {
       </aside>
     </>
   );
-}
-
-function initials(name?: string): string {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  const first = parts[0]?.[0] ?? "";
-  const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
-  return (first + last).toUpperCase();
 }
 
 function SidebarLink({

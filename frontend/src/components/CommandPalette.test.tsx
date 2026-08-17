@@ -112,4 +112,30 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+
+  it("navigates the list with ArrowDown/ArrowUp, wrapping at both ends, and selects with Enter", async () => {
+    renderPalette();
+    open();
+
+    // Dashboard is the first command; ArrowUp from there wraps to the last.
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(await screen.findByText("Alerts Page")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does nothing on ArrowDown/Enter when the palette is closed", () => {
+    render(
+      <MemoryRouter>
+        <CommandPalette />
+      </MemoryRouter>,
+    );
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveOnCallSet } from "./onCallRotation";
-import type { OnCallParticipant, OnCallWorkingHoursInterval } from "../types/onCallSchedule";
+import type { OnCallParticipant, OnCallWorkingHoursInterval, OnCallWorkingHoursMode } from "../types/onCallSchedule";
+import fixtures from "../../../docs/oncall-rotation-fixtures.json";
 
 function participant(name: string): OnCallParticipant {
   return { userId: name.toLowerCase(), userName: name };
@@ -141,5 +142,38 @@ describe("resolveOnCallSet", () => {
     expect(
       names(resolveOnCallSet([alice], handover, 7, 1, "specific_times", businessHours, override, outsideHours)),
     ).toEqual(["Carol"]);
+  });
+
+  // Shared fixture also read by backend/internal/domain/on_call_schedule_test.go
+  // -- a handful of concrete cases both language ports must resolve
+  // identically, cheap insurance against this hand-maintained TS port
+  // silently drifting from the Go original it mirrors.
+  describe("cross-language fixtures (docs/oncall-rotation-fixtures.json)", () => {
+    for (const c of fixtures as Array<{
+      name: string;
+      participants: OnCallParticipant[];
+      handoverAt: string;
+      periodDays: number;
+      concurrentShifts: number;
+      workingHoursMode: OnCallWorkingHoursMode;
+      workingHours: OnCallWorkingHoursInterval[];
+      override: OnCallParticipant | null;
+      localNow: string;
+      expectedUserIds: string[];
+    }>) {
+      it(c.name, () => {
+        const result = resolveOnCallSet(
+          c.participants,
+          new Date(c.handoverAt),
+          c.periodDays,
+          c.concurrentShifts,
+          c.workingHoursMode,
+          c.workingHours,
+          c.override,
+          new Date(c.localNow),
+        );
+        expect(result.map((p) => p.userId)).toEqual(c.expectedUserIds);
+      });
+    }
   });
 });

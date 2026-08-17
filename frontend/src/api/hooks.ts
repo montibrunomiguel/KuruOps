@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, isSessionExpiredError } from "../auth/AuthContext";
 import { ApiError } from "./client";
+import i18n from "../i18n";
+
+// resolveListError is useList/usePagedList's shared failure handling: a
+// session-expiry error logs the user out (returning null -- the caller
+// shouldn't also set an error state, since the app is about to redirect to
+// login) rather than showing a raw error message the reload is about to
+// wipe away anyway.
+function resolveListError(err: unknown, logout: () => void): string | null {
+  if (isSessionExpiredError(err)) {
+    logout();
+    return null;
+  }
+  return err instanceof ApiError ? err.message : String(i18n.t("common.loadFailed"));
+}
 
 interface ListState<T> {
   data: T[] | null;
@@ -22,11 +36,41 @@ export function useList<T>(fetcher: (token: string | null) => Promise<T[]>, deps
     fetcher(token)
       .then((data) => setState({ data, loading: false, error: null }))
       .catch((err: unknown) => {
-        if (isSessionExpiredError(err)) {
-          logout();
-          return;
-        }
-        const message = err instanceof ApiError ? err.message : "Falha ao carregar dados";
+        const message = resolveListError(err, logout);
+        if (message === null) return;
+        setState({ data: null, loading: false, error: message });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, ...deps]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  return { ...state, reload };
+}
+
+interface ObjectState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+
+// useObject mirrors useList but for a single-object GET endpoint -- same
+// reload()/loading/error/401-logout shape, for Settings panels that load
+// one config object (SMTP config, an identity provider, ...) rather than a
+// list.
+export function useObject<T>(fetcher: (token: string | null) => Promise<T>, deps: unknown[] = []) {
+  const { token, logout } = useAuth();
+  const [state, setState] = useState<ObjectState<T>>({ data: null, loading: true, error: null });
+
+  const reload = useCallback(() => {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetcher(token)
+      .then((data) => setState({ data, loading: false, error: null }))
+      .catch((err: unknown) => {
+        const message = resolveListError(err, logout);
+        if (message === null) return;
         setState({ data: null, loading: false, error: message });
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -72,11 +116,8 @@ export function usePagedList<T>(
       fetcher(token, pageSize, (targetPage - 1) * pageSize)
         .then(({ items, total }) => setState({ items, total, loading: false, error: null }))
         .catch((err: unknown) => {
-          if (isSessionExpiredError(err)) {
-            logout();
-            return;
-          }
-          const message = err instanceof ApiError ? err.message : "Falha ao carregar dados";
+          const message = resolveListError(err, logout);
+          if (message === null) return;
           setState((s) => ({ ...s, loading: false, error: message }));
         });
     },
@@ -124,5 +165,5 @@ export function usePagedList<T>(
 // (forms) rather than going through useList.
 export function mutationErrorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  return "Falha ao salvar";
+  return String(i18n.t("common.saveFailed"));
 }

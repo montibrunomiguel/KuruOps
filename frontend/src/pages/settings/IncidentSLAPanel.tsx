@@ -2,12 +2,11 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage } from "../../api/hooks";
+import { mutationErrorMessage, useList } from "../../api/hooks";
 import type { IncidentSLAPolicy, IncidentPriority } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
 import { PRIORITY_ORDER } from "../../lib/chartColors";
-
-const MATRIX_SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informational"];
+import { SeverityPriorityGrid, SEVERITY_PRIORITY_GRID_SEVERITIES } from "../../components/SeverityPriorityGrid";
 
 function cellKey(severity: Severity, priority: IncidentPriority) {
   return `${severity}-${priority}`;
@@ -22,30 +21,23 @@ function cellKey(severity: Severity, priority: IncidentPriority) {
 export function IncidentSLAPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [policies, setPolicies] = useState<IncidentSLAPolicy[]>([]);
+  const { data, loading, error, reload } = useList<IncidentSLAPolicy>((tok) =>
+    api.get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", tok),
+  );
+  const policies = data ?? [];
   const [values, setValues] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  function load() {
-    setLoading(true);
-    api
-      .get<IncidentSLAPolicy[]>("/api/v1/settings/incident-sla", token)
-      .then((list) => {
-        setPolicies(list);
-        const next: Record<string, string> = {};
-        for (const p of list) {
-          next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
-        }
-        setValues(next);
-      })
-      .catch((err: unknown) => setError(mutationErrorMessage(err)))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(load, [token]);
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const p of policies) {
+      next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
+    }
+    setValues(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   function original(key: string): string {
     const p = policies.find((p) => cellKey(p.severity, p.priority) === key);
@@ -56,12 +48,12 @@ export function IncidentSLAPanel() {
     return (values[key] ?? "") !== original(key);
   }
 
-  const allKeys = MATRIX_SEVERITIES.flatMap((sev) => PRIORITY_ORDER.map((p) => cellKey(sev, p)));
+  const allKeys = SEVERITY_PRIORITY_GRID_SEVERITIES.flatMap((sev) => PRIORITY_ORDER.map((p) => cellKey(sev, p)));
   const dirtyKeys = allKeys.filter(isDirty);
 
   async function handleSave() {
     setSaving(true);
-    setError(null);
+    setSaveError(null);
     setSaved(false);
     try {
       for (const key of dirtyKeys) {
@@ -77,9 +69,9 @@ export function IncidentSLAPanel() {
         await api.put("/api/v1/settings/incident-sla", { severity, priority, dueWithinMinutes: Number(value) }, token);
       }
       setSaved(true);
-      load();
+      reload();
     } catch (err) {
-      setError(mutationErrorMessage(err));
+      setSaveError(mutationErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -97,55 +89,43 @@ export function IncidentSLAPanel() {
       </p>
 
       {error && <div className="error-banner">{error}</div>}
+      {saveError && <div className="error-banner">{saveError}</div>}
       {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.incidentSla.saved")}</div>}
 
-      <div className="nist-matrix">
-        <span />
-        {PRIORITY_ORDER.map((p) => (
-          <span className="nist-matrix-header-cell" key={p}>
-            {p.toUpperCase()}
-          </span>
-        ))}
-        {MATRIX_SEVERITIES.map((sev) => (
-          <>
-            <span className="nist-matrix-row-label" key={`label-${sev}`}>
-              {t(`common.severity.${sev}`)}
-            </span>
-            {PRIORITY_ORDER.map((p) => {
-              const key = cellKey(sev, p);
-              return (
-                <div key={key} style={{ position: "relative" }}>
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    style={{ width: "100%", textAlign: "center", paddingRight: values[key] ? 28 : undefined }}
-                    placeholder={t("settings.incidentSla.unconfigured") ?? undefined}
-                    aria-label={`${t(`common.severity.${sev}`)} / ${p.toUpperCase()}`}
-                    value={values[key] ?? ""}
-                    onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                  />
-                  {values[key] && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        right: 8,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        fontSize: 10,
-                        color: "var(--text-muted)",
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {t("settings.incidentSla.unit")}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </>
-        ))}
-      </div>
+      <SeverityPriorityGrid
+        renderCell={(sev, p) => {
+          const key = cellKey(sev, p);
+          return (
+            <div style={{ position: "relative" }}>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                style={{ width: "100%", textAlign: "center", paddingRight: values[key] ? 28 : undefined }}
+                placeholder={t("settings.incidentSla.unconfigured") ?? undefined}
+                aria-label={`${t(`common.severity.${sev}`)} / ${p.toUpperCase()}`}
+                value={values[key] ?? ""}
+                onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+              />
+              {values[key] && (
+                <span
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    fontSize: 10,
+                    color: "var(--text-muted)",
+                    pointerEvents: "none",
+                  }}
+                >
+                  {t("settings.incidentSla.unit")}
+                </span>
+              )}
+            </div>
+          );
+        }}
+      />
 
       <div className="row-actions" style={{ marginTop: 14 }}>
         <button type="button" className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving || dirtyKeys.length === 0}>

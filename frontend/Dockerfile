@@ -3,11 +3,18 @@
 # service on the Docker network. This mirrors exactly what vite.config.ts's
 # dev-server proxy does -- the browser only ever talks to one origin, so
 # there's no CORS story to build on the Go side just for this.
+#
+# Build context is the repo root (see docker-compose.yml), not frontend/ --
+# lib/onCallRotation.test.ts imports docs/oncall-rotation-fixtures.json as
+# its cross-language source of truth (see that file's own doc comment), and
+# `tsc`'s src-wide typecheck in `npm run build` fails if it can't resolve
+# that import, so docs/ has to be reachable from inside the build.
 FROM node:20-alpine AS build
 WORKDIR /src
-COPY package.json package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
-COPY . .
+COPY frontend/. .
+COPY docs/oncall-rotation-fixtures.json /docs/oncall-rotation-fixtures.json
 RUN npm run build
 
 # nginx-unprivileged, not plain nginx:1.27-alpine: runs as a non-root user
@@ -16,6 +23,6 @@ RUN npm run build
 # handled by the image itself with no nginx.conf changes beyond the listen
 # port below. Same tag suffix as the image we're replacing.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080

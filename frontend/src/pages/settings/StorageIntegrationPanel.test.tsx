@@ -89,10 +89,14 @@ describe("StorageIntegrationPanel", () => {
   });
 
   it("removing the integration DELETEs and clears the configured badge", async () => {
+    let removed = false;
     const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      if (init?.method === "DELETE") return Promise.resolve(new Response(null, { status: 204 }));
+      if (init?.method === "DELETE") {
+        removed = true;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
       return Promise.resolve(
-        jsonResponse({ provider: "s3", s3Bucket: "evidence", s3Region: "us-east-1", s3AccessKeyId: "AKIA" }),
+        jsonResponse(removed ? null : { provider: "s3", s3Bucket: "evidence", s3Region: "us-east-1", s3AccessKeyId: "AKIA" }),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
