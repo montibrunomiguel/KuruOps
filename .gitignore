@@ -1,3 +1,7 @@
+# docker compose reads a repo-root .env automatically -- never commit a
+# real one (see .env.example for the template).
+/.env
+
 # Go
 backend/bin/
 backend/jwt_private.pem

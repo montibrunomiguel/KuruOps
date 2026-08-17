@@ -147,3 +147,45 @@ naquele certificado).
    salve. Mesma regra do LDAP: deixar em branco mantém a chave antiga.
 2. Nenhuma sessão de análise em andamento é afetada — a chave só é resolvida no momento de cada
    chamada à LLM, não mantida aberta entre requisições.
+
+## Segredos de infraestrutura: credenciais padrão do `docker-compose.yml`
+
+As seções acima cobrem segredos de nível de aplicação (LDAP, SAML, LLM/MCP) — resolvidos via
+`secrets.Store` e rotacionáveis pela UI de Settings sem reiniciar nada. `docker-compose.yml` tem
+uma categoria diferente e mais básica de segredo: as credenciais que colocam a própria stack de pé
+(senha do Postgres, das roles `argusops_app`/`argusops_worker`, a chave de criptografia do
+`secrets.Store`). Essas **não** passam pela UI — são lidas direto de variáveis de ambiente no
+momento em que cada container sobe.
+
+Todo esse conjunto vem com um valor padrão funcional embutido no próprio `docker-compose.yml`
+(propositalmente — `docker compose up` sem nenhuma configuração adicional já sobe a stack inteira,
+sem exigir que quem está só experimentando localmente gere segredos primeiro). O efeito colateral é
+que esses valores padrão são **públicos**: aparecem em texto puro neste repositório, tanto no
+`docker-compose.yml` quanto no `.env.example` (ver raiz do repositório). São aceitáveis para rodar
+a stack no laptop de um único desenvolvedor. **Não são aceitáveis** para qualquer ambiente
+alcançável por outra pessoa — uma máquina de staging compartilhada, um ambiente de demonstração,
+qualquer coisa exposta a um IP que não seja `localhost`.
+
+### Rotação antes de qualquer uso compartilhado
+
+1. Copie `.env.example` (raiz do repositório) para `.env`.
+2. Gere valores novos para cada credencial:
+   - `POSTGRES_PASSWORD` / `POSTGRES_USER`: qualquer senha forte; trocar `POSTGRES_USER` exige
+     também atualizar as chamadas `docker compose exec postgres psql -U postgres ...` hardcoded no
+     `Taskfile.yml` (`db:up`, `db:test:up`, `db:backup`, etc. — elas não leem a variável, assumem
+     literalmente `postgres`).
+   - `ARGUSOPS_APP_PASSWORD` / `ARGUSOPS_WORKER_PASSWORD`: qualquer senha forte — só precisam bater
+     com o que `db/init/argusops_app_role.sql` / `argusops_worker_role.sql` configuram na criação
+     das roles (rodar `task db:reset` depois de trocar, para recriar as roles com a senha nova).
+   - `SECRETS_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Atenção**: trocar essa chave depois que
+     já existem segredos gravados no Postgres (`secret_store`) os torna ilegíveis — gere a chave
+     definitiva antes do primeiro `docker compose up`, não depois.
+3. `docker compose up -d` novamente para os serviços pegarem os valores novos (`api`/`ingest`/
+   `worker` seguem `${VAR:-default}`, então uma vez setado no `.env` o valor override já é o que
+   sobe).
+4. `.env` está no `.gitignore` do repositório — nunca force `git add -f` nele.
+
+Exceção deliberada: `VAULT_DEV_ROOT_TOKEN_ID` (serviço `vault-dev`, perfil `tools`) fica hardcoded
+no `docker-compose.yml`, sem variável de override. É o token de root de uma instância Vault em modo
+dev — armazenamento em memória, descartado a cada restart (ver o próprio comentário do serviço) —
+então não existe nada durável ali para rotacionar.
