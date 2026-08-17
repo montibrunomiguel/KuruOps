@@ -107,6 +107,27 @@ func TestKeyedLimiter_Allow_ConcurrentRequestsNeverExceedLimit(t *testing.T) {
 	assert.LessOrEqual(t, allowed.Load(), int64(3), "no more than the configured limit may be allowed even under concurrent requests for the same key")
 }
 
+// TestKeyedLimiter_DeniedKeysAreCachedLocally is the regression test for the
+// local negative cache: once a key is denied by the real DB check, a
+// subsequent Allow() call for that same key must stay denied WITHOUT
+// needing the database at all. Proven black-box (this file's package is
+// middleware_test, not middleware) by closing the pool right after the
+// key is first denied -- if Allow() fell through to the DB on the next
+// call, KeyedLimiter's fail-open behavior on a DB error would return true,
+// so seeing false here is only possible if the local cache short-circuited
+// before ever touching the (now-closed) pool.
+func TestKeyedLimiter_DeniedKeysAreCachedLocally(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	limiter := middleware.NewKeyedLimiter(t.Context(), pool.Pool, uniqueScope("test_denied_cached_locally"), 1, time.Minute)
+
+	assert.True(t, limiter.Allow("10.0.0.50"), "1st request is allowed")
+	assert.False(t, limiter.Allow("10.0.0.50"), "2nd request exceeds the limit and is denied by the real DB check")
+
+	pool.Close()
+
+	assert.False(t, limiter.Allow("10.0.0.50"), "3rd request stays denied via the local cache -- a real DB call here would fail open (return true) against the now-closed pool")
+}
+
 func TestNewRateLimiter_PerIP(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	limiter := middleware.NewRateLimiter(t.Context(), pool.Pool, uniqueScope("test_per_ip"), 2, time.Minute)

@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/httpserver/handlers"
@@ -66,6 +68,11 @@ type Options struct {
 	// comment for why this route needs a much larger timeout than every
 	// other /api/v1 route.
 	DatabaseMigrationTimeout time.Duration
+	// Tracer starts one span per request (see middleware.TracingMiddleware).
+	// nil (the zero value, what every test call site that doesn't care about
+	// tracing passes) falls back to a no-op tracer -- see telemetry.Setup for
+	// where a real one comes from.
+	Tracer trace.Tracer
 }
 
 // defaultHTTPRequestTimeout is used when Options.HTTPRequestTimeout is left
@@ -84,9 +91,13 @@ func NewRouter(opts Options) http.Handler {
 	if opts.DatabaseMigrationTimeout <= 0 {
 		opts.DatabaseMigrationTimeout = defaultDatabaseMigrationTimeout
 	}
+	if opts.Tracer == nil {
+		opts.Tracer = noop.NewTracerProvider().Tracer("argusops")
+	}
 
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
+	r.Use(middleware.TracingMiddleware(opts.Tracer))
 	r.Use(middleware.RequestLogger(opts.Logger))
 	// ClientIPFromHeader("X-Real-IP"), not the deprecated chimw.RealIP: RealIP
 	// also trusts X-Forwarded-For / True-Client-IP, both client-suppliable and

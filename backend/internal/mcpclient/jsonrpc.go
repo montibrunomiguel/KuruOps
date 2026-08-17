@@ -20,7 +20,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+// tracer's provider is whatever telemetry.Setup registered globally (a
+// no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) -- see post below, this
+// package's one choke point every call/notify eventually funnels through.
+var tracer = otel.Tracer("argusops/mcpclient")
 
 const (
 	protocolVersion = "2025-03-26"
@@ -192,13 +201,21 @@ func (c *Client) notify(ctx context.Context, method string, params any) error {
 }
 
 func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
+	ctx, span := tracer.Start(ctx, "mcp.request")
+	defer span.End()
+	span.SetAttributes(attribute.String("mcp.method", req.Method))
+
 	payload, err := json.Marshal(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -212,9 +229,12 @@ func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer httpResp.Body.Close()
+	span.SetAttributes(attribute.Int("http.status_code", httpResp.StatusCode))
 
 	if sid := httpResp.Header.Get("Mcp-Session-Id"); sid != "" {
 		c.sessionID = sid
@@ -228,6 +248,8 @@ func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
 
 	bodyBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if httpResp.StatusCode >= 300 {

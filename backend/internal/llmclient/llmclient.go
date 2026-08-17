@@ -18,7 +18,17 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+// tracer's provider is whatever telemetry.Setup registered globally (a
+// no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) -- see doRequest below,
+// this package's one choke point every provider's Complete/CompleteWithTools
+// call eventually funnels through.
+var tracer = otel.Tracer("argusops/llmclient")
 
 // Client sends one system+user prompt pair to an LLM and returns its text
 // response, or (via CompleteWithTools) runs one turn of a multi-turn,
@@ -502,17 +512,28 @@ func toAnthropicTools(tools []Tool) []anthropicToolDef {
 }
 
 func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
+	ctx, span := tracer.Start(req.Context(), "llm.request")
+	defer span.End()
+	req = req.WithContext(ctx)
+	span.SetAttributes(attribute.String("http.url", req.URL.Host+req.URL.Path))
+
 	resp, err := client.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, fmt.Errorf("read response: %w", err)
 	}
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	if resp.StatusCode >= 300 {
+		span.SetStatus(codes.Error, fmt.Sprintf("llm provider returned %d", resp.StatusCode))
 		return nil, fmt.Errorf("llm provider returned %d: %s", resp.StatusCode, string(body))
 	}
 	return body, nil
