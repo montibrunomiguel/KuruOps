@@ -13,6 +13,7 @@ import { AddNoteForm } from "../../components/AddNoteForm";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
+import { AlertDetailSkeleton } from "../../components/AlertDetailSkeleton";
 import { formatDateTime, initials, shortId } from "../../lib/format";
 import { MetadataPanel } from "./AlertDetailPage/MetadataPanel";
 import { PayloadPanel } from "./AlertDetailPage/PayloadPanel";
@@ -93,7 +94,7 @@ export function AlertDetailPage() {
     }
   }
 
-  if (loading) return <div className="empty-state">{t("common.loading")}</div>;
+  if (loading) return <AlertDetailSkeleton />;
   if (error) return <div className="error-banner">{error}</div>;
   if (!current) return <div className="empty-state">{t("alerts.detail.notFound")}</div>;
 

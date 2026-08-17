@@ -20,6 +20,14 @@ function open() {
   fireEvent.keyDown(window, { key: "k", metaKey: true });
 }
 
+// Escape/Arrow/Enter are now handled by a listener scoped to the dialog
+// itself (see CommandPalette's onKeyDown), not window -- fire them on the
+// dialog's own combobox input, which is where a real user's keystrokes
+// would land (it has autoFocus).
+function fireOnPalette(key: string, extra: Record<string, unknown> = {}) {
+  fireEvent.keyDown(screen.getByRole("combobox"), { key, ...extra });
+}
+
 describe("CommandPalette", () => {
   it("opens on Cmd+K and closes on Escape", () => {
     render(
@@ -33,7 +41,7 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireOnPalette("Escape");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -118,10 +126,10 @@ describe("CommandPalette", () => {
     open();
 
     // Dashboard is the first command; ArrowUp from there wraps to the last.
-    fireEvent.keyDown(window, { key: "ArrowUp" });
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    fireEvent.keyDown(window, { key: "ArrowDown" });
-    fireEvent.keyDown(window, { key: "Enter" });
+    fireOnPalette("ArrowUp");
+    fireOnPalette("ArrowDown");
+    fireOnPalette("ArrowDown");
+    fireOnPalette("Enter");
 
     expect(await screen.findByText("Alerts Page")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -137,5 +145,55 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(window, { key: "ArrowDown" });
     fireEvent.keyDown(window, { key: "Enter" });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("exposes combobox/listbox ARIA wiring with aria-activedescendant tracking the highlighted option", () => {
+    renderPalette();
+    open();
+
+    const input = screen.getByRole("combobox");
+    const listbox = screen.getByRole("listbox");
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(input).toHaveAttribute("aria-controls", listbox.id);
+
+    const options = screen.getAllByRole("option");
+    expect(options.length).toBeGreaterThan(1);
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[0].id);
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+
+    fireOnPalette("ArrowDown");
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[1].id);
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("restores focus to the previously focused element on close", () => {
+    render(
+      <MemoryRouter>
+        <button>outside trigger</button>
+        <CommandPalette />
+      </MemoryRouter>,
+    );
+
+    const trigger = screen.getByText("outside trigger");
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.getByRole("combobox")).toHaveFocus();
+
+    fireOnPalette("Escape");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps focus on the input when Tab is pressed (minimal focus trap)", () => {
+    renderPalette();
+    open();
+
+    const input = screen.getByRole("combobox");
+    expect(input).toHaveFocus();
+
+    fireOnPalette("Tab");
+    expect(input).toHaveFocus();
   });
 });

@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
+import { DashboardSkeleton } from "./DashboardSkeleton";
 import type { DashboardStats } from "../../types/dashboard";
 import type { Incident } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
@@ -68,6 +69,14 @@ export function IncidentsTabPanel() {
     reloadIncidents();
   });
 
+  // hasLoadedOnce gates DashboardSkeleton to the very first paint only --
+  // see AlertsTabPanel's identical wiring for the reasoning.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!statsLoading) setHasLoadedOnce(true);
+  }, [statsLoading]);
+
+  if (statsLoading && !hasLoadedOnce) return <DashboardSkeleton />;
   if (statsError) return <div className="error-banner">{statsError}</div>;
 
   const byPriority = stats?.incidentsByPriority ?? {};
