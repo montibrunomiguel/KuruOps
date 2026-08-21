@@ -83,6 +83,7 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [autoAnalyzeAllAlerts, setAutoAnalyzeAllAlerts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,7 +97,7 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
     try {
       await api.post(
         "/api/v1/settings/llm-providers",
-        { name, kind, baseUrl: needsBaseUrl ? baseUrl : undefined, model, apiKey },
+        { name, kind, baseUrl: needsBaseUrl ? baseUrl : undefined, model, apiKey, autoAnalyzeAllAlerts },
         token,
       );
       onSaved();
@@ -175,6 +176,17 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
             </button>
           </div>
         </div>
+        <div className="field field-full">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={autoAnalyzeAllAlerts}
+              onChange={(e) => setAutoAnalyzeAllAlerts(e.target.checked)}
+            />
+            {t("settings.llm.form.autoAnalyzeAllAlerts")}
+          </label>
+          <span className="field-hint">{t("settings.llm.form.autoAnalyzeAllAlertsHint")}</span>
+        </div>
       </div>
 
       <div className="row-actions">
@@ -230,6 +242,9 @@ function ProviderRow({
         <p className="row-title">
           {provider.name}{" "}
           {provider.isDefault && <span className="badge badge-success">{t("settings.llm.defaultBadge")}</span>}
+          {provider.autoAnalyzeAllAlerts && (
+            <span className="badge badge-muted">{t("settings.llm.autoAnalyzeBadge")}</span>
+          )}
         </p>
         <p className="row-sub">
           {t(`settings.llm.kind.${provider.kind}`)} · {provider.model}

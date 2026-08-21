@@ -42,6 +42,8 @@ type LLMProviderSaveInput struct {
 	BaseURL *string
 	Model   string
 	APIKey  string
+	// AutoAnalyzeAllAlerts -- see domain.LLMProvider's doc comment.
+	AutoAnalyzeAllAlerts bool
 }
 
 // Create validates that a custom endpoint is only allowed for the kinds
@@ -60,13 +62,14 @@ func (s *LLMProviderService) Create(ctx context.Context, tenantID, actorID uuid.
 	}
 
 	p := &domain.LLMProvider{
-		TenantID:        tenantID,
-		Name:            in.Name,
-		Kind:            in.Kind,
-		BaseURL:         in.BaseURL,
-		Model:           in.Model,
-		APIKeySecretRef: ref,
-		CreatedBy:       &actorID,
+		TenantID:             tenantID,
+		Name:                 in.Name,
+		Kind:                 in.Kind,
+		BaseURL:              in.BaseURL,
+		Model:                in.Model,
+		APIKeySecretRef:      ref,
+		AutoAnalyzeAllAlerts: in.AutoAnalyzeAllAlerts,
+		CreatedBy:            &actorID,
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -110,6 +113,7 @@ func (s *LLMProviderService) Update(ctx context.Context, tenantID, id uuid.UUID,
 		existing.BaseURL = in.BaseURL
 		existing.Model = in.Model
 		existing.APIKeySecretRef = ref
+		existing.AutoAnalyzeAllAlerts = in.AutoAnalyzeAllAlerts
 
 		if err := s.repo.Update(ctx, tx, existing); err != nil {
 			return fmt.Errorf("update llm provider: %w", err)

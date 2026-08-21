@@ -121,6 +121,14 @@ func main() {
 				logger.Debug("auto-analysis skipped, no LLM provider configured", "tenant_id", tenantID)
 				return
 			}
+			// Same reasoning, the other common case: a provider IS
+			// configured but hasn't opted into AutoAnalyzeAllAlerts (the
+			// default) -- an analyst clicking "Analyze with AI" is still
+			// available, this is just the unattended trigger declining.
+			if errors.Is(err, service.ErrAutoAnalysisDisabled) {
+				logger.Debug("auto-analysis skipped, disabled for the default llm provider", "tenant_id", tenantID)
+				return
+			}
 			logger.Warn("auto-analysis failed", "tenant_id", tenantID, "alert_id", alertID, "error", err)
 		}
 	})

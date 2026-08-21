@@ -30,6 +30,7 @@ func TestLLMProviderRepository_InsertGetListUpdateDelete(t *testing.T) {
 	require.NoError(t, repo.Insert(t.Context(), tx, p))
 	require.NotEqual(t, [16]byte{}, p.ID)
 	assert.False(t, p.IsDefault)
+	assert.False(t, p.AutoAnalyzeAllAlerts, "defaults off -- see the migration's doc comment")
 
 	t.Run("get", func(t *testing.T) {
 		got, err := repo.Get(t.Context(), tx, p.ID)
@@ -62,12 +63,14 @@ func TestLLMProviderRepository_InsertGetListUpdateDelete(t *testing.T) {
 	t.Run("update", func(t *testing.T) {
 		p.Name = "OpenAI GPT-4o Renamed"
 		p.Model = "gpt-4o-mini"
+		p.AutoAnalyzeAllAlerts = true
 		require.NoError(t, repo.Update(t.Context(), tx, p))
 
 		got, err := repo.Get(t.Context(), tx, p.ID)
 		require.NoError(t, err)
 		assert.Equal(t, "OpenAI GPT-4o Renamed", got.Name)
 		assert.Equal(t, "gpt-4o-mini", got.Model)
+		assert.True(t, got.AutoAnalyzeAllAlerts)
 	})
 
 	t.Run("set default clears any other default for the tenant", func(t *testing.T) {

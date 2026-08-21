@@ -24,6 +24,14 @@ import (
 // into 409 Conflict rather than starting a second, overlapping run.
 var ErrAnalysisInProgress = errors.New("an analysis is already in progress for this item")
 
+// ErrAutoAnalysisDisabled is what buildClient returns when the tenant's
+// default LLM provider hasn't opted into domain.LLMProvider.
+// AutoAnalyzeAllAlerts and this call is the unattended, fires-on-every-alert
+// trigger (see AlertService.EnableAutoAnalysis) rather than an analyst
+// clicking "Analyze with AI" -- cmd/ingest treats this the same as "no
+// provider configured": skip quietly, not a failure worth a warn-level log.
+var ErrAutoAnalysisDisabled = errors.New("auto-analysis is disabled for the default llm provider")
+
 // AIAnalysisService runs an "Analyze with AI" request against the tenant's
 // default LLM provider (see Settings -> AI Integration) and logs the result
 // as an alert_events/incident_events row so it shows up in the timeline
@@ -306,7 +314,7 @@ func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUI
 			return err
 		}
 
-		c, err := s.buildClient(ctx, tx)
+		c, err := s.buildClient(ctx, tx, actorID == nil)
 		if err != nil {
 			return err
 		}
@@ -378,7 +386,10 @@ func (s *AIAnalysisService) continueAnalysis(ctx context.Context, tenantID uuid.
 		}
 		latest = r
 
-		c, err := s.buildClient(ctx, tx)
+		// false: continuing an analysis chat is always an explicit analyst
+		// action (actorID here is a plain uuid.UUID, never nil), never the
+		// unattended ingest-time trigger.
+		c, err := s.buildClient(ctx, tx, false)
 		if err != nil {
 			return err
 		}
@@ -818,13 +829,20 @@ func (s *AIAnalysisService) recordEvent(ctx context.Context, tenantID uuid.UUID,
 // buildClient resolves the tenant's default LLM provider and its API key,
 // returning a ready-to-use llmclient.Client. tx is required (not the pool)
 // because llm_providers is RLS-scoped the same as every other tenant table.
-func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx) (llmclient.Client, error) {
+// autoTriggered must be true only for AlertService's unattended ingest-time
+// call (actorID nil in startAnalysis) -- an analyst clicking "Analyze with
+// AI" always proceeds regardless of AutoAnalyzeAllAlerts, since that flag
+// only gates the fires-on-every-alert path, never the explicit one.
+func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx, autoTriggered bool) (llmclient.Client, error) {
 	provider, err := s.llmProviders.GetDefault(ctx, tx)
 	if err != nil {
 		return nil, fmt.Errorf("load default llm provider: %w", err)
 	}
 	if provider == nil {
 		return nil, fmt.Errorf("no LLM provider configured -- set one up in Settings -> AI Integration")
+	}
+	if autoTriggered && !provider.AutoAnalyzeAllAlerts {
+		return nil, ErrAutoAnalysisDisabled
 	}
 
 	apiKey, err := s.secrets.Resolve(ctx, provider.APIKeySecretRef)
@@ -848,7 +866,11 @@ func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx) (llmclie
 func (s *AIAnalysisService) BuildClient(ctx context.Context, tenantID uuid.UUID) (llmclient.Client, error) {
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		c, err := s.buildClient(ctx, tx)
+		// false: both callers (ResumeAnalysisRun continuing an
+		// already-started run, PostmortemService.Generate) are past the
+		// point AutoAnalyzeAllAlerts gates, or are themselves an explicit
+		// action -- never the unattended ingest-time trigger.
+		c, err := s.buildClient(ctx, tx, false)
 		client = c
 		return err
 	})

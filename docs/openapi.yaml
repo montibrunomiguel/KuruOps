@@ -3514,6 +3514,12 @@ components:
         baseUrl: { type: string, nullable: true }
         model: { type: string }
         isDefault: { type: boolean }
+        autoAnalyzeAllAlerts:
+          type: boolean
+          description: >
+            When true and this is the tenant's default provider, every alert
+            ingested via webhook is analyzed automatically. Off by default:
+            analysis then only happens when an analyst clicks "Analyze with AI".
         createdBy: { type: string, format: uuid, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -3528,6 +3534,9 @@ components:
         apiKey:
           type: string
           description: Write-only. Required on create; empty on update means "keep the existing key".
+        autoAnalyzeAllAlerts:
+          type: boolean
+          description: Fully replaces the stored value on every save, unlike apiKey -- there's no "omit to keep existing" case.
       required: [name, model]
 
     MCPServer:

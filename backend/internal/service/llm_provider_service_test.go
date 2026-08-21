@@ -41,6 +41,20 @@ func TestLLMProviderService_Create(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotContains(t, p.APIKeySecretRef, "sk-super-secret")
 	})
+
+	t.Run("AutoAnalyzeAllAlerts defaults off, opts in when set", func(t *testing.T) {
+		off, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "Default Off", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-1",
+		})
+		require.NoError(t, err)
+		assert.False(t, off.AutoAnalyzeAllAlerts)
+
+		on, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "Opted In", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-2", AutoAnalyzeAllAlerts: true,
+		})
+		require.NoError(t, err)
+		assert.True(t, on.AutoAnalyzeAllAlerts)
+	})
 }
 
 func TestLLMProviderService_Update(t *testing.T) {
@@ -70,6 +84,20 @@ func TestLLMProviderService_Update(t *testing.T) {
 			Name: "x", Kind: "openai_compatible", Model: "m",
 		})
 		assert.ErrorContains(t, err, "not found")
+	})
+
+	t.Run("AutoAnalyzeAllAlerts fully replaces on every update, same as Name/Kind/Model", func(t *testing.T) {
+		updated, err := svc.Update(t.Context(), tenantID, p.ID, service.LLMProviderSaveInput{
+			Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", AutoAnalyzeAllAlerts: true,
+		})
+		require.NoError(t, err)
+		assert.True(t, updated.AutoAnalyzeAllAlerts)
+
+		updated, err = svc.Update(t.Context(), tenantID, p.ID, service.LLMProviderSaveInput{
+			Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", AutoAnalyzeAllAlerts: false,
+		})
+		require.NoError(t, err)
+		assert.False(t, updated.AutoAnalyzeAllAlerts)
 	})
 }
 
