@@ -62,7 +62,7 @@ type Alert struct {
 	Payload json.RawMessage `json:"payload"`
 	// Metadata is the sender's own curated key/value list (Slack channel,
 	// playbook link, environment, anything they want surfaced) -- see
-	// db/migrations/0032_alert_metadata.up.sql. Always an object, possibly
+	// db/migrations/0001_initial_schema.up.sql. Always an object, possibly
 	// empty (`{}`), never null. Distinct from Payload, which is the
 	// unfiltered raw webhook body.
 	Metadata   json.RawMessage `json:"metadata"`
@@ -165,7 +165,7 @@ const (
 )
 
 // AlertEvent is an append-only audit row — see alert_events in
-// db/migrations/0004_alerts.up.sql. Never updated after insert.
+// db/migrations/0001_initial_schema.up.sql. Never updated after insert.
 type AlertEvent struct {
 	ID        int64           `json:"id"`
 	AlertID   uuid.UUID       `json:"alertId"`

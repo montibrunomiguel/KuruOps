@@ -56,7 +56,7 @@ type NamedCount struct {
 // "live" counts (open/critical alerts) come from a cheap indexed COUNT(*)
 // against the alerts table so they're always current; MTTA/MTTR and the
 // incident KPIs come from mv_alert_daily_stats / mv_incident_kpis, which
-// cmd/worker refreshes on a schedule (see db/migrations/0009_materialized_views.up.sql).
+// cmd/worker refreshes on a schedule (see db/migrations/0001_initial_schema.up.sql).
 // The trade-off is deliberate: an average-over-time metric doesn't need
 // per-request freshness, and computing it from a materialized view instead
 // of fetching every alert/incident row into the client is what actually

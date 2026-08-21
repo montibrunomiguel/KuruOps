@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -22,8 +23,8 @@ func NewWebhookRepository() *WebhookRepository {
 // token. It deliberately does not go through Pool.WithTenant — the tenant
 // isn't known yet, that's what this call determines — and instead opens the
 // narrow, single-purpose RLS carve-out from
-// db/migrations/0010_webhook_token_lookup_policy.up.sql for the duration of
-// one transaction. See that migration for why this is safe.
+// db/migrations/0001_initial_schema.up.sql (the webhook_token_lookup
+// policy) for the duration of one transaction.
 func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tokenHash string) (*domain.WebhookEndpoint, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -47,7 +48,7 @@ func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tok
 		&ep.GroupByFields, &ep.DedupWindowMinutes,
 	)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("resolve webhook token: %w", err)

@@ -1,1 +1,0 @@
-drop table refresh_tokens;

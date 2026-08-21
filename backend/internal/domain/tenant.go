@@ -7,7 +7,8 @@ import (
 )
 
 // Tenant mirrors `tenants`. Unlike every other table in this codebase, it
-// is intentionally not RLS-scoped (see db/migrations/0008 comment) — a
+// is intentionally not RLS-scoped (see the RLS section of
+// db/migrations/0001_initial_schema.up.sql) — a
 // tenant's own identity has to be resolvable before app.tenant_id can be
 // set, which is exactly the login bootstrap problem Slug solves.
 type Tenant struct {

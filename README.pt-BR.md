@@ -85,7 +85,7 @@ mesmo tempo.
   Communications Lead e Privacy Officer (NIST 800-61), cada um atribuível a um usuário.
 - **Histórico de Fases** (no detalhe do incidente) — cada fase NIST 800-61 registra quando foi
   entrada; o horário original nunca é sobrescrito. Uma correção exige motivo, fica registrada com
-  autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0005_incidents.up.sql`.
+  autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0001_initial_schema.up.sql`.
   Pular uma fase (ex.: New → Eradication direto) não é bloqueado, mas fica marcado com um evento de
   aviso na timeline, para não mascarar processo mal seguido em métricas de MTTR.
 - **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no

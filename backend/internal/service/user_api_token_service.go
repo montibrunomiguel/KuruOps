@@ -123,7 +123,7 @@ func (s *UserAPITokenService) Resolve(ctx context.Context, plaintext string) (*R
 
 	var identity *ResolvedIdentity
 	err = s.pool.WithTenant(ctx, tok.TenantID, func(tx pgx.Tx) error {
-		u, err := s.users.Get(ctx, tx, tok.UserID)
+		u, err := s.users.Get(ctx, tx, tok.TenantID, tok.UserID)
 		if err != nil {
 			return err
 		}

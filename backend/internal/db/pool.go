@@ -2,7 +2,7 @@
 // repository must go through. It exists specifically so that "forgot to
 // filter by tenant_id" is impossible to write: WithTenant sets the
 // app.tenant_id session variable that the RLS policies in
-// db/migrations/0008_row_level_security.up.sql key off of, and every query
+// db/migrations/0001_initial_schema.up.sql key off of, and every query
 // runs inside that transaction.
 package db
 

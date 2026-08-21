@@ -46,26 +46,12 @@ func (r *AIAnalysisRunRepository) Get(ctx context.Context, tx pgx.Tx, id int64) 
 // layer needing to leak run IDs through AnalyzeAlert/AnalyzeIncident's
 // public (string, error) signature.
 func (r *AIAnalysisRunRepository) ListByContext(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID) ([]domain.AIAnalysisRun, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select `+aiAnalysisRunColumns+` from ai_analysis_runs
 		where context_type = $1 and context_id = $2
 		order by created_at desc`,
-		contextType, contextID,
+		scanAIAnalysisRun, contextType, contextID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query analysis runs: %w", err)
-	}
-	defer rows.Close()
-
-	runs := []domain.AIAnalysisRun{}
-	for rows.Next() {
-		run, err := scanAIAnalysisRun(rows)
-		if err != nil {
-			return nil, err
-		}
-		runs = append(runs, *run)
-	}
-	return runs, rows.Err()
 }
 
 // LatestRun returns the single most recent analysis run for one

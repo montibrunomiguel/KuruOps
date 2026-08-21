@@ -97,6 +97,7 @@ func TestOnCallScheduleRepository_GetUnknownIDReturnsNil(t *testing.T) {
 func TestOnCallScheduleRepository_List(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
+	alice := testutil.NewUser(t, tenantID, "analyst", nil)
 	repo := repository.NewOnCallScheduleRepository()
 	tx := testutil.BeginTx(t, pool, tenantID)
 
@@ -110,19 +111,33 @@ func TestOnCallScheduleRepository_List(t *testing.T) {
 		TenantID: tenantID, Name: "Zebra Team", HandoverAt: time.Now(), PeriodDays: 7, ConcurrentShifts: 1,
 		WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
 	}))
+	// Alpha Team carries a participant and a working-hours interval --
+	// exercises List's batch-loaded participantsForSchedules/
+	// workingHoursForSchedules path (see OnCallScheduleRepository.List's doc
+	// comment on the N+1 fix) with an actual row to scan, not just the
+	// empty-result branch Zebra Team above covers.
 	require.NoError(t, repo.Insert(t.Context(), tx, &domain.OnCallSchedule{
 		TenantID: tenantID, Name: "Alpha Team", IsDefault: true, HandoverAt: time.Now(), PeriodDays: 7, ConcurrentShifts: 1,
-		WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
+		WorkingHoursMode: domain.OnCallWorkingHoursSpecificTimes,
+		Participants:     []domain.OnCallParticipant{{UserID: alice}},
+		WorkingHours:     []domain.OnCallWorkingHoursInterval{{Weekdays: []int{1, 2, 3, 4, 5}, StartMinute: 540, EndMinute: 1020}},
 	}))
 
-	t.Run("returns every schedule for the tenant, ordered by name", func(t *testing.T) {
+	t.Run("returns every schedule for the tenant, ordered by name, with participants/working hours batch-loaded", func(t *testing.T) {
 		list, err := repo.List(t.Context(), tx)
 		require.NoError(t, err)
 		require.Len(t, list, 2)
 		assert.Equal(t, "Alpha Team", list[0].Name)
 		assert.True(t, list[0].IsDefault)
+		require.Len(t, list[0].Participants, 1)
+		assert.Equal(t, alice, list[0].Participants[0].UserID)
+		require.Len(t, list[0].WorkingHours, 1)
+		assert.Equal(t, []int{1, 2, 3, 4, 5}, list[0].WorkingHours[0].Weekdays)
+
 		assert.Equal(t, "Zebra Team", list[1].Name)
 		assert.False(t, list[1].IsDefault)
+		assert.Empty(t, list[1].Participants, "a schedule with no participants must still get an empty (not nil) slice")
+		assert.Empty(t, list[1].WorkingHours)
 	})
 }
 

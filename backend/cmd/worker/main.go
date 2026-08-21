@@ -222,7 +222,7 @@ func runLocked(ctx context.Context, pool *db.Pool, key int64, job string, logger
 // isolation for these two views is the API layer's responsibility -- every
 // query against them MUST include `where tenant_id = $1`. REFRESH ...
 // CONCURRENTLY requires the unique indexes created alongside the views in
-// db/migrations/0009_materialized_views.up.sql.
+// db/migrations/0001_initial_schema.up.sql.
 //
 // cfg.DatabaseURL must point at argusops_worker (BYPASSRLS), not
 // argusops_app: Postgres runs a materialized view's defining query with the

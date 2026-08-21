@@ -135,21 +135,8 @@ func (r *IncidentRepository) List(ctx context.Context, tx pgx.Tx, f ListIncident
 	args = append(args, f.Offset)
 	query += fmt.Sprintf(" offset $%d", len(args))
 
-	rows, err := tx.Query(ctx, query, args...)
+	incidents, err := queryList(ctx, tx, query, scanIncident, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query incidents: %w", err)
-	}
-	defer rows.Close()
-
-	incidents := []domain.Incident{}
-	for rows.Next() {
-		inc, err := scanIncident(rows)
-		if err != nil {
-			return nil, err
-		}
-		incidents = append(incidents, *inc)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -263,28 +250,22 @@ func (r *IncidentRepository) AssigneesForIncidents(ctx context.Context, tx pgx.T
 // SQL; plain alphabetical-by-role-string is good enough here since the
 // frontend groups by role anyway, not by this ordering).
 func (r *IncidentRepository) RolesForIncident(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentRoleAssignment, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select ra.role, u.id, u.name
 		from incident_role_assignments ra
 		join users u on u.id = ra.user_id
 		where ra.incident_id = $1
 		order by ra.role, u.name`,
-		incidentID,
+		scanIncidentRoleAssignment, incidentID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query incident role assignments: %w", err)
-	}
-	defer rows.Close()
+}
 
-	roles := []domain.IncidentRoleAssignment{}
-	for rows.Next() {
-		var ra domain.IncidentRoleAssignment
-		if err := rows.Scan(&ra.Role, &ra.User.ID, &ra.User.Name); err != nil {
-			return nil, fmt.Errorf("scan incident role assignment: %w", err)
-		}
-		roles = append(roles, ra)
+func scanIncidentRoleAssignment(row pgx.Row) (*domain.IncidentRoleAssignment, error) {
+	var ra domain.IncidentRoleAssignment
+	if err := row.Scan(&ra.Role, &ra.User.ID, &ra.User.Name); err != nil {
+		return nil, fmt.Errorf("scan incident role assignment: %w", err)
 	}
-	return roles, rows.Err()
+	return &ra, nil
 }
 
 // SetRole replaces every assignee currently holding role on incident with
@@ -292,7 +273,7 @@ func (r *IncidentRepository) RolesForIncident(ctx context.Context, tx pgx.Tx, in
 // SetAssignees/UpdateTags) -- empty userIDs just clears the role. Callers
 // must validate cardinality themselves for single-assignee roles (see
 // domain.IncidentRole.SingleAssignee and IncidentService.SetRole) --
-// the partial unique index in db/migrations/0030_incident_role_assignments
+// the partial unique index in db/migrations/0001_initial_schema.up.sql
 // only guards against a concurrent-request race, it's not the primary
 // validation path (a bulk-insert of 2 rows for 'commander' would just fail
 // with an opaque constraint-violation error otherwise).
@@ -388,31 +369,25 @@ func (r *IncidentRepository) RecordPhaseEntered(ctx context.Context, tx pgx.Tx, 
 }
 
 func (r *IncidentRepository) ListStatusHistory(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentStatusHistoryEntry, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select id, incident_id, tenant_id, phase, entered_at, corrected_entered_at,
 		       corrected_at, corrected_by, correction_reason, created_at
 		from incident_status_history
 		where incident_id = $1
 		order by entered_at asc`,
-		incidentID,
+		scanIncidentStatusHistoryEntry, incidentID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query status history: %w", err)
-	}
-	defer rows.Close()
+}
 
-	entries := []domain.IncidentStatusHistoryEntry{}
-	for rows.Next() {
-		var e domain.IncidentStatusHistoryEntry
-		if err := rows.Scan(
-			&e.ID, &e.IncidentID, &e.TenantID, &e.Phase, &e.EnteredAt, &e.CorrectedEnteredAt,
-			&e.CorrectedAt, &e.CorrectedBy, &e.CorrectionReason, &e.CreatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan status history: %w", err)
-		}
-		entries = append(entries, e)
+func scanIncidentStatusHistoryEntry(row pgx.Row) (*domain.IncidentStatusHistoryEntry, error) {
+	var e domain.IncidentStatusHistoryEntry
+	if err := row.Scan(
+		&e.ID, &e.IncidentID, &e.TenantID, &e.Phase, &e.EnteredAt, &e.CorrectedEnteredAt,
+		&e.CorrectedAt, &e.CorrectedBy, &e.CorrectionReason, &e.CreatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan status history: %w", err)
 	}
-	return entries, rows.Err()
+	return &e, nil
 }
 
 // CorrectPhaseTimestamp is the only way to change what a phase's entered_at
@@ -440,27 +415,21 @@ func (r *IncidentRepository) InsertEvent(ctx context.Context, tx pgx.Tx, e *doma
 }
 
 func (r *IncidentRepository) ListEvents(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentEvent, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select id, incident_id, tenant_id, event_type, actor_type, actor_id, data, created_at
 		from incident_events
 		where incident_id = $1
 		order by created_at asc`,
-		incidentID,
+		scanIncidentEvent, incidentID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query incident events: %w", err)
-	}
-	defer rows.Close()
+}
 
-	events := []domain.IncidentEvent{}
-	for rows.Next() {
-		var e domain.IncidentEvent
-		if err := rows.Scan(&e.ID, &e.IncidentID, &e.TenantID, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan incident event: %w", err)
-		}
-		events = append(events, e)
+func scanIncidentEvent(row pgx.Row) (*domain.IncidentEvent, error) {
+	var e domain.IncidentEvent
+	if err := row.Scan(&e.ID, &e.IncidentID, &e.TenantID, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt); err != nil {
+		return nil, fmt.Errorf("scan incident event: %w", err)
 	}
-	return events, rows.Err()
+	return &e, nil
 }
 
 func (r *IncidentRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *domain.IncidentComment) error {
@@ -474,27 +443,21 @@ func (r *IncidentRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *do
 }
 
 func (r *IncidentRepository) ListComments(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IncidentComment, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select id, incident_id, tenant_id, author_id, author_name, body, attachment_url, created_at
 		from incident_comments
 		where incident_id = $1
 		order by created_at asc`,
-		incidentID,
+		scanIncidentComment, incidentID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query incident comments: %w", err)
-	}
-	defer rows.Close()
+}
 
-	comments := []domain.IncidentComment{}
-	for rows.Next() {
-		var c domain.IncidentComment
-		if err := rows.Scan(&c.ID, &c.IncidentID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan incident comment: %w", err)
-		}
-		comments = append(comments, c)
+func scanIncidentComment(row pgx.Row) (*domain.IncidentComment, error) {
+	var c domain.IncidentComment
+	if err := row.Scan(&c.ID, &c.IncidentID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
+		return nil, fmt.Errorf("scan incident comment: %w", err)
 	}
-	return comments, rows.Err()
+	return &c, nil
 }
 
 func (r *IncidentRepository) LinkAlert(ctx context.Context, tx pgx.Tx, incidentID, alertID, tenantID uuid.UUID) error {
@@ -516,7 +479,7 @@ func (r *IncidentRepository) UnlinkAlert(ctx context.Context, tx pgx.Tx, inciden
 }
 
 func (r *IncidentRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.Alert, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select `+alertColumnsWithAssignee+`
 		from alerts a
 		join incident_alert_links l on l.alert_id = a.id
@@ -524,22 +487,8 @@ func (r *IncidentRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, in
 		left join playbooks pb on pb.id = a.playbook_id
 		where l.incident_id = $1
 		order by a.received_at desc`,
-		incidentID,
+		scanAlert, incidentID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query linked alerts: %w", err)
-	}
-	defer rows.Close()
-
-	alerts := []domain.Alert{}
-	for rows.Next() {
-		a, err := scanAlert(rows)
-		if err != nil {
-			return nil, err
-		}
-		alerts = append(alerts, *a)
-	}
-	return alerts, rows.Err()
 }
 
 func scanIncident(row pgx.Row) (*domain.Incident, error) {

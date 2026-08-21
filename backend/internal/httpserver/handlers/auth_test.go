@@ -23,7 +23,7 @@ import (
 )
 
 // newAuthHandlers wires AuthHandlers against the real seeded default tenant
-// (admin@argusops.local / ChangeMe123!, see db/migrations/0013_seed_default_admin.up.sql)
+// (admin@argusops.local / ChangeMe123!, see db/migrations/0002_seed_default_admin.up.sql)
 // -- resolveTenant always resolves that single tenant, so login-success
 // tests have no other way to reach it than through the actual seed data.
 func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {

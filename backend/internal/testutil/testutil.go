@@ -2,7 +2,7 @@
 // a real Postgres connection. Repository methods take a pgx.Tx directly
 // (never a bare pool) and RLS policies only mean anything against a real
 // database, so unlike the rest of this codebase's tests, these can't be
-// mocked away -- see db/migrations/0008_row_level_security.up.sql.
+// mocked away -- see the RLS section of db/migrations/0001_initial_schema.up.sql.
 //
 // Two pools are used deliberately:
 //   - the "app" pool authenticates as argusops_app, the same least-privilege,
@@ -130,7 +130,7 @@ func NewRole(t *testing.T, tenantID uuid.UUID, isAdmin bool, resourceAccess []st
 
 // NewUser inserts a local, active, password-set user (auth_provider='local'
 // requires a password hash -- see the users_local_requires_password check
-// constraint in db/migrations/0003_tenants_users.up.sql), backed by a fresh
+// constraint in db/migrations/0001_initial_schema.up.sql), backed by a fresh
 // Role built from role/resourceAccess -- role is "admin" (grants
 // Role.IsAdmin) or anything else (not admin, purely a label on the
 // generated Role's name, since IsAdmin is the only tier distinction that

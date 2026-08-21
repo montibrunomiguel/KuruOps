@@ -12,7 +12,7 @@ import (
 // user can hold any combination of the three capabilities below, which is
 // what lets a SOC analyst see Follow-up without full Incidents access while
 // a CSIRT member holds all three. Stored as a Postgres text[] with a CHECK
-// constraint (see db/migrations/0015_resource_access_capabilities.up.sql)
+// constraint (see db/migrations/0001_initial_schema.up.sql)
 // rather than an enum array, so a future capability doesn't need another
 // multi-step enum migration.
 type ResourceAccess []string
@@ -98,7 +98,7 @@ type User struct {
 	IsActive      bool         `json:"isActive"`
 	// MustChangePassword locks the account to POST /api/v1/account/change-password
 	// only (see middleware.RequirePasswordChanged) until the password is
-	// rotated. Set true for the seeded default admin (0013_seed_default_admin.up.sql)
+	// rotated. Set true for the seeded default admin (db/migrations/0002_seed_default_admin.up.sql)
 	// and never cleared except by a successful password change.
 	MustChangePassword bool `json:"mustChangePassword"`
 	// Phone is optional but, when set, must pass ValidatePhone (E.164-ish,

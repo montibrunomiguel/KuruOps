@@ -58,19 +58,11 @@ func (r *AuditRepository) ExportEvents(ctx context.Context, tx pgx.Tx, afterCrea
 		order by created_at asc, event_id asc
 		limit $3`
 
-	rows, err := tx.Query(ctx, query, afterCreatedAt, afterEventID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("query audit export events: %w", err)
-	}
-	defer rows.Close()
-
-	events := []domain.AuditEvent{}
-	for rows.Next() {
+	return queryList(ctx, tx, query, func(row pgx.Row) (*domain.AuditEvent, error) {
 		var e domain.AuditEvent
-		if err := rows.Scan(&e.Kind, &e.ContextID, &e.ContextTitle, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt, &e.EventID); err != nil {
+		if err := row.Scan(&e.Kind, &e.ContextID, &e.ContextTitle, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt, &e.EventID); err != nil {
 			return nil, fmt.Errorf("scan audit export event: %w", err)
 		}
-		events = append(events, e)
-	}
-	return events, rows.Err()
+		return &e, nil
+	}, afterCreatedAt, afterEventID, limit)
 }

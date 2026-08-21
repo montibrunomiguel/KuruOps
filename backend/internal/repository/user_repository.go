@@ -29,21 +29,7 @@ const userColumns = `
 const usersFrom = `from users u join roles r on r.id = u.role_id`
 
 func (r *UserRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.User, error) {
-	rows, err := tx.Query(ctx, `select `+userColumns+` `+usersFrom+` order by u.name asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query users: %w", err)
-	}
-	defer rows.Close()
-
-	users := []domain.User{}
-	for rows.Next() {
-		u, err := scanUser(rows)
-		if err != nil {
-			return nil, err
-		}
-		users = append(users, *u)
-	}
-	return users, rows.Err()
+	return queryList(ctx, tx, `select `+userColumns+` `+usersFrom+` order by u.name asc`, scanUser)
 }
 
 // ListSummaries backs the non-admin directory endpoint (see
@@ -51,25 +37,26 @@ func (r *UserRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.User, er
 // a valid pick for an owner/assignee. No role join needed, this never
 // exposes access info.
 func (r *UserRepository) ListSummaries(ctx context.Context, tx pgx.Tx) ([]domain.UserSummary, error) {
-	rows, err := tx.Query(ctx, `select id, name from users where is_active order by name asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query user summaries: %w", err)
-	}
-	defer rows.Close()
-
-	summaries := []domain.UserSummary{}
-	for rows.Next() {
-		var s domain.UserSummary
-		if err := rows.Scan(&s.ID, &s.Name); err != nil {
-			return nil, fmt.Errorf("scan user summary: %w", err)
-		}
-		summaries = append(summaries, s)
-	}
-	return summaries, rows.Err()
+	return queryList(ctx, tx, `select id, name from users where is_active order by name asc`,
+		func(row pgx.Row) (*domain.UserSummary, error) {
+			var s domain.UserSummary
+			if err := row.Scan(&s.ID, &s.Name); err != nil {
+				return nil, fmt.Errorf("scan user summary: %w", err)
+			}
+			return &s, nil
+		})
 }
 
-func (r *UserRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.User, error) {
-	row := tx.QueryRow(ctx, `select `+userColumns+` `+usersFrom+` where u.id = $1`, id)
+// Get filters by tenantID explicitly rather than relying on RLS alone --
+// unlike most repositories here, this one is also queried through
+// cmd/worker's BYPASSRLS connection (EscalationPolicyService.
+// ResolveStepNotification, via UserService.Get), where WithTenant's
+// app.tenant_id session var has no effect at all: Postgres skips RLS
+// unconditionally for a BYPASSRLS role, so a query filtered only by id
+// would resolve any tenant's user. Same "explicit filter, don't lean on
+// RLS" precedent as OnCallScheduleRepository.GetDefaultForResolution.
+func (r *UserRepository) Get(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (*domain.User, error) {
+	row := tx.QueryRow(ctx, `select `+userColumns+` `+usersFrom+` where u.id = $1 and u.tenant_id = $2`, id, tenantID)
 	u, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -83,9 +70,13 @@ func (r *UserRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*dom
 // GetByEmail looks up a user within the already-tenant-scoped transaction
 // (see the login flow in internal/httpserver/handlers/auth.go: the single
 // default tenant is resolved first via TenantRepository.GetDefault, then
-// this runs inside WithTenant).
-func (r *UserRepository) GetByEmail(ctx context.Context, tx pgx.Tx, email string) (*domain.User, error) {
-	row := tx.QueryRow(ctx, `select `+userColumns+` `+usersFrom+` where u.email = $1`, email)
+// this runs inside WithTenant). Filters by tenantID explicitly for the same
+// BYPASSRLS reasoning as Get, above, even though every current caller of
+// GetByEmail happens to run under a normal RLS-subject connection -- the
+// explicit filter costs nothing and closes off the same class of bug if a
+// future caller ever reaches this from a BYPASSRLS path.
+func (r *UserRepository) GetByEmail(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, email string) (*domain.User, error) {
+	row := tx.QueryRow(ctx, `select `+userColumns+` `+usersFrom+` where u.email = $1 and u.tenant_id = $2`, email, tenantID)
 	u, err := scanUser(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -218,21 +209,7 @@ const authGroupMappingColumns = `
 const authGroupMappingsFrom = `from auth_group_mappings m join roles r on r.id = m.role_id`
 
 func (r *UserRepository) ListGroupMappings(ctx context.Context, tx pgx.Tx) ([]domain.AuthGroupMapping, error) {
-	rows, err := tx.Query(ctx, `select `+authGroupMappingColumns+` `+authGroupMappingsFrom+` order by m.external_group asc`)
-	if err != nil {
-		return nil, fmt.Errorf("query auth group mappings: %w", err)
-	}
-	defer rows.Close()
-
-	mappings := []domain.AuthGroupMapping{}
-	for rows.Next() {
-		m, err := scanAuthGroupMapping(rows)
-		if err != nil {
-			return nil, err
-		}
-		mappings = append(mappings, *m)
-	}
-	return mappings, rows.Err()
+	return queryList(ctx, tx, `select `+authGroupMappingColumns+` `+authGroupMappingsFrom+` order by m.external_group asc`, scanAuthGroupMapping)
 }
 
 func (r *UserRepository) UpsertGroupMapping(ctx context.Context, tx pgx.Tx, m *domain.AuthGroupMapping) error {

@@ -88,7 +88,7 @@ func TestService_Migrate_EndToEnd(t *testing.T) {
 	// than taking a tenant ID as an argument (this is single-instance
 	// software; see that method's doc comment). A fresh argusops_test
 	// already has exactly one tenant at this point: the one
-	// db/migrations/0013_seed_default_admin.up.sql seeds automatically the
+	// db/migrations/0002_seed_default_admin.up.sql seeds automatically the
 	// first time migrations run against an empty database. Seed fixtures
 	// under that same tenant, not a new one via testutil.NewTenant, or
 	// Migrate would migrate a tenant this test never populated.
