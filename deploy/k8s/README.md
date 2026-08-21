@@ -1,3 +1,5 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # ArgusOps on Kubernetes
 
 Basic manifests to run the real stack (api, ingest, worker, frontend) on a

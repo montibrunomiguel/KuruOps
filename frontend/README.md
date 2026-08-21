@@ -1,67 +1,69 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # ArgusOps frontend
 
-React + Vite + TypeScript. Cobre **Dashboard, Alertas, Incidentes, Playbooks e Settings**
-(gerenciamento completo de alertas e resposta a incidentes de SOC/SIEM), com internacionalização
-(pt/en), tema claro/escuro e atualização ao vivo via SSE (`src/api/eventStream.ts`).
+React + Vite + TypeScript. Covers **Dashboard, Alerts, Incidents, Playbooks and Settings**
+(complete alert management and SOC/SIEM incident response), with internationalization (pt/en),
+light/dark theme, and live updates via SSE (`src/api/eventStream.ts`).
 
-## Rodando local
+## Running locally
 
 ```bash
 npm install
-npm run dev   # :5173, faz proxy de /api e /auth para http://localhost:8080 (cmd/api)
+npm run dev   # :5173, proxies /api and /auth to http://localhost:8080 (cmd/api)
 ```
 
-Precisa do `cmd/api` do backend rodando (ver `backend/README.md`). Login: `admin@argusops.local` /
-`ChangeMe123!` — todo deploy novo já vem com esse admin, semeado pela migration
-`0013_seed_default_admin.up.sql`. Não há campo de "empresa" no login (ArgusOps é single-instance,
-"empresa" existe só como tag em alertas/incidentes) e não há tela de signup — outros usuários locais
-são criados via SQL direto ou pela API de Settings depois do primeiro admin logado.
+Needs the backend's `cmd/api` running (see `backend/README.md`). Login: `admin@argusops.local` /
+`ChangeMe123!` — every new deploy already ships with this admin, seeded by the migration
+`0013_seed_default_admin.up.sql`. There's no "company" field at login (ArgusOps is single-instance,
+"company" only exists as a tag on alerts/incidents) and there's no signup screen — other local
+users are created via direct SQL or through the Settings API after the first admin has logged in.
 
-## Estrutura
+## Structure
 
-- `src/auth/AuthContext.tsx` — sessão (token JWT + refresh token), persistida em `localStorage`.
-  `mustChangePassword` é lido direto do JWT (claim `must_change_password`), não do backend a cada
-  render — ver `decodeMustChangePassword`. Um 401 tenta uma troca automática do refresh token antes
-  de deslogar (ver `src/api/client.ts`'s `refreshOnce`).
-- `src/pages/ChangePassword.tsx` + o guard em `App.tsx` — toda sessão com `mustChangePassword` é
-  redirecionada pra cá antes de qualquer outra tela; o backend aplica o mesmo bloqueio de verdade
-  (`middleware.RequirePasswordChanged`), então isso não é só uma UX, dá pra confiar nela.
-- `src/api/client.ts` — wrapper fino de `fetch`, sempre exige o token explicitamente.
-- `src/api/hooks.ts` — `useList` faz logout automático numa falha de refresh (token expirado/inválido).
-- `src/api/eventStream.ts` — hook sobre `GET /api/v1/events/stream` (SSE); Dashboard/Alertas/
-  Incidentes usam para recarregar dados ao vivo em vez de polling.
-- `src/pages/dashboard/` — três abas (Alertas/Incidentes/Follow-up), cada uma com KPIs, gráficos
-  (`src/components/charts/`) e filtros (severidade/status/tag/analista-ou-commander/período —
-  `src/components/TimeRangeFilter.tsx` cobre tanto presets quanto um intervalo customizado com
-  data+hora via `<input type="datetime-local">`).
-- `src/pages/alerts/`, `src/pages/incidents/` — listagem com filtros/paginação e página de detalhe
-  (timeline, comentários, papéis da equipe NIST no caso de incidentes, análise por IA).
-- `src/pages/playbooks/` — biblioteca de procedimentos por categoria/fase.
-- `src/pages/settings/` — um arquivo por painel (Webhooks, Integração de IA, Servidores MCP,
-  Armazenamento, SMTP, Usuários e Papéis, Provedores de Identidade, Tags, Escalas de Plantão, SLAs
-  de Incidente, Escalonamento, Exportação de Auditoria, Banco de Dados Externo), todos seguindo o
-  mesmo padrão: `useList` para carregar, formulário local para criar/editar, ações inline por linha
-  para mutações.
+- `src/auth/AuthContext.tsx` — session (JWT token + refresh token), persisted in `localStorage`.
+  `mustChangePassword` is read directly from the JWT (`must_change_password` claim), not from the
+  backend on every render — see `decodeMustChangePassword`. A 401 tries an automatic refresh-token
+  exchange before logging out (see `refreshOnce` in `src/api/client.ts`).
+- `src/pages/ChangePassword.tsx` + the guard in `App.tsx` — any session with `mustChangePassword`
+  is redirected here before any other screen; the backend enforces the same block for real
+  (`middleware.RequirePasswordChanged`), so this isn't just UX, it can be trusted.
+- `src/api/client.ts` — thin `fetch` wrapper, always requires the token explicitly.
+- `src/api/hooks.ts` — `useList` logs out automatically on a refresh failure (expired/invalid
+  token).
+- `src/api/eventStream.ts` — hook over `GET /api/v1/events/stream` (SSE); Dashboard/Alerts/
+  Incidents use it to reload data live instead of polling.
+- `src/pages/dashboard/` — three tabs (Alerts/Incidents/Follow-up), each with KPIs, charts
+  (`src/components/charts/`) and filters (severity/status/tag/analyst-or-commander/period —
+  `src/components/TimeRangeFilter.tsx` covers both presets and a custom date+time range via
+  `<input type="datetime-local">`).
+- `src/pages/alerts/`, `src/pages/incidents/` — listing with filters/pagination and a detail page
+  (timeline, comments, NIST team roles in the case of incidents, AI analysis).
+- `src/pages/playbooks/` — procedure library by category/phase.
+- `src/pages/settings/` — one file per panel (Webhooks, AI Integration, MCP Servers, Storage,
+  SMTP, Users and Roles, Identity Providers, Tags, On-Call Schedules, Incident SLAs, Escalation,
+  Audit Export, External Database), all following the same pattern: `useList` to load, a local
+  form to create/edit, inline per-row actions for mutations.
 
-## Testes
+## Tests
 
 ```bash
 npm test              # Vitest, watch mode
-npm run test:coverage # com relatório de cobertura
+npm run test:coverage # with coverage report
 ```
 
-~40 arquivos de teste (componentes + páginas), usando Testing Library e `fetch` mockado por teste
-(sem servidor real) — ver qualquer `*.test.tsx` existente como referência de padrão ao adicionar um
-novo. `npx tsc --noEmit` e `npm run build` continuam sendo a verificação de tipos/build.
+~40 test files (components + pages), using Testing Library and per-test mocked `fetch` (no real
+server) — see any existing `*.test.tsx` as a reference for the pattern when adding a new one.
+`npx tsc --noEmit` and `npm run build` remain the type-checking/build verification.
 
-## O que falta
+## What's missing
 
-- **Descoberta de tools via `tools/list`** — feito para servidores com `transport: "http"`: o botão
-  "Discover tools" na linha de cada servidor (`MCPServersPanel.tsx`) chama
-  `POST /settings/mcp-servers/{id}/discover-tools`, que fala MCP de verdade com o servidor
-  (`backend/internal/mcpclient`) e mostra as tools reais com checkbox em vez de texto livre. O
-  formulário de criação ainda pede as tools como texto (comma-separated) porque o servidor precisa
-  existir antes de dar pra descobrir tools nele — descubra depois de salvar.
-- **Sem testes end-to-end** — a cobertura atual é unitária/componente (fetch mockado); não há
-  suíte e2e contra um backend real rodando (isso é o que `task test:smoke`, na raiz do repo, cobre
-  no nível de API/HTTP, não de UI).
+- **Tool discovery via `tools/list`** — done for servers with `transport: "http"`: the "Discover
+  tools" button on each server's row (`MCPServersPanel.tsx`) calls
+  `POST /settings/mcp-servers/{id}/discover-tools`, which speaks real MCP with the server
+  (`backend/internal/mcpclient`) and shows the real tools with checkboxes instead of free text. The
+  creation form still asks for tools as comma-separated text because the server needs to exist
+  before tools can be discovered on it — discover after saving.
+- **No end-to-end tests** — current coverage is unit/component level (mocked `fetch`); there's no
+  e2e suite against a real running backend (that's what `task test:smoke`, at the repo root,
+  covers at the API/HTTP level, not the UI level).

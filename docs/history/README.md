@@ -1,20 +1,22 @@
-# Histórico de planos
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-Este diretório guarda planos de melhoria já executados — mantido por valor histórico (o
-diagnóstico e o raciocínio por trás de cada decisão), não como documentação do estado atual do
-projeto. Para o estado atual, sempre prefira:
+# Plan history
 
-- `README.md` (raiz) e `backend/README.md`/`frontend/README.md`/`db/README.md` para arquitetura e
-  como cada parte funciona hoje.
-- `CHANGELOG.md` para o que mudou e quando.
-- `docs/TROUBLESHOOTING.md` para pegadinhas conhecidas.
+This directory holds improvement plans that have already been executed — kept for historical
+value (the diagnosis and reasoning behind each decision), not as documentation of the project's
+current state. For the current state, always prefer:
 
-Um plano arquivado aqui pode descrever um estado que já mudou — cada um traz uma nota de status no
-topo linkando pra onde a informação atualizada realmente vive, mas a data de "arquivamento" é o
-limite: nada aqui é atualizado retroativamente para acompanhar mudanças posteriores.
+- `README.md` (root) and `backend/README.md`/`frontend/README.md`/`db/README.md` for architecture
+  and how each part works today.
+- `CHANGELOG.md` for what changed and when.
+- `docs/TROUBLESHOOTING.md` for known gotchas.
 
-## Planos
+A plan archived here may describe a state that has since changed — each one carries a status note
+at the top linking to where the up-to-date information actually lives, but the "archival" date is
+the boundary: nothing here is updated retroactively to track later changes.
 
-- [`PLANO_DE_MELHORIAS.md`](PLANO_DE_MELHORIAS.md) — diagnóstico inicial e plano de 3 fases
-  (rate limiting/refresh tokens/cache SAML; loop agêntico MCP/normalizadores/SSE; Vault-KMS/
-  on-call/CEF). Todas as 3 fases foram implementadas.
+## Plans
+
+- [`PLANO_DE_MELHORIAS.md`](PLANO_DE_MELHORIAS.md) — initial diagnosis and 3-phase plan (rate
+  limiting/refresh tokens/SAML cache; MCP agentic loop/normalizers/SSE; Vault-KMS/on-call/CEF).
+  All 3 phases have been implemented.

@@ -1,70 +1,72 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # ArgusOps backend
 
-Implementação Go do backend descrito no handoff de design (`design_handoff_argusops/`) e no
-review de arquitetura. Três binários, um módulo:
+Go implementation of the backend described in the design handoff (`design_handoff_argusops/`) and
+the architecture review. Three binaries, one module:
 
-| Comando | Faz o quê | Por quê é separado |
+| Command | What it does | Why it's separate |
 |---|---|---|
-| `cmd/api` | REST para o frontend: alertas, incidentes, playbooks, settings | escala/falha independente da ingestão |
-| `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) | perfil de carga/rate-limit diferente do `api` |
-| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | não deixa uma chamada de LLM lenta bloquear o CRUD; a análise por IA em si dispara numa goroutine dentro de `cmd/ingest` (na ingestão do alerta), não passa por este worker |
+| `cmd/api` | REST for the frontend: alerts, incidents, playbooks, settings | scales/fails independently from ingestion |
+| `cmd/ingest` | Receives SIEM/XDR webhooks (`POST /hooks`, token-authenticated) | different load/rate-limit profile than `api` |
+| `cmd/worker` | Background jobs: refreshing KPI materialized views (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), `incidents.sla_breached` sweep, on-call escalation sweep | keeps a slow LLM call from blocking CRUD; the AI analysis itself fires in a goroutine inside `cmd/ingest` (during alert ingestion), it doesn't go through this worker |
 
-## Rodando local
+## Running locally
 
-O caminho mais rápido é `task deploy:up` na raiz do repo (ver `README.md` raiz) — sobe Postgres via
-Docker, aplica migrations, cria o role `argusops_app` e builda/roda os três binários em container.
+The fastest path is `task deploy:up` from the repo root (see the root `README.md`) — it brings up
+Postgres via Docker, applies migrations, creates the `argusops_app` role, and builds/runs the three
+binaries in containers.
 
-Pra rodar os binários direto na máquina (sem Docker para o Go, só para o Postgres):
+To run the binaries directly on the machine (no Docker for Go, only for Postgres):
 
 ```bash
-cp .env.example .env   # ajuste DATABASE_URL depois de criar o role argusops_app (ver db/README.md)
+cp .env.example .env   # adjust DATABASE_URL after creating the argusops_app role (see db/README.md)
 export $(cat .env | xargs)
 make run-api      # :8080
-make run-ingest   # reusa HTTP_ADDR -- rode em processos/terminais separados com portas diferentes
+make run-ingest   # reuses HTTP_ADDR -- run in separate processes/terminals with different ports
 make run-worker
 ```
 
-Todo primeiro deploy já vem com um admin padrão (`0013_seed_default_admin.up.sql`) —
-`admin@argusops.local` / `ChangeMe123!`, com `must_change_password=true`. Teste do login local
-(`AUTH_MODE=dev` já basta — não precisa gerar chaves JWT nem trocar pra `dev-headers`; login é
-autenticação real mesmo em modo dev, só a geração de chave é que vira efêmera):
+Every first deploy already ships with a default admin (`0013_seed_default_admin.up.sql`) —
+`admin@argusops.local` / `ChangeMe123!`, with `must_change_password=true`. Testing the local login
+(`AUTH_MODE=dev` is enough — no need to generate JWT keys or switch to `dev-headers`; login is real
+authentication even in dev mode, only key generation becomes ephemeral):
 
 ```bash
 curl -X POST http://localhost:8080/auth/login \
   -d '{"email":"admin@argusops.local","password":"ChangeMe123!"}'
 # -> {"token":"...", "user": {"mustChangePassword": true, ...}}
 
-# com mustChangePassword=true, TODO outro endpoint em /api/v1 responde 403
-# (middleware.RequirePasswordChanged) exceto este:
+# with mustChangePassword=true, EVERY other endpoint under /api/v1 responds 403
+# (middleware.RequirePasswordChanged) except this one:
 curl -X POST http://localhost:8080/api/v1/account/change-password \
   -H "Authorization: Bearer <token>" \
-  -d '{"currentPassword":"ChangeMe123!","newPassword":"<sua senha>"}'
-# -> {"token":"..."}  (novo token, já sem mustChangePassword)
+  -d '{"currentPassword":"ChangeMe123!","newPassword":"<your password>"}'
+# -> {"token":"..."}  (new token, without mustChangePassword now)
 
 curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/alerts
 ```
 
-Pra criar outros usuários locais (não há endpoint de signup — ver `internal/repository/user_repository.go`),
-gere o `password_hash` com `go run ./cmd/hashpw '<senha>'`, nunca escreva o hash à mão, e insira via
-SQL contra o tenant único (`select id from tenants` — sempre uma linha, ver
-`TenantRepository.GetDefault`).
+To create other local users (there's no signup endpoint — see
+`internal/repository/user_repository.go`), generate the `password_hash` with
+`go run ./cmd/hashpw '<password>'`, never write the hash by hand, and insert it via SQL against the
+single tenant (`select id from tenants` — always one row, see `TenantRepository.GetDefault`).
 
-ArgusOps é software single-instance (ver review de arquitetura): não existe conceito de
-"empresa"/tenant no login — `tenant_id` continua em todo lugar por baixo dos panos (pra permitir
-SaaS multi-tenant real no futuro sem reescrever schema), mas a API sempre resolve o único tenant
-automaticamente. "Empresa" só existe como tag em alertas/incidentes (`allowedTags` do usuário), não
-como boundary de login.
+ArgusOps is single-instance software (see the architecture review): there's no concept of a
+"company"/tenant at login — `tenant_id` still runs through everything under the hood (to allow real
+multi-tenant SaaS in the future without rewriting the schema), but the API always resolves the
+single tenant automatically. "Company" only exists as a tag on alerts/incidents (the user's
+`allowedTags`), not as a login boundary.
 
-Pra curlar `/api/v1` sem passar por login (atalho, não é "autenticação de mentira" de propósito
-geral — troca a verificação de JWT por confiar em headers crus, então um token de login não
-funciona nesse modo):
+To curl `/api/v1` without going through login (a shortcut, not a general-purpose "fake auth" — it
+swaps JWT verification for trusting raw headers, so a login token doesn't work in this mode):
 
 ```bash
 AUTH_MODE=dev-headers make run-api
 curl -H "X-Tenant-ID: <uuid>" -H "X-User-ID: <uuid>" http://localhost:8080/api/v1/alerts
 ```
 
-Teste do endpoint de ingestão (crie um `webhook_endpoints` de teste primeiro, hash do token com
+Testing the ingestion endpoint (create a test `webhook_endpoints` row first, hash the token with
 sha256):
 
 ```bash
@@ -73,115 +75,117 @@ curl -X POST http://localhost:8081/hooks \
   -d '{"title":"Multiple Failed SSH Login Attempts","severity":"critical"}'
 ```
 
-## O que está implementado vs. ainda é design
+## What's implemented vs. still design
 
-**Implementado**: schema completo (`db/migrations`) com RLS por tenant, e o CRUD completo com
-regras de negócio para:
-- **Alertas** — ciclo de vida (open → investigating/escalated → closed, classificação só no
-  fechamento), auditoria append-only (`alert_events`), metadados customizados aceitos no payload do
-  webhook (lista arbitrária de chave/valor — canal do Slack, link de playbook externo, etc.,
-  renderizada num painel dedicado no detalhe), análise por IA disparada automaticamente na
-  ingestão quando há provedor LLM configurado (mesmo resultado do botão manual "Analisar com IA")
-- **Incidentes** — fases NIST com salto livre + detecção de "fase pulada", matriz
-  severidade×prioridade, correção auditável de timestamp (nunca sobrescreve o valor original),
-  Team Notes, alertas correlacionados, papéis de equipe NIST 800-61 (Commander, Technical Lead,
-  Incident Handler(s), Communications Lead, Privacy Officer — `domain.Incident.Roles`, substituiu
-  o painel genérico de "responsáveis" na tela de detalhe)
-- **Playbooks** — CRUD + auto-match por keyword (com fallback "General Security Event")
-- **Settings**: endpoints de webhook (token com hash + rotação), provedores de LLM por tenant
-  (`kind=openai_compatible` genérico, chave nunca persistida em claro — ver
-  `internal/secrets/store.go`; validado ao vivo contra o endpoint OpenAI-compatible real do Gemini,
-  `generativelanguage.googleapis.com/v1beta`, sem precisar de nenhum adapter dedicado — "Analisar
-  com IA" funciona ponta a ponta com um provedor real, não só mockado), servidores MCP (allow-list de tools + lista de tools com efeito
-  colateral que sempre exigem aprovação — ver `service.EvaluateToolInvocation`), usuários/roles e
-  mapeamento de grupo LDAP/SAML → role/tags (com botão de remover configuração, além de
-  criar/atualizar), integração de armazenamento de evidências (S3/GCS — `S3Store` validado ao vivo
-  contra um bucket real: upload de uma imagem via `POST /api/v1/uploads/images`, depois `GET` de
-  volta confirmando o mesmo conteúdo, latência consistente com uma chamada de rede real à AWS, não
-  disco local; `GCSStore` ainda não validado contra uma conta GCP real), SMTP (reset de senha por
-  email), tags, escalas de plantão, SLAs de incidente por severidade×prioridade, políticas de
-  escalonamento (PagerDuty/Slack/webhook genérico), exportação de auditoria em CEF, e migração
-  assistida para um Postgres externo (Settings → Banco de Dados Externo)
-- Ingestão de webhook com normalização genérica, cálculo de MTTA/MTTR como materialized view em
-  vez de client-side
-- **Autenticação**: login local (argon2id + JWT RS256), bind LDAP (`internal/authn/ldap.go`, com
-  o padrão de dois binds: service account para achar o DN, depois bind como o próprio usuário para
-  checar a senha), e SSO SAML (`internal/authn/saml.go`, SP via `crewjam/saml`, com proteção contra
-  replay via cookie de `InResponseTo`). Os três convergem em `AuthService`/`ProvisionFederated`,
-  que aplica `auth_group_mappings` (grupo do IdP → role/resource_access/allowed_tags) e emite o
-  mesmo JWT. `internal/httpserver/middleware.JWTAuth` verifica esse token em `/api/v1/**`.
-- **Autorização**: role e escopo (`resourceAccess`/`allowedTags`) viajam no JWT (`authn.Claims`) e
-  são aplicados em dois pontos — `middleware.RequireRole("admin")` bloqueia todo `/settings/**` para
-  quem não é admin, e `middleware.RequireResourceAccess` bloqueia `/alerts` ou `/incidents` por
-  inteiro conforme o `resourceAccess` do usuário. Dentro de cada recurso, `allowedTags` filtra a
-  listagem na query SQL (`tags && $allowedTags`) e é checado de novo em `Get`/`ChangeStatus`/`Close`/
-  `ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` — ver `service/access.go` e o comentário
-  em `IncidentService` sobre os sub-recursos (comentários, links, timeline) que ainda não repetem
-  essa checagem e dependem só do isolamento por tenant via RLS.
+**Implemented**: complete schema (`db/migrations`) with per-tenant RLS, and full CRUD with business
+rules for:
+- **Alerts** — lifecycle (open → investigating/escalated → closed, classification only on close),
+  append-only audit trail (`alert_events`), custom metadata accepted in the webhook payload
+  (arbitrary key/value list — Slack channel, external playbook link, etc., rendered in a dedicated
+  panel on the detail page), AI analysis triggered automatically on ingestion when an LLM provider
+  is configured (same result as the manual "Analyze with AI" button)
+- **Incidents** — NIST phases with free jumping + "skipped phase" detection, severity×priority
+  matrix, auditable timestamp correction (never overwrites the original value), Team Notes,
+  correlated alerts, NIST 800-61 team roles (Commander, Technical Lead, Incident Handler(s),
+  Communications Lead, Privacy Officer — `domain.Incident.Roles`, replaced the generic "owners"
+  panel on the detail screen)
+- **Playbooks** — CRUD + keyword auto-match (with a "General Security Event" fallback)
+- **Settings**: webhook endpoints (hashed token + rotation), per-tenant LLM providers (generic
+  `kind=openai_compatible`, key never persisted in plaintext — see `internal/secrets/store.go`;
+  validated live against Gemini's real OpenAI-compatible endpoint,
+  `generativelanguage.googleapis.com/v1beta`, without needing any dedicated adapter — "Analyze with
+  AI" works end-to-end with a real provider, not just mocked), MCP servers (tool allow-list + a list
+  of side-effecting tools that always require approval — see `service.EvaluateToolInvocation`),
+  users/roles and LDAP/SAML group → role/tags mapping (with a button to remove a configuration, in
+  addition to create/update), evidence storage integration (S3/GCS — `S3Store` validated live
+  against a real bucket: uploading an image via `POST /api/v1/uploads/images`, then `GET`-ing it
+  back and confirming the same content, with latency consistent with a real network call to AWS,
+  not local disk; `GCSStore` not yet validated against a real GCP account), SMTP (email password
+  reset), tags, on-call schedules, per-severity×priority incident SLAs, escalation policies
+  (PagerDuty/Slack/generic webhook), CEF audit export, and assisted migration to an external
+  Postgres (Settings → External Database)
+- Webhook ingestion with generic normalization, MTTA/MTTR computed as a materialized view instead
+  of client-side
+- **Authentication**: local login (argon2id + JWT RS256), LDAP bind (`internal/authn/ldap.go`,
+  using the two-bind pattern: a service account to find the DN, then binding as the user themselves
+  to check the password), and SAML SSO (`internal/authn/saml.go`, SP via `crewjam/saml`, with replay
+  protection via an `InResponseTo` cookie). All three converge in `AuthService`/`ProvisionFederated`,
+  which applies `auth_group_mappings` (IdP group → role/resource_access/allowed_tags) and issues the
+  same JWT. `internal/httpserver/middleware.JWTAuth` verifies that token on `/api/v1/**`.
+- **Authorization**: role and scope (`resourceAccess`/`allowedTags`) travel in the JWT
+  (`authn.Claims`) and are enforced at two points — `middleware.RequireRole("admin")` blocks all of
+  `/settings/**` for non-admins, and `middleware.RequireResourceAccess` blocks `/alerts` or
+  `/incidents` entirely based on the user's `resourceAccess`. Within each resource, `allowedTags`
+  filters the listing in the SQL query (`tags && $allowedTags`) and is checked again in
+  `Get`/`ChangeStatus`/`Close`/`ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` — see
+  `service/access.go` and the comment in `IncidentService` about sub-resources (comments, links,
+  timeline) that don't yet repeat this check and rely solely on tenant isolation via RLS.
 
-## Autenticação: o que falta para produção
+## Authentication: what's missing for production
 
-O fluxo funciona ponta a ponta (local/LDAP/SAML → JWT → `JWTAuth` middleware), mas tem lacunas
-conhecidas, deliberadamente deixadas como TODO em vez de meia-solução escondida:
+The flow works end-to-end (local/LDAP/SAML → JWT → `JWTAuth` middleware), but has known gaps,
+deliberately left as TODOs instead of a hidden half-solution:
 
-- **`ServeACS` devolve o token como JSON direto** — aceitável para testar o fluxo, mas produção não
-  deve expor um token de sessão na resposta de um POST vindo de um redirect de IdP; o padrão correto
-  é a SPA trocar um código de uso único por token via uma chamada same-origin separada.
+- **`ServeACS` returns the token as raw JSON** — acceptable for testing the flow, but production
+  shouldn't expose a session token in the response of a POST coming from an IdP redirect; the
+  correct pattern is for the SPA to exchange a single-use code for a token via a separate
+  same-origin call.
 
-Resolvidos desde a última revisão deste documento: revogação de sessão (refresh tokens em
-`refresh_tokens`, ver `AuthService.Refresh`/`RevokeSessions` e o botão "Revoke sessions" em
-Settings → Usuários), cache de metadata SAML (`SAMLAuthService`'s `resolveIDPMetadata`, TTL de 1h,
-invalidado ao salvar config), rate limiting por conta no login (`AuthHandlers.loginAttempts`, além
-do limite por IP já existente), normalizers dedicados para Wazuh/CrowdStrike/GuardDuty
-(`internal/ingest/normalize_*.go`, roteados por `webhook_endpoints.source` em `Handler.normalizerFor`
-— fontes sem adapter dedicado continuam caindo no `genericNormalizer`; nenhum dos três foi validado
-contra tráfego real do respectivo vendor, tratar como ponto de partida), e um backend de
-`secrets.Store` real além do `PersistentEnvStore` padrão (encriptado com `SECRETS_ENCRYPTION_KEY`,
-persistido na tabela `secret_store` — sobrevive a um restart do processo, ao contrário do antigo
-`EnvStore` em memória puro, que ainda existe só para uso em testes): `SECRETS_BACKEND=vault`
-(`VaultStore`, engine KV v2 via HTTP direto, sem o SDK oficial) ou `SECRETS_BACKEND=kms`
-(`AWSKMSStore`, Encrypt/Decrypt puro, sem Secrets Manager) — ver `secrets.NewFromConfig` para o
-factory switch e as variáveis de cada backend. `VaultStore` já foi validado contra um servidor
-Vault real em modo dev (`internal/secrets/vault_store_live_test.go`, `task backend:test:vault`) —
-um ciclo Put→Resolve de verdade, não só o mock em `vault_store_test.go`. `AWSKMSStore` ainda não
-foi validado contra uma conta AWS real (precisa de credencial real, ver Fase 3 do histórico de
-planos em `docs/history/`).
+Resolved since the last revision of this document: session revocation (refresh tokens in
+`refresh_tokens`, see `AuthService.Refresh`/`RevokeSessions` and the "Revoke sessions" button in
+Settings → Users), SAML metadata caching (`SAMLAuthService`'s `resolveIDPMetadata`, 1h TTL,
+invalidated on config save), per-account rate limiting on login (`AuthHandlers.loginAttempts`, in
+addition to the existing per-IP limit), dedicated normalizers for Wazuh/CrowdStrike/GuardDuty
+(`internal/ingest/normalize_*.go`, routed by `webhook_endpoints.source` in `Handler.normalizerFor`
+— sources without a dedicated adapter still fall through to `genericNormalizer`; none of the three
+has been validated against real traffic from the respective vendor, treat them as a starting
+point), and a real `secrets.Store` backend beyond the default `PersistentEnvStore` (encrypted with
+`SECRETS_ENCRYPTION_KEY`, persisted in the `secret_store` table — survives a process restart,
+unlike the old pure in-memory `EnvStore`, which still exists only for use in tests):
+`SECRETS_BACKEND=vault` (`VaultStore`, KV v2 engine over direct HTTP, without the official SDK) or
+`SECRETS_BACKEND=kms` (`AWSKMSStore`, plain Encrypt/Decrypt, without Secrets Manager) — see
+`secrets.NewFromConfig` for the factory switch and each backend's variables. `VaultStore` has
+already been validated against a real Vault server in dev mode
+(`internal/secrets/vault_store_live_test.go`, `task backend:test:vault`) — a real Put→Resolve
+cycle, not just the mock in `vault_store_test.go`. `AWSKMSStore` has not yet been validated against
+a real AWS account (needs a real credential, see Phase 3 of the plan history in `docs/history/`).
 
-## Client MCP
+## MCP Client
 
-`internal/mcpclient` fala Model Context Protocol de verdade com um servidor MCP registrado —
-handshake (`initialize` + `notifications/initialized`), `tools/list` (com paginação) e
-`tools/call`, sobre o transporte "Streamable HTTP" (POST JSON-RPC 2.0, com suporte a resposta
-`text/event-stream` de um único evento). Validado contra o servidor de referência oficial
+`internal/mcpclient` speaks real Model Context Protocol with a registered MCP server — handshake
+(`initialize` + `notifications/initialized`), `tools/list` (with pagination), and `tools/call`, over
+the "Streamable HTTP" transport (POST JSON-RPC 2.0, with support for a single-event
+`text/event-stream` response). Validated against the official reference server
 (`@modelcontextprotocol/server-everything`, `internal/mcpclient/live_test.go`, `task backend:test:mcp`)
-— handshake, listagem e chamada de tool passam contra uma implementação MCP real e independente,
-não só contra os mocks internos deste repo. `stdio`/`sse` como transporte continuam não
-implementados (retornam erro claro em vez de tentar e falhar confuso).
+— handshake, listing, and tool calls pass against a real, independent MCP implementation, not just
+this repo's internal mocks. `stdio`/`sse` as transports remain unimplemented (they return a clear
+error instead of trying and failing confusingly).
 
-`service.MCPToolService` é a fronteira entre esse client e a política de acesso:
-- `DiscoverTools` conecta no servidor ao vivo e devolve o catálogo real de `tools/list` — é o que
-  o botão "Discover tools" em Settings → MCP Servers chama, pra trocar o preenchimento manual de
-  nomes de tool por uma lista de verdade com checkboxes.
-- `ProposeToolCall` sempre passa por `EvaluateToolInvocation` primeiro (allow-list). Tool sem
-  efeito colateral executa na hora; tool marcada em `side_effecting_tools` fica em
-  `ai_tool_calls.status = 'proposed'` até `ApproveToolCall`/`RejectToolCall` — o agente nunca
-  executa uma tool de efeito colateral sozinho (ver review de arquitetura, "IA sugere vs IA
-  executa"). Endpoints: `GET/POST /api/v1/settings/mcp-servers/tool-calls[/{id}/approve|reject]`.
+`service.MCPToolService` is the boundary between this client and the access policy:
+- `DiscoverTools` connects to the live server and returns the real `tools/list` catalog — this is
+  what the "Discover tools" button in Settings → MCP Servers calls, to replace manually typing tool
+  names with a real checkbox list.
+- `ProposeToolCall` always goes through `EvaluateToolInvocation` first (allow-list). A tool with no
+  side effects executes immediately; a tool marked in `side_effecting_tools` sits at
+  `ai_tool_calls.status = 'proposed'` until `ApproveToolCall`/`RejectToolCall` — the agent never
+  executes a side-effecting tool on its own (see the architecture review, "AI suggests vs AI
+  executes"). Endpoints: `GET/POST /api/v1/settings/mcp-servers/tool-calls[/{id}/approve|reject]`.
 
-**Resolvido desde a última revisão deste documento**: `AIAnalysisService.runAgentAnalysis` agora
-roda um loop agêntico de verdade (até `maxAgenticTurns = 5` idas e vindas com a LLM) e chama
-`ProposeToolCall` a cada tool que o modelo pedir. Uma tool sem efeito colateral executa na hora e o
-resultado volta pro próximo turno; uma tool marcada `side_effecting_tools` pausa o run inteiro
-(persistido em `ai_analysis_runs` com status `paused`) até um analista aprovar/rejeitar em
-Settings → Servidores MCP → Aprovações Pendentes (painel novo, `MCPServersPanel.tsx`) —
-`MCPToolService.SetOnToolCallResolved` retoma o run de onde parou via `ResumeAnalysisRun`. O
-"Analyze with AI" do detalhe de alerta/incidente aciona esse loop de ponta a ponta, e a ingestão de
-um alerta também dispara a mesma análise automaticamente quando há provedor LLM configurado.
+**Resolved since the last revision of this document**: `AIAnalysisService.runAgentAnalysis` now runs
+a real agentic loop (up to `maxAgenticTurns = 5` round-trips with the LLM) and calls
+`ProposeToolCall` for every tool the model requests. A tool with no side effects executes
+immediately and the result feeds back into the next turn; a tool marked `side_effecting_tools`
+pauses the entire run (persisted in `ai_analysis_runs` with status `paused`) until an analyst
+approves/rejects it in Settings → MCP Servers → Pending Approvals (new panel,
+`MCPServersPanel.tsx`) — `MCPToolService.SetOnToolCallResolved` resumes the run where it left off
+via `ResumeAnalysisRun`. The "Analyze with AI" action on the alert/incident detail page triggers
+this loop end-to-end, and ingesting an alert also fires the same analysis automatically when an LLM
+provider is configured.
 
-### Configurando LDAP/SAML de um tenant
+### Configuring LDAP/SAML for a tenant
 
-O frontend (`frontend/src/pages/settings/IdentityProvidersPanel.tsx`) já cobre isso — Settings →
-Identity Providers. Pra testar direto na API sem subir o frontend:
+The frontend (`frontend/src/pages/settings/IdentityProvidersPanel.tsx`) already covers this —
+Settings → Identity Providers. To test directly against the API without running the frontend:
 
 ```bash
 # LDAP
@@ -191,19 +195,19 @@ curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/ldap \
        "bindPassword":"...","userBaseDn":"ou=people,dc=acme,dc=local","userFilter":"(mail=%s)",
        "groupAttribute":"memberOf"}'
 
-# SAML -- gera a keypair da SP na primeira chamada; baixe a metadata depois em
-# GET /auth/saml/metadata e registre no IdP
+# SAML -- generates the SP keypair on the first call; download the metadata afterwards from
+# GET /auth/saml/metadata and register it with the IdP
 curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/saml \
   -H "Authorization: Bearer <admin-token>" \
   -d '{"idpMetadataUrl":"https://idp.acme.com/metadata","acsUrl":"https://argusops.acme.com/auth/saml/acs",
        "spEntityId":"https://argusops.acme.com/auth/saml","groupAttribute":"groups"}'
 ```
 
-## Padrão de código
+## Code pattern
 
-Cada recurso de domínio segue: `internal/domain` (struct + regras de transição documentadas em
-comentário) → `internal/repository` (SQL puro via pgx, sempre dentro de `db.Pool.WithTenant`) →
-`internal/service` (única camada que pode escrever, valida transições antes de tocar o repo) →
-`internal/httpserver/handlers` (decodifica request, chama o service, serializa resposta). Ver
-`alert_service.go` / `alert_repository.go` / `handlers/alerts.go` como referência ao adicionar
-incidentes/playbooks/settings.
+Each domain resource follows: `internal/domain` (struct + transition rules documented in comments)
+→ `internal/repository` (plain SQL via pgx, always inside `db.Pool.WithTenant`) →
+`internal/service` (the only layer allowed to write, validates transitions before touching the
+repo) → `internal/httpserver/handlers` (decodes the request, calls the service, serializes the
+response). See `alert_service.go` / `alert_repository.go` / `handlers/alerts.go` as a reference
+when adding incidents/playbooks/settings.
