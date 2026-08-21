@@ -1,3 +1,5 @@
+<p align="right"><a href="CONTRIBUTING.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # Contributing to ArgusOps
 
 First off, thank you for considering contributing to ArgusOps! It's contributions like yours that make ArgusOps a great open-source cybersecurity incident management tool.

@@ -1,29 +1,33 @@
-# Plano de Análise e Proposta de Melhorias — ArgusOps
+<p align="right"><a href="PLANO_DE_MELHORIAS.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-> **Status: todas as 3 fases abaixo foram implementadas.** Este documento é mantido como registro
-> histórico do diagnóstico e do raciocínio por trás de cada item — para o estado atual e mais
-> preciso de cada um (o que ficou diferente do proposto originalmente, e o que ainda não foi
-> validado contra infraestrutura real), ver a seção "Autenticação: o que falta para produção" e
-> "Resolvidos desde a última revisão deste documento" em `backend/README.md`. Resumo rápido do que
-> saiu diferente do plano original:
-> - **Fase 1** — rate limiting, refresh tokens/revogação de sessão e cache de metadata SAML: feitos
->   como descrito.
-> - **Fase 2** — loop agêntico MCP, normalizadores Wazuh/CrowdStrike/GuardDuty e SSE: feitos: porém
->   nenhum normalizador foi validado contra tráfego real do respectivo vendor (tratar como ponto de
->   partida).
-> - **Fase 3** — Vault/KMS, escalonamento on-call e exportação CEF: feitos; `VaultStore` já validado
->   contra um servidor Vault real (`task backend:test:vault`); `AWSKMSStore` ainda só testado contra
->   backend mockado (sem conta AWS real disponível ainda).
-> - **Achado fora do escopo original**: o secret store padrão (`EnvStore`) era puramente em memória
->   e perdia toda credencial (LDAP, SAML, LLM, webhook) a cada restart do processo — bug real
->   descoberto durante teste ao vivo de LDAP/SAML, corrigido com `PersistentEnvStore` (criptografado,
->   persistido em Postgres). Não estava listado como lacuna neste documento original.
+# Analysis and Improvement Proposal Plan — ArgusOps
 
-## Visão Geral da Aplicação
+> **Status: all 3 phases below have been implemented.** This document is kept as a historical
+> record of the diagnosis and the reasoning behind each item — for the current, more precise state
+> of each one (what ended up different from what was originally proposed, and what still hasn't
+> been validated against real infrastructure), see the "Authentication: what's missing for
+> production" and "Resolved since the last review of this document" sections in `backend/README.md`.
+> Quick summary of what turned out differently from the original plan:
+> - **Phase 1** — rate limiting, refresh tokens/session revocation, and SAML metadata cache: done
+>   as described.
+> - **Phase 2** — MCP agentic loop, Wazuh/CrowdStrike/GuardDuty normalizers, and SSE: done; however
+>   no normalizer has been validated against real traffic from the respective vendor (treat as a
+>   starting point).
+> - **Phase 3** — Vault/KMS, on-call escalation, and CEF export: done; `VaultStore` has already
+>   been validated against a real Vault server (`task backend:test:vault`); `AWSKMSStore` has so
+>   far only been tested against a mocked backend (no real AWS account available yet).
+> - **Finding outside the original scope**: the default secret store (`EnvStore`) was purely
+>   in-memory and lost every credential (LDAP, SAML, LLM, webhook) on every process restart — a
+>   real bug discovered during live LDAP/SAML testing, fixed with `PersistentEnvStore` (encrypted,
+>   persisted in Postgres). It wasn't listed as a gap in this original document.
 
-O **ArgusOps** é uma plataforma moderna e open-source de gerenciamento de alertas de segurança (SOC) e resposta a incidentes (IRP/SIEM Incident Response). Ela foi projetada com arquitetura Go + PostgreSQL no backend e React + Vite + TypeScript no frontend.
+## Application Overview
 
-### Componentes Principais
+**ArgusOps** is a modern, open-source security alert management (SOC) and incident response
+(IRP/SIEM Incident Response) platform. It was designed with a Go + PostgreSQL backend architecture
+and a React + Vite + TypeScript frontend.
+
+### Main Components
 
 ```mermaid
 graph TD
@@ -36,111 +40,111 @@ graph TD
     API -->|OpenAI API / LLM| LLM[LLM Provider / IA]
 ```
 
-1. **`cmd/api`**: Servidor HTTP REST central responsável pelas regras de negócio (Alertas, Incidentes, Playbooks, Configurações, Usuários, Autenticação Local/LDAP/SAML).
-2. **`cmd/ingest`**: Serviço isolado para ingestão de alertas via webhooks de alta volumetria, utilizando tokens rotacionáveis e hash SHA-256.
-3. **`cmd/worker`**: Processador de fundo responsável pelo recálculo periódico (1 min) de Views Materializadas (`mv_alert_daily_stats`, `mv_incident_kpis`) para KPIs operacionais (MTTA/MTTR, SLAs).
-4. **`frontend/`**: Interface de usuário rica construída em React, TypeScript e Vite com internacionalização (i18n), estatísticas em tempo real, suporte a tema escuro/claro e controle por papel (RBAC/RLS).
-5. **`db/`**: Banco PostgreSQL com **Row-Level Security (RLS)** estrito e princípio do menor privilégio através da role `argusops_app`.
+1. **`cmd/api`**: Central REST HTTP server responsible for business rules (Alerts, Incidents, Playbooks, Settings, Users, Local/LDAP/SAML Authentication).
+2. **`cmd/ingest`**: Isolated service for ingesting alerts via high-volume webhooks, using rotatable tokens and SHA-256 hashing.
+3. **`cmd/worker`**: Background processor responsible for periodic (1 min) recalculation of Materialized Views (`mv_alert_daily_stats`, `mv_incident_kpis`) for operational KPIs (MTTA/MTTR, SLAs).
+4. **`frontend/`**: Rich user interface built with React, TypeScript, and Vite, with internationalization (i18n), real-time statistics, dark/light theme support, and role-based control (RBAC/RLS).
+5. **`db/`**: PostgreSQL database with strict **Row-Level Security (RLS)** and the principle of least privilege via the `argusops_app` role.
 
 ---
 
-## Funcionalidades Atuais (Feature Matrix)
+## Current Features (Feature Matrix)
 
-| Módulo | Status Atual | Detalhes Técnicos |
+| Module | Current Status | Technical Details |
 | :--- | :--- | :--- |
-| **Autenticação & IdP** | ✅ Implementado | Argon2id + JWT RS256, integração LDAP (bind duplo), SAML 2.0 (crewjam/saml) com mapeamento de grupos para roles/tags e obrigatoriedade de troca de senha no 1º login. |
-| **Autorização & RLS** | ✅ Implementado | Isolamento por tenant + restrição por tags (`allowedTags`) aplicados tanto no Postgres via RLS quanto no Go Service layer (`access.go`). |
-| **Gestão de Alertas** | ✅ Implementado | Ciclo de vida (Open → Investigating → Closed), sugestão automática de Playbooks por palavra-chave, linha do tempo auditável (*append-only*). |
-| **Gestão de Incidentes**| ✅ Implementado | Fases NIST 800-61, timestamps originais imutáveis, detecção e auditoria de salto de fases (*phase jumping*), notas de equipe e vínculo N:N com alertas. |
-| **Playbooks de SOC** | ✅ Implementado | Biblioteca de procedimentos operacionais organizados por fase NIST e categoria com auto-matching. |
-| **Integração IA & MCP** | ✅ Implementado | Suporte a provedores LLM compatíveis com OpenAI. Cliente **MCP (Model Context Protocol)** funcional sobre HTTP. `AIAnalysisService` roda um loop agêntico iterativo (tool-use) que chama `ProposeToolCall`; ferramentas com efeito colateral (`side_effecting_tools`) ficam em `proposed` até aprovação humana. Análise dispara automaticamente na ingestão de um alerta, se houver provedor LLM configurado. |
-| **Dashboards & KPIs** | ✅ Implementado | Métricas operacionais (MTTA, MTTR, alertas críticos, SLA estourado, volume de alertas/incidentes por dia) calculadas de forma assíncrona no backend via materialized views; filtro de período por preset ou intervalo customizado (data + hora). |
+| **Authentication & IdP** | ✅ Implemented | Argon2id + JWT RS256, LDAP integration (double bind), SAML 2.0 (crewjam/saml) with group-to-role/tag mapping and mandatory password change on first login. |
+| **Authorization & RLS** | ✅ Implemented | Tenant isolation + tag restriction (`allowedTags`) enforced both in Postgres via RLS and in the Go service layer (`access.go`). |
+| **Alert Management** | ✅ Implemented | Lifecycle (Open → Investigating → Closed), automatic Playbook suggestion by keyword, auditable (append-only) timeline. |
+| **Incident Management**| ✅ Implemented | NIST 800-61 phases, immutable original timestamps, phase-jump detection and audit, team notes, and N:N linking with alerts. |
+| **SOC Playbooks** | ✅ Implemented | Library of operational procedures organized by NIST phase and category with auto-matching. |
+| **AI & MCP Integration** | ✅ Implemented | Support for OpenAI-compatible LLM providers. Functional **MCP (Model Context Protocol)** client over HTTP. `AIAnalysisService` runs an iterative agentic loop (tool-use) that calls `ProposeToolCall`; tools with side effects (`side_effecting_tools`) stay in `proposed` status until human approval. Analysis fires automatically on alert ingestion, if an LLM provider is configured. |
+| **Dashboards & KPIs** | ✅ Implemented | Operational metrics (MTTA, MTTR, critical alerts, breached SLA, alert/incident volume per day) computed asynchronously in the backend via materialized views; period filter by preset or custom range (date + time). |
 
 ---
 
-## Diagnóstico do Código e Lacunas Identificadas
+## Code Diagnosis and Identified Gaps
 
-Após varredura técnica detalhada no código Go (`backend/internal/`), TypeScript (`frontend/src/`) e SQL (`db/migrations/`), identificaram-se os seguintes pontos de atenção:
+After a detailed technical scan of the Go code (`backend/internal/`), TypeScript (`frontend/src/`), and SQL (`db/migrations/`), the following points of attention were identified:
 
-### 1. Segurança & Autenticação
-* **Falta de Revogação de JWT / Refresh Tokens**: O JWT emitido possui TTL de 15 minutos, mas não há suporte a revogação antecipada (blacklist/Redis) nem par *Access/Refresh Token*. Se um usuário for revogado no painel de Settings, sua sessão ativa permanece válida até o expirar do JWT.
-* **Rate Limiting Ausente**: Os endpoints sensíveis `/auth/login`, `/auth/saml/acs` e `/hooks` não possuem rate limiting contra ataques de força bruta ou estouro de cota de ingestão.
-* **Secret Store Efêmero**: O `internal/secrets.EnvStore` armazena segredos (senhas de bind LDAP, chaves de API LLM, chaves privadas SAML) apenas em memória ou variáveis de ambiente. Em produção, necessita de integração com Vault / AWS Secrets Manager / KMS.
-* **Callback SAML Direct Token**: O endpoint `ServeACS` devolve o token JWT diretamente no corpo do POST de resposta do IdP, padrão menos seguro para SPAs em produção (o recomendado é Authorization Code / cookie efêmero).
+### 1. Security & Authentication
+* **Lack of JWT Revocation / Refresh Tokens**: The issued JWT has a 15-minute TTL, but there's no support for early revocation (blacklist/Redis) nor an Access/Refresh Token pair. If a user is revoked in the Settings panel, their active session remains valid until the JWT expires.
+* **Missing Rate Limiting**: The sensitive endpoints `/auth/login`, `/auth/saml/acs`, and `/hooks` have no rate limiting against brute-force attacks or ingestion quota overflow.
+* **Ephemeral Secret Store**: `internal/secrets.EnvStore` stores secrets (LDAP bind passwords, LLM API keys, SAML private keys) only in memory or environment variables. In production, it needs integration with Vault / AWS Secrets Manager / KMS.
+* **SAML Direct Token Callback**: The `ServeACS` endpoint returns the JWT token directly in the body of the IdP's response POST, a less secure pattern for SPAs in production (the recommended approach is Authorization Code / ephemeral cookie).
 
-### 2. Automação & Inteligência Artificial (Orquestração Agêntica)
-* **Agente IA Desconectado das Tools MCP**: O `AIAnalysisService` atual faz chamadas síncronas de texto livre (`Complete`) à LLM. Ele ainda não executa o ciclo agêntico (*Function Calling / Tool Use*) para acionar as ferramentas MCP cadastradas (ex.: consultar Threat Intel no VirusTotal, isolar IP via Firewall, buscar logs no SIEM).
-* **Falta de Normalizadores Específicos**: A ingestão possui apenas o `genericNormalizer`. Falta suporte a parsers nativos para plataformas populares (Wazuh, CrowdStrike Falcon, AWS GuardDuty, Microsoft Defender, Datadog).
+### 2. Automation & Artificial Intelligence (Agentic Orchestration)
+* **AI Agent Disconnected from MCP Tools**: The current `AIAnalysisService` makes synchronous free-text calls (`Complete`) to the LLM. It doesn't yet run the agentic cycle (Function Calling / Tool Use) to invoke registered MCP tools (e.g., querying Threat Intel on VirusTotal, isolating an IP via Firewall, searching logs in the SIEM).
+* **Lack of Specific Normalizers**: Ingestion only has the `genericNormalizer`. Native parsers for popular platforms (Wazuh, CrowdStrike Falcon, AWS GuardDuty, Microsoft Defender, Datadog) are missing.
 
-### 3. Performance & Arquitetura
-* **Fetch de Metadata SAML sem Cache**: O `SAMLAuthService.buildServiceProvider` busca o XML de metadados do IdP em toda requisição de login/ACS. Deve haver um cache em memória com TTL e atualização em segundo plano.
-* **Validação de `allowedTags` em Sub-Recursos**: Em `IncidentService`, comentários, anexos e links dependem do RLS do PostgreSQL, mas poderiam revalidar `allowedTags` explicitamente na camada Go para maior consistência defensiva.
+### 3. Performance & Architecture
+* **SAML Metadata Fetch without Cache**: `SAMLAuthService.buildServiceProvider` fetches the IdP's metadata XML on every login/ACS request. There should be an in-memory cache with TTL and background refresh.
+* **`allowedTags` Validation on Sub-Resources**: In `IncidentService`, comments, attachments, and links rely on PostgreSQL's RLS, but could explicitly revalidate `allowedTags` at the Go layer for stronger defensive consistency.
 
 ---
 
-## Proposta Estruturada de Melhorias
+## Structured Improvement Proposal
 
-Recomendamos a implementação das melhorias organizadas em 3 fases prioritárias:
+We recommend implementing the improvements organized into 3 priority phases:
 
-### Fase 1: Segurança, Estabilidade & Resiliência (Curto Prazo)
+### Phase 1: Security, Stability & Resilience (Short Term)
 
 > [!IMPORTANT]
-> Ações de segurança e governança essenciais para garantir que a aplicação possa operar com segurança em ambientes compartilhados ou corporativos.
+> Essential security and governance actions to ensure the application can operate safely in shared or corporate environments.
 
-1. **Sistema de Rate Limiting (Middleware em Go)**
-   - Implementar rate limiter no `backend/internal/httpserver/middleware` utilizando algoritmo Token Bucket ou Leaky Bucket (com Redis ou `golang.org/x/time/rate`).
-   - Proteger `/auth/login`, `/auth/saml/*` e `/hooks`.
-2. **Mecanismo de Revogação de Sessão & Refresh Tokens**
-   - Introduzir tabela `refresh_tokens` no PostgreSQL com revocação por hash e suporte a rotação de tokens.
-   - Adicionar checagem de revogação de tokens JWT no middleware `JWTAuth`.
-3. **Cache de Metadata SAML**
-   - Adicionar cache em memória com mutex e expiração (ex: 1 hora) para o `saml.EntityDescriptor` no `SAMLAuthService`.
+1. **Rate Limiting System (Go Middleware)**
+   - Implement a rate limiter in `backend/internal/httpserver/middleware` using a Token Bucket or Leaky Bucket algorithm (with Redis or `golang.org/x/time/rate`).
+   - Protect `/auth/login`, `/auth/saml/*`, and `/hooks`.
+2. **Session Revocation & Refresh Token Mechanism**
+   - Introduce a `refresh_tokens` table in PostgreSQL with hash-based revocation and token rotation support.
+   - Add JWT revocation checking to the `JWTAuth` middleware.
+3. **SAML Metadata Cache**
+   - Add an in-memory cache with mutex and expiration (e.g., 1 hour) for the `saml.EntityDescriptor` in `SAMLAuthService`.
 
-### Fase 2: Automação Agêntica de SOC & Ingestão Enriquecida (Médio Prazo)
+### Phase 2: SOC Agentic Automation & Enriched Ingestion (Medium Term)
 
 > [!TIP]
-> Eleva o valor operacional do ArgusOps no dia a dia do SOC, automatizando triagem e resposta rápida através do ecossistema MCP e IA.
+> Raises ArgusOps's day-to-day operational value for the SOC, automating triage and rapid response through the MCP and AI ecosystem.
 
-1. **Loop Agêntico de Triagem com MCP (AI Agent Loop)**
-   - Evoluir o `AIAnalysisService` para suportar *Tool Use* iterativo.
-   - O agente de IA poderá invocar ferramentas registradas nos servidores MCP (ex: reputação de IP, busca de hashes, enriquecimento de OSINT).
-   - Ferramentas marcadas como `side_effecting` geram requisições com status `proposed`, acionando o fluxo de aprovação humana no frontend (`MCP Tool Approvals`).
-2. **Parsers Nativos de Ingestão (Wazuh, CrowdStrike, GuardDuty)**
-   - Expandir `backend/internal/ingest/` criando adaptadores específicos que implementam a interface `ingest.Normalizer`.
-   - Permitir seleção automática do normalizador baseado no cabeçalho ou payload do webhook.
-3. **Notificações em Tempo Real (Server-Sent Events - SSE)**
-   - Implementar endpoint SSE em `/api/v1/events/stream` para notificar a SPA React sobre novos alertas críticos e mudanças de fase de incidentes sem necessidade de polling manual.
+1. **MCP Agentic Triage Loop (AI Agent Loop)**
+   - Evolve `AIAnalysisService` to support iterative Tool Use.
+   - The AI agent will be able to invoke tools registered on MCP servers (e.g., IP reputation, hash lookup, OSINT enrichment).
+   - Tools marked as `side_effecting` generate requests with `proposed` status, triggering the human approval flow in the frontend (`MCP Tool Approvals`).
+2. **Native Ingestion Parsers (Wazuh, CrowdStrike, GuardDuty)**
+   - Expand `backend/internal/ingest/` by creating specific adapters that implement the `ingest.Normalizer` interface.
+   - Allow automatic normalizer selection based on the webhook's header or payload.
+3. **Real-Time Notifications (Server-Sent Events - SSE)**
+   - Implement an SSE endpoint at `/api/v1/events/stream` to notify the React SPA about new critical alerts and incident phase changes without manual polling.
 
-### Fase 3: Governança, Integrações & Escalabilidade (Longo Prazo)
+### Phase 3: Governance, Integrations & Scalability (Long Term)
 
-1. **Integração com Vault / KMS para Secrets**
-   - Implementar `secrets.VaultStore` e `secrets.AWSKMSStore` conforme a interface `secrets.Store`.
-2. **Engine de On-Call / Escalonamento**
-   - Conectar o `on_call_shift_service.go` a notificações externas via Webhook/PagerDuty/Slack para alertas de severidade alta/crítica sem atendimento dentro do SLA.
-3. **Exportação de Logs de Auditoria SIEM / CEF / Syslog**
-   - Endpoint e worker para streaming de eventos de auditoria do ArgusOps para SIEM externo.
-
----
-
-## Plano de Ação Recomendado / Próximos Passos
-
-1. **Revisão e Validação**: O usuário pode revisar a proposta de melhorias e escolher em qual módulo ou fase deseja focar primeiro.
-2. **Implementação Incremental**: Iniciar pela execução das tarefas da **Fase 1** (Rate Limiting e Cache SAML) ou pela evolução da **Fase 2** (Agente MCP / Normalizadores), mantendo 100% de compatibilidade e testes com `task test`.
+1. **Vault / KMS Integration for Secrets**
+   - Implement `secrets.VaultStore` and `secrets.AWSKMSStore` per the `secrets.Store` interface.
+2. **On-Call / Escalation Engine**
+   - Connect `on_call_shift_service.go` to external notifications via Webhook/PagerDuty/Slack for high/critical severity alerts not handled within the SLA.
+3. **SIEM Audit Log Export / CEF / Syslog**
+   - Endpoint and worker to stream ArgusOps audit events to an external SIEM.
 
 ---
 
-## Plano de Verificação
+## Recommended Action Plan / Next Steps
 
-### Testes Automatizados
-- Executar a suíte de validação completa:
+1. **Review and Validation**: The user can review the improvement proposal and choose which module or phase to focus on first.
+2. **Incremental Implementation**: Start by executing **Phase 1** tasks (Rate Limiting and SAML Cache) or by evolving **Phase 2** (MCP Agent / Normalizers), maintaining 100% compatibility and passing tests with `task test`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Run the full validation suite:
   ```bash
   task test
   ```
-- Executar o teste de fumaça end-to-end com PostgreSQL e Docker Compose:
+- Run the end-to-end smoke test with PostgreSQL and Docker Compose:
   ```bash
   task test:smoke
   ```
 
-### Validação Manual
-- Testar endpoints de autenticação e rotas com JWT/RLS.
-- Verificar navegação no frontend React (`http://localhost:3000`).
+### Manual Validation
+- Test authentication endpoints and routes with JWT/RLS.
+- Verify navigation in the React frontend (`http://localhost:3000`).

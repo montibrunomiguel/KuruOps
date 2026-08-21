@@ -1,3 +1,5 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # ArgusOps on Azure (AKS)
 
 Provisions the cloud infrastructure ArgusOps needs: a resource group + VNet,

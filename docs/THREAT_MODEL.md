@@ -1,191 +1,193 @@
+<p align="right"><a href="THREAT_MODEL.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # Threat Model
 
-Este documento descreve os limites de confiança do ArgusOps, o que cada camada de defesa garante
-(e o que explicitamente não garante), e como girar um segredo sem downtime. É um complemento ao
-código, não um substituto — onde os dois divergirem, o código está certo e este documento está
-desatualizado; atualize-o no mesmo PR que mudar o comportamento descrito aqui (ver checklist do
-`.github/PULL_REQUEST_TEMPLATE.md`).
+This document describes ArgusOps's trust boundaries, what each layer of defense guarantees
+(and what it explicitly does not guarantee), and how to rotate a secret without downtime. It's a
+complement to the code, not a substitute — where the two diverge, the code is right and this
+document is stale; update it in the same PR that changes the behavior described here (see the
+checklist in `.github/PULL_REQUEST_TEMPLATE.md`).
 
-## Limites de confiança
+## Trust boundaries
 
 ```
-Navegador (não confiável)
-   │ HTTPS (produção) / HTTP (dev local)
+Browser (untrusted)
+   │ HTTPS (production) / HTTP (local dev)
    ▼
-nginx (frontend) -- serve a SPA, faz proxy de /api e /auth
-   │ rede interna do Docker Compose
+nginx (frontend) -- serves the SPA, proxies /api and /auth
+   │ internal Docker Compose network
    ▼
-api / ingest (Go, confiável) -- autenticação e autorização são checadas aqui
-   │ role argusops_app, sem BYPASSRLS
+api / ingest (Go, trusted) -- authentication and authorization are checked here
+   │ argusops_app role, no BYPASSRLS
    ▼
-Postgres -- RLS por tenant_id
+Postgres -- RLS by tenant_id
 ```
 
-- **Navegador → nginx**: fronteira não confiável de verdade. Qualquer coisa vinda daqui —
-  header, cookie, body — é tratada como potencialmente hostil pelo backend.
-- **nginx → api/ingest**: nginx é a única coisa que fala com o navegador; ele reescreve
-  `X-Real-IP` incondicionalmente antes de repassar (`proxy_set_header X-Real-IP $remote_addr`),
-  então esse é o único header de IP que o backend confia (ver
-  `middleware.getClientIP`/`ClientIPFromHeader` — nunca `X-Forwarded-For`, que o cliente controla
-  diretamente).
-- **`ingest` é superfície separada de `api`**: só ele recebe tráfego de webhook de terceiros
-  (vendors SIEM/XDR), autenticado por um token por-endpoint com hash SHA-256 armazenado
-  (`webhook_endpoints.token_hash`), não por JWT de usuário. Isolar esse caminho limita o raio de
-  um endpoint de ingestão comprometido/vazado a esse único endpoint (rotação de token disponível em
-  Settings → Webhook Endpoints), sem tocar em nada do resto da API.
-- **`worker` não tem superfície HTTP nenhuma** — só roda cron interno (refresh de materialized
-  view, sweep de SLA/escalonamento), então não é um alvo de rede.
-- **api/ingest/worker → Postgres**: os três conectam como o mesmo role least-privilege
-  (`argusops_app`, ver `db/init/argusops_app_role.sql`) — sem `BYPASSRLS`, sem ownership de tabela.
-  O role `postgres` (superuser, usado só por migrations/`task db:*`) contorna RLS por completo,
-  de propósito — nunca é o role que uma requisição de usuário usa.
+- **Browser → nginx**: the genuinely untrusted boundary. Anything coming from here — header,
+  cookie, body — is treated as potentially hostile by the backend.
+- **nginx → api/ingest**: nginx is the only thing that talks to the browser; it unconditionally
+  rewrites `X-Real-IP` before forwarding (`proxy_set_header X-Real-IP $remote_addr`), so that's
+  the only IP header the backend trusts (see `middleware.getClientIP`/`ClientIPFromHeader` —
+  never `X-Forwarded-For`, which the client controls directly).
+- **`ingest` is a separate surface from `api`**: it's the only one that receives third-party
+  webhook traffic (SIEM/XDR vendors), authenticated by a per-endpoint token whose SHA-256 hash is
+  stored (`webhook_endpoints.token_hash`), not by a user JWT. Isolating this path limits the blast
+  radius of a compromised/leaked ingestion endpoint to that single endpoint (token rotation
+  available under Settings → Webhook Endpoints), without touching anything else in the API.
+- **`worker` has no HTTP surface at all** — it only runs internal cron jobs (materialized view
+  refresh, SLA/escalation sweep), so it isn't a network target.
+- **api/ingest/worker → Postgres**: all three connect as the same least-privilege role
+  (`argusops_app`, see `db/init/argusops_app_role.sql`) — no `BYPASSRLS`, no table ownership. The
+  `postgres` role (superuser, used only by migrations/`task db:*`) bypasses RLS entirely, on
+  purpose — it's never the role a user request uses.
 
-## O que a Row-Level Security garante — e o que não garante
+## What Row-Level Security guarantees — and what it doesn't
 
-RLS filtra toda query pelo `tenant_id` da sessão (`set_config('app.tenant_id', ...)`, ver
-`db.Pool.WithTenant`). Hoje o ArgusOps roda como instância única — não existe conceito de
-"empresa"/tenant no login (`README.md` raiz) — então na prática atual, RLS por `tenant_id` é
-defesa em profundidade contra um bug de query que "esqueceu" o filtro certo, não o mecanismo de
-isolamento que separa usuários entre si no dia a dia. Ela existe pronta para SaaS multi-tenant
-real no futuro sem reescrever schema.
+RLS filters every query by the session's `tenant_id` (`set_config('app.tenant_id', ...)`, see
+`db.Pool.WithTenant`). Today ArgusOps runs as a single instance — there's no concept of a
+"company"/tenant at login (root `README.md`) — so in current practice, RLS by `tenant_id` is
+defense in depth against a query bug that "forgot" the right filter, not the mechanism that
+separates users from one another day to day. It exists ready for a real multi-tenant SaaS future
+without a schema rewrite.
 
-**RLS não garante**:
-- **Autorização fina dentro do tenant** — isso é `role`/`resourceAccess`/`allowedTags`, aplicado na
-  camada de serviço/handler (`middleware.RequireRole`, `middleware.RequireResourceAccess`,
-  filtro `tags && $allowedTags` na query), não na política de RLS em si. Um bug nessa camada não é
-  coberto por RLS.
-- **Isolamento contra o role `postgres`** — intencional; esse role só é usado para setup
-  administrativo, nunca por uma requisição HTTP.
-- **Consistência dos sub-recursos de incidente** — comentários, vínculos com alertas e timeline
-  ainda não repetem a checagem de `allowedTags` que `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
-  `SetSeverityAndPriority`/`UpdateDescription` já fazem (ver `backend/README.md`, seção
-  "Autorização") — dependem só do isolamento por tenant via RLS. Num ambiente single-tenant isso
-  não vaza nada entre tenants diferentes, mas significa que um usuário com acesso ao recurso
-  `incidents` (mas sem a tag específica de um incidente) pode, hoje, comentar/ver sub-recursos de
-  um incidente fora do seu `allowedTags` se souber o ID. Lacuna conhecida, não um achado novo desta
-  revisão.
+**RLS does not guarantee**:
+- **Fine-grained authorization within a tenant** — that's `role`/`resourceAccess`/`allowedTags`,
+  enforced at the service/handler layer (`middleware.RequireRole`,
+  `middleware.RequireResourceAccess`, the `tags && $allowedTags` filter in the query), not in the
+  RLS policy itself. A bug in that layer is not covered by RLS.
+- **Isolation against the `postgres` role** — intentional; that role is only used for
+  administrative setup, never by an HTTP request.
+- **Consistency of incident sub-resources** — comments, alert links, and the timeline still don't
+  repeat the `allowedTags` check that `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
+  `SetSeverityAndPriority`/`UpdateDescription` already perform (see `backend/README.md`, section
+  "Authorization") — they rely only on tenant isolation via RLS. In a single-tenant environment
+  this doesn't leak anything across different tenants, but it means a user with access to the
+  `incidents` resource (but without the specific tag on a given incident) can, today,
+  comment on/view sub-resources of an incident outside their `allowedTags` if they know the ID.
+  Known gap, not a new finding from this review.
 
-## Segredos: como nunca trafegam em claro para o Postgres
+## Secrets: how they never travel in plaintext to Postgres
 
-`secrets.Store` (`Put`/`Resolve`) é a única forma pela qual código de aplicação lida com uma
-credencial de terceiro (senha de bind LDAP, chave privada SP do SAML, API key de LLM, credencial
-S3/GCS). O backend padrão, `PersistentEnvStore`, criptografa com AES-256-GCM
-(`SECRETS_ENCRYPTION_KEY`, uma variável de ambiente — nunca fica no Postgres) antes de gravar na
-tabela `secret_store`; um dump ou vazamento do banco sozinho não expõe nada em claro, só com a
-chave de criptografia também comprometida. `VaultStore`/`AWSKMSStore` (`SECRETS_BACKEND=vault|kms`)
-vão além — o segredo nem chega a existir no Postgres, criptografado ou não.
+`secrets.Store` (`Put`/`Resolve`) is the only way application code handles a third-party
+credential (LDAP bind password, SAML SP private key, LLM API key, S3/GCS credential). The default
+backend, `PersistentEnvStore`, encrypts with AES-256-GCM (`SECRETS_ENCRYPTION_KEY`, an environment
+variable — never stored in Postgres) before writing to the `secret_store` table; a dump or leak of
+the database alone exposes nothing in plaintext, only if the encryption key is also compromised.
+`VaultStore`/`AWSKMSStore` (`SECRETS_BACKEND=vault|kms`) go further — the secret never even exists
+in Postgres, encrypted or not.
 
-O que isso **não** cobre: o valor em claro passa pela memória do processo Go no momento de
-`Put`/`Resolve` (inevitável — é preciso pra de fato bindar no LDAP, chamar a API do LLM, etc.), e
-trafega do navegador pro `api` em texto no momento de salvar em Settings (HTTPS em produção
-protege esse trecho; em dev local via `task deploy:up` é HTTP puro, aceitável só numa máquina
-local).
+What this does **not** cover: the plaintext value passes through the Go process's memory at the
+moment of `Put`/`Resolve` (unavoidable — it's needed to actually bind to LDAP, call the LLM API,
+etc.), and it travels from the browser to `api` as plaintext at the moment it's saved in Settings
+(HTTPS in production protects that leg; in local dev via `task deploy:up` it's plain HTTP,
+acceptable only on a local machine).
 
-**Tradeoff deliberado**: o `EnvStore` original (puramente em memória) nunca tocava disco, mas
-perdia toda credencial a cada restart do processo enquanto as linhas no banco continuavam
-referenciando o ref antigo — um bug de disponibilidade real, descoberto durante teste ao vivo de
-LDAP/SAML nesta sessão. Trocar para `PersistentEnvStore` troca "nunca toca disco" por "sobrevive a
-um restart", mitigado pela criptografia AES-256-GCM antes da gravação — não é uma correção sem
-custo, é uma escolha de durabilidade vs. superfície, documentada aqui de propósito.
+**Deliberate tradeoff**: the original `EnvStore` (purely in-memory) never touched disk, but it
+lost every credential on every process restart while the rows in the database kept referencing
+the old ref — a real availability bug, discovered during live LDAP/SAML testing in this session.
+Switching to `PersistentEnvStore` trades "never touches disk" for "survives a restart," mitigated
+by AES-256-GCM encryption before the write — it isn't a free fix, it's a durability-vs-surface
+tradeoff, documented here on purpose.
 
-## Cookie `SameSite` do SAML: por que o `RelayState` é o canal primário
+## SAML `SameSite` cookie: why `RelayState` is the primary channel
 
-`RedirectToIDP` originalmente dependia de um cookie (`SameSite=Lax`) pra amarrar a resposta do IdP
-de volta ao `AuthnRequest` original (proteção contra replay/CSRF). Isso quebrava contra qualquer
-IdP real (Okta, Azure AD, mocksaml.com) — todo IdP compatível com o spec devolve a asserção via
-POST cross-site (binding HTTP-POST), e um cookie `SameSite=Lax` nunca é enviado numa requisição
-POST cross-site por design do navegador. O fix: o ID do `AuthnRequest` viaja no `RelayState` (que
-todo IdP compatível com o spec ecoa de volta verbatim) como canal primário; o cookie continua como
-fallback só pro caso same-site. Ver `internal/authn/saml.go`'s comentário em
-`samlRequestIDCookie` para os detalhes de wire format.
+`RedirectToIDP` originally relied on a cookie (`SameSite=Lax`) to tie the IdP's response back to
+the original `AuthnRequest` (replay/CSRF protection). This broke against any real IdP (Okta, Azure
+AD, mocksaml.com) — every spec-compliant IdP returns the assertion via a cross-site POST
+(HTTP-POST binding), and a `SameSite=Lax` cookie is never sent on a cross-site POST request by
+browser design. The fix: the `AuthnRequest` ID travels in `RelayState` (which every
+spec-compliant IdP echoes back verbatim) as the primary channel; the cookie remains as a fallback
+just for the same-site case. See `internal/authn/saml.go`'s comment on `samlRequestIDCookie` for
+wire-format details.
 
-## Headers de segurança HTTP
+## HTTP security headers
 
-`middleware.SecurityHeaders` (aplicado a toda resposta de `api`/`ingest`, `internal/httpserver/router.go`)
-usa uma CSP maximamente restrita (`default-src 'none'; frame-ancestors 'none'`) porque essas
-respostas são sempre JSON ou texto puro, nunca HTML — não há razão legítima pra carregar
-script/style/frame a partir de uma resposta de API. `frontend/nginx.conf` define uma CSP separada,
-mais permissiva, só na resposta que serve o `index.html` (o único lugar que serve HTML de fato) —
-`style-src 'unsafe-inline'` é necessário porque a árvore React usa `style={{...}}` extensivamente
-(gráficos principalmente), não porque sobrou de um exemplo copiado; não há
-`dangerouslySetInnerHTML` nem `<script>` inline em lugar nenhum do app, então `script-src` continua
-estrito sem exceção correspondente. `X-XSS-Protection` deliberadamente não é setado — deprecated,
-o próprio Auditor de XSS do Chrome foi removido em 2019 depois de o auditor em si introduzir bugs;
-a orientação atual da OWASP é omitir o header, não setar um valor.
+`middleware.SecurityHeaders` (applied to every `api`/`ingest` response,
+`internal/httpserver/router.go`) uses a maximally restrictive CSP (`default-src 'none';
+frame-ancestors 'none'`) because these responses are always JSON or plain text, never HTML —
+there's no legitimate reason to load a script/style/frame from an API response. `frontend/nginx.conf`
+defines a separate, more permissive CSP only for the response that serves `index.html` (the only
+place that actually serves HTML) — `style-src 'unsafe-inline'` is necessary because the React tree
+uses `style={{...}}` extensively (mainly for charts), not because it's left over from a copied
+example; there's no `dangerouslySetInnerHTML` nor inline `<script>` anywhere in the app, so
+`script-src` remains strict with no matching exception. `X-XSS-Protection` is deliberately not
+set — deprecated, Chrome's own XSS Auditor was removed in 2019 after the auditor itself introduced
+bugs; current OWASP guidance is to omit the header, not set a value.
 
-## Runbook: rotação de segredo sem downtime
+## Runbook: secret rotation without downtime
 
-Nenhuma rotação abaixo derruba sessões já ativas — o JWT de sessão não depende de o
-LDAP/SAML/LLM continuar configurado do jeito que estava no momento do login.
+None of the rotations below tear down already-active sessions — the session JWT doesn't depend on
+LDAP/SAML/LLM staying configured the way it was at login time.
 
-### Senha de bind do LDAP
+### LDAP bind password
 
-1. Gere/atualize a nova senha do lado do diretório LDAP primeiro (a conta de serviço, não a de um
-   usuário comum).
-2. Settings → Identity Providers → LDAP → preencha o campo de senha com o novo valor e salve.
-   Deixar o campo em branco mantém a credencial antiga (`SaveLDAPConfig`'s "re-save sem nova senha
-   mantém a atual") — **é preciso digitar a senha nova explicitamente** para rotacionar de fato.
-3. Login LDAP a partir daqui usa a senha nova; nada mais precisa reiniciar.
+1. Generate/update the new password on the LDAP directory side first (the service account, not a
+   regular user's).
+2. Settings → Identity Providers → LDAP → fill the password field with the new value and save.
+   Leaving the field blank keeps the old credential (`SaveLDAPConfig`'s "re-save without a new
+   password keeps the current one") — **you must type the new password explicitly** to actually
+   rotate it.
+3. LDAP logins from this point on use the new password; nothing else needs to restart.
 
-### Keypair de assinatura da SP (SAML)
+### SP signing keypair (SAML)
 
-Não existe um botão dedicado de "rotacionar" — a única forma suportada é remover e reconfigurar,
-já que `SaveSAMLConfig` só gera um keypair novo quando não existe nenhuma config anterior (ver seu
-comentário: reconfigurar sem apagar mantém o keypair, de propósito, porque o IdP já confia
-naquele certificado).
+There's no dedicated "rotate" button — the only supported way is to remove and reconfigure, since
+`SaveSAMLConfig` only generates a new keypair when no prior config exists (see its comment:
+reconfiguring without deleting keeps the keypair, on purpose, because the IdP already trusts that
+certificate).
 
-1. Settings → Identity Providers → SAML → "Remover configuração".
-2. Reconfigure do zero (mesma URL/XML de metadata do IdP) e salve — isso gera um par novo.
-3. Baixe a metadata nova em `GET /auth/saml/metadata` e registre no IdP no lugar da antiga.
-4. **Login SAML fica indisponível entre o passo 1 e o IdP confiar no certificado novo do passo 3**
-   — planeje uma janela curta se este for o único método de login em uso; local/LDAP continuam
-   funcionando durante a janela.
+1. Settings → Identity Providers → SAML → "Remove configuration".
+2. Reconfigure from scratch (same IdP metadata URL/XML) and save — this generates a new pair.
+3. Download the new metadata at `GET /auth/saml/metadata` and register it with the IdP in place of
+   the old one.
+4. **SAML login is unavailable between step 1 and the IdP trusting the new certificate from step
+   3** — plan a short window if this is the only login method in use; local/LDAP keep working
+   during the window.
 
-### Chave de API de um provedor LLM
+### An LLM provider's API key
 
-1. Settings → AI Integration → edite o provedor → preencha o campo de API key com o valor novo e
-   salve. Mesma regra do LDAP: deixar em branco mantém a chave antiga.
-2. Nenhuma sessão de análise em andamento é afetada — a chave só é resolvida no momento de cada
-   chamada à LLM, não mantida aberta entre requisições.
+1. Settings → AI Integration → edit the provider → fill the API key field with the new value and
+   save. Same rule as LDAP: leaving it blank keeps the old key.
+2. No in-progress analysis session is affected — the key is only resolved at the moment of each
+   call to the LLM, not held open across requests.
 
-## Segredos de infraestrutura: credenciais padrão do `docker-compose.yml`
+## Infrastructure secrets: `docker-compose.yml` default credentials
 
-As seções acima cobrem segredos de nível de aplicação (LDAP, SAML, LLM/MCP) — resolvidos via
-`secrets.Store` e rotacionáveis pela UI de Settings sem reiniciar nada. `docker-compose.yml` tem
-uma categoria diferente e mais básica de segredo: as credenciais que colocam a própria stack de pé
-(senha do Postgres, das roles `argusops_app`/`argusops_worker`, a chave de criptografia do
-`secrets.Store`). Essas **não** passam pela UI — são lidas direto de variáveis de ambiente no
-momento em que cada container sobe.
+The sections above cover application-level secrets (LDAP, SAML, LLM/MCP) — resolved via
+`secrets.Store` and rotatable from the Settings UI without restarting anything.
+`docker-compose.yml` has a different, more basic category of secret: the credentials that stand up
+the stack itself (the Postgres password, the `argusops_app`/`argusops_worker` role passwords, the
+`secrets.Store` encryption key). These **do not** go through the UI — they're read directly from
+environment variables at the moment each container comes up.
 
-Todo esse conjunto vem com um valor padrão funcional embutido no próprio `docker-compose.yml`
-(propositalmente — `docker compose up` sem nenhuma configuração adicional já sobe a stack inteira,
-sem exigir que quem está só experimentando localmente gere segredos primeiro). O efeito colateral é
-que esses valores padrão são **públicos**: aparecem em texto puro neste repositório, tanto no
-`docker-compose.yml` quanto no `.env.example` (ver raiz do repositório). São aceitáveis para rodar
-a stack no laptop de um único desenvolvedor. **Não são aceitáveis** para qualquer ambiente
-alcançável por outra pessoa — uma máquina de staging compartilhada, um ambiente de demonstração,
-qualquer coisa exposta a um IP que não seja `localhost`.
+This whole set ships with a working default value baked into `docker-compose.yml` itself
+(deliberately — `docker compose up` with no extra configuration already brings up the entire
+stack, without requiring someone just experimenting locally to generate secrets first). The side
+effect is that these default values are **public**: they appear in plaintext in this repository,
+both in `docker-compose.yml` and in `.env.example` (see repository root). They're acceptable for
+running the stack on a single developer's laptop. **They are not acceptable** for any environment
+reachable by anyone else — a shared staging machine, a demo environment, anything exposed to an
+IP other than `localhost`.
 
-### Rotação antes de qualquer uso compartilhado
+### Rotation before any shared use
 
-1. Copie `.env.example` (raiz do repositório) para `.env`.
-2. Gere valores novos para cada credencial:
-   - `POSTGRES_PASSWORD` / `POSTGRES_USER`: qualquer senha forte; trocar `POSTGRES_USER` exige
-     também atualizar as chamadas `docker compose exec postgres psql -U postgres ...` hardcoded no
-     `Taskfile.yml` (`db:up`, `db:test:up`, `db:backup`, etc. — elas não leem a variável, assumem
-     literalmente `postgres`).
-   - `ARGUSOPS_APP_PASSWORD` / `ARGUSOPS_WORKER_PASSWORD`: qualquer senha forte — só precisam bater
-     com o que `db/init/argusops_app_role.sql` / `argusops_worker_role.sql` configuram na criação
-     das roles (rodar `task db:reset` depois de trocar, para recriar as roles com a senha nova).
-   - `SECRETS_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Atenção**: trocar essa chave depois que
-     já existem segredos gravados no Postgres (`secret_store`) os torna ilegíveis — gere a chave
-     definitiva antes do primeiro `docker compose up`, não depois.
-3. `docker compose up -d` novamente para os serviços pegarem os valores novos (`api`/`ingest`/
-   `worker` seguem `${VAR:-default}`, então uma vez setado no `.env` o valor override já é o que
-   sobe).
-4. `.env` está no `.gitignore` do repositório — nunca force `git add -f` nele.
+1. Copy `.env.example` (repository root) to `.env`.
+2. Generate new values for each credential:
+   - `POSTGRES_PASSWORD` / `POSTGRES_USER`: any strong password; changing `POSTGRES_USER` also
+     requires updating the hardcoded `docker compose exec postgres psql -U postgres ...` calls in
+     `Taskfile.yml` (`db:up`, `db:test:up`, `db:backup`, etc. — they don't read the variable, they
+     assume `postgres` literally).
+   - `ARGUSOPS_APP_PASSWORD` / `ARGUSOPS_WORKER_PASSWORD`: any strong password — they just need to
+     match what `db/init/argusops_app_role.sql` / `argusops_worker_role.sql` set up when creating
+     the roles (run `task db:reset` after changing, to recreate the roles with the new password).
+   - `SECRETS_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Warning**: changing this key after
+     secrets already exist in Postgres (`secret_store`) makes them unreadable — generate the final
+     key before the first `docker compose up`, not after.
+3. `docker compose up -d` again for services to pick up the new values (`api`/`ingest`/`worker`
+   follow `${VAR:-default}`, so once it's set in `.env` the override value is what comes up).
+4. `.env` is in the repository's `.gitignore` — never `git add -f` it.
 
-Exceção deliberada: `VAULT_DEV_ROOT_TOKEN_ID` (serviço `vault-dev`, perfil `tools`) fica hardcoded
-no `docker-compose.yml`, sem variável de override. É o token de root de uma instância Vault em modo
-dev — armazenamento em memória, descartado a cada restart (ver o próprio comentário do serviço) —
-então não existe nada durável ali para rotacionar.
+Deliberate exception: `VAULT_DEV_ROOT_TOKEN_ID` (service `vault-dev`, profile `tools`) is
+hardcoded in `docker-compose.yml`, with no override variable. It's the root token of a Vault
+instance in dev mode — in-memory storage, discarded on every restart (see the service's own
+comment) — so there's nothing durable there to rotate.

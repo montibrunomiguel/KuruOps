@@ -1,3 +1,5 @@
+<p align="right"><a href="SECURITY.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # Security Policy
 
 ## Supported Versions

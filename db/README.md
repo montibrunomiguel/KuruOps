@@ -1,30 +1,35 @@
-# ArgusOps — banco de dados
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-Migrations em `migrations/`, formato `golang-migrate` (`{version}_{name}.up.sql` / `.down.sql`).
+# ArgusOps — database
 
-## Setup local
+Migrations in `migrations/`, `golang-migrate` format (`{version}_{name}.up.sql` / `.down.sql`).
 
-Via Task (recomendado — ver `README.md` na raiz): `task db:up && task db:migrate && task db:roles`
-faz tudo isso, incluindo o role da aplicação abaixo, contra o Postgres do `docker-compose.yml`.
+## Local setup
 
-Manual, contra um Postgres já rodando:
+Via Task (recommended — see the root `README.md`): `task db:up && task db:migrate && task db:roles`
+does all of this, including the application role below, against the Postgres from
+`docker-compose.yml`.
+
+Manual, against an already-running Postgres:
 
 ```bash
 createdb argusops
 migrate -database "postgres://localhost:5432/argusops?sslmode=disable" -path migrations up
 ```
 
-Sem `golang-migrate` instalado: `go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest`
+Without `golang-migrate` installed:
+`go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest`
 
-## Role da aplicação (obrigatório antes de rodar `cmd/api` / `cmd/ingest` / `cmd/worker`)
+## Application role (required before running `cmd/api` / `cmd/ingest` / `cmd/worker`)
 
-As migrations em `0008_row_level_security.up.sql` e `0010_webhook_token_lookup_policy.up.sql` só
-protegem os dados se a aplicação conectar com um role que **não** seja dono das tabelas e **não**
-tenha `BYPASSRLS`. Rodar as migrations como superusuário/dono e depois conectar a aplicação com
-esse mesmo usuário torna a RLS inofensiva — o dono da tabela ignora as políticas por padrão.
+The migrations in `0008_row_level_security.up.sql` and `0010_webhook_token_lookup_policy.up.sql`
+only protect the data if the application connects with a role that is **not** the owner of the
+tables and does **not** have `BYPASSRLS`. Running the migrations as a superuser/owner and then
+connecting the application with that same user makes RLS harmless — the table owner bypasses
+policies by default.
 
-`task db:roles` roda exatamente isso (`db/init/argusops_app_role.sql`, idempotente — pode rodar de
-novo a cada deploy). Equivalente manual:
+`task db:roles` runs exactly this (`db/init/argusops_app_role.sql`, idempotent — safe to run again
+on every deploy). Manual equivalent:
 
 ```sql
 create role argusops_app with login password '...' nosuperuser nocreatedb nocreaterole nobypassrls;
@@ -33,39 +38,40 @@ grant select, insert, update, delete on all tables in schema public to argusops_
 grant usage, select on all sequences in schema public to argusops_app;
 ```
 
-`DATABASE_URL` do backend deve apontar para `argusops_app`, não para o usuário dono das tabelas
-usado para rodar as migrations.
+The backend's `DATABASE_URL` must point to `argusops_app`, not to the table-owning user used to
+run the migrations.
 
-## Role do worker (`cmd/worker`, refresh das materialized views)
+## Worker role (`cmd/worker`, materialized view refresh)
 
-`cmd/worker` **não** conecta como `argusops_app` -- conecta como `argusops_worker`
-(`db/init/argusops_worker_role.sql`, também criado por `task db:roles`), que tem `BYPASSRLS`.
+`cmd/worker` does **not** connect as `argusops_app` — it connects as `argusops_worker`
+(`db/init/argusops_worker_role.sql`, also created by `task db:roles`), which has `BYPASSRLS`.
 
-Motivo: `REFRESH MATERIALIZED VIEW` só pode ser rodado pelo dono da view, e uma materialized view
-roda sua query com o privilégio do **dono**, não de quem chama o REFRESH (mesma regra de views
-comuns). `mv_alert_daily_stats`/`mv_incident_kpis`/`mv_incident_daily_stats` são agregados
-cross-tenant por definição (agrupados por `tenant_id`, sem um tenant único) e o refresh roda fora
-de qualquer contexto de tenant -- então, se o dono da view for um role sem `BYPASSRLS`, a policy
-`tenant_id = current_tenant_id()` de `alerts`/`incidents` nunca casa (não há tenant setado), e o
-REFRESH "funciona" mas sempre recalcula para zero linhas, sem erro nenhum. `argusops_worker` existe
-para isso -- majoritariamente só `SELECT`, com duas exceções pontuais de `UPDATE` restritas a uma
-coluna cada (`incidents.sla_breached` e `alerts.escalated_at`, para os sweeps periódicos que também
-rodam nesse role, ver `db/init/argusops_worker_role.sql`) -- e não deve ser reusado para mais nada
-além dessas responsabilidades específicas.
+Reason: `REFRESH MATERIALIZED VIEW` can only be run by the view's owner, and a materialized view
+runs its query with the **owner's** privileges, not the caller's (same rule as regular views).
+`mv_alert_daily_stats`/`mv_incident_kpis`/`mv_incident_daily_stats` are cross-tenant aggregates by
+definition (grouped by `tenant_id`, with no single tenant), and the refresh runs outside of any
+tenant context — so if the view's owner is a role without `BYPASSRLS`, the `alerts`/`incidents`
+policy `tenant_id = current_tenant_id()` never matches (no tenant is set), and the REFRESH
+"succeeds" but always recomputes to zero rows, with no error at all. `argusops_worker` exists for
+this — mostly just `SELECT`, with two narrow `UPDATE` exceptions restricted to one column each
+(`incidents.sla_breached` and `alerts.escalated_at`, for the periodic sweeps that also run under
+this role, see `db/init/argusops_worker_role.sql`) — and shouldn't be reused for anything beyond
+these specific responsibilities.
 
-## Por que RLS e não só filtro na aplicação
+## Why RLS and not just application-level filtering
 
-O modelo de acesso por tags do protótipo (`allowedTags` / `resourceAccess`) já aponta o caminho
-certo, mas se ficar só na camada de aplicação, uma query nova sem `WHERE tenant_id = ...` vaza
-dados de outro cliente. As políticas em `0008_row_level_security.up.sql` fecham essa classe de bug
-no banco: toda tabela sensível só devolve linhas do tenant setado via
-`select set_config('app.tenant_id', ...)` na transação (ver `internal/db.Pool.WithTenant` no
-backend Go).
+The prototype's tag-based access model (`allowedTags` / `resourceAccess`) already points the right
+way, but if it stays only at the application layer, a new query without `WHERE tenant_id = ...`
+leaks another customer's data. The policies in `0008_row_level_security.up.sql` close off this
+class of bug at the database level: every sensitive table only returns rows for the tenant set via
+`select set_config('app.tenant_id', ...)` in the transaction (see `internal/db.Pool.WithTenant` in
+the Go backend).
 
-## Limitação conhecida: materialized views e RLS
+## Known limitation: materialized views and RLS
 
-Postgres não suporta RLS em materialized views. `mv_alert_daily_stats`, `mv_incident_kpis`
-(`0009_materialized_views.up.sql`) e `mv_incident_daily_stats`
-(`0034_mv_incident_daily_stats.up.sql`) são agregações cross-tenant por definição — toda query
-contra elas na camada de API **precisa** incluir `where tenant_id = $1` manualmente. Isso é uma
-exceção documentada ao princípio "isolamento no banco, não na query", não um descuido.
+Postgres doesn't support RLS on materialized views. `mv_alert_daily_stats`, `mv_incident_kpis`
+(`0009_materialized_views.up.sql`), and `mv_incident_daily_stats`
+(`0034_mv_incident_daily_stats.up.sql`) are cross-tenant aggregations by definition — every query
+against them at the API layer **must** include `where tenant_id = $1` manually. This is a
+documented exception to the "isolation in the database, not in the query" principle, not an
+oversight.

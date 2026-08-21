@@ -1,110 +1,111 @@
+<p align="right"><a href="TROUBLESHOOTING.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # Troubleshooting
 
-Pegadinhas reais já encontradas neste repo — a maioria só existia como conhecimento tácito de quem
-mexeu no deploy/testes antes, não documentado em lugar nenhum. Adicione aqui qualquer coisa nova
-que te custou mais de alguns minutos pra descobrir.
+Real gotchas already hit in this repo — most of them existed only as tacit knowledge of whoever
+had touched deploy/tests before, not documented anywhere. Add anything new here that cost you more
+than a few minutes to figure out.
 
 ## Deploy / Docker Compose
 
-### `task db:up` ou `task deploy:up` travando/falhando em vez de simplesmente esperar o Postgres subir
+### `task db:up` or `task deploy:up` hanging/failing instead of just waiting for Postgres to come up
 
-As tasks que esperam um serviço ficar saudável usam `docker compose up --wait`, não um loop
-manual com `sleep`/`seq`. Isso é proposital: `sleep` e `seq` não são garantidos no PATH puro do
-Windows (fora do Git Bash/WSL), então um loop hand-rolled de polling quebra silenciosamente ali. Se
-você for adicionar uma nova task que precisa esperar um container, prefira `--wait
---wait-timeout N` (usa o `healthcheck:` já declarado no `docker-compose.yml`) em vez de escrever
-seu próprio loop.
+The tasks that wait for a service to become healthy use `docker compose up --wait`, not a manual
+loop with `sleep`/`seq`. This is deliberate: `sleep` and `seq` aren't guaranteed to be on PATH on
+plain Windows (outside Git Bash/WSL), so a hand-rolled polling loop breaks silently there. If
+you're adding a new task that needs to wait on a container, prefer `--wait --wait-timeout N` (uses
+the `healthcheck:` already declared in `docker-compose.yml`) instead of writing your own loop.
 
-### Healthcheck do container `frontend` falha com `wget: bad address` ou connection refused, mas o nginx "parece" estar rodando
+### `frontend` container healthcheck fails with `wget: bad address` or connection refused, but nginx "looks" like it's running
 
-O script de entrypoint da imagem oficial do nginx que habilita IPv6 (`20-envsubst-on-templates.sh`
-e afins) só faz o patch no `default.conf` *original, não modificado* da imagem — como
-`frontend/nginx.conf` sobrescreve esse arquivo, o patch nunca roda, e o nginx fica IPv4-only. Só
-que o musl libc da imagem Alpine resolve `localhost` para `::1` (IPv6) primeiro no
-`/etc/hosts` — então `wget http://localhost/` de dentro do próprio container (é assim que o
-healthcheck do `docker-compose.yml` testa) tenta IPv6 primeiro, recebe connection refused (nginx
-não está escutando ali), e falha.
+The official nginx image's entrypoint script that enables IPv6 (`20-envsubst-on-templates.sh` and
+friends) only patches the image's *original, unmodified* `default.conf` — since
+`frontend/nginx.conf` overwrites that file, the patch never runs, and nginx stays IPv4-only. The
+catch is that the Alpine image's musl libc resolves `localhost` to `::1` (IPv6) first in
+`/etc/hosts` — so `wget http://localhost/` from inside the container itself (that's how the
+`docker-compose.yml` healthcheck tests it) tries IPv6 first, gets connection refused (nginx isn't
+listening there), and fails.
 
-Fix: `frontend/nginx.conf` declara `listen [::]:80;` explicitamente, ao lado do `listen 80;`
-normal — dual-stack manual, já que o auto-patch da imagem não se aplica. `api`/`ingest` não têm
-esse problema porque `net.Listen(":PORT")` do Go já faz bind dual-stack por padrão.
+Fix: `frontend/nginx.conf` declares `listen [::]:80;` explicitly, alongside the normal
+`listen 80;` — manual dual-stack, since the image's auto-patch doesn't apply. `api`/`ingest` don't
+have this problem because Go's `net.Listen(":PORT")` already binds dual-stack by default.
 
-### Volume Docker nomeado montado vazio fica com dono `root`, e o processo do container (rodando como usuário não-root) não consegue escrever nele
+### A named Docker volume mounted empty gets `root` ownership, and the container process (running as a non-root user) can't write to it
 
-Acontece com qualquer volume novo montado num diretório que a imagem não tinha antes — Docker cria
-o ponto de montagem como `root:root` na primeira vez, mesmo que o container rode como `USER
-argusops` (ver `backend/Dockerfile`). Sintoma: erro `permission denied` tentando escrever ali logo
-na subida do container (foi assim que o volume `dev-jwt-keys:/app/.dev-keys` quebrou na primeira
-tentativa).
+Happens with any new volume mounted at a directory the image didn't previously have — Docker
+creates the mount point as `root:root` the first time, even though the container runs as `USER
+argusops` (see `backend/Dockerfile`). Symptom: `permission denied` error trying to write there
+right at container startup (this is how the `dev-jwt-keys:/app/.dev-keys` volume broke on the
+first attempt).
 
-Fix: criar o diretório de destino *dentro do Dockerfile*, como o usuário não-root, antes do
-`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` depois do `USER argusops` herdado) — Docker copia a
-ownership desse diretório pro volume na primeira montagem, já que ele existe e tem dono certo no
-layer da imagem. Se o volume já foi criado uma vez com dono errado (por já ter subido antes do
-fix), rebuildar a imagem sozinho não resolve — é preciso `docker volume rm` no volume específico
-pra forçar a reinicialização de ownership.
+Fix: create the destination directory *inside the Dockerfile*, as the non-root user, before
+`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` after the inherited `USER argusops`) — Docker copies
+that directory's ownership to the volume on first mount, since it already exists with the correct
+owner in the image layer. If the volume was already created once with the wrong owner (because it
+came up before the fix), rebuilding the image alone doesn't fix it — you need `docker volume rm`
+on that specific volume to force ownership to be reinitialized.
 
-## Testes
+## Tests
 
-### Um slice Go `nil` retornado como JSON vira `null`, não `[]`, e quebra código de frontend que assume array
+### A `nil` Go slice returned as JSON becomes `null`, not `[]`, and breaks frontend code that assumes an array
 
-`json.Marshal` de um `[]T` que é `nil` (não `[]T{}`) produz o literal `null`. Isso é
-frequentemente invisível em Go (`for range nil` não panica, `len(nil)` é 0) mas quebra qualquer
-consumidor JS que chama `.map`/`.length` direto na resposta assumindo array. Acontece
-principalmente quando um valor vem de um `map[K][]V` e a chave não existe — `assignees[id]` num
-mapa sem essa chave retorna o zero value do slice, que é `nil`, não `[]V{}`.
+`json.Marshal` of a `[]T` that is `nil` (not `[]T{}`) produces the literal `null`. This is often
+invisible in Go (`for range nil` doesn't panic, `len(nil)` is 0) but breaks any JS consumer that
+calls `.map`/`.length` directly on the response assuming an array. It happens mainly when a value
+comes from a `map[K][]V` and the key doesn't exist — `assignees[id]` on a map without that key
+returns the slice's zero value, which is `nil`, not `[]V{}`.
 
-Fix: normalizar explicitamente antes de serializar. Ver `orEmptyUserSummarySlice` em
-`backend/internal/repository/incident_repository.go` como padrão a copiar — e cobrir com um teste
-que falha se a normalização for removida (`incident_repository_test.go` comenta isso
-explicitamente: "Must be [], not nil").
+Fix: normalize explicitly before serializing. See `orEmptyUserSummarySlice` in
+`backend/internal/repository/incident_repository.go` as the pattern to copy — and cover it with a
+test that fails if the normalization is removed (`incident_repository_test.go` comments on this
+explicitly: "Must be [], not nil").
 
-### Suíte de testes do frontend (Vitest) falha com `[vitest-pool-runner]: Timeout waiting for worker to respond`, mas rodando de novo passa
+### The frontend test suite (Vitest) fails with `[vitest-pool-runner]: Timeout waiting for worker to respond`, but running it again passes
 
-Sintoma observado especificamente no Windows rodando vários processos pesados em paralelo (ex.:
-`go test`, `golangci-lint`, e `vitest` ao mesmo tempo) — contenção de CPU real, não um teste
-quebrado. `Test Files`/`Tests` ainda aparecem como "passed" no resumo mesmo com esse erro no meio
-do log. Antes de investigar um teste específico por causa disso, rode a suíte isolada (sem outros
-processos pesados concorrentes) uma vez — se passar limpo, foi contenção, não bug.
+Symptom observed specifically on Windows running several heavy processes in parallel (e.g.,
+`go test`, `golangci-lint`, and `vitest` at the same time) — real CPU contention, not a broken
+test. `Test Files`/`Tests` still show as "passed" in the summary even with this error in the
+middle of the log. Before investigating a specific test because of this, run the suite in
+isolation (without other concurrent heavy processes) once — if it passes cleanly, it was
+contention, not a bug.
 
-### `go test` falhando com `fatal error: out of memory allocating heap arena map`
+### `go test` failing with `fatal error: out of memory allocating heap arena map`
 
-Falha transitória de alocação do runtime Go sob pressão de memória do sistema (várias JVMs/Docker
-containers/processos Node rodando ao mesmo tempo), não um bug no código. Rodar de novo
-normalmente resolve; se persistir, feche processos concorrentes pesados primeiro.
+Transient allocation failure of the Go runtime under system memory pressure (several JVMs/Docker
+containers/Node processes running at the same time), not a bug in the code. Running it again
+usually resolves it; if it persists, close heavy concurrent processes first.
 
-### `secrets.EnvStore.Resolve` de uma ref que nunca existiu não retorna erro
+### `secrets.EnvStore.Resolve` of a ref that never existed doesn't return an error
 
-Ao contrário do que a assinatura `(string, error)` sugere, `EnvStore.Resolve` sempre retorna `nil`
-de erro — uma ref desconhecida simplesmente resolve pra string vazia `""`. Um teste que espera
-"resolver uma ref inválida deveria falhar" vai quebrar de um jeito não óbvio (não é o erro que
-falha, é o step seguinte que recebe uma credencial vazia). Isso é comportamento do `EnvStore`
-especificamente — `VaultStore`/`AWSKMSStore` reais retornam erro de verdade nesse caso.
+Contrary to what the `(string, error)` signature suggests, `EnvStore.Resolve` always returns a
+`nil` error — an unknown ref simply resolves to the empty string `""`. A test expecting "resolving
+an invalid ref should fail" will break in a non-obvious way (it's not the error that fails, it's
+the next step that receives an empty credential). This is `EnvStore`-specific behavior —
+real `VaultStore`/`AWSKMSStore` do return a real error in that case.
 
-## Ferramentas de linha de comando neste ambiente (Windows/Git Bash)
+## Command-line tools in this environment (Windows/Git Bash)
 
-### Matar um processo em background (`kill $PID` do Bash) não derruba de fato o processo, ele continua segurando a porta
+### Killing a background process (Bash's `kill $PID`) doesn't actually bring the process down — it keeps holding the port
 
-No Git Bash/MSYS, `$!` (PID do último comando em background) é um PID no espaço do MSYS, que não
-necessariamente corresponde ao PID nativo do Windows que o `netstat`/Gerenciador de Tarefas
-enxergam — comum quando o comando em background é um wrapper que por sua vez spawna outro processo
-(ex.: `npx` spawnando um `node.exe` separado). `kill`/`pkill -P` nesse PID não alcança o processo
-real.
+In Git Bash/MSYS, `$!` (the PID of the last background command) is a PID in MSYS space, which
+doesn't necessarily correspond to the native Windows PID that `netstat`/Task Manager sees —
+common when the background command is a wrapper that in turn spawns another process (e.g., `npx`
+spawning a separate `node.exe`). `kill`/`pkill -P` on that PID doesn't reach the real process.
 
-Fix confiável: descobrir o PID nativo de verdade pela porta (`netstat -ano | grep ":PORTA" | grep
-LISTENING`, última coluna) e matar esse com `taskkill //F //PID <pid>` — não confiar em `$!` para
-esse cenário. Ver `backend/scripts/run-mcp-reference-test.sh`'s `stop_server` para um exemplo
-funcional desse padrão.
+Reliable fix: find the real native PID via the port (`netstat -ano | grep ":PORT" | grep
+LISTENING`, last column) and kill that one with `taskkill //F //PID <pid>` — don't rely on `$!`
+for this scenario. See `backend/scripts/run-mcp-reference-test.sh`'s `stop_server` for a working
+example of this pattern.
 
-### Um processo em background segurando a mesma saída (`stdout`) do script pai trava qualquer `| tail` ou outro consumidor de pipe pra sempre
+### A background process holding the same output (`stdout`) as the parent script hangs any `| tail` or other pipe consumer forever
 
-Se você inicia um processo em background (`comando &`) sem redirecionar `stdout`/`stderr` pra um
-arquivo, ele herda o descritor de arquivo do script pai. Se esse script inteiro estiver sendo
-executado como parte de um pipe (`task minha-task | tail -N`), o pipe só fecha (EOF) quando *todo*
-processo que tem aquele descritor aberto termina — incluindo o processo em background, mesmo que o
-script "principal" já tenha logicamente terminado e feito seu `trap ... EXIT`. Sintoma: o comando
-parece travado indefinidamente sem nenhuma saída, mesmo que o trabalho de verdade (ex.: os testes)
-já tenha rodado e passado há muito tempo.
+If you start a background process (`command &`) without redirecting `stdout`/`stderr` to a file,
+it inherits the parent script's file descriptor. If that whole script is being run as part of a
+pipe (`task my-task | tail -N`), the pipe only closes (EOF) when *every* process holding that
+descriptor open terminates — including the background process, even if the "main" script has
+already logically finished and run its `trap ... EXIT`. Symptom: the command appears to hang
+indefinitely with no output, even though the actual work (e.g., the tests) already ran and passed
+a long time ago.
 
-Fix: sempre redirecionar a saída de um processo em background pra um arquivo/`/dev/null`
-explicitamente (`comando >"$LOG_FILE" 2>&1 &`), nunca deixar herdar o stdout do script pai.
+Fix: always redirect a background process's output to a file/`/dev/null` explicitly
+(`command >"$LOG_FILE" 2>&1 &`), never let it inherit the parent script's stdout.

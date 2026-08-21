@@ -1,3 +1,5 @@
+<p align="right"><a href="CODE_OF_CONDUCT.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # Contributor Covenant Code of Conduct
 
 ## Our Pledge

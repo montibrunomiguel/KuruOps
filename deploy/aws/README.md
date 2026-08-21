@@ -1,3 +1,5 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 # ArgusOps on AWS (EKS)
 
 Provisions the cloud infrastructure ArgusOps needs: a VPC, an EKS cluster

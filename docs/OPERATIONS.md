@@ -1,120 +1,120 @@
-# Operação
+<p align="right"><a href="OPERATIONS.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-Runbook para quem está de olho no ArgusOps rodando (produção assistida): o que os healthchecks
-significam, como ler os logs, como reverter um deploy ruim, como restaurar de um backup. Não
-confundir com `TROUBLESHOOTING.md` (gotchas de desenvolvimento/CI) nem com `THREAT_MODEL.md`
-(rotação de segredos e modelo de ameaças) — este aqui é o "o que fazer quando algo pisca no
-painel", os outros dois são sobre outra coisa.
+# Operations
+
+Runbook for whoever is watching ArgusOps run (assisted production): what the healthchecks mean,
+how to read the logs, how to roll back a bad deploy, how to restore from a backup. Don't confuse
+this with `TROUBLESHOOTING.md` (development/CI gotchas) or `THREAT_MODEL.md` (secret rotation and
+threat model) — this one is "what to do when something blinks on the dashboard," the other two
+are about something else.
 
 ## Healthchecks
 
-Três endpoints, cada um com um propósito diferente — ver `backend/internal/httpserver/healthcheck.go`:
+Three endpoints, each with a different purpose — see `backend/internal/httpserver/healthcheck.go`:
 
-- **`GET /healthz`** — pinga o Postgres com timeout de 2s; 503 se não conseguir. Usado como
-  `readinessProbe` (ver `deploy/k8s/04-api.yaml` etc.): um pod que falha aqui é retirado do
-  Service até voltar a responder, sem ser reiniciado.
-- **`GET /livez`** — sempre 200, sem checar nada. Usado como `livenessProbe` — de propósito
-  independente do Postgres, pra uma instabilidade passageira do banco não derrubar todas as
-  réplicas de uma vez (kubelet mataria e reiniciaria todo mundo ao mesmo tempo se a liveness
-  também dependesse do banco).
-- **`GET /metrics`** — formato de exposição do Prometheus, ver seção seguinte.
+- **`GET /healthz`** — pings Postgres with a 2s timeout; 503 if it can't. Used as the
+  `readinessProbe` (see `deploy/k8s/04-api.yaml` etc.): a pod that fails here is pulled out of the
+  Service until it responds again, without being restarted.
+- **`GET /livez`** — always 200, checks nothing. Used as the `livenessProbe` — deliberately
+  independent from Postgres, so a transient database blip doesn't take down every replica at once
+  (kubelet would kill and restart everyone simultaneously if liveness also depended on the
+  database).
+- **`GET /metrics`** — Prometheus exposition format, see the next section.
 
-**Se `/healthz` está falhando**: primeiro suspeito é o Postgres em si (rede, credenciais,
-`max_connections` esgotado) — não o pod. `kubectl logs` do pod não vai mostrar muito além de "não
-consegui pingar"; olhe o lado do banco (métricas do RDS/Cloud SQL, ou `docker compose logs
-postgres` localmente).
+**If `/healthz` is failing**: the first suspect is Postgres itself (network, credentials,
+`max_connections` exhausted) — not the pod. `kubectl logs` on the pod won't show much beyond
+"couldn't ping it"; look at the database side instead (RDS/Cloud SQL metrics, or `docker compose
+logs postgres` locally).
 
-**Se `/livez` está falhando** (o pod nem responde 200 nisso): o processo em si travou ou morreu —
-aí sim é hora de olhar `kubectl logs`/`kubectl describe pod` daquela réplica específica.
+**If `/livez` is failing** (the pod doesn't even respond 200 to this): the process itself has
+hung or died — that's when it's time to look at `kubectl logs`/`kubectl describe pod` for that
+specific replica.
 
 ## Logs
 
-JSON estruturado via `log/slog` (não texto solto) — cada linha tem um campo `request_id` que
-correlaciona todas as linhas de uma mesma requisição, incluindo através de handlers diferentes
-(ver `backend/internal/httpserver/middleware/logging.go`). Pra investigar um erro específico:
+Structured JSON via `log/slog` (not loose text) — every line carries a `request_id` field that
+correlates all the lines from the same request, including across different handlers (see
+`backend/internal/httpserver/middleware/logging.go`). To investigate a specific error:
 
-1. Ache a linha do erro, pegue o `request_id`.
-2. Filtre todas as linhas com esse mesmo `request_id` (em qualquer agregador de log —
-   `kubectl logs | grep` funciona pra uma checagem rápida local).
-3. Isso reconstrói a requisição inteira, não só a linha que falhou.
+1. Find the error line, grab the `request_id`.
+2. Filter every line with that same `request_id` (in whatever log aggregator you use —
+   `kubectl logs | grep` works for a quick local check).
+3. That reconstructs the entire request, not just the line that failed.
 
-## Reverter um deploy ruim
+## Rolling back a bad deploy
 
-Não há blue-green nem canary aqui — é `kubectl rollout undo` de verdade:
+There's no blue-green or canary here — it's a real `kubectl rollout undo`:
 
 ```bash
 kubectl rollout history deployment/argusops-api -n argusops
 kubectl rollout undo deployment/argusops-api -n argusops
-# repita pra argusops-ingest / argusops-worker / argusops-frontend se o deploy ruim tocou nelas também
+# repeat for argusops-ingest / argusops-worker / argusops-frontend if the bad deploy touched those too
 ```
 
-Uma migration nova (`deploy/k8s/03-migration-job.yaml`) **não** é revertida automaticamente por
-isso — `kubectl rollout undo` só volta a imagem do container, não o schema do banco. Se o deploy
-ruim incluiu uma migration incompatível com a versão anterior do app, reverter o Deployment sem
-também reverter a migration pode deixar o app antigo rodando contra um schema que ele não
-entende. Confirme que a migration em questão era aditiva (nova coluna/tabela, não uma renomeação/
-remoção) antes de confiar só no rollback do Deployment.
+A new migration (`deploy/k8s/03-migration-job.yaml`) is **not** automatically rolled back by
+this — `kubectl rollout undo` only reverts the container image, not the database schema. If the
+bad deploy included a migration that's incompatible with the previous app version, rolling back
+the Deployment without also rolling back the migration can leave the old app running against a
+schema it doesn't understand. Confirm the migration in question was additive (a new column/table,
+not a rename/drop) before trusting the Deployment rollback alone.
 
-## Restaurar de um backup
+## Restoring from a backup
 
-`deploy/k8s/08-backup-cronjob.yaml` roda `pg_dump` uma vez por dia e sobe pro S3 — RPO de ~24h
-(ver o próprio comentário do manifest). Pra restaurar:
+`deploy/k8s/08-backup-cronjob.yaml` runs `pg_dump` once a day and uploads it to S3 — an RPO of
+~24h (see the manifest's own comment). To restore:
 
-1. Baixe o dump mais recente do bucket S3 configurado (`aws s3 cp
-   s3://$BACKUP_S3_BUCKET/argusops/<arquivo>.dump .`).
-2. **Nunca restaure direto por cima do banco de produção sem antes validar o dump** — rode
-   `task db:backup:restore-test` localmente primeiro (aponta pro dump mais recente em `backups/`,
-   restaura num banco descartável `argusops_backup_verify`, roda uma contagem de sanidade em
-   `tenants`/`alerts`/`incidents`, depois derruba o banco descartável). Isso não toca no banco
-   real — é seguro rodar a qualquer momento pra confirmar que um dump é restaurável de verdade.
-3. Só depois de validado, restaure no banco real:
+1. Download the most recent dump from the configured S3 bucket (`aws s3 cp
+   s3://$BACKUP_S3_BUCKET/argusops/<file>.dump .`).
+2. **Never restore straight over the production database without validating the dump first** —
+   run `task db:backup:restore-test` locally first (it points at the most recent dump in
+   `backups/`, restores into a disposable `argusops_backup_verify` database, runs a sanity count
+   on `tenants`/`alerts`/`incidents`, then tears down the disposable database). This never touches
+   the real database — it's safe to run at any time to confirm a dump is actually restorable.
+3. Only after it's validated, restore into the real database:
    ```bash
-   pg_restore --no-owner --no-privileges -d <DATABASE_URL real> <arquivo>.dump
+   pg_restore --no-owner --no-privileges -d <real DATABASE_URL> <file>.dump
    ```
-4. Isso é uma restauração completa (substitui o estado atual) — não incremental. Qualquer escrita
-   feita depois do backup diário mais recente é perdida; é exatamente isso que "RPO de ~24h"
-   significa. Se isso for inaceitável para o seu caso, WAL archiving/PITR (não implementado ainda)
-   é o próximo passo, não este runbook.
+4. This is a full restore (it replaces the current state) — not incremental. Any write made after
+   the most recent daily backup is lost; that's exactly what "RPO of ~24h" means. If that's
+   unacceptable for your case, WAL archiving/PITR (not implemented yet) is the next step, not this
+   runbook.
 
-## Queries de referência (Prometheus)
+## Reference queries (Prometheus)
 
-`deploy/k8s/09-monitoring.yaml` sobe um Prometheus mínimo (sem Grafana, sem
-armazenamento persistente — ver o próprio manifest) já com as regras de
-alerta que disparam sozinhas. As queries abaixo são pra investigação manual
-durante a janela assistida — cole em `http://<prometheus>:9090/graph`:
+`deploy/k8s/09-monitoring.yaml` brings up a minimal Prometheus (no Grafana, no persistent storage
+— see the manifest's own comment) that already has the alerting rules that fire on their own. The
+queries below are for manual investigation during the assisted window — paste them into
+`http://<prometheus>:9090/graph`:
 
-- **Taxa de erro por serviço**: `sum by (job) (rate(argusops_http_requests_5xx_total[5m])) / sum by (job) (rate(argusops_http_requests_total[5m]))`
-- **Latência p99 por serviço**: `histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m])))`
-- **Saturação do pool de conexões**: `argusops_db_pool_acquired_conns / argusops_db_pool_max_conns`
-- **Conexões SSE ativas** (deve variar com analistas logados, não crescer sem limite): `argusops_sse_active_connections`
-- **Há quanto tempo cada sweep do worker rodou com sucesso pela última vez** (em minutos): `(time() - argusops_worker_last_sweep_success_timestamp) / 60`
-- **Scrape targets fora do ar**: `up{job=~"argusops-.*"} == 0`
+- **Error rate per service**: `sum by (job) (rate(argusops_http_requests_5xx_total[5m])) / sum by (job) (rate(argusops_http_requests_total[5m]))`
+- **p99 latency per service**: `histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m])))`
+- **Connection pool saturation**: `argusops_db_pool_acquired_conns / argusops_db_pool_max_conns`
+- **Active SSE connections** (should vary with logged-in analysts, not grow unbounded): `argusops_sse_active_connections`
+- **How long since each worker sweep last succeeded** (in minutes): `(time() - argusops_worker_last_sweep_success_timestamp) / 60`
+- **Scrape targets that are down**: `up{job=~"argusops-.*"} == 0`
 
-## Baseline de capacidade
+## Capacity baseline
 
-Primeira execução de `task perf:smoke` (5 VUs, 30s) contra o stack local via
-docker-compose (hardware de desenvolvimento, não um ambiente de produção
-real — usar como referência de forma relativa, não como número absoluto):
+First run of `task perf:smoke` (5 VUs, 30s) against the local stack via docker-compose
+(development hardware, not a real production environment — use it as a relative reference, not an
+absolute number):
 
-- **`GET /api/v1/alerts` e `GET /api/v1/dashboard/stats`**: 100% de sucesso,
-  ~9.5 req/s combinados, latência p90 18.7ms / p95 24.9ms / média 16.3ms.
-  Praticamente sem gargalo visível nesse volume.
-- **`POST /hooks` (ingest de webhook)**: achado real do teste de carga, não
-  um bug — em rajada, ~59% das requisições voltaram 429 porque o rate
-  limiter `webhook_ip` (`cmd/ingest/main.go`, 60 requisições/minuto por IP de
-  origem) entrou em ação de propósito. Isso é o limite real de throughput
-  pra uma única fonte (um único SIEM/IP) enviando alertas: **~1 req/s
-  sustentado por IP de origem**. Se uma integração real precisar de mais
-  que isso de uma fonte só, o limite está hardcoded (não configurável via
-  env hoje) — mudar isso é uma decisão de segurança à parte, não algo pra
-  ajustar de passagem.
+- **`GET /api/v1/alerts` and `GET /api/v1/dashboard/stats`**: 100% success, ~9.5 req/s combined,
+  p90 latency 18.7ms / p95 24.9ms / mean 16.3ms. Practically no visible bottleneck at this volume.
+- **`POST /hooks` (webhook ingest)**: a genuine load-test finding, not a bug — under burst, ~59%
+  of requests came back 429 because the `webhook_ip` rate limiter (`cmd/ingest/main.go`, 60
+  requests/minute per source IP) kicked in on purpose. That's the real throughput limit for a
+  single source (a single SIEM/IP) sending alerts: **~1 req/s sustained per source IP**. If a real
+  integration needs more than that from a single source, the limit is hardcoded (not configurable
+  via env today) — changing that is a separate security decision, not something to tweak in
+  passing.
 
-Reexecutar `task perf:load` (mais pesado, VUS/DURATION configuráveis) contra
-o ambiente real antes do lançamento assistido e comparar os números acima.
+Re-run `task perf:load` (heavier, VUS/DURATION configurable) against the real environment before
+the assisted launch and compare against the numbers above.
 
-## Escalonamento / contatos
+## Escalation / contacts
 
-_Preencher com os contatos reais do time antes de liberar produção assistida — quem é acionado
-quando um alerta do Alertmanager dispara, e por qual canal (o mesmo PagerDuty/Slack/webhook que o
-próprio ArgusOps usa pra escalar incidentes de segurança dos tenants, ou um canal separado pra
-incidentes da própria plataforma)._
+_Fill in with the team's real contacts before releasing to assisted production — who gets paged
+when an Alertmanager alert fires, and over which channel (the same PagerDuty/Slack/webhook that
+ArgusOps itself uses to escalate tenant security incidents, or a separate channel for platform
+incidents)._

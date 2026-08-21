@@ -1,144 +1,148 @@
+<p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
+
 <p align="center">
   <img src="docs/logo.png" alt="ArgusOps" width="420" />
 </p>
 
 # ArgusOps
 
-SOC/SIEM alert & incident management — Go + PostgreSQL backend, React frontend, desenhado a partir
-do handoff em `design_handoff_argusops/`. Ver `backend/README.md`, `frontend/README.md` e
-`db/README.md` para detalhes de cada parte; este README cobre como subir tudo e o que esperar
-depois que sobe.
+SOC/SIEM alert & incident management — Go + PostgreSQL backend, React frontend, designed from the
+handoff in `design_handoff_argusops/`. See `backend/README.md`, `frontend/README.md` and
+`db/README.md` for details on each part; this README covers how to bring everything up and what to
+expect once it's running.
 
-## Requisitos
+## Requirements
 
 - [Task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`)
-- Docker + Docker Compose (Postgres, API, ingest, worker e o frontend rodam em container)
-- Go 1.25+, Node 20+ (só necessários se for rodar `backend`/`frontend` fora de container)
+- Docker + Docker Compose (Postgres, API, ingest, worker, and the frontend all run in containers)
+- Go 1.25+, Node 20+ (only needed if you run `backend`/`frontend` outside a container)
 
-## Deploy local (um comando)
+## Local deploy (one command)
 
 ```bash
 task deploy:up
 ```
 
-Isso faz, nessa ordem: sobe o Postgres e espera ficar saudável, aplica as migrations
-(`db/migrations`), cria o role `argusops_app` (least-privilege — é o que faz a row-level security
-valer alguma coisa, ver `db/README.md`), builda as imagens e sobe `api` + `ingest` + `worker` +
-`frontend`. No final, imprime:
+This does, in order: brings up Postgres and waits for it to be healthy, applies the migrations
+(`db/migrations`), creates the `argusops_app` role (least-privilege — what makes row-level security
+worth anything at all, see `db/README.md`), builds the images, and brings up `api` + `ingest` +
+`worker` + `frontend`. At the end it prints:
 
-- **Web UI:** http://localhost:3000 (o frontend, servido por nginx, já com proxy de `/api` e
-  `/auth` pro backend — é por aqui que você entra)
-- **API:** http://localhost:8080 (`AUTH_MODE=dev` por padrão — ver `backend/README.md` antes de
-  expor isso fora da sua máquina)
+- **Web UI:** http://localhost:3000 (the frontend, served by nginx, already proxying `/api` and
+  `/auth` to the backend — this is where you log in)
+- **API:** http://localhost:8080 (`AUTH_MODE=dev` by default — see `backend/README.md` before
+  exposing this outside your own machine)
 - **Ingest (webhooks):** http://localhost:8081
 
 ```bash
-task deploy:logs   # acompanhar logs de tudo
-task deploy:down   # derrubar (mantém o volume do Postgres)
+task deploy:logs   # follow logs for everything
+task deploy:down   # tear down (keeps the Postgres volume)
 ```
 
-Para desenvolvimento de UI com hot reload (sem rebuildar a imagem Docker a cada mudança):
+For UI development with hot reload (without rebuilding the Docker image on every change):
 
 ```bash
-task frontend:dev   # :5173, faz proxy de /api e /auth pro :8080
+task frontend:dev   # :5173, proxies /api and /auth to :8080
 ```
 
-### Primeiro login
+### First login
 
-Todo deploy novo já vem com um admin: **`admin@argusops.local` / `ChangeMe123!`**. A senha é
-pública (está neste repo) de propósito — o primeiro login força a troca antes de liberar qualquer
-outra coisa, tanto na tela quanto no backend (nenhuma rota além de trocar senha responde enquanto
-`mustChangePassword` estiver ativo). Troque assim que entrar.
+Every fresh deploy ships with an admin: **`admin@argusops.local` / `ChangeMe123!`**. The password is
+public (it's right here in this repo) on purpose — the first login forces a change before anything
+else unlocks, both on screen and in the backend (no route other than changing the password responds
+while `mustChangePassword` is set). Change it as soon as you log in.
 
-ArgusOps é pensado pra rodar como **uma instância só** — não tem conceito de "empresa"/tenant no
-login. "Empresa" existe apenas como tag em alertas/incidentes, usada para restringir o que cada
-usuário enxerga (`allowedTags`); um mesmo usuário pode ter acesso a alertas de várias empresas ao
-mesmo tempo.
+ArgusOps is designed to run as **a single instance** — there's no "company"/tenant concept at
+login. "Company" only exists as a tag on alerts/incidents, used to restrict what each user sees
+(`allowedTags`); a single user can have access to alerts from several companies at once.
 
-> `AUTH_MODE=dev` gera um par de chaves JWT na primeira subida do container `api` e persiste em
-> `.dev-keys/` (ver `backend/README.md`) — sessões continuam válidas entre restarts/redeploys
-> normais. Um `docker compose down -v` (que também zera o Postgres) apaga esse volume junto.
+> `AUTH_MODE=dev` generates a JWT keypair the first time the `api` container starts and persists it
+> in `.dev-keys/` (see `backend/README.md`) — sessions stay valid across normal restarts/redeploys.
+> A `docker compose down -v` (which also wipes Postgres) removes that volume too.
 
-### O que tem depois de logado
+### What's there once you're logged in
 
-- **Dashboard** — três abas (Alertas / Incidentes / Follow-up), com KPIs computados no backend
-  (não somando listas no navegador): alertas abertos/críticos, incidentes ativos, SLA estourado, e
-  **MTTA/MTTR** de alertas e incidentes, além de volume de alertas e de incidentes por dia,
-  distribuição por severidade/status/prioridade/fase e por analista/commander responsável. As
-  médias e os gráficos de volume vêm de materialized views (`mv_alert_daily_stats`,
-  `mv_incident_kpis`, `mv_incident_daily_stats`) recalculadas a cada 1 minuto pelo `worker` — se
-  você acabou de fechar um alerta/incidente, o número pode levar até um minuto para refletir, é o
-  trade-off deliberado de não recalcular isso a cada request. Contadores "ao vivo" (abertos,
-  críticos) e a lista/atividade recente atualizam via SSE, sem precisar recarregar a página. O
-  filtro de período aceita tanto um preset (24h/7d/30d/90d) quanto um intervalo customizado com
-  data e hora exatas.
-- **Alertas / Incidentes** — listagem com filtros e paginação (`Carregar mais`), detalhe com
-  timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (manual via botão,
-  ou automática na ingestão se houver um provedor LLM configurado). Um alerta recebido via webhook
-  pode carregar metadados customizados (canal do Slack, link de playbook externo, ambiente, ou
-  qualquer chave/valor que a fonte quiser mandar), renderizados num painel dedicado no detalhe.
-- **Papéis da Equipe** (no detalhe do incidente) — Commander, Technical Lead, Incident Handler(s),
-  Communications Lead e Privacy Officer (NIST 800-61), cada um atribuível a um usuário.
-- **Histórico de Fases** (no detalhe do incidente) — cada fase NIST 800-61 registra quando foi
-  entrada; o horário original nunca é sobrescrito. Uma correção exige motivo, fica registrada com
-  autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0005_incidents.up.sql`.
-  Pular uma fase (ex.: New → Eradication direto) não é bloqueado, mas fica marcado com um evento de
-  aviso na timeline, para não mascarar processo mal seguido em métricas de MTTR.
-- **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no
-  detalhe do alerta.
-- **Settings** (admin) — Webhook Endpoints (token com política de expiração/rotação — 90 dias por
-  padrão, configurável na criação/regeneração), AI Integration (LLM providers), MCP Servers
-  (com painel de aprovações pendentes para tools de efeito colateral que a IA propõe usar),
-  Integração de Armazenamento (S3/GCS, para evidências anexadas), SMTP (reset de senha por email),
-  Users & Roles, Identity Providers (LDAP/SAML — configurar, atualizar e remover), Tags, Escala de
-  Atendimento, SLAs de Incidentes, Escalonamento de Plantão (PagerDuty/Slack/webhook genérico),
-  Exportação de Auditoria (CEF) e Banco de Dados Externo (migração assistida do Postgres embutido
-  para um Postgres gerenciado pelo cliente).
+- **Dashboard** — three tabs (Alerts / Incidents / Follow-up), with KPIs computed on the backend
+  (not summed from lists in the browser): open/critical alerts, active incidents, breached SLAs, and
+  alert/incident **MTTA/MTTR**, plus daily alert and incident volume, and distribution by
+  severity/status/priority/phase and by responsible analyst/commander. The averages and volume
+  charts come from materialized views (`mv_alert_daily_stats`, `mv_incident_kpis`,
+  `mv_incident_daily_stats`) recomputed every 1 minute by the `worker` — if you just closed an
+  alert/incident, the number can take up to a minute to catch up, a deliberate trade-off against
+  recomputing this on every request. "Live" counters (open, critical) and the recent list/activity
+  feed update via SSE, no page reload needed. The time-range filter accepts either a preset
+  (24h/7d/30d/90d) or a custom range with exact date and time.
+- **Alerts / Incidents** — listing with filters and pagination (`Load more`), a detail view with an
+  event timeline, comments, alert↔incident linking, and AI analysis (manual via a button, or
+  automatic on ingest if an LLM provider is configured for it). An alert received via webhook can
+  carry custom metadata (a Slack channel, an external playbook link, an environment, or any
+  key/value the source wants to send), rendered in a dedicated panel on the detail view. See
+  [docs/API_INTEGRATION.md](docs/API_INTEGRATION.md) for the full guide on how an external source
+  (SIEM/XDR) sends alerts via webhook.
+- **Team Roles** (in the incident detail view) — Commander, Technical Lead, Incident Handler(s),
+  Communications Lead, and Privacy Officer (NIST 800-61), each assignable to a user.
+- **Phase History** (in the incident detail view) — every NIST 800-61 phase records when it was
+  entered; the original timestamp is never overwritten. A correction requires a reason, is recorded
+  with an author, and produces an entry in the append-only audit log — see
+  `db/migrations/0005_incidents.up.sql`. Skipping a phase (e.g. New → Eradication directly) isn't
+  blocked, but it's flagged with a warning event on the timeline, so poorly-followed process doesn't
+  silently skew MTTR metrics.
+- **Playbooks** — a library of procedures by category/phase, with automatic suggestions on the alert
+  detail view.
+- **Settings** (admin) — Webhook Endpoints (token with an expiration/rotation policy — 90 days by
+  default, configurable at creation/regeneration), AI Integration (LLM providers, with an option to
+  analyze every alert automatically on ingest or only on demand), MCP Servers (with a pending-approvals
+  panel for side-effecting tools the AI proposes using), Storage Integration (S3/GCS, for attached
+  evidence), SMTP (password-reset emails), Users & Roles, Identity Providers (LDAP/SAML — configure,
+  update, and remove), Tags (also auto-created from webhook-ingested alerts), On-Call Schedules,
+  Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Export (CEF), and
+  External Database (assisted migration from the bundled Postgres to a customer-managed Postgres).
 
-## Testes
+## Tests
 
 ```bash
-task test         # build + vet + gofmt + go test + tsc + vite build — não precisa de deploy
-task test:smoke   # sobe o stack (task deploy:up) e roda scripts/smoke-test.sh contra ele
+task test         # build + vet + gofmt + go test + tsc + vite build — no deploy needed
+task test:smoke   # brings up the stack (task deploy:up) and runs scripts/smoke-test.sh against it
 ```
 
-`test:smoke` é o teste que realmente prova que a cadeia inteira funciona — Postgres real, RLS real,
-JWT real, HTTP real —, não só que o código compila. Ele loga como o admin padrão semeado pela
-migration, testa a troca de senha obrigatória, cria um webhook endpoint, ingere um alerta por ele e
-confere isolamento/RLS. Idempotente — pode rodar de novo contra um deploy que já rodou antes, mas
-**troca a senha do admin padrão** como parte do fluxo — se você quer manter `ChangeMe123!` válido
-para explorar a UI manualmente depois, não rode `test:smoke` nesse mesmo deploy (ou resete com
-`docker compose down -v && task deploy:up` depois). Não é suíte de testes completa — não toca
-LDAP/SAML nem MCP —, é o smoke test que pega regressão de "a stack nem sobe".
+`test:smoke` is the test that actually proves the whole chain works — real Postgres, real RLS, real
+JWT, real HTTP —, not just that the code compiles. It logs in as the default admin seeded by the
+migration, tests the forced password change, creates a webhook endpoint, ingests an alert through it,
+and checks isolation/RLS. Idempotent — it can run again against a deploy that's already run it, but
+**it changes the default admin's password** as part of the flow — if you want to keep
+`ChangeMe123!` valid for exploring the UI manually afterward, don't run `test:smoke` against that
+same deploy (or reset with `docker compose down -v && task deploy:up` afterward). It's not a
+complete test suite — it doesn't touch LDAP/SAML or MCP —, it's the smoke test that catches "the
+stack doesn't even come up" regressions.
 
-## Todas as tasks
+## All tasks
 
 ```bash
 task --list
 ```
 
-## Arquitetura
+## Architecture
 
 ```mermaid
 graph TD
-    Browser["Navegador"]
+    Browser["Browser"]
 
     subgraph Compose["Docker Compose (task deploy:up)"]
         Nginx["frontend (nginx)\n:3000 -- SPA + proxy /api, /auth"]
         Api["api\n:8080 -- REST + login (local/LDAP/SAML) + SSE"]
-        Ingest["ingest\n:8081 -- só recebe webhook de alertas"]
-        Worker["worker\n(sem porta) -- refresh de materialized views,\nsweep de SLA/escalonamento"]
-        PG[("Postgres\nRLS por tenant_id")]
+        Ingest["ingest\n:8081 -- only receives alert webhooks"]
+        Worker["worker\n(no port) -- materialized view refresh,\nSLA/escalation sweep"]
+        PG[("Postgres\nRLS by tenant_id")]
     end
 
-    IdP["LDAP / SAML IdP\n(diretório do cliente)"]
-    LLM["Provedor LLM\n(Anthropic/OpenAI-compatible/Gemini)"]
-    MCP["Servidor(es) MCP\n(tools que a IA pode invocar)"]
-    Blob["S3 / GCS\n(evidências anexadas)"]
+    IdP["LDAP / SAML IdP\n(customer directory)"]
+    LLM["LLM Provider\n(Anthropic/OpenAI-compatible/Gemini)"]
+    MCP["MCP Server(s)\n(tools the AI can invoke)"]
+    Blob["S3 / GCS\n(attached evidence)"]
     Secrets["Vault / AWS KMS\n(SECRETS_BACKEND=vault|kms)"]
-    SMTP["SMTP\n(reset de senha)"]
-    OnCall["PagerDuty / Slack / webhook\n(escalonamento de plantão)"]
-    Vendors["Wazuh / CrowdStrike / GuardDuty\n(origem dos alertas)"]
+    SMTP["SMTP\n(password reset)"]
+    OnCall["PagerDuty / Slack / webhook\n(on-call escalation)"]
+    Vendors["Wazuh / CrowdStrike / GuardDuty\n(alert source)"]
 
     Browser -->|HTTPS| Nginx
     Vendors -->|webhook HTTPS| Ingest
@@ -151,66 +155,68 @@ graph TD
     Api -->|bind/search| IdP
     Api -->|analyze/tool-use| LLM
     Api -->|tools/list, tools/call| MCP
-    Api -->|upload/download evidência| Blob
-    Api -->|Resolve/Put segredo| Secrets
-    Api -->|reset de senha| SMTP
-    Api -->|disparo de plantão| OnCall
+    Api -->|upload/download evidence| Blob
+    Api -->|Resolve/Put secret| Secrets
+    Api -->|password reset| SMTP
+    Api -->|on-call trigger| OnCall
 ```
 
-`api`/`ingest`/`worker` são três binários Go separados (mesmo módulo, `cmd/api`, `cmd/ingest`,
-`cmd/worker`) para escalar/falhar independentemente — `ingest` é a única superfície exposta a
-webhooks de terceiros (superfície de ataque menor e isolada do resto da API), `worker` não expõe
-porta nenhuma (só cron interno). Todos os três conectam no Postgres como o mesmo role
-least-privilege (`argusops_app`), então a row-level security por `tenant_id` vale para qualquer um
-deles, não só para requests vindos do navegador — ver `db/README.md`. Os componentes externos
-(IdP, LLM, MCP, blobstore, secrets backend, SMTP, on-call) são todos opcionais e configurados por
-tenant em Settings; sem nenhum configurado, o sistema roda só com auth local + storage em disco
-local + segredos criptografados no próprio Postgres.
+`api`/`ingest`/`worker` are three separate Go binaries (same module, `cmd/api`, `cmd/ingest`,
+`cmd/worker`) so they can scale/fail independently — `ingest` is the only surface exposed to
+third-party webhooks (a smaller attack surface, isolated from the rest of the API), `worker` exposes
+no port at all (just internal cron). All three connect to Postgres as the same least-privilege role
+(`argusops_app`), so row-level security by `tenant_id` applies to any of them, not just requests
+coming from the browser — see `db/README.md`. The external components (IdP, LLM, MCP, blob storage,
+secrets backend, SMTP, on-call) are all optional and configured per tenant in Settings; with none
+configured, the system runs with just local auth + local disk storage + secrets encrypted in
+Postgres itself.
 
-### Limitação conhecida: `api` só escala verticalmente hoje
+### Known limitation: `api` only scales vertically today
 
-Duas peças do `api` guardam estado em memória, no processo — `internal/events.Broadcaster` (fan-out
-de eventos SSE para as abas conectadas) e `middleware.NewRateLimiter` (rate limit de login, por
-IP/conta). Isso é suficiente pro modelo single-instance do ArgusOps (ver "Primeiro login" acima —
-não existe conceito de tenant/empresa no login, então nunca houve razão pra rodar mais de uma
-réplica do `api`), mas significa que **rodar duas ou mais réplicas do `api` atrás de um load
-balancer quebra os dois**: um cliente conectado à réplica A nunca recebe um evento publicado pela
-réplica B (fica sem update ao vivo até o próximo reload manual, os dados continuam corretos — SSE é
-só um "algo mudou" opcional, ver `internal/events`'s doc comment), e o rate limit de login conta
-tentativas por réplica, não no total, então o limite efetivo multiplica pelo número de réplicas.
+Two pieces of `api` hold in-process, in-memory state — `internal/events.Broadcaster` (SSE event
+fan-out to connected tabs) and `middleware.NewRateLimiter` (login rate limiting, by IP/account).
+That's enough for ArgusOps' single-instance model (see "First login" above — there's no
+tenant/company concept at login, so there's never been a reason to run more than one `api`
+replica), but it means **running two or more `api` replicas behind a load balancer breaks both**: a
+client connected to replica A never receives an event published by replica B (it just misses the
+live update until the next manual reload, the data itself stays correct — SSE is only an optional
+"something changed" signal, see `internal/events`'s doc comment), and login rate limiting counts
+attempts per replica, not in total, so the effective limit multiplies by the number of replicas.
 
-Se isso precisar mudar: um `Broadcaster` sobre Redis pub/sub (ou NATS) resolve o primeiro, e um
-rate limiter contra Redis (`INCR`+`EXPIRE`, padrão bem conhecido) resolve o segundo — nenhum dos
-dois exige mudar o formato dos dados ou a API pública, só trocar a implementação por trás da mesma
-interface. Não é um problema hoje porque não há motivo pra rodar mais de uma réplica; vira um
-problema no dia em que houver.
+If this ever needs to change: a `Broadcaster` over Redis pub/sub (or NATS) fixes the first one, and
+a rate limiter against Redis (`INCR`+`EXPIRE`, a well-known pattern) fixes the second — neither
+requires changing the data format or the public API, just swapping the implementation behind the
+same interface. It's not a problem today because there's no reason to run more than one replica; it
+becomes one the day there is.
 
-## Estrutura do repositório
+## Repository layout
 
 ```
 backend/    Go: cmd/api, cmd/ingest, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
 frontend/   React + Vite + TS
-db/         migrations (golang-migrate) + init scripts (role least-privilege)
-docs/       logo, openapi.yaml, TROUBLESHOOTING.md, history/ (planos já executados)
-CHANGELOG.md, Taskfile.yml, docker-compose.yml   changelog + orquestração local
+db/         migrations (golang-migrate) + init scripts (least-privilege role)
+docs/       logo, openapi.yaml, API_INTEGRATION.md (webhook guide), TROUBLESHOOTING.md, history/ (already-executed plans)
+CHANGELOG.md, Taskfile.yml, docker-compose.yml   changelog + local orchestration
 ```
 
-## Estado do projeto e Governança Open-Source
+## Project status and open-source governance
 
-`task test` roda tudo que não precisa de deploy: `go build`/`go vet`/`gofmt` + `golangci-lint` +
-`govulncheck` + `go test ./...` no backend, `tsc --noEmit` + ESLint + `npm audit` + Vitest + `vite
-build` no frontend. Cobertura de teste tem gate próprio contra regressão
-(`task backend:test:coverage-gate`, compara contra `backend/coverage-baseline.txt`).
-`task test:smoke` sobe a stack completa em Docker Compose e valida ponta a ponta (Postgres real +
-RLS + JWT + HTTP) — é o teste que prova que a cadeia inteira funciona, não só que o código compila.
+`task test` runs everything that doesn't need a deploy: `go build`/`go vet`/`gofmt` +
+`golangci-lint` + `govulncheck` + `go test ./...` on the backend, `tsc --noEmit` + ESLint +
+`npm audit` + Vitest + `vite build` on the frontend. Test coverage has its own regression gate
+(`task backend:test:coverage-gate`, compared against `backend/coverage-baseline.txt`).
+`task test:smoke` brings up the full stack in Docker Compose and validates it end to end (real
+Postgres + RLS + JWT + HTTP) — the test that proves the whole chain works, not just that the code
+compiles.
 
-Documentação: [CHANGELOG.md](CHANGELOG.md) (o que mudou e quando),
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (pegadinhas conhecidas do deploy/testes),
-[docs/openapi.yaml](docs/openapi.yaml) (contrato da API `/api/v1/**`).
+Documentation: [CHANGELOG.md](CHANGELOG.md) (what changed and when),
+[docs/API_INTEGRATION.md](docs/API_INTEGRATION.md) (how an external SIEM/XDR sends alerts via
+webhook), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (known deploy/testing gotchas),
+[docs/openapi.yaml](docs/openapi.yaml) (the `/api/v1/**` API contract — kept in English on purpose,
+it's a machine-consumed technical spec, not translated).
 
-Consulte os arquivos de governança open-source:
+See the open-source governance files:
 - [LICENSE](LICENSE) (Apache 2.0)
-- [SECURITY.md](SECURITY.md) (Política de Segurança e Vuln Disclosure)
-- [CONTRIBUTING.md](CONTRIBUTING.md) (Guia de Contribuição e Workflow)
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Código de Conduta)
-
+- [SECURITY.md](SECURITY.md) (Security Policy and Vulnerability Disclosure)
+- [CONTRIBUTING.md](CONTRIBUTING.md) (Contributing Guide and Workflow)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) (Code of Conduct)
