@@ -77,7 +77,7 @@ func (s *AuthService) LoginLocal(ctx context.Context, tenantID uuid.UUID, email,
 	var user *domain.User
 	var refreshToken string
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		u, err := s.users.GetByEmail(ctx, tx, email)
+		u, err := s.users.GetByEmail(ctx, tx, tenantID, email)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
 		}
@@ -132,7 +132,7 @@ func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshTo
 			return nil
 		}
 
-		u, err := s.users.Get(ctx, tx, rt.UserID)
+		u, err := s.users.Get(ctx, tx, tenantID, rt.UserID)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
 		}
@@ -188,7 +188,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 
 	var user *domain.User
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		u, err := s.users.Get(ctx, tx, userID)
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
 		}
@@ -244,7 +244,7 @@ func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.U
 
 	var user *domain.User
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		u, err := s.users.Get(ctx, tx, userID)
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
 		}
@@ -346,7 +346,7 @@ func (s *AuthService) ProvisionFederated(ctx context.Context, tenantID uuid.UUID
 		// joined Role -- reload so the token is issued from the real,
 		// current capability set (also covers "existing federated user,
 		// mapping just changed", not only first-ever provisioning).
-		reloaded, err := s.users.Get(ctx, tx, u.ID)
+		reloaded, err := s.users.Get(ctx, tx, tenantID, u.ID)
 		if err != nil {
 			return fmt.Errorf("reload provisioned user: %w", err)
 		}

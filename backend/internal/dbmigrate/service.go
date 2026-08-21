@@ -92,7 +92,7 @@ func (s *Service) RunSchemaMigrations(ctx context.Context, target TargetConfig) 
 	return version, nil
 }
 
-// clearSeedData undoes db/migrations/0013_seed_default_admin.up.sql's
+// clearSeedData undoes db/migrations/0002_seed_default_admin.up.sql's
 // effect on target: that migration always seeds one 'default' tenant plus
 // an admin@argusops.local user the first time it runs against an empty
 // `tenants` table, which target's schema replay just triggered -- and

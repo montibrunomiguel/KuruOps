@@ -197,7 +197,7 @@ func RequireResourceAccess(resourceType string) func(http.Handler) http.Handler 
 
 // RequirePasswordChanged blocks every /api/v1 route except the one path
 // that lets the caller rotate their own password, for as long as
-// MustChangePassword is set on their token -- see 0013_seed_default_admin.up.sql
+// MustChangePassword is set on their token -- see db/migrations/0002_seed_default_admin.up.sql
 // (the seeded default admin starts in this state) and
 // AuthService.ChangePassword (the only thing that clears it). Must run
 // after JWTAuth/DevHeaderAuth. changePasswordPath is compared exactly

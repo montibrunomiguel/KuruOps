@@ -1,5 +1,5 @@
 // Package mcpclient speaks the Model Context Protocol to a tenant-registered
-// MCP server (see mcp_servers in db/migrations/0007_llm_mcp.up.sql): the
+// MCP server (see mcp_servers in db/migrations/0001_initial_schema.up.sql): the
 // handshake, listing available tools, and invoking one. It implements only
 // the "Streamable HTTP" transport (a single endpoint, JSON-RPC 2.0 over
 // POST, optionally with an SSE response) — stdio and sse as configured in

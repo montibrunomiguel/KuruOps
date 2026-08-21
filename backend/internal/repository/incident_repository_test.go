@@ -483,7 +483,7 @@ func TestIncidentRepository_IncidentAssignees_TenantIsolation(t *testing.T) {
 // (additive to, and independent of, incident_assignees -- see
 // domain.Incident.Roles's doc comment) and the single-assignee
 // (Commander/Technical Lead) DB constraint from
-// db/migrations/0030_incident_role_assignments.
+// db/migrations/0001_initial_schema.up.sql.
 func TestIncidentRepository_Roles(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

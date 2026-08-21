@@ -56,7 +56,7 @@ func (h *AuthHandlers) Routes(r chi.Router) {
 }
 
 // resolveTenant fetches the single tenant every deployment has. A nil
-// tenant here means the seed migration (0013_seed_default_admin.up.sql)
+// tenant here means the seed migration (db/migrations/0002_seed_default_admin.up.sql)
 // never ran or was rolled back -- an operational misconfiguration, not a
 // per-request condition, but every handler still has to handle it since
 // nothing guarantees the DB is in the expected state.

@@ -162,21 +162,7 @@ func (r *AlertRepository) List(ctx context.Context, tx pgx.Tx, f ListAlertsFilte
 	args = append(args, f.Offset)
 	query += fmt.Sprintf(" offset $%d", len(args))
 
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query alerts: %w", err)
-	}
-	defer rows.Close()
-
-	alerts := []domain.Alert{}
-	for rows.Next() {
-		a, err := scanAlert(rows)
-		if err != nil {
-			return nil, err
-		}
-		alerts = append(alerts, *a)
-	}
-	return alerts, rows.Err()
+	return queryList(ctx, tx, query, scanAlert, args...)
 }
 
 // Count returns how many alerts match f, ignoring f.Limit/f.Offset -- used
@@ -358,7 +344,7 @@ func (r *AlertRepository) UnlinkAlert(ctx context.Context, tx pgx.Tx, alertID, o
 }
 
 func (r *AlertRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, alertID uuid.UUID) ([]domain.Alert, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select `+alertColumnsWithAssignee+`
 		from alerts a
 		join alert_links l on l.linked_alert_id = a.id
@@ -366,22 +352,8 @@ func (r *AlertRepository) ListLinkedAlerts(ctx context.Context, tx pgx.Tx, alert
 		left join playbooks pb on pb.id = a.playbook_id
 		where l.alert_id = $1
 		order by a.received_at desc`,
-		alertID,
+		scanAlert, alertID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query linked alerts: %w", err)
-	}
-	defer rows.Close()
-
-	alerts := []domain.Alert{}
-	for rows.Next() {
-		a, err := scanAlert(rows)
-		if err != nil {
-			return nil, err
-		}
-		alerts = append(alerts, *a)
-	}
-	return alerts, rows.Err()
 }
 
 // InsertComment/ListComments back Team Notes on an alert -- same shape as
@@ -397,27 +369,21 @@ func (r *AlertRepository) InsertComment(ctx context.Context, tx pgx.Tx, c *domai
 }
 
 func (r *AlertRepository) ListComments(ctx context.Context, tx pgx.Tx, alertID uuid.UUID) ([]domain.AlertComment, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select id, alert_id, tenant_id, author_id, author_name, body, attachment_url, created_at
 		from alert_comments
 		where alert_id = $1
 		order by created_at asc`,
-		alertID,
+		scanAlertComment, alertID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query alert comments: %w", err)
-	}
-	defer rows.Close()
+}
 
-	comments := []domain.AlertComment{}
-	for rows.Next() {
-		var c domain.AlertComment
-		if err := rows.Scan(&c.ID, &c.AlertID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan alert comment: %w", err)
-		}
-		comments = append(comments, c)
+func scanAlertComment(row pgx.Row) (*domain.AlertComment, error) {
+	var c domain.AlertComment
+	if err := row.Scan(&c.ID, &c.AlertID, &c.TenantID, &c.AuthorID, &c.AuthorName, &c.Body, &c.AttachmentURL, &c.CreatedAt); err != nil {
+		return nil, fmt.Errorf("scan alert comment: %w", err)
 	}
-	return comments, rows.Err()
+	return &c, nil
 }
 
 func (r *AlertRepository) InsertEvent(ctx context.Context, tx pgx.Tx, e *domain.AlertEvent) error {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test against a locally deployed stack (task deploy:up).
-# Logs in as the default admin seeded by db/migrations/0013_seed_default_admin.up.sql
+# Logs in as the default admin seeded by db/migrations/0002_seed_default_admin.up.sql
 # for real over HTTP (no direct SQL seeding of our own -- there's nothing
 # left to seed, that's the point of this migration), and exercises a
 # handful of routes that only work correctly with the full chain wired up:

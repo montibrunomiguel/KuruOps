@@ -27,7 +27,7 @@ make run-ingest   # reuses HTTP_ADDR -- run in separate processes/terminals with
 make run-worker
 ```
 
-Every first deploy already ships with a default admin (`0013_seed_default_admin.up.sql`) —
+Every first deploy already ships with a default admin (`db/migrations/0002_seed_default_admin.up.sql`) —
 `admin@argusops.local` / `ChangeMe123!`, with `must_change_password=true`. Testing the local login
 (`AUTH_MODE=dev` is enough — no need to generate JWT keys or switch to `dev-headers`; login is real
 authentication even in dev mode, only key generation becomes ephemeral):

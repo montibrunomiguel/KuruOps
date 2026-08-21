@@ -167,9 +167,9 @@ func buildScheduleFromInput(tenantID uuid.UUID, in domain.SaveOnCallScheduleInpu
 	return sched
 }
 
-func (s *OnCallScheduleService) resolveParticipants(ctx context.Context, tx pgx.Tx, sched *domain.OnCallSchedule, participantIDs []uuid.UUID) error {
+func (s *OnCallScheduleService) resolveParticipants(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, sched *domain.OnCallSchedule, participantIDs []uuid.UUID) error {
 	for _, userID := range participantIDs {
-		u, err := s.users.Get(ctx, tx, userID)
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("analyst %s not found", userID)
@@ -195,7 +195,7 @@ func (s *OnCallScheduleService) Create(ctx context.Context, tenantID uuid.UUID, 
 	sched := buildScheduleFromInput(tenantID, in)
 
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		if err := s.resolveParticipants(ctx, tx, sched, in.ParticipantIDs); err != nil {
+		if err := s.resolveParticipants(ctx, tx, tenantID, sched, in.ParticipantIDs); err != nil {
 			return err
 		}
 		existing, err := s.repo.List(ctx, tx)
@@ -236,7 +236,7 @@ func (s *OnCallScheduleService) Update(ctx context.Context, tenantID, id uuid.UU
 		}
 		sched.IsDefault = existing.IsDefault
 
-		if err := s.resolveParticipants(ctx, tx, sched, in.ParticipantIDs); err != nil {
+		if err := s.resolveParticipants(ctx, tx, tenantID, sched, in.ParticipantIDs); err != nil {
 			return err
 		}
 		return s.repo.Update(ctx, tx, sched)
@@ -300,7 +300,7 @@ func (s *OnCallScheduleService) CreateOverride(ctx context.Context, tenantID, sc
 
 	var result domain.OnCallOverride
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		u, err := s.users.Get(ctx, tx, userID)
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return fmt.Errorf("analyst %s not found", userID)

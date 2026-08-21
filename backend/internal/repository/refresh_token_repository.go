@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -38,7 +39,7 @@ func (r *RefreshTokenRepository) GetByHash(ctx context.Context, tx pgx.Tx, hash 
 	row := tx.QueryRow(ctx, `select `+refreshTokenColumns+` from refresh_tokens where token_hash = $1`, hash)
 	t, err := scanRefreshToken(row)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

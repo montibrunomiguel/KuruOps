@@ -26,7 +26,7 @@ var refreshInterval = 60 * time.Second
 // PersistentEnvStore is the production-safe default "env" backend: the same
 // Put/Resolve contract as EnvStore, but every Put also writes an
 // AES-256-GCM-encrypted copy to the secret_store table
-// (db/migrations/0033_secret_store.up.sql), and NewPersistentEnvStore loads
+// (db/migrations/0001_initial_schema.up.sql), and NewPersistentEnvStore loads
 // every existing row back into memory at construction. This is what fixes
 // the failure mode EnvStore's own doc comment warns about: this app runs
 // each cmd/* binary as a single instance that restarts on every deploy, and

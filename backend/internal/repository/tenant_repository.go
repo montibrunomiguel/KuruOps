@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -13,7 +14,7 @@ import (
 
 // TenantRepository is the one repository that does NOT take a pgx.Tx from
 // Pool.WithTenant -- tenants is not RLS-scoped (see the comment at the
-// bottom of db/migrations/0008_row_level_security.up.sql), so its methods
+// RLS section of db/migrations/0001_initial_schema.up.sql), so its methods
 // take the pool directly. This is the sanctioned exception; every other
 // repository in this codebase must go through WithTenant.
 type TenantRepository struct{}
@@ -24,7 +25,7 @@ func NewTenantRepository() *TenantRepository {
 
 // GetDefault resolves "the" tenant, before app.tenant_id can be set — this
 // is the login-time equivalent of WebhookRepository.ResolveToken. ArgusOps
-// is single-instance software (see 0013_seed_default_admin.up.sql): there
+// is single-instance software (see db/migrations/0002_seed_default_admin.up.sql): there
 // is exactly one row in `tenants`, seeded on first migrate, and every login
 // flow (local/LDAP/SAML) resolves it automatically instead of asking for a
 // company name. The tenant_id/RLS plumbing everywhere else stays in place
@@ -36,7 +37,7 @@ func (r *TenantRepository) GetDefault(ctx context.Context, pool *db.Pool) (*doma
 	err := pool.QueryRow(ctx, `select id, name, slug, created_at from tenants order by created_at asc limit 1`).
 		Scan(&t.ID, &t.Name, &t.Slug, &t.CreatedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get default tenant: %w", err)

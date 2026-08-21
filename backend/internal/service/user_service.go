@@ -54,7 +54,7 @@ func (s *UserService) ListSummaries(ctx context.Context, tenantID uuid.UUID) ([]
 func (s *UserService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.User, error) {
 	var user *domain.User
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		v, err := s.repo.Get(ctx, tx, id)
+		v, err := s.repo.Get(ctx, tx, tenantID, id)
 		user = v
 		return err
 	})
@@ -68,7 +68,7 @@ func (s *UserService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.
 // this generates a random one-time password instead of taking one from the
 // admin: the admin shares it out of band, and must_change_password forces
 // the new user to set their own on first login (same flow as the seeded
-// default admin from 0013_seed_default_admin.up.sql). The plaintext
+// default admin from db/migrations/0002_seed_default_admin.up.sql). The plaintext
 // password is returned once here and never stored or logged anywhere else.
 func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name, phone string, roleID uuid.UUID) (*domain.User, string, error) {
 	email = strings.TrimSpace(email)

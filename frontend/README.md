@@ -15,7 +15,7 @@ npm run dev   # :5173, proxies /api and /auth to http://localhost:8080 (cmd/api)
 
 Needs the backend's `cmd/api` running (see `backend/README.md`). Login: `admin@argusops.local` /
 `ChangeMe123!` — every new deploy already ships with this admin, seeded by the migration
-`0013_seed_default_admin.up.sql`. There's no "company" field at login (ArgusOps is single-instance,
+`db/migrations/0002_seed_default_admin.up.sql`. There's no "company" field at login (ArgusOps is single-instance,
 "company" only exists as a tag on alerts/incidents) and there's no signup screen — other local
 users are created via direct SQL or through the Settings API after the first admin has logged in.
 

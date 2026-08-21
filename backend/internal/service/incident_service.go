@@ -55,10 +55,10 @@ func (s *IncidentService) publishEvent(tenantID, incidentID uuid.UUID, action st
 // order. Unlike ingest's silent tag-drop, an unknown/inactive analyst id is
 // a real user mistake worth surfacing immediately -- the whole call is
 // rejected rather than silently dropping the bad id (see Create/SetAssignees).
-func (s *IncidentService) resolveAssignees(ctx context.Context, tx pgx.Tx, userIDs []uuid.UUID) ([]domain.UserSummary, error) {
+func (s *IncidentService) resolveAssignees(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, userIDs []uuid.UUID) ([]domain.UserSummary, error) {
 	summaries := make([]domain.UserSummary, 0, len(userIDs))
 	for _, id := range userIDs {
-		u, err := s.users.Get(ctx, tx, id)
+		u, err := s.users.Get(ctx, tx, tenantID, id)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("analyst %s not found", id)
@@ -157,7 +157,7 @@ func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUI
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		assignees, err := s.resolveAssignees(ctx, tx, in.AssigneeIDs)
+		assignees, err := s.resolveAssignees(ctx, tx, tenantID, in.AssigneeIDs)
 		if err != nil {
 			return err
 		}
@@ -307,7 +307,7 @@ func (s *IncidentService) SetAssignees(ctx context.Context, tenantID, incidentID
 		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
-		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
+		assignees, err := s.resolveAssignees(ctx, tx, tenantID, userIDs)
 		if err != nil {
 			return err
 		}
@@ -352,7 +352,7 @@ func (s *IncidentService) SetRole(ctx context.Context, tenantID, incidentID, act
 		if current == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
-		assignees, err := s.resolveAssignees(ctx, tx, userIDs)
+		assignees, err := s.resolveAssignees(ctx, tx, tenantID, userIDs)
 		if err != nil {
 			return err
 		}
@@ -469,7 +469,7 @@ func (s *IncidentService) UpdateTags(ctx context.Context, tenantID, incidentID, 
 
 // CorrectPhaseTimestamp is the audit-safe replacement for freely editing a
 // status_history entry's entered_at (see the schema comment in
-// db/migrations/0005_incidents.up.sql). The original entered_at is never
+// db/migrations/0001_initial_schema.up.sql). The original entered_at is never
 // touched; this records what it should read as, who changed it, and why.
 func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, phase domain.IncidentPhase, correctedEnteredAt time.Time, reason string) error {
 	if reason == "" {

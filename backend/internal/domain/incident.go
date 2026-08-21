@@ -112,9 +112,9 @@ type Incident struct {
 
 // IncidentRole is one of the NIST 800-61 incident-response team roles.
 // RoleCommander and RoleTechnicalLead are single-assignee (enforced by a
-// partial unique index in db/migrations/0030_incident_role_assignments --
-// see that migration's comment); the other three allow any number of
-// people.
+// partial unique index in db/migrations/0001_initial_schema.up.sql
+// (incident_role_assignments_single_commander/_single_technical_lead));
+// the other three allow any number of people.
 type IncidentRole string
 
 const (
@@ -167,7 +167,7 @@ type CreateIncidentInput struct {
 // IncidentStatusHistoryEntry is one row per NIST phase entered. EnteredAt is
 // never mutated after insert; a correction fills CorrectedEnteredAt /
 // CorrectedAt / CorrectedBy / CorrectionReason instead, so the original
-// value stays intact for audit (see db/migrations/0005_incidents.up.sql).
+// value stays intact for audit (see db/migrations/0001_initial_schema.up.sql).
 type IncidentStatusHistoryEntry struct {
 	ID                 uuid.UUID     `json:"id"`
 	IncidentID         uuid.UUID     `json:"incidentId"`
@@ -210,7 +210,7 @@ const (
 )
 
 // IncidentEvent is an append-only audit row — see incident_events in
-// db/migrations/0005_incidents.up.sql. Never updated after insert.
+// db/migrations/0001_initial_schema.up.sql. Never updated after insert.
 type IncidentEvent struct {
 	ID         int64             `json:"id"`
 	IncidentID uuid.UUID         `json:"incidentId"`
@@ -231,7 +231,7 @@ type IncidentComment struct {
 	TenantID   uuid.UUID `json:"tenantId"`
 	AuthorID   uuid.UUID `json:"authorId"`
 	// AuthorName is denormalized at write time (see
-	// db/migrations/0017_incident_comment_author_name.up.sql) so Team Notes
+	// db/migrations/0001_initial_schema.up.sql) so Team Notes
 	// can show who wrote a comment without a user-lookup endpoint a non-admin
 	// analyst wouldn't have access to.
 	AuthorName    string    `json:"authorName"`

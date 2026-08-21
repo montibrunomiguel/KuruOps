@@ -17,7 +17,7 @@ const (
 )
 
 // StorageConfig mirrors `tenant_storage_config` (see
-// db/migrations/0019_tenant_storage_config.up.sql) -- same secret-reference
+// db/migrations/0001_initial_schema.up.sql) -- same secret-reference
 // pattern as domain.LDAPConfig/domain.SAMLConfig: the actual access
 // key/service-account JSON is never stored here, only an opaque reference
 // into secrets.Store, and those reference fields are tagged json:"-" so an

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -120,7 +121,7 @@ func (r *DashboardRepository) Stats(ctx context.Context, tx pgx.Tx, tenantID uui
 		where tenant_id = $1`,
 		tenantID,
 	).Scan(&stats.IncidentAvgMTTASeconds, &stats.IncidentAvgMTTRSeconds)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("incident kpis: %w", err)
 	}
 
@@ -132,7 +133,7 @@ func (r *DashboardRepository) Stats(ctx context.Context, tx pgx.Tx, tenantID uui
 		where tenant_id = $1 and day >= now() - interval '30 days'`,
 		tenantID,
 	).Scan(&stats.AlertAvgMTTASeconds, &stats.AlertAvgMTTRSeconds)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("alert daily stats: %w", err)
 	}
 
@@ -181,21 +182,7 @@ func (r *DashboardRepository) alertsByAnalyst(ctx context.Context, tx pgx.Tx, wh
 		from alerts a left join users u on u.id = a.assigned_analyst_id` + where + `
 		group by a.assigned_analyst_id, u.name
 		order by count(*) desc`
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query alerts by analyst: %w", err)
-	}
-	defer rows.Close()
-
-	counts := []domain.NamedCount{}
-	for rows.Next() {
-		var c domain.NamedCount
-		if err := rows.Scan(&c.ID, &c.Name, &c.Count); err != nil {
-			return nil, fmt.Errorf("scan alerts by analyst: %w", err)
-		}
-		counts = append(counts, c)
-	}
-	return counts, rows.Err()
+	return queryList(ctx, tx, query, scanNamedCount, args...)
 }
 
 // incidentsByCommander is alertsByAnalyst's incident-side counterpart --
@@ -220,21 +207,15 @@ func (r *DashboardRepository) incidentsByCommander(ctx context.Context, tx pgx.T
 		) grouped
 		left join users u on u.id = grouped.commander_id
 		order by grouped.cnt desc`
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query incidents by commander: %w", err)
-	}
-	defer rows.Close()
+	return queryList(ctx, tx, query, scanNamedCount, args...)
+}
 
-	counts := []domain.NamedCount{}
-	for rows.Next() {
-		var c domain.NamedCount
-		if err := rows.Scan(&c.ID, &c.Name, &c.Count); err != nil {
-			return nil, fmt.Errorf("scan incidents by commander: %w", err)
-		}
-		counts = append(counts, c)
+func scanNamedCount(row pgx.Row) (*domain.NamedCount, error) {
+	var c domain.NamedCount
+	if err := row.Scan(&c.ID, &c.Name, &c.Count); err != nil {
+		return nil, fmt.Errorf("scan named count: %w", err)
 	}
-	return counts, rows.Err()
+	return &c, nil
 }
 
 // alertFilterClause/incidentFilterClause build a `where ...` fragment (or
@@ -246,7 +227,7 @@ func alertFilterClause(f StatsFilter) (string, []any) {
 	var args []any
 	if len(f.AlertSeverity) > 0 {
 		args = append(args, toStrings(f.AlertSeverity))
-		// severity is severity_enum (see 0002_enums.up.sql), not text --
+		// severity is severity_enum (see db/migrations/0001_initial_schema.up.sql), not text --
 		// casting both sides to text sidesteps Postgres needing to resolve
 		// $n's element type against the enum on its own, which it can't do
 		// implicitly for an any(array) comparison the way it can for a
@@ -357,54 +338,40 @@ func whereClause(clauses []string) string {
 // trend chart's day counts/MTTR figures stay tenant-wide; the KPI cards,
 // breakdown charts, and activity feed (the actual reported leak) are scoped.
 func (r *DashboardRepository) alertTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]domain.AlertTrendPoint, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select to_char(day, 'YYYY-MM-DD'), alert_count, avg_mttr_seconds
 		from mv_alert_daily_stats
 		where tenant_id = $1 and day >= now() - interval '14 days'
 		order by day asc`,
+		func(row pgx.Row) (*domain.AlertTrendPoint, error) {
+			var p domain.AlertTrendPoint
+			if err := row.Scan(&p.Day, &p.AlertCount, &p.AvgMTTRSeconds); err != nil {
+				return nil, fmt.Errorf("scan alert trend point: %w", err)
+			}
+			return &p, nil
+		},
 		tenantID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("alert trend: %w", err)
-	}
-	defer rows.Close()
-
-	points := []domain.AlertTrendPoint{}
-	for rows.Next() {
-		var p domain.AlertTrendPoint
-		if err := rows.Scan(&p.Day, &p.AlertCount, &p.AvgMTTRSeconds); err != nil {
-			return nil, fmt.Errorf("scan alert trend point: %w", err)
-		}
-		points = append(points, p)
-	}
-	return points, rows.Err()
 }
 
 // incidentTrend is alertTrend's incident-side counterpart, reading from
 // mv_incident_daily_stats instead -- see IncidentTrendPoint's doc comment
 // for why there's no MTTR figure alongside the count.
 func (r *DashboardRepository) incidentTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]domain.IncidentTrendPoint, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select to_char(day, 'YYYY-MM-DD'), incident_count
 		from mv_incident_daily_stats
 		where tenant_id = $1 and day >= now() - interval '14 days'
 		order by day asc`,
+		func(row pgx.Row) (*domain.IncidentTrendPoint, error) {
+			var p domain.IncidentTrendPoint
+			if err := row.Scan(&p.Day, &p.IncidentCount); err != nil {
+				return nil, fmt.Errorf("scan incident trend point: %w", err)
+			}
+			return &p, nil
+		},
 		tenantID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("incident trend: %w", err)
-	}
-	defer rows.Close()
-
-	points := []domain.IncidentTrendPoint{}
-	for rows.Next() {
-		var p domain.IncidentTrendPoint
-		if err := rows.Scan(&p.Day, &p.IncidentCount); err != nil {
-			return nil, fmt.Errorf("scan incident trend point: %w", err)
-		}
-		points = append(points, p)
-	}
-	return points, rows.Err()
 }
 
 // countGroupedByAllowedTables/countGroupedByAllowedColumns are the only
@@ -527,19 +494,11 @@ func (r *DashboardRepository) RecentActivity(ctx context.Context, tx pgx.Tx, lim
 
 	args = append(args, limit)
 	query := strings.Join(branches, " union all ") + fmt.Sprintf(" order by created_at desc limit $%d", len(args))
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query recent activity: %w", err)
-	}
-	defer rows.Close()
-
-	events := []domain.ActivityEvent{}
-	for rows.Next() {
+	return queryList(ctx, tx, query, func(row pgx.Row) (*domain.ActivityEvent, error) {
 		var e domain.ActivityEvent
-		if err := rows.Scan(&e.Kind, &e.ContextID, &e.ContextTitle, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt); err != nil {
+		if err := row.Scan(&e.Kind, &e.ContextID, &e.ContextTitle, &e.EventType, &e.ActorType, &e.ActorID, &e.Data, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan activity event: %w", err)
 		}
-		events = append(events, e)
-	}
-	return events, rows.Err()
+		return &e, nil
+	}, args...)
 }

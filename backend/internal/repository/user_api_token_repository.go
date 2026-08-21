@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -21,7 +22,8 @@ func NewUserAPITokenRepository() *UserAPITokenRepository {
 // personal API token. It deliberately does not go through Pool.WithTenant --
 // the tenant isn't known yet, that's what this call determines -- and
 // instead opens the narrow, single-purpose RLS carve-out from
-// 0041_user_api_tokens.up.sql for the duration of one transaction. See
+// db/migrations/0001_initial_schema.up.sql (the api_token_lookup policy)
+// for the duration of one transaction. See
 // WebhookRepository.ResolveToken for the identical pattern this mirrors.
 func (r *UserAPITokenRepository) ResolveToken(ctx context.Context, pool *db.Pool, tokenHash string) (*domain.UserAPIToken, error) {
 	tx, err := pool.Begin(ctx)
@@ -42,7 +44,7 @@ func (r *UserAPITokenRepository) ResolveToken(ctx context.Context, pool *db.Pool
 		tokenHash,
 	).Scan(&t.ID, &t.TenantID, &t.UserID, &t.ExpiresAt, &t.RevokedAt)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("resolve api token: %w", err)
@@ -77,21 +79,7 @@ func (r *UserAPITokenRepository) Insert(ctx context.Context, tx pgx.Tx, t *domai
 // ever created, most recent first -- Profile's "API Tokens" list never
 // shows the plaintext again, only name/last-4/expiry/revoked state.
 func (r *UserAPITokenRepository) ListByUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]domain.UserAPIToken, error) {
-	rows, err := tx.Query(ctx, `select `+userAPITokenColumns+` from user_api_tokens where user_id = $1 order by created_at desc`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("query api tokens: %w", err)
-	}
-	defer rows.Close()
-
-	tokens := []domain.UserAPIToken{}
-	for rows.Next() {
-		t, err := scanUserAPIToken(rows)
-		if err != nil {
-			return nil, err
-		}
-		tokens = append(tokens, *t)
-	}
-	return tokens, rows.Err()
+	return queryList(ctx, tx, `select `+userAPITokenColumns+` from user_api_tokens where user_id = $1 order by created_at desc`, scanUserAPIToken, userID)
 }
 
 // Revoke sets revoked_at, scoped to (id, userID) so a user can never revoke

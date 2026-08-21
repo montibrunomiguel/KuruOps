@@ -1,1 +1,0 @@
-drop index incident_alert_links_alert_id_idx;

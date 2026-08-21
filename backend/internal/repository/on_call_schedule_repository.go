@@ -28,39 +28,44 @@ const onCallScheduleColumns = `id, tenant_id, name, is_default, handover_at, per
 // List loads every schedule for the tenant (RLS-scoped, no explicit
 // tenantID needed here -- unlike GetDefaultForResolution below, this is
 // never called through cmd/worker's BYPASSRLS connection). Participants and
-// working hours are loaded per row; overrides are omitted -- not relevant
-// to a list view, and Get loads them for the one schedule being edited.
+// working hours are batch-loaded across every schedule row in one query
+// each (see participantsForSchedules/workingHoursForSchedules), same
+// "1 + 2 queries total, not 1 + 2N" shape as
+// IncidentRepository.AssigneesForIncidents -- List has no bound on how many
+// schedules a tenant can have, unlike EscalationPolicyRepository.List's
+// per-row stepsFor call (documented there as fine only because a tenant has
+// at most a handful of escalation policies). Overrides are omitted -- not
+// relevant to a list view, and Get loads them for the one schedule being
+// edited.
 func (r *OnCallScheduleRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.OnCallSchedule, error) {
-	rows, err := tx.Query(ctx, `select `+onCallScheduleColumns+` from on_call_schedules order by name asc`)
+	schedules, err := queryList(ctx, tx, `select `+onCallScheduleColumns+` from on_call_schedules order by name asc`, scanOnCallSchedule)
 	if err != nil {
-		return nil, fmt.Errorf("query on-call schedules: %w", err)
+		return nil, err
 	}
-	var schedules []domain.OnCallSchedule
-	for rows.Next() {
-		sched, err := scanOnCallScheduleRow(rows)
-		if err != nil {
-			rows.Close()
-			return nil, err
-		}
-		schedules = append(schedules, *sched)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate on-call schedules: %w", err)
+	if len(schedules) == 0 {
+		return schedules, nil
 	}
 
+	ids := make([]uuid.UUID, len(schedules))
+	for i, s := range schedules {
+		ids[i] = s.ID
+	}
+
+	participants, err := r.participantsForSchedules(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	workingHours, err := r.workingHoursForSchedules(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
 	for i := range schedules {
-		participants, err := r.participantsFor(ctx, tx, schedules[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		schedules[i].Participants = participants
-
-		workingHours, err := r.workingHoursFor(ctx, tx, schedules[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		schedules[i].WorkingHours = workingHours
+		// participantsFor/workingHoursFor's callers all expect a non-nil
+		// (possibly empty) slice, never nil -- a missing map key from a
+		// schedule with zero participants/working-hours rows would
+		// otherwise leave the field nil.
+		schedules[i].Participants = orEmptyParticipantSlice(participants[schedules[i].ID])
+		schedules[i].WorkingHours = orEmptyWorkingHoursSlice(workingHours[schedules[i].ID])
 	}
 	return schedules, nil
 }
@@ -161,91 +166,147 @@ func (r *OnCallScheduleRepository) SetDefault(ctx context.Context, tx pgx.Tx, te
 }
 
 func (r *OnCallScheduleRepository) replaceParticipants(ctx context.Context, tx pgx.Tx, scheduleID, tenantID uuid.UUID, participants []domain.OnCallParticipant) error {
-	if _, err := tx.Exec(ctx, `delete from on_call_rotation_participants where schedule_id = $1`, scheduleID); err != nil {
-		return fmt.Errorf("clear on-call participants: %w", err)
-	}
-	for i, p := range participants {
-		if _, err := tx.Exec(ctx, `
-			insert into on_call_rotation_participants (schedule_id, tenant_id, user_id, position)
-			values ($1,$2,$3,$4)`,
-			scheduleID, tenantID, p.UserID, i,
-		); err != nil {
-			return fmt.Errorf("insert on-call participant: %w", err)
-		}
-	}
-	return nil
+	return replaceChildRows(ctx, tx, "on-call participant",
+		`delete from on_call_rotation_participants where schedule_id = $1`, scheduleID,
+		participants, func(p domain.OnCallParticipant, i int) error {
+			_, err := tx.Exec(ctx, `
+				insert into on_call_rotation_participants (schedule_id, tenant_id, user_id, position)
+				values ($1,$2,$3,$4)`,
+				scheduleID, tenantID, p.UserID, i,
+			)
+			return err
+		})
 }
 
 func (r *OnCallScheduleRepository) replaceWorkingHours(ctx context.Context, tx pgx.Tx, scheduleID, tenantID uuid.UUID, intervals []domain.OnCallWorkingHoursInterval) error {
-	if _, err := tx.Exec(ctx, `delete from on_call_working_hours where schedule_id = $1`, scheduleID); err != nil {
-		return fmt.Errorf("clear on-call working hours: %w", err)
-	}
-	for _, iv := range intervals {
-		weekdays := make([]int32, len(iv.Weekdays))
-		for i, w := range iv.Weekdays {
-			weekdays[i] = int32(w)
-		}
-		if _, err := tx.Exec(ctx, `
-			insert into on_call_working_hours (schedule_id, tenant_id, weekdays, start_minute, end_minute)
-			values ($1,$2,$3,$4,$5)`,
-			scheduleID, tenantID, weekdays, iv.StartMinute, iv.EndMinute,
-		); err != nil {
-			return fmt.Errorf("insert on-call working hours: %w", err)
-		}
-	}
-	return nil
+	return replaceChildRows(ctx, tx, "on-call working-hours interval",
+		`delete from on_call_working_hours where schedule_id = $1`, scheduleID,
+		intervals, func(iv domain.OnCallWorkingHoursInterval, _ int) error {
+			weekdays := make([]int32, len(iv.Weekdays))
+			for i, w := range iv.Weekdays {
+				weekdays[i] = int32(w)
+			}
+			_, err := tx.Exec(ctx, `
+				insert into on_call_working_hours (schedule_id, tenant_id, weekdays, start_minute, end_minute)
+				values ($1,$2,$3,$4,$5)`,
+				scheduleID, tenantID, weekdays, iv.StartMinute, iv.EndMinute,
+			)
+			return err
+		})
 }
 
 func (r *OnCallScheduleRepository) participantsFor(ctx context.Context, tx pgx.Tx, scheduleID uuid.UUID) ([]domain.OnCallParticipant, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select p.user_id, u.name from on_call_rotation_participants p
 		join users u on u.id = p.user_id
 		where p.schedule_id = $1
 		order by p.position asc`,
+		func(row pgx.Row) (*domain.OnCallParticipant, error) {
+			var p domain.OnCallParticipant
+			if err := row.Scan(&p.UserID, &p.UserName); err != nil {
+				return nil, fmt.Errorf("scan on-call participant: %w", err)
+			}
+			return &p, nil
+		},
 		scheduleID,
+	)
+}
+
+func (r *OnCallScheduleRepository) workingHoursFor(ctx context.Context, tx pgx.Tx, scheduleID uuid.UUID) ([]domain.OnCallWorkingHoursInterval, error) {
+	return queryList(ctx, tx, `
+		select id, weekdays, start_minute, end_minute from on_call_working_hours
+		where schedule_id = $1
+		order by start_minute asc`,
+		func(row pgx.Row) (*domain.OnCallWorkingHoursInterval, error) {
+			var iv domain.OnCallWorkingHoursInterval
+			var weekdays []int32
+			if err := row.Scan(&iv.ID, &weekdays, &iv.StartMinute, &iv.EndMinute); err != nil {
+				return nil, fmt.Errorf("scan on-call working hours: %w", err)
+			}
+			iv.Weekdays = make([]int, len(weekdays))
+			for i, w := range weekdays {
+				iv.Weekdays[i] = int(w)
+			}
+			return &iv, nil
+		},
+		scheduleID,
+	)
+}
+
+// participantsForSchedules is participantsFor's batch counterpart -- List's
+// only caller, one query for every schedule row instead of one per row (see
+// List's doc comment). A scheduleID with no participants simply has no key
+// in the returned map; List normalizes that to an empty slice via
+// orEmptyParticipantSlice, same pattern
+// IncidentRepository.AssigneesForIncidents already uses.
+func (r *OnCallScheduleRepository) participantsForSchedules(ctx context.Context, tx pgx.Tx, scheduleIDs []uuid.UUID) (map[uuid.UUID][]domain.OnCallParticipant, error) {
+	result := map[uuid.UUID][]domain.OnCallParticipant{}
+	rows, err := tx.Query(ctx, `
+		select p.schedule_id, p.user_id, u.name from on_call_rotation_participants p
+		join users u on u.id = p.user_id
+		where p.schedule_id = any($1)
+		order by p.schedule_id, p.position asc`,
+		scheduleIDs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query on-call participants: %w", err)
 	}
 	defer rows.Close()
 
-	participants := []domain.OnCallParticipant{}
 	for rows.Next() {
+		var scheduleID uuid.UUID
 		var p domain.OnCallParticipant
-		if err := rows.Scan(&p.UserID, &p.UserName); err != nil {
+		if err := rows.Scan(&scheduleID, &p.UserID, &p.UserName); err != nil {
 			return nil, fmt.Errorf("scan on-call participant: %w", err)
 		}
-		participants = append(participants, p)
+		result[scheduleID] = append(result[scheduleID], p)
 	}
-	return participants, rows.Err()
+	return result, rows.Err()
 }
 
-func (r *OnCallScheduleRepository) workingHoursFor(ctx context.Context, tx pgx.Tx, scheduleID uuid.UUID) ([]domain.OnCallWorkingHoursInterval, error) {
+// workingHoursForSchedules is workingHoursFor's batch counterpart -- see
+// participantsForSchedules's doc comment.
+func (r *OnCallScheduleRepository) workingHoursForSchedules(ctx context.Context, tx pgx.Tx, scheduleIDs []uuid.UUID) (map[uuid.UUID][]domain.OnCallWorkingHoursInterval, error) {
+	result := map[uuid.UUID][]domain.OnCallWorkingHoursInterval{}
 	rows, err := tx.Query(ctx, `
-		select id, weekdays, start_minute, end_minute from on_call_working_hours
-		where schedule_id = $1
-		order by start_minute asc`,
-		scheduleID,
+		select schedule_id, id, weekdays, start_minute, end_minute from on_call_working_hours
+		where schedule_id = any($1)
+		order by schedule_id, start_minute asc`,
+		scheduleIDs,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query on-call working hours: %w", err)
 	}
 	defer rows.Close()
 
-	intervals := []domain.OnCallWorkingHoursInterval{}
 	for rows.Next() {
+		var scheduleID uuid.UUID
 		var iv domain.OnCallWorkingHoursInterval
 		var weekdays []int32
-		if err := rows.Scan(&iv.ID, &weekdays, &iv.StartMinute, &iv.EndMinute); err != nil {
+		if err := rows.Scan(&scheduleID, &iv.ID, &weekdays, &iv.StartMinute, &iv.EndMinute); err != nil {
 			return nil, fmt.Errorf("scan on-call working hours: %w", err)
 		}
 		iv.Weekdays = make([]int, len(weekdays))
 		for i, w := range weekdays {
 			iv.Weekdays[i] = int(w)
 		}
-		intervals = append(intervals, iv)
+		result[scheduleID] = append(result[scheduleID], iv)
 	}
-	return intervals, rows.Err()
+	return result, rows.Err()
+}
+
+func orEmptyParticipantSlice(s []domain.OnCallParticipant) []domain.OnCallParticipant {
+	if s == nil {
+		return []domain.OnCallParticipant{}
+	}
+	return s
+}
+
+func orEmptyWorkingHoursSlice(s []domain.OnCallWorkingHoursInterval) []domain.OnCallWorkingHoursInterval {
+	if s == nil {
+		return []domain.OnCallWorkingHoursInterval{}
+	}
+	return s
 }
 
 // GetDefaultForResolution is a lean load for the hot ResolveCurrentAnalyst
@@ -396,28 +457,22 @@ func (r *OnCallScheduleRepository) DeleteOverride(ctx context.Context, tx pgx.Tx
 }
 
 func (r *OnCallScheduleRepository) ListOverrides(ctx context.Context, tx pgx.Tx, scheduleID uuid.UUID) ([]domain.OnCallOverride, error) {
-	rows, err := tx.Query(ctx, `
+	return queryList(ctx, tx, `
 		select o.id, o.override_date::text, o.user_id, u.name, o.created_at
 		from on_call_overrides o
 		join users u on u.id = o.user_id
 		where o.schedule_id = $1
 		order by o.override_date asc`,
-		scheduleID,
+		scanOnCallOverride, scheduleID,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("query on-call overrides: %w", err)
-	}
-	defer rows.Close()
+}
 
-	overrides := []domain.OnCallOverride{}
-	for rows.Next() {
-		var o domain.OnCallOverride
-		if err := rows.Scan(&o.ID, &o.Date, &o.UserID, &o.UserName, &o.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan on-call override: %w", err)
-		}
-		overrides = append(overrides, o)
+func scanOnCallOverride(row pgx.Row) (*domain.OnCallOverride, error) {
+	var o domain.OnCallOverride
+	if err := row.Scan(&o.ID, &o.Date, &o.UserID, &o.UserName, &o.CreatedAt); err != nil {
+		return nil, fmt.Errorf("scan on-call override: %w", err)
 	}
-	return overrides, rows.Err()
+	return &o, nil
 }
 
 func scanOnCallSchedule(row pgx.Row) (*domain.OnCallSchedule, error) {
@@ -427,17 +482,6 @@ func scanOnCallSchedule(row pgx.Row) (*domain.OnCallSchedule, error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("scan on-call schedule: %w", err)
-	}
-	return &s, nil
-}
-
-// scanOnCallScheduleRow is scanOnCallSchedule's pgx.Rows counterpart (List
-// iterates rows, not a single QueryRow) -- same column order, no
-// ErrNoRows case since Rows.Next() already gates that.
-func scanOnCallScheduleRow(rows pgx.Rows) (*domain.OnCallSchedule, error) {
-	var s domain.OnCallSchedule
-	if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.IsDefault, &s.HandoverAt, &s.PeriodDays, &s.ConcurrentShifts, &s.WorkingHoursMode, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("scan on-call schedule: %w", err)
 	}
 	return &s, nil

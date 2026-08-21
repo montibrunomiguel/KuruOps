@@ -273,7 +273,7 @@ func emailFor(t *testing.T, tenantID, userID uuid.UUID) string {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 	tx := testutil.BeginTx(t, pool, tenantID)
-	u, err := repository.NewUserRepository().Get(t.Context(), tx, userID)
+	u, err := repository.NewUserRepository().Get(t.Context(), tx, tenantID, userID)
 	require.NoError(t, err)
 	require.NotNil(t, u)
 	return u.Email

@@ -45,7 +45,7 @@ func NewPasswordResetService(pool *db.Pool, repo *repository.PasswordResetReposi
 // not letting a response shape leak account existence.
 func (s *PasswordResetService) RequestReset(ctx context.Context, tenantID uuid.UUID, email string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		u, err := s.users.GetByEmail(ctx, tx, email)
+		u, err := s.users.GetByEmail(ctx, tx, tenantID, email)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
 		}

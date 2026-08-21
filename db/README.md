@@ -22,7 +22,7 @@ Without `golang-migrate` installed:
 
 ## Application role (required before running `cmd/api` / `cmd/ingest` / `cmd/worker`)
 
-The migrations in `0008_row_level_security.up.sql` and `0010_webhook_token_lookup_policy.up.sql`
+The RLS policies in `0001_initial_schema.up.sql`
 only protect the data if the application connects with a role that is **not** the owner of the
 tables and does **not** have `BYPASSRLS`. Running the migrations as a superuser/owner and then
 connecting the application with that same user makes RLS harmless — the table owner bypasses
@@ -62,16 +62,15 @@ these specific responsibilities.
 
 The prototype's tag-based access model (`allowedTags` / `resourceAccess`) already points the right
 way, but if it stays only at the application layer, a new query without `WHERE tenant_id = ...`
-leaks another customer's data. The policies in `0008_row_level_security.up.sql` close off this
+leaks another customer's data. The policies in `0001_initial_schema.up.sql` close off this
 class of bug at the database level: every sensitive table only returns rows for the tenant set via
 `select set_config('app.tenant_id', ...)` in the transaction (see `internal/db.Pool.WithTenant` in
 the Go backend).
 
 ## Known limitation: materialized views and RLS
 
-Postgres doesn't support RLS on materialized views. `mv_alert_daily_stats`, `mv_incident_kpis`
-(`0009_materialized_views.up.sql`), and `mv_incident_daily_stats`
-(`0034_mv_incident_daily_stats.up.sql`) are cross-tenant aggregations by definition — every query
-against them at the API layer **must** include `where tenant_id = $1` manually. This is a
-documented exception to the "isolation in the database, not in the query" principle, not an
-oversight.
+Postgres doesn't support RLS on materialized views. `mv_alert_daily_stats`, `mv_incident_kpis`, and
+`mv_incident_daily_stats` (all in `0001_initial_schema.up.sql`) are cross-tenant aggregations by
+definition — every query against them at the API layer **must** include `where tenant_id = $1`
+manually. This is a documented exception to the "isolation in the database, not in the query"
+principle, not an oversight.

@@ -36,23 +36,10 @@ func (r *PlaybookRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (
 }
 
 func (r *PlaybookRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.Playbook, error) {
-	rows, err := tx.Query(ctx, `
+	playbooks, err := queryList(ctx, tx, `
 		select id, tenant_id, title, category, description, keywords, alert_name_pattern, is_default, created_by, created_at, updated_at
-		from playbooks order by title asc`)
+		from playbooks order by title asc`, scanPlaybook)
 	if err != nil {
-		return nil, fmt.Errorf("query playbooks: %w", err)
-	}
-	defer rows.Close()
-
-	playbooks := []domain.Playbook{}
-	for rows.Next() {
-		pb, err := scanPlaybook(rows)
-		if err != nil {
-			return nil, err
-		}
-		playbooks = append(playbooks, *pb)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -179,22 +166,34 @@ func (r *PlaybookRepository) GetStepWebhookConfig(ctx context.Context, tx pgx.Tx
 // are always DB-generated fresh here (the incoming steps' own IDs, if any,
 // are ignored) -- the frontend always re-reads the playbook after a save,
 // so a trigger button always targets a current id.
+// flatPlaybookStep pairs a step with the (phase, phase-local order) that
+// its position in domain's map-of-slices shape implies -- replaceChildRows
+// takes a single flat []T, so replaceSteps flattens the map into this
+// before calling it, restarting the position counter per phase the same
+// way the old nested loop did.
+type flatPlaybookStep struct {
+	phase domain.IncidentPhase
+	order int
+	step  domain.PlaybookStep
+}
+
 func (r *PlaybookRepository) replaceSteps(ctx context.Context, tx pgx.Tx, playbookID, tenantID uuid.UUID, steps map[domain.IncidentPhase][]domain.PlaybookStep) error {
-	if _, err := tx.Exec(ctx, `delete from playbook_phase_steps where playbook_id = $1`, playbookID); err != nil {
-		return fmt.Errorf("clear playbook steps: %w", err)
-	}
+	flat := make([]flatPlaybookStep, 0, len(steps))
 	for phase, phaseSteps := range steps {
 		for i, step := range phaseSteps {
-			if _, err := tx.Exec(ctx, `
-				insert into playbook_phase_steps (playbook_id, tenant_id, phase, step_order, action_text, webhook_url, webhook_payload_template)
-				values ($1,$2,$3,$4,$5,$6,$7)`,
-				playbookID, tenantID, phase, i, step.Text, step.WebhookURL, step.WebhookPayloadTemplate,
-			); err != nil {
-				return fmt.Errorf("insert playbook step: %w", err)
-			}
+			flat = append(flat, flatPlaybookStep{phase: phase, order: i, step: step})
 		}
 	}
-	return nil
+	return replaceChildRows(ctx, tx, "playbook step",
+		`delete from playbook_phase_steps where playbook_id = $1`, playbookID,
+		flat, func(f flatPlaybookStep, _ int) error {
+			_, err := tx.Exec(ctx, `
+				insert into playbook_phase_steps (playbook_id, tenant_id, phase, step_order, action_text, webhook_url, webhook_payload_template)
+				values ($1,$2,$3,$4,$5,$6,$7)`,
+				playbookID, tenantID, f.phase, f.order, f.step.Text, f.step.WebhookURL, f.step.WebhookPayloadTemplate,
+			)
+			return err
+		})
 }
 
 func (r *PlaybookRepository) stepsFor(ctx context.Context, tx pgx.Tx, playbookID uuid.UUID) (map[domain.IncidentPhase][]domain.PlaybookStep, error) {

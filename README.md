@@ -84,7 +84,7 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
 - **Phase History** (in the incident detail view) — every NIST 800-61 phase records when it was
   entered; the original timestamp is never overwritten. A correction requires a reason, is recorded
   with an author, and produces an entry in the append-only audit log — see
-  `db/migrations/0005_incidents.up.sql`. Skipping a phase (e.g. New → Eradication directly) isn't
+  `db/migrations/0001_initial_schema.up.sql`. Skipping a phase (e.g. New → Eradication directly) isn't
   blocked, but it's flagged with a warning event on the timeline, so poorly-followed process doesn't
   silently skew MTTR metrics.
 - **Playbooks** — a library of procedures by category/phase, with automatic suggestions on the alert
