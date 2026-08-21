@@ -94,6 +94,62 @@ func TestIngestHandler_ValidAlert(t *testing.T) {
 	assert.NotEmpty(t, resp["id"])
 }
 
+// TestIngestHandler_AutoCreatesUnknownTags is the regression test for the
+// TagService.EnsureExist switch: a tag the source sends that isn't yet in
+// Settings -> Tags used to be silently dropped (see the now-superseded
+// TagService.FilterKnown) -- it must now be auto-created in the tenant's
+// catalog and actually attached to the ingested alert, exactly like a
+// pre-registered tag already was.
+func TestIngestHandler_AutoCreatesUnknownTags(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+
+	webhookRepo := repository.NewWebhookRepository()
+	webhookSvc := service.NewWebhookService(pool, webhookRepo)
+	tagRepo := repository.NewTagRepository()
+	tagSvc := service.NewTagService(pool, tagRepo)
+	alertRepo := repository.NewAlertRepository()
+	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
+
+	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil, nil, nil)
+	require.NoError(t, err)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+
+	body, _ := json.Marshal(map[string]any{
+		"title": "Suspicious login", "severity": "high", "tags": []string{"brand-new-tag", "  another-new-one  "},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
+	req.Header.Set("X-Webhook-Token", result.Token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	alertID, err := uuid.Parse(resp["id"])
+	require.NoError(t, err)
+
+	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+		alert, err := alertRepo.Get(t.Context(), tx, alertID)
+		require.NoError(t, err)
+		require.NotNil(t, alert)
+		assert.ElementsMatch(t, []string{"brand-new-tag", "another-new-one"}, alert.Tags, "trimmed, and both attached even though neither existed before this request")
+		return nil
+	}))
+
+	catalog, err := tagSvc.List(t.Context(), tenantID)
+	require.NoError(t, err)
+	names := make([]string, len(catalog))
+	for i, tg := range catalog {
+		names[i] = tg.Name
+	}
+	assert.Contains(t, names, "brand-new-tag", "auto-created tags must show up in Settings -> Tags")
+	assert.Contains(t, names, "another-new-one")
+}
+
 // TestIngestHandler_UnknownSourceFallsBackToGeneric guards the fallback
 // path: a webhook endpoint whose source has no dedicated normalizer still
 // ingests via the flat genericNormalizer envelope, same as before per-source

@@ -68,6 +68,44 @@ func TestTagRepository_FilterKnown(t *testing.T) {
 	})
 }
 
+func TestTagRepository_EnsureExist(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewTagRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	require.NoError(t, repo.Create(t.Context(), tx, &domain.Tag{TenantID: tenantID, Name: "phishing"}))
+
+	t.Run("creates any name not already in the catalog, leaves existing ones untouched", func(t *testing.T) {
+		require.NoError(t, repo.EnsureExist(t.Context(), tx, tenantID, []string{"phishing", "new-from-siem"}))
+		known, err := repo.FilterKnown(t.Context(), tx, []string{"phishing", "new-from-siem"})
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"phishing", "new-from-siem"}, known)
+	})
+
+	t.Run("is case-insensitively idempotent -- an existing name in different casing doesn't create a duplicate row", func(t *testing.T) {
+		require.NoError(t, repo.EnsureExist(t.Context(), tx, tenantID, []string{"PHISHING"}))
+		list, err := repo.List(t.Context(), tx)
+		require.NoError(t, err)
+		names := make([]string, len(list))
+		for i, tg := range list {
+			names[i] = tg.Name
+		}
+		assert.ElementsMatch(t, []string{"phishing", "new-from-siem"}, names, "still stored as the original \"phishing\", not a second \"PHISHING\" row")
+	})
+
+	t.Run("duplicate names within the same call don't error", func(t *testing.T) {
+		require.NoError(t, repo.EnsureExist(t.Context(), tx, tenantID, []string{"dup", "dup", "dup"}))
+		known, err := repo.FilterKnown(t.Context(), tx, []string{"dup"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"dup"}, known)
+	})
+
+	t.Run("empty input is a no-op", func(t *testing.T) {
+		require.NoError(t, repo.EnsureExist(t.Context(), tx, tenantID, nil))
+	})
+}
+
 func TestTagRepository_TenantIsolation(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantA := testutil.NewTenant(t)

@@ -70,3 +70,55 @@ func TestTagService_FilterKnown(t *testing.T) {
 		assert.Empty(t, known)
 	})
 }
+
+func TestTagService_EnsureExist(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	svc := service.NewTagService(pool, repository.NewTagRepository())
+
+	_, err := svc.Create(t.Context(), tenantID, actorID, "phishing", nil)
+	require.NoError(t, err)
+
+	t.Run("unlike FilterKnown, an unregistered name is created and returned rather than dropped", func(t *testing.T) {
+		result, err := svc.EnsureExist(t.Context(), tenantID, []string{"phishing", "new-from-webhook"})
+		require.NoError(t, err)
+		assert.ElementsMatch(t, []string{"phishing", "new-from-webhook"}, result)
+
+		list, err := svc.List(t.Context(), tenantID)
+		require.NoError(t, err)
+		names := make([]string, len(list))
+		for i, tag := range list {
+			names[i] = tag.Name
+		}
+		assert.Contains(t, names, "new-from-webhook", "the auto-created tag must show up in Settings -> Tags like any other")
+	})
+
+	t.Run("blank and whitespace-only names are dropped, never create an empty tag", func(t *testing.T) {
+		result, err := svc.EnsureExist(t.Context(), tenantID, []string{"  ", "", "real-tag"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"real-tag"}, result)
+	})
+
+	t.Run("all-blank input is a no-op returning nil", func(t *testing.T) {
+		result, err := svc.EnsureExist(t.Context(), tenantID, []string{"  ", ""})
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty input is a no-op returning nil", func(t *testing.T) {
+		result, err := svc.EnsureExist(t.Context(), tenantID, nil)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("auto-created tags are scoped to their own tenant like any other", func(t *testing.T) {
+		otherTenant := testutil.NewTenant(t)
+		_, err := svc.EnsureExist(t.Context(), otherTenant, []string{"tenant-b-only"})
+		require.NoError(t, err)
+
+		known, err := svc.FilterKnown(t.Context(), tenantID, []string{"tenant-b-only"})
+		require.NoError(t, err)
+		assert.Empty(t, known, "a tag auto-created for one tenant must not leak into another's catalog")
+	})
+}

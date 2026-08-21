@@ -741,7 +741,7 @@
     "tags": {
       "title": "Tags",
       "newTag": "+ Nova Tag",
-      "helper": "Catálogo de tags disponíveis para marcar alertas e incidentes. Só tags cadastradas aqui podem ser aplicadas manualmente ou vindas de um webhook -- uma tag desconhecida enviada por uma fonte é descartada silenciosamente, não rejeita o alerta.",
+      "helper": "Catálogo de tags disponíveis para marcar alertas e incidentes. Marcar um alerta/incidente manualmente só oferece tags já cadastradas aqui, mas uma tag enviada por um webhook que ainda não existe é cadastrada aqui automaticamente, não descartada.",
       "noTags": "Nenhuma tag cadastrada ainda.",
       "createdOn": "Criada em {{date}}",
       "deleteConfirm": "Excluir esta tag? Alertas/incidentes já marcados com ela mantêm a tag -- só deixa de aparecer no seletor.",

@@ -741,7 +741,7 @@
     "tags": {
       "title": "Tags",
       "newTag": "+ New Tag",
-      "helper": "Catalog of tags available for tagging alerts and incidents. Only tags registered here can be applied manually or come from a webhook -- an unknown tag sent by a source is silently dropped, not rejected.",
+      "helper": "Catalog of tags available for tagging alerts and incidents. Manually tagging an alert/incident only offers tags already registered here, but a tag sent by a webhook that isn't registered yet is auto-created here automatically, not dropped.",
       "noTags": "No tags registered yet.",
       "createdOn": "Created on {{date}}",
       "deleteConfirm": "Delete this tag? Alerts/incidents already tagged with it keep the tag -- it just stops appearing in the picker.",

@@ -118,14 +118,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		srcIP = net.ParseIP(*normalized.SrcIP)
 	}
 
-	// A tag the source sent that isn't registered in Settings -> Tags is
-	// dropped, not rejected -- an unrecognized tag on one field shouldn't
-	// fail ingestion of the whole alert (see domain.Tag / TagService).
+	// A tag the source sends is auto-created in the tenant's catalog if it
+	// doesn't already exist, then attached -- unlike an analyst's own manual
+	// tag edit (see AlertService.UpdateTags), a webhook sender has no
+	// Settings UI to pre-register a tag in first, so treating an unknown one
+	// as a hard requirement would just silently lose it. See
+	// TagService.EnsureExist's doc comment for why this can't over-expose
+	// data to a tag-restricted analyst.
 	var tags []string
 	if len(normalized.Tags) > 0 {
-		tags, err = h.tags.FilterKnown(r.Context(), endpoint.TenantID, normalized.Tags)
+		tags, err = h.tags.EnsureExist(r.Context(), endpoint.TenantID, normalized.Tags)
 		if err != nil {
-			logger.Error("filter tags failed", "error", err, "tenant_id", endpoint.TenantID)
+			logger.Error("ensure tags exist failed", "error", err, "tenant_id", endpoint.TenantID)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -135,7 +139,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if endpoint.FieldMappingTemplateID != nil {
 		// A missing/deleted template shouldn't fail the whole alert over a
 		// best-effort enrichment -- same principle extractMetadata/
-		// FilterKnown already follow -- so this only logs and falls back to
+		// EnsureExist already follow -- so this only logs and falls back to
 		// the metadata already extracted above.
 		template, err := h.fieldMappings.Get(r.Context(), endpoint.TenantID, *endpoint.FieldMappingTemplateID)
 		if err != nil {
@@ -184,7 +188,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // {"metadata": {"slackChannel": "#incident-response", "environment": "production"}}.
 // Anything malformed (missing, not an object, not valid JSON at all) just
 // yields empty metadata -- same "don't fail the whole alert over one
-// optional, best-effort field" principle FilterKnown's unknown-tag handling
+// optional, best-effort field" principle EnsureExist's tag auto-creation
 // already follows.
 func extractMetadata(body []byte) json.RawMessage {
 	var envelope struct {
