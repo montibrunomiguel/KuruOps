@@ -13,6 +13,7 @@ import { AddNoteForm } from "../../components/AddNoteForm";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
 import { SparkleIcon } from "../../components/icons";
+import { AlertDetailSkeleton } from "../../components/AlertDetailSkeleton";
 import { formatDateTime, initials, shortId } from "../../lib/format";
 import { MetadataPanel } from "./AlertDetailPage/MetadataPanel";
 import { PayloadPanel } from "./AlertDetailPage/PayloadPanel";
@@ -30,11 +31,11 @@ export function AlertDetailPage() {
   const navigate = useNavigate();
 
   const { data: alert, loading, error, reload } = useList<Alert>(
+    ["alert", id],
     async (tk) => {
       const a = await api.get<Alert>(`/api/v1/alerts/${id}`, tk);
       return [a];
     },
-    [id],
   );
   const current = alert?.[0];
 
@@ -50,8 +51,8 @@ export function AlertDetailPage() {
   });
 
   const { data: comments, reload: reloadComments } = useList<AlertComment>(
+    ["alert-comments", id],
     (tk) => api.get<AlertComment[]>(`/api/v1/alerts/${id}/comments`, tk),
-    [id],
   );
 
   const [actionError, setActionError] = useState<string | null>(null);
@@ -93,7 +94,7 @@ export function AlertDetailPage() {
     }
   }
 
-  if (loading) return <div className="empty-state">{t("common.loading")}</div>;
+  if (loading) return <AlertDetailSkeleton />;
   if (error) return <div className="error-banner">{error}</div>;
   if (!current) return <div className="empty-state">{t("alerts.detail.notFound")}</div>;
 

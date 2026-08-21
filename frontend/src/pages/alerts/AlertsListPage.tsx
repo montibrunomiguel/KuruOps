@@ -37,6 +37,7 @@ export function AlertsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Alert>(
+    ["alerts", severity, status, source, correlated, tag, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
@@ -50,7 +51,6 @@ export function AlertsListPage() {
       params.set("offset", String(offset));
       return api.getPaged<Alert>(`/api/v1/alerts?${params.toString()}`, tk);
     },
-    [severity, status, source, correlated, tag, range.since, range.until],
   );
 
   // Live updates: another analyst (or the same one, in another tab)

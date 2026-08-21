@@ -26,6 +26,9 @@
     "webhookOnline": "Webhook listener online",
     "removeTag": "Remove tag {{name}}",
     "addTagOption": "+ Add tag...",
+    "tagAdded": "Tag added: {{name}}",
+    "tagRemoved": "Tag removed: {{name}}",
+    "tagPickerGroupLabel": "Tags",
     "removeFilterValue": "Remove {{value}}",
     "addFilterOption": "+ Add...",
     "pagination": {

@@ -27,13 +27,13 @@ export function FollowupTabPanel() {
   const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const { data: viewData, loading, error, reload } = useList<FollowupView>(
+    ["dashboard-followup", range.since, range.until],
     async (tk) => {
       const params = new URLSearchParams();
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       return [await api.get<FollowupView>(`/api/v1/dashboard/followup?${params.toString()}`, tk)];
     },
-    [range.since, range.until],
   );
   const view = viewData?.[0];
 

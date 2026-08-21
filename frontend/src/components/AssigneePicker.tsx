@@ -36,8 +36,8 @@ export function AssigneePicker({
   // already owns the fetch -- still calls useList unconditionally so this
   // obeys the rules of hooks either way.
   const { data: fetchedDirectory } = useList<UserSummary>(
+    ["users-directory", sharesDirectory],
     (tk) => (sharesDirectory ? Promise.resolve<UserSummary[]>([]) : api.get<UserSummary[]>("/api/v1/users/directory", tk)),
-    [sharesDirectory],
   );
   const directory = sharesDirectory ? directoryProp : fetchedDirectory;
   const byId = new Map((directory ?? []).map((u) => [u.id, u.name]));

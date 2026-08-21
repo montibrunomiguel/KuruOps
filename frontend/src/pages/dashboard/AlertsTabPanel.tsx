@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
+import { DashboardSkeleton } from "./DashboardSkeleton";
 import type { ActivityEvent, DashboardStats } from "../../types/dashboard";
 import type { AlertStatus, Severity } from "../../types/alerts";
 import { TrendChart } from "../../components/charts/TrendChart";
@@ -31,6 +32,7 @@ export function AlertsTabPanel() {
   const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const { data: statsData, loading: statsLoading, error: statsError, reload: reloadStats } = useList<DashboardStats>(
+    ["dashboard-alerts-stats", severity.join(","), status.join(","), source, tag.join(","), analystIds.join(","), range.since, range.until],
     async (tk) => {
       const params = new URLSearchParams();
       if (severity.length > 0) params.set("alertSeverity", severity.join(","));
@@ -42,18 +44,17 @@ export function AlertsTabPanel() {
       if (range.until) params.set("until", range.until);
       return [await api.get<DashboardStats>(`/api/v1/dashboard/stats?${params.toString()}`, tk)];
     },
-    [severity.join(","), status.join(","), source, tag.join(","), analystIds.join(","), range.since, range.until],
   );
   const stats = statsData?.[0];
 
   const { data: activityData, loading: activityLoading, reload: reloadActivity } = useList<ActivityEvent>(
+    ["dashboard-alerts-activity", range.since, range.until],
     (tk) => {
       const params = new URLSearchParams({ kind: "alert", limit: "6" });
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       return api.get<ActivityEvent[]>(`/api/v1/dashboard/activity?${params.toString()}`, tk);
     },
-    [range.since, range.until],
   );
 
   // Live updates: an alert changing anywhere (this tab, another analyst,
@@ -66,6 +67,16 @@ export function AlertsTabPanel() {
     reloadActivity();
   });
 
+  // hasLoadedOnce gates DashboardSkeleton to the very first paint only --
+  // statsLoading itself flips true again on every filter change, and this
+  // tab's stat cards/charts already have their own inline "—" placeholders
+  // for that case (see statsLoading usage below).
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!statsLoading) setHasLoadedOnce(true);
+  }, [statsLoading]);
+
+  if (statsLoading && !hasLoadedOnce) return <DashboardSkeleton />;
   if (statsError) return <div className="error-banner">{statsError}</div>;
 
   const bySeverity = stats?.alertsBySeverity ?? {};

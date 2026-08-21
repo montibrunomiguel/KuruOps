@@ -29,27 +29,27 @@ export function IncidentDetailPage() {
   const navigate = useNavigate();
 
   const { data: incidentData, loading, error, reload } = useList<Incident>(
+    ["incident", id],
     async (tk) => [await api.get<Incident>(`/api/v1/incidents/${id}`, tk)],
-    [id],
   );
   const incident = incidentData?.[0];
 
   const { data: comments, reload: reloadComments } = useList<IncidentComment>(
+    ["incident-comments", id],
     (tk) => api.get<IncidentComment[]>(`/api/v1/incidents/${id}/comments`, tk),
-    [id],
   );
   const { data: linkedAlerts, reload: reloadLinkedAlerts } = useList<Alert>(
+    ["incident-linked-alerts", id],
     (tk) => api.get<Alert[]>(`/api/v1/incidents/${id}/alerts`, tk),
-    [id],
   );
-  const { data: alertCandidates } = useList<Alert>((tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
+  const { data: alertCandidates } = useList<Alert>(["incident-alert-candidates"], (tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
   const { data: timeline, reload: reloadTimeline } = useList<IncidentEvent>(
+    ["incident-timeline", id],
     (tk) => api.get<IncidentEvent[]>(`/api/v1/incidents/${id}/timeline`, tk),
-    [id],
   );
   const { data: statusHistory, reload: reloadStatusHistory } = useList<IncidentStatusHistoryEntry>(
+    ["incident-status-history", id],
     (tk) => api.get<IncidentStatusHistoryEntry[]>(`/api/v1/incidents/${id}/status-history`, tk),
-    [id],
   );
 
   // Analysis runs in the background on the server (POST /analyze returns

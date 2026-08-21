@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "./auth/AuthContext";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
+import { Skeleton, SkeletonBlock } from "./components/Skeleton";
 
 // Lazy, one chunk per route instead of one 890KB+ bundle everyone downloads
 // up front just to see the login screen -- each import() only fires the
@@ -91,11 +92,17 @@ function ChangePasswordRoute() {
   return <ChangePasswordPage />;
 }
 
-// RouteFallback is deliberately minimal (no spinner component exists in
-// this codebase yet) -- route chunks are small and cached after first
-// visit, so this is only ever visible for a moment on a cold load.
+// RouteFallback is deliberately minimal -- route chunks are small and
+// cached after first visit, so this is only ever visible for a moment on a
+// cold load. Still gets a real skeleton (not a bare "…") so that moment
+// reads as "loading" rather than "broken".
 function RouteFallback() {
-  return <div className="empty-state">…</div>;
+  return (
+    <SkeletonBlock className="skeleton-stack" style={{ padding: "24px 4px" }}>
+      <Skeleton width={180} height={20} />
+      <Skeleton width="60%" height={13} />
+    </SkeletonBlock>
+  );
 }
 
 export default function App() {

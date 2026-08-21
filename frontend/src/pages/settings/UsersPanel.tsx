@@ -10,10 +10,10 @@ import { GroupMappingsPanel } from "./UsersPanel/GroupMappingsPanel";
 
 export function UsersPanel() {
   const { t } = useTranslation();
-  const { data: users, loading, error, reload } = useList<User>((tk) =>
+  const { data: users, loading, error, reload } = useList<User>(["settings-users"], (tk) =>
     api.get<User[]>("/api/v1/settings/users", tk),
   );
-  const { data: roles } = useList<Role>((tk) => api.get<Role[]>("/api/v1/settings/roles", tk));
+  const { data: roles } = useList<Role>(["settings-roles"], (tk) => api.get<Role[]>("/api/v1/settings/roles", tk));
   const [showCreate, setShowCreate] = useState(false);
   const [created, setCreated] = useState<CreatedUser | null>(null);
   const [resetResult, setResetResult] = useState<{ name: string; temporaryPassword: string } | null>(null);

@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
+import { DashboardSkeleton } from "./DashboardSkeleton";
 import type { DashboardStats } from "../../types/dashboard";
 import type { Incident } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
@@ -28,6 +29,7 @@ export function IncidentsTabPanel() {
   const range = useMemo(() => timeRangeParams(timeRange), [timeRange]);
 
   const { data: statsData, loading: statsLoading, error: statsError, reload: reloadStats } = useList<DashboardStats>(
+    ["dashboard-incidents-stats", severity.join(","), tag.join(","), commanderIds.join(","), range.since, range.until],
     async (tk) => {
       const params = new URLSearchParams();
       if (severity.length > 0) params.set("incidentSeverity", severity.join(","));
@@ -37,7 +39,6 @@ export function IncidentsTabPanel() {
       if (range.until) params.set("until", range.until);
       return [await api.get<DashboardStats>(`/api/v1/dashboard/stats?${params.toString()}`, tk)];
     },
-    [severity.join(","), tag.join(","), commanderIds.join(","), range.since, range.until],
   );
   const stats = statsData?.[0];
 
@@ -48,6 +49,7 @@ export function IncidentsTabPanel() {
   // value of each filter rather than dropping the filter (and diverging
   // from the KPI cards above) entirely.
   const { data: incidents, loading: incidentsLoading, reload: reloadIncidents } = useList<Incident>(
+    ["dashboard-recent-incidents", severity[0], tag[0], commanderIds[0], range.since, range.until],
     (tk) => {
       const params = new URLSearchParams();
       if (severity[0]) params.set("severity", severity[0]);
@@ -58,7 +60,6 @@ export function IncidentsTabPanel() {
       params.set("limit", "5");
       return api.get<Incident[]>(`/api/v1/incidents?${params.toString()}`, tk);
     },
-    [severity[0], tag[0], commanderIds[0], range.since, range.until],
   );
 
   // Live updates -- see AlertsTabPanel's identical wiring for the reasoning.
@@ -68,6 +69,14 @@ export function IncidentsTabPanel() {
     reloadIncidents();
   });
 
+  // hasLoadedOnce gates DashboardSkeleton to the very first paint only --
+  // see AlertsTabPanel's identical wiring for the reasoning.
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!statsLoading) setHasLoadedOnce(true);
+  }, [statsLoading]);
+
+  if (statsLoading && !hasLoadedOnce) return <DashboardSkeleton />;
   if (statsError) return <div className="error-banner">{statsError}</div>;
 
   const byPriority = stats?.incidentsByPriority ?? {};
