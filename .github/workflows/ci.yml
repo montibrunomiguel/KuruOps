@@ -6,6 +6,20 @@ on:
   pull_request:
     branches: [ main ]
 
+# A new push to the same PR/branch supersedes whatever's still running for
+# it -- see security.yml's identical concurrency group for the same
+# reasoning, kept as two separate groups (not one shared across both
+# workflows) so a Security Scan run in progress never gets cancelled by an
+# unrelated CI push and vice versa.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Explicit least-privilege default -- none of these jobs push commits,
+# comment on PRs, or otherwise need more than reading the checked-out code.
+permissions:
+  contents: read
+
 jobs:
   backend-ci:
     name: Backend (Go)

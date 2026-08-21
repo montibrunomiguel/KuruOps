@@ -8,6 +8,19 @@ on:
   schedule:
     - cron: '0 0 * * 1' # Every Monday at midnight
 
+# A new push to the same PR/branch supersedes whatever's still running for
+# it -- no point burning runner minutes finishing a scan of a commit that's
+# already been replaced. Scoped to the ref (not the whole workflow) so
+# separate branches/PRs still run fully in parallel.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+# Explicit least-privilege default -- none of these jobs push commits,
+# comment on PRs, or otherwise need more than reading the checked-out code.
+permissions:
+  contents: read
+
 jobs:
   govulncheck:
     name: Go Vulnerability Check
@@ -20,6 +33,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -82,7 +97,11 @@ jobs:
             .
 
       - name: Scan ${{ matrix.image }} with Trivy
-        uses: aquasecurity/trivy-action@master
+        # Pinned to a release tag, not @master -- @master is a moving
+        # target (a floating branch ref, not a version), so a scanner
+        # action of all things shouldn't be one unreviewed upstream commit
+        # away from silently changing behavior on every run.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ matrix.image }}:scan
           severity: CRITICAL,HIGH
