@@ -293,7 +293,12 @@ func TestOnCallScheduleService_ResolveCurrentAnalyst(t *testing.T) {
 
 	t.Run("an override for today wins outright", func(t *testing.T) {
 		bob := testutil.NewUser(t, tenantID, "analyst", nil)
-		today := time.Now().Format("2006-01-02")
+		// ResolveCurrentAnalyst resolves "today" in the tenant's configured
+		// timezone (UTC by default, untouched here) -- format in UTC too, or
+		// this flips to the wrong calendar day for ~3h/day wherever the test
+		// happens to run in a timezone behind UTC (e.g. UTC-3 around 21:00-24:00
+		// local, which is already tomorrow in UTC).
+		today := time.Now().UTC().Format("2006-01-02")
 		_, err := svc.CreateOverride(t.Context(), tenantID, defaultSched.ID, alice, bob, today)
 		require.NoError(t, err)
 
