@@ -125,6 +125,12 @@ type Config struct {
 	// this struct is env-var driven, so these were the odd ones out.
 	LoginRateLimitPerMinute   int
 	WebhookRateLimitPerMinute int
+
+	// OTelExporterOTLPEndpoint, when set, points telemetry.Setup at an
+	// OTLP/HTTP collector (e.g. "http://otel-collector:4318") and enables
+	// real distributed tracing. Empty (the default) keeps tracing fully
+	// inert -- see telemetry.Setup's doc comment.
+	OTelExporterOTLPEndpoint string
 }
 
 func Load(logger *slog.Logger) (Config, error) {
@@ -159,6 +165,8 @@ func Load(logger *slog.Logger) (Config, error) {
 		DatabaseMigrationTimeout:  getEnvDurationDefault(logger, "DATABASE_MIGRATION_TIMEOUT", 10*time.Minute),
 		LoginRateLimitPerMinute:   int(getEnvInt32Default(logger, "LOGIN_RATE_LIMIT_PER_MINUTE", 20)),
 		WebhookRateLimitPerMinute: int(getEnvInt32Default(logger, "WEBHOOK_RATE_LIMIT_PER_MINUTE", 60)),
+
+		OTelExporterOTLPEndpoint: getEnvDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 
 	if cfg.DatabaseURL == "" {

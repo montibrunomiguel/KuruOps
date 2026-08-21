@@ -66,7 +66,7 @@ func TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := WrapWithObservability(base, logger)
+	handler := WrapWithObservability(base, logger, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 	rec := httptest.NewRecorder()
@@ -116,7 +116,7 @@ func TestWrapWithObservability_RecoversFromPanic(t *testing.T) {
 		panic("malformed payload")
 	})
 
-	handler := WrapWithObservability(base, logger)
+	handler := WrapWithObservability(base, logger, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/hooks", nil)
 	rec := httptest.NewRecorder()

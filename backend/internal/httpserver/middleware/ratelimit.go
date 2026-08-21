@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,25 @@ type KeyedLimiter struct {
 	scope  string
 	limit  int
 	window time.Duration
+
+	// deniedUntil is a local, in-memory NEGATIVE cache (key -> the time its
+	// denial expires): never consulted to allow a request early, only to
+	// skip a redundant DB round-trip for a key already known to be over
+	// budget. This is what keeps a sustained DDoS/brute-force from a small
+	// set of keys off the rate_limit_events table -- see Allow's doc
+	// comment for why this can never introduce a false allow.
+	deniedUntil sync.Map // map[string]time.Time
+}
+
+// negativeCacheTTL bounds how long a key stays locally denied without
+// re-checking the DB -- min(window, 5s), so a legitimate caller whose burst
+// clears the sliding window is never stuck denied by a stale local entry
+// for longer than 5 seconds past that point.
+func negativeCacheTTL(window time.Duration) time.Duration {
+	if window > 5*time.Second {
+		return 5 * time.Second
+	}
+	return window
 }
 
 // NewKeyedLimiter creates a limiter callers key themselves (e.g. by email,
@@ -48,7 +68,21 @@ func NewKeyedLimiter(ctx context.Context, pool *pgxpool.Pool, scope string, limi
 // in practice every one of these call sites (login, webhook ingestion)
 // already depends on the same database for the request to succeed at all,
 // so a real outage fails the request downstream regardless.
+//
+// Checks the local deniedUntil cache first and returns false immediately,
+// with no DB call, if key is still within its cached denial window -- this
+// is purely a fast path for a key that would be denied by the DB check
+// anyway. The allow path below is never cached, so it always runs the exact,
+// up-to-date DB check; only an already-denied key ever skips it, which
+// cannot turn a would-be-allowed request into a denied one.
 func (l *KeyedLimiter) Allow(key string) bool {
+	if until, ok := l.deniedUntil.Load(key); ok {
+		if time.Now().Before(until.(time.Time)) {
+			return false
+		}
+		l.deniedUntil.Delete(key)
+	}
+
 	ctx := context.Background()
 	now := time.Now()
 	cutoff := now.Add(-l.window)
@@ -91,6 +125,7 @@ func (l *KeyedLimiter) Allow(key string) bool {
 
 	if count >= l.limit {
 		_ = tx.Commit(ctx) //nolint:errcheck // still commit the cleanup delete above; a failed commit here just leaves stale rows for next time
+		l.deniedUntil.Store(key, now.Add(negativeCacheTTL(l.window)))
 		return false
 	}
 
@@ -106,7 +141,10 @@ func (l *KeyedLimiter) Allow(key string) bool {
 // cleanupLoop periodically deletes this limiter's stale rows across ALL
 // keys -- Allow only ever cleans the one key it was just called with, so
 // this is what keeps the table from growing unboundedly for keys that stop
-// being checked.
+// being checked. Also purges expired deniedUntil entries, for the same
+// reason on the in-memory side: without this, a sustained attack from many
+// distinct keys would leave the map growing for keys that stop being
+// checked once their denial expires.
 func (l *KeyedLimiter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(l.window * 2)
 	defer ticker.Stop()
@@ -117,6 +155,14 @@ func (l *KeyedLimiter) cleanupLoop(ctx context.Context) {
 		case <-ticker.C:
 			cutoff := time.Now().Add(-l.window)
 			_, _ = l.pool.Exec(context.Background(), "delete from rate_limit_events where scope = $1 and occurred_at <= $2", l.scope, cutoff)
+
+			now := time.Now()
+			l.deniedUntil.Range(func(k, v any) bool {
+				if now.After(v.(time.Time)) {
+					l.deniedUntil.Delete(k)
+				}
+				return true
+			})
 		}
 	}
 }

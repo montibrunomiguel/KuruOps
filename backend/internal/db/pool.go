@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Pool struct {
@@ -31,6 +32,11 @@ type PoolConfig struct {
 	MaxConns int32
 	// MinConns 0 leaves pgxpool's own default (0) in effect.
 	MinConns int32
+	// Tracer, when non-nil, is wrapped in a pgx.QueryTracer (see tracing.go)
+	// and wired into every connection this pool opens -- nil (the zero
+	// value, what every test/tooling call site that doesn't care about
+	// tracing passes) leaves pgx's own default of no tracer in effect.
+	Tracer trace.Tracer
 }
 
 func NewPool(ctx context.Context, databaseURL string, poolCfg PoolConfig) (*Pool, error) {
@@ -44,6 +50,9 @@ func NewPool(ctx context.Context, databaseURL string, poolCfg PoolConfig) (*Pool
 	}
 	if poolCfg.MinConns > 0 {
 		cfg.MinConns = poolCfg.MinConns
+	}
+	if poolCfg.Tracer != nil {
+		cfg.ConnConfig.Tracer = &dbTracer{tracer: poolCfg.Tracer}
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

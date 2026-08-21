@@ -27,6 +27,7 @@ import (
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
 	"github.com/argusops/argusops/internal/service"
+	"github.com/argusops/argusops/internal/telemetry"
 )
 
 func main() {
@@ -41,7 +42,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns})
+	otelShutdown, tracer, err := telemetry.Setup(ctx, "argusops-ingest", cfg.OTelExporterOTLPEndpoint)
+	if err != nil {
+		logger.Error("telemetry setup failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Warn("telemetry shutdown failed", "error", err)
+		}
+	}()
+
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
@@ -125,7 +139,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.WrapWithObservability(mux, logger),
+		Handler:           httpserver.WrapWithObservability(mux, logger, tracer),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

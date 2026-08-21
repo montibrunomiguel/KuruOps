@@ -8,6 +8,8 @@ import (
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/argusops/argusops/internal/httpserver/middleware"
 )
@@ -60,10 +62,18 @@ func Livez(w http.ResponseWriter, r *http.Request) {
 // by an external, untrusted SIEM/webhook sender -- a single malformed
 // payload panicking a normalizer used to be able to crash the entire ingest
 // process for every tenant.
-func WrapWithObservability(base http.Handler, logger *slog.Logger) http.Handler {
+//
+// tracer starts one span per request, same as router.go's own
+// TracingMiddleware -- nil falls back to a no-op tracer (see NewRouter's
+// identical fallback).
+func WrapWithObservability(base http.Handler, logger *slog.Logger, tracer trace.Tracer) http.Handler {
+	if tracer == nil {
+		tracer = noop.NewTracerProvider().Tracer("argusops")
+	}
 	h := MetricsMiddleware(base)
 	h = chimw.Recoverer(h)
 	h = middleware.RequestLogger(logger)(h)
+	h = middleware.TracingMiddleware(tracer)(h)
 	h = chimw.RequestID(h)
 	return h
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
 	"github.com/argusops/argusops/internal/service"
+	"github.com/argusops/argusops/internal/telemetry"
 )
 
 func main() {
@@ -72,7 +73,20 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns})
+	otelShutdown, tracer, err := telemetry.Setup(ctx, "argusops-api", cfg.OTelExporterOTLPEndpoint)
+	if err != nil {
+		logger.Error("telemetry setup failed", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Warn("telemetry shutdown failed", "error", err)
+		}
+	}()
+
+	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
 		logger.Error("database connection failed", "error", err)
 		os.Exit(1)
@@ -274,6 +288,7 @@ func main() {
 		HealthCheck:                  httpserver.HealthCheck(pool.Pool),
 		HTTPRequestTimeout:           cfg.HTTPRequestTimeout,
 		DatabaseMigrationTimeout:     cfg.DatabaseMigrationTimeout,
+		Tracer:                       tracer,
 	})
 
 	srv := &http.Server{
