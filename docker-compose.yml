@@ -12,10 +12,16 @@ services:
     image: postgres:16-alpine
     mem_limit: 512m
     cpus: 1.0
+    # Overriding these (see .env.example) also requires updating every
+    # `docker compose exec postgres psql -U postgres ...` / `pg_dump -U
+    # postgres` call in Taskfile.yml (task db:up/db:test:up/db:backup/etc.)
+    # and the migrate service's connection string above -- this compose
+    # file's own migrate service already reads the same vars, Taskfile.yml's
+    # dev-tooling commands do not.
     environment:
       POSTGRES_DB: argusops
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
@@ -51,14 +57,18 @@ services:
   # external database -- only internal/dbmigrate's own integration test
   # points at this (see Taskfile.yml's backend:test:migration), never
   # started by plain `docker compose up`. No volume: entirely disposable,
-  # the test resets it on every run.
+  # the test resets it on every run -- overriding POSTGRES_TARGET_USER/
+  # PASSWORD below also requires updating Taskfile.yml's own hardcoded
+  # TEST_MIGRATION_TARGET_USER/PASSWORD (kept separately hardcoded there
+  # since this container is ephemeral test infra, not a credential anyone
+  # actually needs to rotate in practice).
   postgres-target:
     image: postgres:16-alpine
     profiles: ["tools"]
     environment:
       POSTGRES_DB: argusops_target
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_TARGET_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_TARGET_PASSWORD:-postgres}
     ports:
       - "5433:5432"
     healthcheck:
@@ -81,7 +91,7 @@ services:
       [
         "migrate",
         "-path=/migrations",
-        "-database=postgres://postgres:postgres@postgres:5432/argusops?sslmode=disable",
+        "-database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/argusops?sslmode=disable",
       ]
 
   api:
@@ -116,6 +126,11 @@ services:
       # your own with `openssl rand -base64 32` and set it in the
       # environment instead).
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
+      # Per-account login rate limit -- see middleware.NewRateLimiter's
+      # caller in cmd/api/main.go. Empty OTEL endpoint keeps tracing fully
+      # inert (see internal/telemetry.Setup's doc comment).
+      LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-20}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - uploads:/data/uploads
       # Survives `docker compose restart`/`down` (without -v) so the
@@ -156,6 +171,8 @@ services:
       # either service (webhook/AI-analysis secrets can be set from either
       # side). See the api service's own comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
+      WEBHOOK_RATE_LIMIT_PER_MINUTE: ${WEBHOOK_RATE_LIMIT_PER_MINUTE:-60}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     ports:
       - "8081:8081"
     depends_on:
@@ -183,6 +200,7 @@ services:
       HTTP_ADDR: :8082
       # Must match the api service's key -- see its comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       postgres:
         condition: service_healthy

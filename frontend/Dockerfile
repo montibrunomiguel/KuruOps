@@ -23,6 +23,14 @@ RUN npm run build
 # handled by the image itself with no nginx.conf changes beyond the listen
 # port below. Same tag suffix as the image we're replacing.
 FROM nginxinc/nginx-unprivileged:1.27-alpine
+# The base image's own Alpine packages (openssl, c-ares, libexpat, libpng,
+# ...) lag behind Alpine's repos between nginx image releases -- picked up
+# by the new container-scan CI job (see .github/workflows/security.yml).
+# Upgrading in place (not bumping the nginx version) keeps this a pure
+# patch-level security fix.
+USER root
+RUN apk update && apk upgrade --no-cache
+USER nginx
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080

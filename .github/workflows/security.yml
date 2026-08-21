@@ -45,3 +45,46 @@ jobs:
         run: |
           cd frontend
           npm audit --audit-level=high
+
+  container-scan:
+    name: Container Image Vulnerability Scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: argusops-api
+            dockerfile: backend/Dockerfile
+            target: api
+          - image: argusops-ingest
+            dockerfile: backend/Dockerfile
+            target: ingest
+          - image: argusops-worker
+            dockerfile: backend/Dockerfile
+            target: worker
+          - image: argusops-frontend
+            dockerfile: frontend/Dockerfile
+            target: ""
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Repo-root context on every image, matching how docker-compose.yml
+      # itself builds them -- both Dockerfiles reach outside their own
+      # subdirectory (backend/Dockerfile copies db/migrations, frontend/
+      # Dockerfile copies docs/oncall-rotation-fixtures.json).
+      - name: Build ${{ matrix.image }}
+        run: |
+          docker build \
+            -f ${{ matrix.dockerfile }} \
+            ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }} \
+            -t ${{ matrix.image }}:scan \
+            .
+
+      - name: Scan ${{ matrix.image }} with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image }}:scan
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
