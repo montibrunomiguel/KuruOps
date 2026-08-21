@@ -83,6 +83,28 @@ func (r *TagRepository) FilterKnown(ctx context.Context, tx pgx.Tx, names []stri
 	return known, rows.Err()
 }
 
+// EnsureExist inserts any name in names that isn't already in the tenant's
+// tag catalog (case-insensitively, same matching as FilterKnown), leaving
+// existing rows untouched. "on conflict ... do nothing" targets the exact
+// expression the tags_tenant_name_uq unique index is built on -- safe even
+// if names contains duplicates, or if a concurrent insert (another request
+// racing to create the same new tag) beats this one to it.
+func (r *TagRepository) EnsureExist(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		insert into tags (tenant_id, name)
+		select $1, unnest($2::text[])
+		on conflict (tenant_id, lower(name)) do nothing`,
+		tenantID, names,
+	)
+	if err != nil {
+		return fmt.Errorf("ensure tags exist: %w", err)
+	}
+	return nil
+}
+
 func scanTag(row pgx.Row) (*domain.Tag, error) {
 	var t domain.Tag
 	err := row.Scan(&t.ID, &t.TenantID, &t.Name, &t.Color, &t.CreatedBy, &t.CreatedAt)

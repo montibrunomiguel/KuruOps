@@ -28,9 +28,9 @@ type NormalizedAlert struct {
 	Asset      *string
 	SrcIP      *string
 	// Tags are whatever the source payload sent -- the ingest handler
-	// filters this down to tags that actually exist in Settings -> Tags
-	// before the alert is inserted (see TagService.FilterKnown), so an
-	// unrecognized tag here is dropped, never rejected as an ingest error.
+	// auto-creates any of these that aren't already in the tenant's tag
+	// catalog before the alert is inserted (see TagService.EnsureExist), so
+	// nothing here is ever dropped or rejected as an ingest error.
 	Tags []string
 }
 
