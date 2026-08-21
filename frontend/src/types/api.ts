@@ -122,6 +122,10 @@ export interface LLMProvider {
   baseUrl?: string;
   model: string;
   isDefault: boolean;
+  // When true and this is the tenant's default provider, every alert
+  // ingested via webhook is analyzed automatically -- otherwise (the
+  // default) analysis only happens when an analyst clicks "Analisar com IA".
+  autoAnalyzeAllAlerts: boolean;
   createdBy?: string;
   createdAt: string;
   updatedAt: string;

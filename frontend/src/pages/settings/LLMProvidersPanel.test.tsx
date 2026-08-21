@@ -228,6 +228,67 @@ describe("LLMProvidersPanel", () => {
     expect(await screen.findByText("delete boom")).toBeInTheDocument();
   });
 
+  it("the auto-analyze checkbox defaults unchecked and is included as false in the payload", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(providerFixture(), 201));
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No LLM provider registered yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Provider" }));
+    const checkbox = screen.getByLabelText("Automatically analyze every incoming alert") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    await userEvent.type(screen.getByLabelText("Name"), "Claude");
+    await userEvent.type(screen.getByLabelText("Model"), "claude-opus");
+    await userEvent.type(screen.getByLabelText("API Key"), "sk-secret");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+      expect(postCall).toBeDefined();
+      const body = JSON.parse((postCall![1] as RequestInit).body as string);
+      expect(body.autoAnalyzeAllAlerts).toBe(false);
+    });
+  });
+
+  it("checking the auto-analyze checkbox sends true in the payload", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(providerFixture(), 201));
+      return Promise.resolve(jsonResponse([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No LLM provider registered yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Provider" }));
+    await userEvent.click(screen.getByLabelText("Automatically analyze every incoming alert"));
+    await userEvent.type(screen.getByLabelText("Name"), "Claude");
+    await userEvent.type(screen.getByLabelText("Model"), "claude-opus");
+    await userEvent.type(screen.getByLabelText("API Key"), "sk-secret");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+      expect(postCall).toBeDefined();
+      const body = JSON.parse((postCall![1] as RequestInit).body as string);
+      expect(body.autoAnalyzeAllAlerts).toBe(true);
+    });
+  });
+
+  it("shows the auto-analyze badge only for a provider that opted in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse([providerFixture({ isDefault: true, autoAnalyzeAllAlerts: true })])),
+    );
+    renderPanel();
+
+    expect(await screen.findByText("OpenAI")).toBeInTheDocument();
+    expect(screen.getByText("auto-analyzes all alerts")).toBeInTheDocument();
+  });
+
   it("omits the baseUrl segment from the row subtitle when the provider has none", async () => {
     vi.stubGlobal(
       "fetch",

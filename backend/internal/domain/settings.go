@@ -58,17 +58,24 @@ type WebhookEndpoint struct {
 // APIKeySecretRef points into the secret manager; the key itself is never
 // stored in this table or returned by the API.
 type LLMProvider struct {
-	ID              uuid.UUID  `json:"id"`
-	TenantID        uuid.UUID  `json:"tenantId"`
-	Name            string     `json:"name"`
-	Kind            string     `json:"kind"`
-	BaseURL         *string    `json:"baseUrl,omitempty"`
-	Model           string     `json:"model"`
-	APIKeySecretRef string     `json:"-"`
-	IsDefault       bool       `json:"isDefault"`
-	CreatedBy       *uuid.UUID `json:"createdBy,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID              uuid.UUID `json:"id"`
+	TenantID        uuid.UUID `json:"tenantId"`
+	Name            string    `json:"name"`
+	Kind            string    `json:"kind"`
+	BaseURL         *string   `json:"baseUrl,omitempty"`
+	Model           string    `json:"model"`
+	APIKeySecretRef string    `json:"-"`
+	IsDefault       bool      `json:"isDefault"`
+	// AutoAnalyzeAllAlerts, when true and this is the tenant's default
+	// provider, makes AlertService.Ingest's auto-analysis trigger actually
+	// fire for every incoming webhook alert (see AIAnalysisService.
+	// buildClient). Default false: an analyst clicking "Analyze with AI" is
+	// always available regardless of this flag, this only controls the
+	// unattended, fires-on-every-alert path.
+	AutoAnalyzeAllAlerts bool       `json:"autoAnalyzeAllAlerts"`
+	CreatedBy            *uuid.UUID `json:"createdBy,omitempty"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }
 
 // MCPServer mirrors `mcp_servers`. AllowedTools is an explicit allow-list —

@@ -48,6 +48,10 @@ type saveLLMProviderRequest struct {
 	// APIKey is write-only: never populated on responses. Empty on update
 	// means "keep the existing key" (see LLMProviderService.Update).
 	APIKey string `json:"apiKey"`
+	// AutoAnalyzeAllAlerts -- see domain.LLMProvider's doc comment. Unlike
+	// APIKey, this fully replaces the stored value on every save (same as
+	// Name/Kind/BaseURL/Model) -- there's no "omit to keep existing" case.
+	AutoAnalyzeAllAlerts bool `json:"autoAnalyzeAllAlerts"`
 }
 
 func (h *LLMProviderHandlers) create(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +73,7 @@ func (h *LLMProviderHandlers) create(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.svc.Create(r.Context(), tenantID, userID, service.LLMProviderSaveInput{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, Model: req.Model, APIKey: req.APIKey,
+		AutoAnalyzeAllAlerts: req.AutoAnalyzeAllAlerts,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -90,6 +95,7 @@ func (h *LLMProviderHandlers) update(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.svc.Update(r.Context(), tenantID, id, service.LLMProviderSaveInput{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, Model: req.Model, APIKey: req.APIKey,
+		AutoAnalyzeAllAlerts: req.AutoAnalyzeAllAlerts,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

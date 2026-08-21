@@ -172,6 +172,75 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	})
 }
 
+// TestAIAnalysisService_AutoTriggerGating covers the AutoAnalyzeAllAlerts
+// gate in buildClient: actorID nil (the unattended ingest-time trigger, see
+// AlertService.EnableAutoAnalysis) must respect the tenant's default
+// provider's opt-in, while an explicit analyst call (actorID non-nil) must
+// never be affected by it -- "Analyze with AI" always works regardless of
+// this setting.
+func TestAIAnalysisService_AutoTriggerGating(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	store := secrets.NewEnvStore()
+
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	aiSvc, analyzed := newAIAnalysisService(pool, store)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"analyzed"}}]}`))
+	}))
+	defer srv.Close()
+
+	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+
+	t.Run("auto-trigger (actorID nil) is rejected when the default provider hasn't opted in", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		err = aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, nil, nil)
+		assert.ErrorIs(t, err, service.ErrAutoAnalysisDisabled)
+	})
+
+	t.Run("an explicit analyst call (actorID set) is unaffected by the opt-in", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, &actorID, nil))
+		waitAnalyzed(t, analyzed)
+	})
+
+	t.Run("auto-trigger proceeds once the default provider opts in", func(t *testing.T) {
+		_, err := llmSvc.Update(t.Context(), tenantID, provider.ID, service.LLMProviderSaveInput{
+			Name: provider.Name, Kind: provider.Kind, BaseURL: provider.BaseURL, Model: provider.Model,
+			AutoAnalyzeAllAlerts: true,
+		})
+		require.NoError(t, err)
+
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
+			Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		require.NoError(t, aiSvc.StartAlertAnalysis(t.Context(), tenantID, alert.ID, nil, nil))
+		waitAnalyzed(t, analyzed)
+
+		run := latestRun(t, pool, tenantID, "alert", alert.ID)
+		require.NotNil(t, run)
+		assert.Equal(t, domain.AIAnalysisRunCompleted, run.Status)
+	})
+}
+
 func TestAIAnalysisService_StartIncidentAnalysis(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

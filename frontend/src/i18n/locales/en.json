@@ -556,7 +556,9 @@
         "baseUrlPlaceholder": "https://api.yourcompany.com/v1",
         "apiKey": "API Key",
         "show": "Show",
-        "hide": "Hide"
+        "hide": "Hide",
+        "autoAnalyzeAllAlerts": "Automatically analyze every incoming alert",
+        "autoAnalyzeAllAlertsHint": "Off by default: analysis only runs when an analyst clicks \"Analyze with AI\". Turning this on runs analysis for every webhook alert the moment it arrives -- only takes effect once this provider is the default."
       },
       "kind": {
         "anthropic": "Anthropic",
@@ -566,6 +568,7 @@
       },
       "setDefault": "Set default",
       "defaultBadge": "default",
+      "autoAnalyzeBadge": "auto-analyzes all alerts",
       "removeConfirm": "Remove provider \"{{name}}\"?"
     },
     "mcp": {

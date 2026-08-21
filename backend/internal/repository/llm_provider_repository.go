@@ -18,7 +18,7 @@ func NewLLMProviderRepository() *LLMProviderRepository {
 }
 
 const llmProviderColumns = `
-	id, tenant_id, name, kind, base_url, model, api_key_secret_ref, is_default, created_by, created_at, updated_at`
+	id, tenant_id, name, kind, base_url, model, api_key_secret_ref, is_default, auto_analyze_all_alerts, created_by, created_at, updated_at`
 
 func (r *LLMProviderRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.LLMProvider, error) {
 	return queryList(ctx, tx, `select `+llmProviderColumns+` from llm_providers order by created_at asc`, scanLLMProvider)
@@ -37,10 +37,10 @@ func (r *LLMProviderRepository) GetDefault(ctx context.Context, tx pgx.Tx) (*dom
 
 func (r *LLMProviderRepository) Insert(ctx context.Context, tx pgx.Tx, p *domain.LLMProvider) error {
 	row := tx.QueryRow(ctx, `
-		insert into llm_providers (tenant_id, name, kind, base_url, model, api_key_secret_ref, is_default, created_by)
-		values ($1,$2,$3,$4,$5,$6,$7,$8)
+		insert into llm_providers (tenant_id, name, kind, base_url, model, api_key_secret_ref, is_default, auto_analyze_all_alerts, created_by)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
 		returning id, created_at, updated_at`,
-		p.TenantID, p.Name, p.Kind, p.BaseURL, p.Model, p.APIKeySecretRef, p.IsDefault, p.CreatedBy,
+		p.TenantID, p.Name, p.Kind, p.BaseURL, p.Model, p.APIKeySecretRef, p.IsDefault, p.AutoAnalyzeAllAlerts, p.CreatedBy,
 	)
 	if err := row.Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return fmt.Errorf("insert llm provider: %w", err)
@@ -51,9 +51,9 @@ func (r *LLMProviderRepository) Insert(ctx context.Context, tx pgx.Tx, p *domain
 func (r *LLMProviderRepository) Update(ctx context.Context, tx pgx.Tx, p *domain.LLMProvider) error {
 	_, err := tx.Exec(ctx, `
 		update llm_providers
-		set name = $2, kind = $3, base_url = $4, model = $5, api_key_secret_ref = $6, updated_at = now()
+		set name = $2, kind = $3, base_url = $4, model = $5, api_key_secret_ref = $6, auto_analyze_all_alerts = $7, updated_at = now()
 		where id = $1`,
-		p.ID, p.Name, p.Kind, p.BaseURL, p.Model, p.APIKeySecretRef,
+		p.ID, p.Name, p.Kind, p.BaseURL, p.Model, p.APIKeySecretRef, p.AutoAnalyzeAllAlerts,
 	)
 	if err != nil {
 		return fmt.Errorf("update llm provider: %w", err)
@@ -83,7 +83,7 @@ func (r *LLMProviderRepository) Delete(ctx context.Context, tx pgx.Tx, id uuid.U
 
 func scanLLMProvider(row pgx.Row) (*domain.LLMProvider, error) {
 	var p domain.LLMProvider
-	err := row.Scan(&p.ID, &p.TenantID, &p.Name, &p.Kind, &p.BaseURL, &p.Model, &p.APIKeySecretRef, &p.IsDefault, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.TenantID, &p.Name, &p.Kind, &p.BaseURL, &p.Model, &p.APIKeySecretRef, &p.IsDefault, &p.AutoAnalyzeAllAlerts, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
