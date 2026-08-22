@@ -50,10 +50,16 @@ cross-tenant por definição (agrupados por `tenant_id`, sem um tenant único) e
 de qualquer contexto de tenant -- então, se o dono da view for um role sem `BYPASSRLS`, a policy
 `tenant_id = current_tenant_id()` de `alerts`/`incidents` nunca casa (não há tenant setado), e o
 REFRESH "funciona" mas sempre recalcula para zero linhas, sem erro nenhum. `argusops_worker` existe
-para isso -- majoritariamente só `SELECT`, com duas exceções pontuais de `UPDATE` restritas a uma
-coluna cada (`incidents.sla_breached` e `alerts.escalated_at`, para os sweeps periódicos que também
-rodam nesse role, ver `db/init/argusops_worker_role.sql`) -- e não deve ser reusado para mais nada
-além dessas responsabilidades específicas.
+para isso -- majoritariamente só `SELECT`, com alguns grants pontuais de `UPDATE` restritos a
+colunas específicas (`incidents.sla_breached`, `alerts.escalated_at`/`sla_escalation_step`,
+`ai_analysis_runs.status`/`error`/`updated_at`) para os outros sweeps periódicos que também rodam
+nesse role. O `sweepDataRetention` (exclui permanentemente alertas/incidentes fechados assim que
+seu prazo de retenção configurado vence -- Configurações → Retenção, `tenant_retention_config`) é
+o único job que precisa de `DELETE` de verdade em vez de um `UPDATE` restrito a coluna, concedido
+em `alerts`/`incidents` e em toda tabela que elas cascateiam, além de `ai_analysis_runs`/
+`ai_tool_calls` (sem FK/cascade de volta para alerts/incidents -- o sweep exclui essas
+explicitamente; ver `db/init/argusops_worker_role.sql` para o grant completo e o motivo de cada
+tabela). Não reuse esse role para mais nada além dessas responsabilidades específicas.
 
 ## Por que RLS e não só filtro na aplicação
 

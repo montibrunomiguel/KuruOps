@@ -69,6 +69,10 @@ tags:
     description: Admin-only unacknowledged-alert escalation rules.
   - name: Settings - Audit Export
     description: Admin-only CEF/JSON audit log export.
+  - name: Settings - Retention
+    description: >
+      Admin-only data retention policy -- how long a closed alert/incident
+      stays in the tool before being permanently deleted.
   - name: Settings - Database Migration
     description: Admin-only one-time cutover to an externally hosted database.
   - name: System
@@ -3142,6 +3146,57 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
+  # ---------------------------------------------------- Settings: Retention
+  /api/v1/settings/retention:
+    get:
+      tags: [Settings - Retention]
+      summary: Get the tenant's data retention policy
+      description: >
+        Unlike most Settings GETs, this never returns null: retention is on
+        by default (18 months per resource type), so an unconfigured tenant
+        still gets real numbers back, with configured=false marking them as
+        the synthesized default rather than an explicit save.
+      responses:
+        "200":
+          description: Retention config -- always non-null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionConfig'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings - Retention]
+      summary: Set the tenant's data retention policy
+      description: >
+        Lowering either value below an existing closed alert/incident's age
+        causes it to be permanently deleted on the next hourly sweep --
+        evidence in blob storage is never touched, only the tool's own
+        record.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alertRetentionMonths: { type: integer, minimum: 0 }
+                incidentRetentionMonths: { type: integer, minimum: 0 }
+              required: [alertRetentionMonths, incidentRetentionMonths]
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
   # ----------------------------------------------------------- Settings: Slack
   /api/v1/settings/integrations/slack:
     get:
@@ -3868,6 +3923,18 @@ components:
         fromName: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+
+    RetentionConfig:
+      type: object
+      description: >
+        GET never returns null -- configured=false means these are the
+        synthesized 18-month defaults, not a value ever actually saved.
+      properties:
+        tenantId: { type: string, format: uuid }
+        alertRetentionMonths: { type: integer, minimum: 0 }
+        incidentRetentionMonths: { type: integer, minimum: 0 }
+        configured: { type: boolean }
+        updatedAt: { type: string, format: date-time, nullable: true }
 
     OnCallWorkingHoursMode:
       type: string

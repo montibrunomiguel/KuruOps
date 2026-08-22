@@ -13,6 +13,13 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Settings → Data & Audit → Retention: configurable data retention for closed alerts/incidents
+  (default 18 months, separately configurable per resource type). A closed alert/incident is
+  permanently deleted by `backend/cmd/worker`'s hourly `sweepDataRetention` job once its retention
+  period elapses since it closed — an open one is never touched, no matter its age. Evidence
+  attached to a deleted alert/incident (images in S3/GCS/Google Drive/local disk) is never
+  removed — only ArgusOps's own record of the alert/incident, since nothing in this codebase has
+  ever implemented deleting from blob storage in the first place.
 - Settings → Conectores → Slack: connect/disconnect a Slack workspace via bot-token OAuth
   (`internal/slackclient`, `SlackConfigService`). Foundation only — no message/thread/channel sync
   yet; a non-null `SlackConfigService.Get` is the gate future Slack features will check before

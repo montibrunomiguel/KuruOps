@@ -629,3 +629,239 @@ func TestSweepStaleAIRuns(t *testing.T) {
 		})
 	})
 }
+
+// insertSweepTestClosedAlert inserts a CLOSED alert (classification is
+// required by the alerts_closed_requires_classification check constraint
+// the moment status='closed') with an explicit closed_at, for
+// sweepDataRetention's eligibility tests -- insertSweepTestAlert (above)
+// has no closed_at/classification parameters since none of the other
+// sweeps care about them.
+func insertSweepTestClosedAlert(t *testing.T, pool *db.Pool, tenantID uuid.UUID, closedAt time.Time) uuid.UUID {
+	t.Helper()
+	alertID := uuid.New()
+	_, err := pool.Exec(context.Background(), `
+		insert into alerts (id, tenant_id, title, source, severity, original_severity, status, classification, tags, payload, received_at, closed_at)
+		values ($1, $2, 'sweep retention test alert', 'test', 'critical', 'critical', 'closed', 'true_positive', '{}', '{}', $3, $3)`,
+		alertID, tenantID, closedAt,
+	)
+	require.NoError(t, err)
+	return alertID
+}
+
+// insertSweepTestClosedIncident mirrors insertSweepTestClosedAlert for
+// incidents -- phase 'post_incident' plus an explicit closed_at (the two
+// only ever agree in practice via IncidentService.Close/
+// IncidentRepository.MarkClosed, but the retention sweep's own WHERE clause
+// only checks closed_at, so phase here is set purely for realism, not
+// because the sweep reads it).
+func insertSweepTestClosedIncident(t *testing.T, pool *db.Pool, tenantID uuid.UUID, closedAt time.Time) uuid.UUID {
+	t.Helper()
+	incidentID := uuid.New()
+	_, err := pool.Exec(context.Background(), `
+		insert into incidents (id, tenant_id, title, severity, priority, phase, tags, closed_at)
+		values ($1, $2, 'sweep retention test incident', 'critical', 'p1', 'post_incident', '{}', $3)`,
+		incidentID, tenantID, closedAt,
+	)
+	require.NoError(t, err)
+	return incidentID
+}
+
+func setRetentionConfig(t *testing.T, pool *db.Pool, tenantID uuid.UUID, alertMonths, incidentMonths int) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		insert into tenant_retention_config (tenant_id, alert_retention_months, incident_retention_months)
+		values ($1, $2, $3)
+		on conflict (tenant_id) do update set
+			alert_retention_months = excluded.alert_retention_months,
+			incident_retention_months = excluded.incident_retention_months`,
+		tenantID, alertMonths, incidentMonths,
+	)
+	require.NoError(t, err)
+}
+
+func alertExists(t *testing.T, pool *db.Pool, id uuid.UUID) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(), `select exists(select 1 from alerts where id = $1)`, id).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func incidentExists(t *testing.T, pool *db.Pool, id uuid.UUID) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(), `select exists(select 1 from incidents where id = $1)`, id).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func aiAnalysisRunExists(t *testing.T, pool *db.Pool, id int64) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(), `select exists(select 1 from ai_analysis_runs where id = $1)`, id).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+func aiToolCallExists(t *testing.T, pool *db.Pool, id int64) bool {
+	t.Helper()
+	var exists bool
+	err := pool.QueryRow(context.Background(), `select exists(select 1 from ai_tool_calls where id = $1)`, id).Scan(&exists)
+	require.NoError(t, err)
+	return exists
+}
+
+// insertSweepTestAnalysisRun is insertAIRunFixture's counterpart for
+// retention tests -- takes an explicit contextType/contextID (an alert or
+// incident this test is about to purge) instead of a random one, since the
+// whole point is proving the sweep finds and deletes the run belonging to
+// that exact context.
+func insertSweepTestAnalysisRun(t *testing.T, pool *db.Pool, tenantID uuid.UUID, contextType string, contextID uuid.UUID) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		insert into ai_analysis_runs (tenant_id, context_type, context_id, status)
+		values ($1, $2, $3, 'completed')
+		returning id`,
+		tenantID, contextType, contextID,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+func insertSweepTestMCPServer(t *testing.T, pool *db.Pool, tenantID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := pool.Exec(context.Background(), `
+		insert into mcp_servers (id, tenant_id, name, transport, endpoint_or_command)
+		values ($1, $2, 'sweep test server', 'http', 'http://example.invalid')`,
+		id, tenantID,
+	)
+	require.NoError(t, err)
+	return id
+}
+
+func insertSweepTestToolCall(t *testing.T, pool *db.Pool, tenantID, mcpServerID uuid.UUID, contextType string, contextID uuid.UUID) int64 {
+	t.Helper()
+	var id int64
+	err := pool.QueryRow(context.Background(), `
+		insert into ai_tool_calls (tenant_id, mcp_server_id, tool_name, context_type, context_id, status)
+		values ($1, $2, 'test_tool', $3, $4, 'executed')
+		returning id`,
+		tenantID, mcpServerID, contextType, contextID,
+	).Scan(&id)
+	require.NoError(t, err)
+	return id
+}
+
+func TestSweepDataRetention(t *testing.T) {
+	adminPool := sweepAdminPool(t)
+	workerPool := sweepWorkerPool(t)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	ctx := context.Background()
+
+	t.Run("a closed alert past the default 18-month retention is purged", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		id := insertSweepTestClosedAlert(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+		sweepDataRetention(ctx, workerPool, logger)
+		assert.False(t, alertExists(t, adminPool, id))
+	})
+
+	t.Run("a closed alert within the default retention window survives", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		id := insertSweepTestClosedAlert(t, adminPool, tenantID, time.Now().AddDate(0, -1, 0))
+		sweepDataRetention(ctx, workerPool, logger)
+		assert.True(t, alertExists(t, adminPool, id))
+	})
+
+	t.Run("an open alert of any age is never purged", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		id := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().AddDate(-5, 0, 0))
+		sweepDataRetention(ctx, workerPool, logger)
+		assert.True(t, alertExists(t, adminPool, id))
+	})
+
+	t.Run("a closed incident past the default retention is purged, cascading its children", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		authorID := testutil.NewUser(t, tenantID, "analyst", nil)
+		id := insertSweepTestClosedIncident(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+		_, err := adminPool.Exec(ctx, `insert into incident_comments (incident_id, tenant_id, author_id, author_name, body)
+			values ($1, $2, $3, 'Test', 'a comment')`, id, tenantID, authorID)
+		require.NoError(t, err)
+
+		sweepDataRetention(ctx, workerPool, logger)
+
+		assert.False(t, incidentExists(t, adminPool, id))
+		var commentCount int
+		require.NoError(t, adminPool.QueryRow(ctx, `select count(*) from incident_comments where incident_id = $1`, id).Scan(&commentCount))
+		assert.Equal(t, 0, commentCount, "cascading delete must remove the incident's comments too")
+	})
+
+	t.Run("an open incident of any age is never purged", func(t *testing.T) {
+		id := insertSweepTestIncident(t, adminPool, time.Now().Add(time.Hour), "new")
+		sweepDataRetention(ctx, workerPool, logger)
+		assert.True(t, incidentExists(t, adminPool, id))
+	})
+
+	t.Run("a still-open alert linked to a purged incident survives, unlinked", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		incidentID := insertSweepTestClosedIncident(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+		alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now())
+		_, err := adminPool.Exec(ctx, `update alerts set incident_id = $1 where id = $2`, incidentID, alertID)
+		require.NoError(t, err)
+
+		sweepDataRetention(ctx, workerPool, logger)
+
+		assert.False(t, incidentExists(t, adminPool, incidentID))
+		require.True(t, alertExists(t, adminPool, alertID))
+		var linkedIncidentID *uuid.UUID
+		require.NoError(t, adminPool.QueryRow(ctx, `select incident_id from alerts where id = $1`, alertID).Scan(&linkedIncidentID))
+		assert.Nil(t, linkedIncidentID, "purging the incident must SET NULL the still-open alert's incident_id, not touch the alert itself")
+	})
+
+	t.Run("ai_analysis_runs/ai_tool_calls for a purged context are deleted, including one with a pending_tool_call_id in the same context", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		alertID := insertSweepTestClosedAlert(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+		mcpServerID := insertSweepTestMCPServer(t, adminPool, tenantID)
+
+		toolCallID := insertSweepTestToolCall(t, adminPool, tenantID, mcpServerID, "alert", alertID)
+		runID := insertSweepTestAnalysisRun(t, adminPool, tenantID, "alert", alertID)
+		_, err := adminPool.Exec(ctx, `update ai_analysis_runs set pending_tool_call_id = $1 where id = $2`, toolCallID, runID)
+		require.NoError(t, err)
+
+		sweepDataRetention(ctx, workerPool, logger)
+
+		assert.False(t, alertExists(t, adminPool, alertID))
+		assert.False(t, aiAnalysisRunExists(t, adminPool, runID), "the run must be deleted before the tool call, clearing pending_tool_call_id's FK reference")
+		assert.False(t, aiToolCallExists(t, adminPool, toolCallID))
+	})
+
+	t.Run("a per-tenant override takes effect immediately, independent of the default for the other resource type", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		setRetentionConfig(t, adminPool, tenantID, 0, 100)
+
+		alertID := insertSweepTestClosedAlert(t, adminPool, tenantID, time.Now().Add(-time.Minute))
+		incidentID := insertSweepTestClosedIncident(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+
+		sweepDataRetention(ctx, workerPool, logger)
+
+		assert.False(t, alertExists(t, adminPool, alertID), "alert_retention_months=0 must purge a just-closed alert immediately")
+		assert.True(t, incidentExists(t, adminPool, incidentID), "incident_retention_months=100 must keep a 19-month-old incident well within its window")
+	})
+
+	// Same "log and return, never panic" DB-error coverage as the other
+	// sweeps' own equivalent case -- see sweepStaleAIRuns's test above.
+	t.Run("a database error is logged, not panicked on", func(t *testing.T) {
+		url := os.Getenv("TEST_DATABASE_WORKER_URL")
+		if url == "" {
+			t.Skip("TEST_DATABASE_WORKER_URL not set -- run via `task backend:test:integration`")
+		}
+		brokenPool, err := db.NewPool(context.Background(), url, db.PoolConfig{})
+		require.NoError(t, err)
+		brokenPool.Close()
+
+		assert.NotPanics(t, func() {
+			sweepDataRetention(context.Background(), brokenPool, logger)
+		})
+	})
+}

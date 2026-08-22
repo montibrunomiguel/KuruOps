@@ -221,6 +221,9 @@ func main() {
 		oauthStateService, cfg.SlackClientID, cfg.SlackClientSecret, cfg.AppBaseURL+"/auth/oauth/slack/callback")
 	slackConfigHandlers := handlers.NewSlackConfigHandlers(slackConfigService)
 
+	retentionConfigService := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository())
+	retentionConfigHandlers := handlers.NewRetentionConfigHandlers(retentionConfigService)
+
 	tenantRepo := repository.NewTenantRepository()
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallShiftService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, tenantRepo)
@@ -297,6 +300,7 @@ func main() {
 		IncidentSLAHandlers:          incidentSLAHandlers,
 		EscalationPolicyHandlers:     escalationPolicyHandlers,
 		AuditExportHandlers:          auditExportHandlers,
+		RetentionConfigHandlers:      retentionConfigHandlers,
 		DatabaseMigrationHandlers:    dbMigrationHandlers,
 		EventsHandlers:               eventsHandlers,
 		OAuthCallbackHandlers:        oauthCallbackHandlers,

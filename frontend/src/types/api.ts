@@ -322,6 +322,19 @@ export interface SlackConfig {
   updatedAt: string;
 }
 
+// RetentionConfig mirrors backend/internal/domain.RetentionConfig -- unlike
+// StorageConfig/SMTPConfig/SlackConfig, GET never returns null: retention
+// is on by default (18 months for each resource type), so `configured`
+// distinguishes an admin's actual saved value from the synthesized
+// default.
+export interface RetentionConfig {
+  tenantId: string;
+  alertRetentionMonths: number;
+  incidentRetentionMonths: number;
+  configured: boolean;
+  updatedAt?: string;
+}
+
 // SMTPConfig mirrors backend/internal/domain.SMTPConfig -- the password is
 // never sent back, same reasoning as StorageConfig above.
 export interface SMTPConfig {

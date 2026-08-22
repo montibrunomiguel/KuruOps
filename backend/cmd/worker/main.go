@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/argusops/argusops/internal/config"
 	"github.com/argusops/argusops/internal/db"
@@ -125,6 +126,13 @@ func main() {
 	staleAIRunTicker := time.NewTicker(1 * time.Minute)
 	defer staleAIRunTicker.Stop()
 
+	// Coarser than the other sweeps on purpose -- deleting data has no
+	// timeliness requirement the way an SLA breach or an escalation firing
+	// does, so ticking every minute would just be wasted table scans. See
+	// sweepDataRetention's own doc comment.
+	retentionTicker := time.NewTicker(1 * time.Hour)
+	defer retentionTicker.Stop()
+
 	// AI analysis on ingest does NOT go through this worker -- it ended up
 	// solved a simpler way than the `ai_analysis_jobs` queue this comment
 	// originally considered: AlertService.Ingest (cmd/ingest) fires
@@ -171,6 +179,10 @@ func main() {
 			runLocked(ctx, pool, lockKeySweepStaleAIRuns, "sweep_stale_ai_runs", logger, func() {
 				sweepStaleAIRuns(ctx, pool, logger)
 			})
+		case <-retentionTicker.C:
+			runLocked(ctx, pool, lockKeySweepDataRetention, "sweep_data_retention", logger, func() {
+				sweepDataRetention(ctx, pool, logger)
+			})
 		}
 	}
 }
@@ -185,6 +197,7 @@ const (
 	lockKeySweepSLABreaches         int64 = 821002
 	lockKeySweepEscalations         int64 = 821003
 	lockKeySweepStaleAIRuns         int64 = 821004
+	lockKeySweepDataRetention       int64 = 821005
 )
 
 // runLocked runs fn only if this process wins the Postgres advisory lock
@@ -507,4 +520,151 @@ func emailOnCallAnalyst(ctx context.Context, smtp *service.SMTPConfigService, te
 		return fmt.Errorf("send on-call email: %w", err)
 	}
 	return nil
+}
+
+// sweepDataRetention permanently deletes closed alerts/incidents once their
+// tenant's configured retention period (Settings -> Retention,
+// tenant_retention_config; domain.DefaultRetentionMonths if unconfigured)
+// has elapsed since they closed. Only ever considers CLOSED
+// alerts/incidents -- an open one is never touched no matter how old, since
+// eligibility is anchored on closed_at IS NOT NULL, not received_at/
+// opened_at.
+//
+// Deliberately never touches blobstore -- evidence attachments (alert/
+// incident comment images) are referenced by URL/key from columns like
+// alert_comments.attachment_url, but internal/blobstore.Store has no
+// Delete method anywhere in this codebase, so there is nothing to call even
+// if this wanted to; a purge here can only ever remove the DB's own record
+// of an alert/incident, never anything in whichever storage backend the
+// tenant has configured.
+//
+// Runs cross-tenant (BYPASSRLS argusops_worker, no Pool.WithTenant, same
+// reasoning as the other sweeps -- see db/init/argusops_worker_role.sql),
+// but unlike them, wrapped in its own explicit transaction: this sweep is
+// multi-statement and order-dependent (see below), so atomicity actually
+// matters here in a way it doesn't for the other sweeps' single UPDATE
+// statements.
+//
+// Delete order matters: ai_analysis_runs and ai_tool_calls reference their
+// alert/incident via a polymorphic context_type/context_id pair with NO
+// foreign key back to alerts/incidents at all (see
+// db/migrations/0001_initial_schema.up.sql) -- a plain DELETE FROM
+// alerts/incidents would silently leave these permanently orphaned, so they
+// must be cleared explicitly first. ai_analysis_runs before ai_tool_calls
+// specifically: ai_analysis_runs.pending_tool_call_id has a real FK to
+// ai_tool_calls(id) with no ON DELETE clause (default RESTRICT), so
+// deleting ai_tool_calls first would fail with a foreign-key violation on
+// any run still pointing at one. Every other child table (alert_comments,
+// alert_events, incident_comments, incident_events, ...) already has real
+// ON DELETE CASCADE and needs no explicit statement here; alerts.incident_id
+// is ON DELETE SET NULL, so purging an incident correctly just unlinks any
+// still-open alert instead of touching it.
+func sweepDataRetention(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		logger.Error("sweep data retention: begin tx failed", "error", err)
+		return
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	alertIDs, err := collectDoomedAlertIDs(ctx, tx)
+	if err != nil {
+		logger.Error("sweep data retention: collect alerts failed", "error", err)
+		return
+	}
+	incidentIDs, err := collectDoomedIncidentIDs(ctx, tx)
+	if err != nil {
+		logger.Error("sweep data retention: collect incidents failed", "error", err)
+		return
+	}
+	if len(alertIDs) == 0 && len(incidentIDs) == 0 {
+		return
+	}
+
+	if _, err := tx.Exec(ctx, `
+		delete from ai_analysis_runs
+		where (context_type = 'alert' and context_id = any($1))
+		   or (context_type = 'incident' and context_id = any($2))`,
+		alertIDs, incidentIDs,
+	); err != nil {
+		logger.Error("sweep data retention: delete ai_analysis_runs failed", "error", err)
+		return
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from ai_tool_calls
+		where (context_type = 'alert' and context_id = any($1))
+		   or (context_type = 'incident' and context_id = any($2))`,
+		alertIDs, incidentIDs,
+	); err != nil {
+		logger.Error("sweep data retention: delete ai_tool_calls failed", "error", err)
+		return
+	}
+
+	alertTag, err := tx.Exec(ctx, `delete from alerts where id = any($1)`, alertIDs)
+	if err != nil {
+		logger.Error("sweep data retention: delete alerts failed", "error", err)
+		return
+	}
+	incidentTag, err := tx.Exec(ctx, `delete from incidents where id = any($1)`, incidentIDs)
+	if err != nil {
+		logger.Error("sweep data retention: delete incidents failed", "error", err)
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		logger.Error("sweep data retention: commit failed", "error", err)
+		return
+	}
+	logger.Info("data retention sweep purged records",
+		"alerts_deleted", alertTag.RowsAffected(), "incidents_deleted", incidentTag.RowsAffected())
+}
+
+func collectDoomedAlertIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		select a.id
+		from alerts a
+		left join tenant_retention_config trc on trc.tenant_id = a.tenant_id
+		where a.status = 'closed' and a.closed_at is not null
+		  and a.closed_at < now() - (coalesce(trc.alert_retention_months, $1) || ' months')::interval`,
+		domain.DefaultRetentionMonths,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query doomed alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan doomed alert id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func collectDoomedIncidentIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `
+		select i.id
+		from incidents i
+		left join tenant_retention_config trc on trc.tenant_id = i.tenant_id
+		where i.closed_at is not null
+		  and i.closed_at < now() - (coalesce(trc.incident_retention_months, $1) || ' months')::interval`,
+		domain.DefaultRetentionMonths,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query doomed incidents: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan doomed incident id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
