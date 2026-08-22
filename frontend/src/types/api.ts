@@ -305,6 +305,23 @@ export interface StorageConfig {
   updatedAt: string;
 }
 
+// SlackConfig mirrors backend/internal/domain.SlackConfig -- the bot token
+// is never sent back, same reasoning as StorageConfig above. A non-null
+// SlackConfig is the "is Slack configured" gate future Slack-dependent
+// features (thread sync, incident channel linking, ...) will check before
+// offering their UI -- see the Slack integration foundation plan.
+export interface SlackConfig {
+  tenantId: string;
+  teamId: string;
+  teamName: string;
+  botUserId: string;
+  installedByUserId: string;
+  installedByUserName: string;
+  grantedScopes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // SMTPConfig mirrors backend/internal/domain.SMTPConfig -- the password is
 // never sent back, same reasoning as StorageConfig above.
 export interface SMTPConfig {

@@ -212,9 +212,11 @@ RLS + JWT + HTTP) — é o teste que prova que a cadeia inteira funciona, não s
 
 Documentação: [CHANGELOG.pt-BR.md](CHANGELOG.pt-BR.md) (o que mudou e quando),
 [docs/API_INTEGRATION.pt-BR.md](docs/API_INTEGRATION.pt-BR.md) (como um SIEM/XDR externo envia
-alertas por webhook), [docs/TROUBLESHOOTING.pt-BR.md](docs/TROUBLESHOOTING.pt-BR.md) (pegadinhas
-conhecidas do deploy/testes), [docs/openapi.yaml](docs/openapi.yaml) (contrato da API `/api/v1/**`,
-em inglês — é uma especificação técnica consumida por ferramentas, não traduzida de propósito).
+alertas por webhook), [docs/SLACK_APP_SETUP.pt-BR.md](docs/SLACK_APP_SETUP.pt-BR.md) (como criar o
+Slack App ao qual a integração Configurações → Conectores → Slack se conecta),
+[docs/TROUBLESHOOTING.pt-BR.md](docs/TROUBLESHOOTING.pt-BR.md) (pegadinhas conhecidas do
+deploy/testes), [docs/openapi.yaml](docs/openapi.yaml) (contrato da API `/api/v1/**`, em inglês — é
+uma especificação técnica consumida por ferramentas, não traduzida de propósito).
 
 Consulte os arquivos de governança open-source:
 - [LICENSE](LICENSE) (Apache 2.0)

@@ -33,6 +33,7 @@ type Options struct {
 	UploadHandlers               *handlers.UploadHandlers
 	StorageConfigHandlers        *handlers.StorageConfigHandlers
 	SMTPConfigHandlers           *handlers.SMTPConfigHandlers
+	SlackConfigHandlers          *handlers.SlackConfigHandlers
 	OnCallScheduleHandlers       *handlers.OnCallScheduleHandlers
 	IncidentSLAHandlers          *handlers.IncidentSLAHandlers
 	EscalationPolicyHandlers     *handlers.EscalationPolicyHandlers
@@ -40,7 +41,7 @@ type Options struct {
 	DatabaseMigrationHandlers    *handlers.DatabaseMigrationHandlers
 	EventsHandlers               *handlers.EventsHandlers
 	// OAuthCallbackHandlers serves every 3rd-party OAuth provider's
-	// callback (Google Drive today) -- mounted unauthenticated at
+	// callback (Google Drive, Slack) -- mounted unauthenticated at
 	// /auth/oauth, not under /api/v1 -- see that handler's doc comment.
 	OAuthCallbackHandlers *handlers.OAuthCallbackHandlers
 	// LoginRateLimiter is built by cmd/api (needs a *pgxpool.Pool, which
@@ -234,6 +235,13 @@ func NewRouter(opts Options) http.Handler {
 				admin.Route("/settings/tags", opts.TagHandlers.SettingsRoutes)
 				admin.Route("/settings/storage", opts.StorageConfigHandlers.Routes)
 				admin.Route("/settings/smtp", opts.SMTPConfigHandlers.Routes)
+				// Settings -> Conectores -> Slack: connect/disconnect only
+				// (this foundation phase). Nested under /settings/integrations
+				// rather than alongside the other /settings/* routes above so
+				// future connectors (beyond Slack) share one URL prefix,
+				// matching the frontend's separate "Conectores" nav section
+				// (kept apart from the existing "Integrações" group).
+				admin.Route("/settings/integrations/slack", opts.SlackConfigHandlers.Routes)
 				admin.Route("/settings/on-call-schedules", opts.OnCallScheduleHandlers.Routes)
 				admin.Route("/settings/incident-sla", opts.IncidentSLAHandlers.Routes)
 				admin.Route("/settings/escalation-policies", opts.EscalationPolicyHandlers.Routes)
