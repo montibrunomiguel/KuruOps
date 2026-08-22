@@ -217,6 +217,10 @@ func main() {
 	smtpConfigService := service.NewSMTPConfigService(pool, smtpConfigRepo, secretStore, mailer.SMTPSender{})
 	smtpConfigHandlers := handlers.NewSMTPConfigHandlers(smtpConfigService)
 
+	slackConfigService := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secretStore,
+		oauthStateService, cfg.SlackClientID, cfg.SlackClientSecret, cfg.AppBaseURL+"/auth/oauth/slack/callback")
+	slackConfigHandlers := handlers.NewSlackConfigHandlers(slackConfigService)
+
 	tenantRepo := repository.NewTenantRepository()
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallShiftService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, tenantRepo)
@@ -251,12 +255,13 @@ func main() {
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 
-	// Every 3rd-party OAuth provider's callback (Google Drive today) --
+	// Every 3rd-party OAuth provider's callback (Google Drive, Slack) --
 	// needs authService to resolve the tenant the same way AuthHandlers'
 	// SAML ACS endpoint does, so this is wired here, after authService
-	// exists, even though storageConfigService (constructed earlier) is
-	// its other dependency -- see OAuthCallbackHandlers' doc comment.
-	oauthCallbackHandlers := handlers.NewOAuthCallbackHandlers(authService, storageConfigService, cfg.AppBaseURL)
+	// exists, even though storageConfigService/slackConfigService
+	// (constructed earlier) are its other dependencies -- see
+	// OAuthCallbackHandlers' doc comment.
+	oauthCallbackHandlers := handlers.NewOAuthCallbackHandlers(authService, storageConfigService, slackConfigService, cfg.AppBaseURL)
 
 	authMiddleware := middleware.JWTAuth(verifier, apiTokenService)
 	if useDevHeaderAuth {
@@ -287,6 +292,7 @@ func main() {
 		UploadHandlers:               uploadHandlers,
 		StorageConfigHandlers:        storageConfigHandlers,
 		SMTPConfigHandlers:           smtpConfigHandlers,
+		SlackConfigHandlers:          slackConfigHandlers,
 		OnCallScheduleHandlers:       onCallShiftHandlers,
 		IncidentSLAHandlers:          incidentSLAHandlers,
 		EscalationPolicyHandlers:     escalationPolicyHandlers,

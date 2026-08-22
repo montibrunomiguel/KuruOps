@@ -452,6 +452,7 @@
     "subtitle": "Integrações, identidade, operação e auditoria do ArgusOps.",
     "navGroups": {
       "integrations": "Integrações",
+      "connectors": "Conectores",
       "identityAccess": "Identidade & Acesso",
       "operations": "Operação",
       "dataAudit": "Dados & Auditoria"
@@ -467,6 +468,7 @@
       "identityProviders": "Provedores de Identidade",
       "storage": "Integração de Armazenamento",
       "smtp": "SMTP",
+      "slack": "Slack",
       "onCallSchedule": "Escala de Atendimento",
       "incidentSla": "SLAs de Incidentes",
       "escalationPolicies": "Escala de Acionamento",
@@ -813,6 +815,17 @@
       "testEmailTo": "Enviar para",
       "testSent": "E-mail de teste enviado para {{to}}.",
       "testFailed": "Falha no e-mail de teste: {{error}}"
+    },
+    "slack": {
+      "title": "Slack",
+      "helper": "Conecte um workspace do Slack para que o ArgusOps possa abrir incidentes pelo Slack e sincronizar mensagens e arquivos de canais/threads. Esta é apenas a fundação -- por enquanto só conectar/desconectar, com a integração completa de mensagens chegando em uma atualização futura.",
+      "connectedBadge": "Conectado a {{team}}",
+      "connectedMessage": "Workspace conectado.",
+      "workspace": "Workspace",
+      "installedBy": "Conectado por",
+      "connectButton": "Conectar ao Slack",
+      "disconnect": "Desconectar",
+      "disconnectConfirm": "Desconectar este workspace do Slack? Todo recurso que depende do Slack para de funcionar até que seja reconectado."
     },
     "onCallSchedule": {
       "title": "Escalas de Atendimento",

@@ -20,7 +20,7 @@ import (
 // seeded default tenant, same reasoning newAuthHandlers documents --
 // resolveTenant-style callback handlers always resolve that one tenant,
 // so there's no other way to reach a non-error path in a test.
-func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *service.StorageConfigService) {
+func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *service.StorageConfigService, *service.SlackConfigService) {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 
@@ -32,12 +32,14 @@ func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *s
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
 		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback")
+	slackSvc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
+		oauthStates, "test-slack-client-id", "test-slack-client-secret", "https://argusops.example/auth/oauth/slack/callback")
 
-	return handlers.NewOAuthCallbackHandlers(authSvc, storageSvc, "https://argusops.example"), storageSvc
+	return handlers.NewOAuthCallbackHandlers(authSvc, storageSvc, slackSvc, "https://argusops.example"), storageSvc, slackSvc
 }
 
 func TestOAuthCallbackHandlers_GDrive(t *testing.T) {
-	h, _ := newOAuthCallbackHandlers(t)
+	h, _, _ := newOAuthCallbackHandlers(t)
 	r := newRouter(h.Routes)
 
 	t.Run("admin declined consent -- redirects back with the provider's error, never 500s", func(t *testing.T) {
@@ -56,5 +58,28 @@ func TestOAuthCallbackHandlers_GDrive(t *testing.T) {
 		loc := rec.Header().Get("Location")
 		assert.Contains(t, loc, "/settings/storage")
 		assert.Contains(t, loc, "gdrive_error=")
+	})
+}
+
+func TestOAuthCallbackHandlers_Slack(t *testing.T) {
+	h, _, _ := newOAuthCallbackHandlers(t)
+	r := newRouter(h.Routes)
+
+	t.Run("admin declined consent -- redirects back with the provider's error, never 500s", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/slack/callback?error=access_denied", nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusFound, rec.Code)
+		loc := rec.Header().Get("Location")
+		assert.Contains(t, loc, "/settings/integrations/slack")
+		assert.Contains(t, loc, "slack_error=access_denied")
+	})
+
+	t.Run("invalid state -- redirects back with an error, not a bare HTTP error page", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/slack/callback?code=some-code&state=not-a-real-state", nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusFound, rec.Code)
+		loc := rec.Header().Get("Location")
+		assert.Contains(t, loc, "/settings/integrations/slack")
+		assert.Contains(t, loc, "slack_error=")
 	})
 }

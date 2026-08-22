@@ -452,6 +452,7 @@
     "subtitle": "Integrations, identity, operations, and audit for ArgusOps.",
     "navGroups": {
       "integrations": "Integrations",
+      "connectors": "Connectors",
       "identityAccess": "Identity & Access",
       "operations": "Operations",
       "dataAudit": "Data & Audit"
@@ -467,6 +468,7 @@
       "identityProviders": "Identity Providers",
       "storage": "Storage Integration",
       "smtp": "SMTP",
+      "slack": "Slack",
       "onCallSchedule": "On-Call Schedule",
       "incidentSla": "Incident SLAs",
       "escalationPolicies": "Escalation Chain",
@@ -813,6 +815,17 @@
       "testEmailTo": "Send to",
       "testSent": "Test email sent to {{to}}.",
       "testFailed": "Test email failed: {{error}}"
+    },
+    "slack": {
+      "title": "Slack",
+      "helper": "Connect a Slack workspace so ArgusOps can open incidents from Slack and sync channel/thread messages and files. This is the foundation only -- connect/disconnect for now, with the full messaging integration arriving in a later update.",
+      "connectedBadge": "Connected to {{team}}",
+      "connectedMessage": "Workspace connected.",
+      "workspace": "Workspace",
+      "installedBy": "Connected by",
+      "connectButton": "Connect to Slack",
+      "disconnect": "Disconnect",
+      "disconnectConfirm": "Disconnect this Slack workspace? Every Slack-dependent feature stops working until reconnected."
     },
     "onCallSchedule": {
       "title": "On-Call Schedules",

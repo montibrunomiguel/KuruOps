@@ -141,6 +141,19 @@ type Config struct {
 	// separate env var (it must always match AppBaseURL's origin anyway).
 	GoogleOAuthClientID     string
 	GoogleOAuthClientSecret string
+
+	// SlackClientID/Secret are the Slack App's OAuth credentials every
+	// tenant's Settings -> Conectores -> Slack "Conectar ao Slack" flow
+	// authenticates through (see SlackConfigService.GetAuthorizeURL).
+	// Optional -- empty disables that path entirely, same convention as
+	// GoogleOAuthClientID/Secret. SlackSigningSecret verifies inbound
+	// requests from Slack (Events API, slash commands) -- unused by this
+	// foundation phase (no inbound receiver yet) but the Slack App fixes
+	// this value at creation time regardless, so it's read now to avoid
+	// asking the admin to re-paste it into a later PR.
+	SlackClientID      string
+	SlackClientSecret  string
+	SlackSigningSecret string
 }
 
 func Load(logger *slog.Logger) (Config, error) {
@@ -180,6 +193,10 @@ func Load(logger *slog.Logger) (Config, error) {
 
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+
+		SlackClientID:      os.Getenv("SLACK_CLIENT_ID"),
+		SlackClientSecret:  os.Getenv("SLACK_CLIENT_SECRET"),
+		SlackSigningSecret: os.Getenv("SLACK_SIGNING_SECRET"),
 	}
 
 	if cfg.DatabaseURL == "" {
