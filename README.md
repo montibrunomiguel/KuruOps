@@ -98,8 +98,10 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   see [docs/SLACK_APP_SETUP.md](docs/SLACK_APP_SETUP.md)), Users & Roles, Identity Providers (LDAP/SAML
   — configure, update, and remove), Tags (also auto-created from webhook-ingested alerts), On-Call
   Schedules, Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Export (CEF or
-  JSON), and External Database (assisted migration from the bundled Postgres to a customer-managed
-  Postgres).
+  JSON), Retention (configurable how long closed alerts/incidents stay in the tool — 18 months by
+  default, separately per resource type — before being permanently deleted; never touches evidence
+  in blob storage), and External Database (assisted migration from the bundled Postgres to a
+  customer-managed Postgres).
 
 ## Tests
 

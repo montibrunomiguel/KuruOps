@@ -69,6 +69,31 @@ grant update (escalated_at, sla_escalation_step) on alerts to argusops_worker;
 -- same column-scoped-UPDATE reasoning as the grants above.
 grant update (status, error, updated_at) on ai_analysis_runs to argusops_worker;
 
+-- cmd/worker's fifth job, sweepDataRetention, permanently deletes closed
+-- alerts/incidents once their tenant's configured retention period
+-- (Settings -> Retention, tenant_retention_config; 18 months if
+-- unconfigured) has elapsed since they closed. Unlike the column-scoped
+-- UPDATE grants above, this needs real DELETE -- the first job that
+-- actually removes rows rather than just flipping a column. Granted on
+-- alerts/incidents themselves, on ai_analysis_runs/ai_tool_calls (no FK/
+-- cascade back to alerts/incidents -- context_type/context_id is a
+-- polymorphic reference with no foreign key, see
+-- db/migrations/0001_initial_schema.up.sql, so the sweep deletes these
+-- explicitly rather than relying on a cascade), and on every child table
+-- alerts/incidents cascade into -- Postgres still checks DELETE privilege
+-- on the table a cascade actually removes rows from, not just the table
+-- named in the original DELETE statement.
+grant delete on alerts, incidents, ai_analysis_runs, ai_tool_calls,
+  alert_comments, alert_events, alert_links,
+  incident_alert_links, incident_assignees, incident_comments,
+  incident_events, incident_role_assignments, incident_status_history
+  to argusops_worker;
+-- Deleting an incident SETs NULL any still-open alert's incident_id
+-- (alerts_incident_id_fkey ON DELETE SET NULL) -- implemented as a real
+-- UPDATE against alerts, checked the same as any other UPDATE, so this
+-- needs its own grant just like sla_escalation_step/escalated_at above.
+grant update (incident_id) on alerts to argusops_worker;
+
 alter materialized view mv_alert_daily_stats owner to argusops_worker;
 alter materialized view mv_incident_kpis owner to argusops_worker;
 alter materialized view mv_incident_daily_stats owner to argusops_worker;

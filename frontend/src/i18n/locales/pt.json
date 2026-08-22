@@ -473,6 +473,7 @@
       "incidentSla": "SLAs de Incidentes",
       "escalationPolicies": "Escala de Acionamento",
       "auditExport": "Exportação de Auditoria",
+      "retention": "Retenção",
       "databaseMigration": "Banco de Dados Externo"
     },
     "webhooks": {
@@ -951,6 +952,15 @@
       "export": "Exportar como CEF",
       "exportJson": "Exportar como JSON",
       "exporting": "Exportando..."
+    },
+    "retention": {
+      "title": "Retenção",
+      "helper": "Por quanto tempo um alerta ou incidente fechado fica no ArgusOps depois de fechado, antes de ser excluído permanentemente. Um alerta/incidente aberto nunca é excluído, não importa a idade. Quer guardar uma cópia do que vai ser excluído? Exporte antes com a Exportação de Auditoria, acima.",
+      "warning": "Reduzir qualquer um dos valores abaixo da idade de um registro fechado já existente faz com que ele seja excluído permanentemente na próxima varredura -- isso não pode ser desfeito. As evidências anexadas a um alerta/incidente excluído não são removidas de onde estão armazenadas (S3, GCS, Google Drive ou disco local) -- só o registro do ArgusOps é removido.",
+      "usingDefault": "Usando o padrão (18 meses)",
+      "alertRetentionMonths": "Retenção de alertas (meses)",
+      "incidentRetentionMonths": "Retenção de incidentes (meses)",
+      "saved": "Configurações de retenção salvas."
     },
     "databaseMigration": {
       "title": "Banco de Dados Externo",

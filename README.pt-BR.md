@@ -100,8 +100,11 @@ mesmo tempo.
   [docs/SLACK_APP_SETUP.pt-BR.md](docs/SLACK_APP_SETUP.pt-BR.md)), Users & Roles, Identity Providers
   (LDAP/SAML — configurar, atualizar e remover), Tags (também auto-criadas a partir de alertas
   vindos de webhook), Escala de Atendimento, SLAs de Incidentes, Escalonamento de Plantão
-  (PagerDuty/Slack/webhook genérico), Exportação de Auditoria (CEF ou JSON) e Banco de Dados Externo
-  (migração assistida do Postgres embutido para um Postgres gerenciado pelo cliente).
+  (PagerDuty/Slack/webhook genérico), Exportação de Auditoria (CEF ou JSON), Retenção (por quanto
+  tempo alertas/incidentes fechados ficam na ferramenta -- 18 meses por padrão, configurável
+  separadamente por tipo de recurso -- antes de serem excluídos permanentemente; nunca toca em
+  evidências no armazenamento de blobs) e Banco de Dados Externo (migração assistida do Postgres
+  embutido para um Postgres gerenciado pelo cliente).
 
 ## Testes
 

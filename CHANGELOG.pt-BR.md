@@ -14,6 +14,14 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Configurações → Dados & Auditoria → Retenção: retenção de dados configurável para alertas/
+  incidentes fechados (padrão de 18 meses, configurável separadamente por tipo de recurso). Um
+  alerta/incidente fechado é excluído permanentemente pelo job `sweepDataRetention` (roda a cada
+  hora em `backend/cmd/worker`) assim que seu prazo de retenção vence a partir do fechamento — um
+  aberto nunca é tocado, não importa a idade. Evidências anexadas a um alerta/incidente excluído
+  (imagens em S3/GCS/Google Drive/disco local) nunca são removidas -- só o registro do ArgusOps
+  sobre o alerta/incidente, já que nada neste código jamais implementou exclusão do armazenamento
+  de blobs.
 - Configurações → Conectores → Slack: conectar/desconectar um workspace do Slack via OAuth de bot
   token (`internal/slackclient`, `SlackConfigService`). Apenas a fundação -- ainda sem sincronia de
   mensagens/threads/canais; um `SlackConfigService.Get` não-nulo é o gate que futuros recursos do

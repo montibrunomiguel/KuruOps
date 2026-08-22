@@ -53,10 +53,16 @@ definition (grouped by `tenant_id`, with no single tenant), and the refresh runs
 tenant context — so if the view's owner is a role without `BYPASSRLS`, the `alerts`/`incidents`
 policy `tenant_id = current_tenant_id()` never matches (no tenant is set), and the REFRESH
 "succeeds" but always recomputes to zero rows, with no error at all. `argusops_worker` exists for
-this — mostly just `SELECT`, with two narrow `UPDATE` exceptions restricted to one column each
-(`incidents.sla_breached` and `alerts.escalated_at`, for the periodic sweeps that also run under
-this role, see `db/init/argusops_worker_role.sql`) — and shouldn't be reused for anything beyond
-these specific responsibilities.
+this — mostly just `SELECT`, plus a handful of narrow, column-scoped `UPDATE` grants
+(`incidents.sla_breached`, `alerts.escalated_at`/`sla_escalation_step`,
+`ai_analysis_runs.status`/`error`/`updated_at`) for the other periodic sweeps that also run under
+this role. `sweepDataRetention` (permanently deletes closed alerts/incidents once their configured
+retention period elapses — Settings → Retention, `tenant_retention_config`) is the one job that
+needs real `DELETE` rather than a column-scoped `UPDATE`, granted on `alerts`/`incidents` and
+every table they cascade into, plus `ai_analysis_runs`/`ai_tool_calls` (no FK/cascade back to
+alerts/incidents — the sweep deletes these explicitly; see `db/init/argusops_worker_role.sql` for
+the full grant and why each table needs it). Don't reuse this role for anything beyond these
+specific responsibilities.
 
 ## Why RLS and not just application-level filtering
 

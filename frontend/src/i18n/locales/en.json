@@ -473,6 +473,7 @@
       "incidentSla": "Incident SLAs",
       "escalationPolicies": "Escalation Chain",
       "auditExport": "Audit Export",
+      "retention": "Retention",
       "databaseMigration": "External Database"
     },
     "webhooks": {
@@ -951,6 +952,15 @@
       "export": "Export as CEF",
       "exportJson": "Export as JSON",
       "exporting": "Exporting..."
+    },
+    "retention": {
+      "title": "Retention",
+      "helper": "How long a closed alert or incident stays in ArgusOps after it closes, before it's permanently deleted. An open alert/incident is never deleted, no matter its age. Want to keep a copy of what gets purged? Export it first with Audit Export, above.",
+      "warning": "Lowering either value below an existing closed record's age causes it to be permanently deleted on the next sweep -- this cannot be undone. Evidence attached to a deleted alert/incident is not removed from wherever it's stored (S3, GCS, Google Drive, or local disk) -- only ArgusOps's own record of it.",
+      "usingDefault": "Using default (18 months)",
+      "alertRetentionMonths": "Alert retention (months)",
+      "incidentRetentionMonths": "Incident retention (months)",
+      "saved": "Retention settings saved."
     },
     "databaseMigration": {
       "title": "External Database",
