@@ -11,14 +11,14 @@ import { mutationErrorMessage } from "../../api/hooks";
 export function AuditExportPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [exporting, setExporting] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<"cef" | "json" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function exportCEF() {
-    setExporting(true);
+  async function exportFormat(format: "cef" | "json") {
+    setExportingFormat(format);
     setError(null);
     try {
-      const { blob, filename } = await api.downloadFile("/api/v1/settings/audit-export/cef", token);
+      const { blob, filename } = await api.downloadFile(`/api/v1/settings/audit-export/${format}`, token);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -30,7 +30,7 @@ export function AuditExportPanel() {
     } catch (err) {
       setError(mutationErrorMessage(err));
     } finally {
-      setExporting(false);
+      setExportingFormat(null);
     }
   }
 
@@ -45,9 +45,14 @@ export function AuditExportPanel() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <button className="btn btn-primary" onClick={exportCEF} disabled={exporting}>
-        {exporting ? t("settings.auditExport.exporting") : t("settings.auditExport.export")}
-      </button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn btn-primary" onClick={() => exportFormat("cef")} disabled={exportingFormat !== null}>
+          {exportingFormat === "cef" ? t("settings.auditExport.exporting") : t("settings.auditExport.export")}
+        </button>
+        <button className="btn btn-secondary" onClick={() => exportFormat("json")} disabled={exportingFormat !== null}>
+          {exportingFormat === "json" ? t("settings.auditExport.exporting") : t("settings.auditExport.exportJson")}
+        </button>
+      </div>
     </div>
   );
 }

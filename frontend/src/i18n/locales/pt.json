@@ -923,6 +923,7 @@
       "title": "Exportação de Auditoria",
       "helper": "Baixe o histórico completo de alertas/incidentes do tenant (mudanças de status, comentários, transições de fase...) como um log CEF para importar em um SIEM (Splunk, ArcSight, QRadar...).",
       "export": "Exportar como CEF",
+      "exportJson": "Exportar como JSON",
       "exporting": "Exportando..."
     },
     "databaseMigration": {

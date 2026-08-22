@@ -923,6 +923,7 @@
       "title": "Audit Export",
       "helper": "Download the tenant's full alert/incident history (status changes, comments, phase transitions...) as a CEF log for import into a SIEM (Splunk, ArcSight, QRadar...).",
       "export": "Export as CEF",
+      "exportJson": "Export as JSON",
       "exporting": "Exporting..."
     },
     "databaseMigration": {
