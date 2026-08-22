@@ -71,6 +71,27 @@ spec:
                 secretKeyRef:
                   name: argusops-secrets
                   key: SECRETS_ENCRYPTION_KEY
+            # Client IDs come from the ConfigMap (envFrom above, not
+            # confidential); only the matching secrets need pulling in
+            # individually here. Omitted entirely (rather than left empty)
+            # in a real deployment that doesn't use one of these OAuth
+            # integrations -- config.Load treats an unset env var the same
+            # as an empty one either way.
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: GOOGLE_OAUTH_CLIENT_SECRET
+            - name: SLACK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: SLACK_CLIENT_SECRET
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: argusops-secrets
+                  key: SLACK_SIGNING_SECRET
             - name: JWT_PRIVATE_KEY_PATH
               value: /app/keys/jwt_private.pem
             - name: JWT_PUBLIC_KEY_PATH

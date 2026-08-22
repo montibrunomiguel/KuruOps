@@ -53,9 +53,14 @@ tags:
   - name: Settings - Tags
     description: Admin-only tag catalog management.
   - name: Settings - Storage
-    description: Admin-only S3/GCS evidence-storage configuration.
+    description: Admin-only S3/GCS/Google Drive evidence-storage configuration.
   - name: Settings - SMTP
     description: Admin-only outbound email configuration.
+  - name: Settings - Slack
+    description: >
+      Admin-only Slack workspace connect/disconnect (bot-token OAuth). This
+      is the foundation only -- no message/thread/channel sync endpoints
+      exist yet.
   - name: Settings - On-Call Schedules
     description: Admin-only on-call rotation schedules, working hours, and per-date overrides.
   - name: Settings - Incident SLA
@@ -63,7 +68,7 @@ tags:
   - name: Settings - Escalation Policies
     description: Admin-only unacknowledged-alert escalation rules.
   - name: Settings - Audit Export
-    description: Admin-only CEF audit log export.
+    description: Admin-only CEF/JSON audit log export.
   - name: Settings - Database Migration
     description: Admin-only one-time cutover to an externally hosted database.
   - name: System
@@ -2536,6 +2541,67 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/settings/storage/gdrive/service-account:
+    put:
+      tags: [Settings - Storage]
+      summary: Configure Google Drive storage using a service-account key
+      description: >
+        The service account named in serviceAccountJson must already have
+        folderId shared with it from the Drive side -- ArgusOps cannot
+        grant that access on the admin's behalf.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                folderId: { type: string }
+                serviceAccountJson:
+                  type: string
+                  description: Empty on update keeps the existing credentials.
+              required: [folderId]
+      responses:
+        "204":
+          description: Saved
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/storage/gdrive/oauth/authorize-url:
+    get:
+      tags: [Settings - Storage]
+      summary: Get the Google consent-screen URL to connect a Google account for Drive storage
+      description: >
+        Returns 400 if this deployment has no Google OAuth client configured
+        (GOOGLE_OAUTH_CLIENT_ID/SECRET unset) -- the service-account path
+        above is unaffected either way. The returned url carries a
+        single-use CSRF state token; the frontend redirects the browser to
+        it directly (window.location.href), it is not fetched via XHR.
+      parameters:
+        - name: folderId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Authorize URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
   # ------------------------------------------------------------ Settings: SMTP
   /api/v1/settings/smtp:
     get:
@@ -3031,6 +3097,109 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/audit-export/json:
+    get:
+      tags: [Settings - Audit Export]
+      summary: Export the tenant's alert/incident event history as newline-delimited JSON
+      description: >
+        Downloadable application/x-ndjson (one domain.AuditEvent JSON object
+        per line). Same keyset-pagination cursor mechanics as the CEF
+        export above -- sinceCreatedAt/sinceEventId resume a previous pull,
+        X-Next-Cursor-* response headers carry the next page's cursor.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 1000, maximum: 10000 }
+        - name: sinceCreatedAt
+          in: query
+          description: RFC3339Nano cursor timestamp from a previous page's X-Next-Cursor-Created-At header.
+          schema: { type: string, format: date-time }
+        - name: sinceEventId
+          in: query
+          description: Cursor event id from a previous page's X-Next-Cursor-Event-Id header.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Newline-delimited JSON audit events
+          headers:
+            X-Next-Cursor-Created-At:
+              description: Present only if more pages remain.
+              schema: { type: string }
+            X-Next-Cursor-Event-Id:
+              description: Present only if more pages remain.
+              schema: { type: string }
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  # ----------------------------------------------------------- Settings: Slack
+  /api/v1/settings/integrations/slack:
+    get:
+      tags: [Settings - Slack]
+      summary: Get the tenant's connected Slack workspace
+      responses:
+        "200":
+          description: Slack config, or null if no workspace is connected
+          content:
+            application/json:
+              schema:
+                type: object
+                nullable: true
+                allOf: [{ $ref: '#/components/schemas/SlackConfig' }]
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Settings - Slack]
+      summary: Disconnect the tenant's Slack workspace
+      responses:
+        "204":
+          description: Disconnected
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/settings/integrations/slack/oauth/authorize-url:
+    get:
+      tags: [Settings - Slack]
+      summary: Get the Slack consent-screen URL to connect a workspace
+      description: >
+        Returns 400 if this deployment has no Slack App configured
+        (SLACK_CLIENT_ID/SECRET unset -- see docs/SLACK_APP_SETUP.md). The
+        returned url carries a single-use CSRF state token; the frontend
+        redirects the browser to it directly (window.location.href), it is
+        not fetched via XHR.
+      responses:
+        "200":
+          description: Authorize URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   # -------------------------------------------- Settings: Database Migration
   /api/v1/settings/database-migration/test-connection:
@@ -3643,17 +3812,46 @@ components:
 
     StorageConfig:
       type: object
-      description: Secret-reference fields (access key/service-account JSON) are never serialized.
+      description: >
+        Secret-reference fields (access key/service-account JSON/OAuth
+        refresh token) are never serialized.
       properties:
         tenantId: { type: string, format: uuid }
         provider:
           type: string
-          enum: [s3, gcs]
+          enum: [s3, gcs, gdrive]
         s3Bucket: { type: string, nullable: true }
         s3Region: { type: string, nullable: true }
         s3AccessKeyId: { type: string, nullable: true }
         gcsBucket: { type: string, nullable: true }
         gcsProjectId: { type: string, nullable: true }
+        gdriveFolderId: { type: string, nullable: true }
+        gdriveAuthMethod:
+          type: string
+          nullable: true
+          enum: [service_account, oauth]
+        gdriveOauthConnectedEmail:
+          type: string
+          nullable: true
+          description: Display only, set once the OAuth "Connect your Google account" flow completes.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    SlackConfig:
+      type: object
+      description: Bot token is never serialized. Null response means no workspace is connected.
+      properties:
+        tenantId: { type: string, format: uuid }
+        teamId: { type: string }
+        teamName: { type: string }
+        botUserId: { type: string }
+        installedByUserId: { type: string, format: uuid }
+        installedByUserName:
+          type: string
+          description: Denormalized via a join, for display ("connected by ...").
+        grantedScopes:
+          type: string
+          description: Comma-separated, exactly as Slack's oauth.v2.access response returned it.
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
 

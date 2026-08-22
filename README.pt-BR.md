@@ -94,12 +94,14 @@ mesmo tempo.
   padrão, configurável na criação/regeneração), AI Integration (LLM providers, com opção de
   analisar todo alerta automaticamente na ingestão ou só sob demanda), MCP Servers
   (com painel de aprovações pendentes para tools de efeito colateral que a IA propõe usar),
-  Integração de Armazenamento (S3/GCS, para evidências anexadas), SMTP (reset de senha por email),
-  Users & Roles, Identity Providers (LDAP/SAML — configurar, atualizar e remover), Tags (também
-  auto-criadas a partir de alertas vindos de webhook), Escala de
-  Atendimento, SLAs de Incidentes, Escalonamento de Plantão (PagerDuty/Slack/webhook genérico),
-  Exportação de Auditoria (CEF) e Banco de Dados Externo (migração assistida do Postgres embutido
-  para um Postgres gerenciado pelo cliente).
+  Integração de Armazenamento (S3, GCS ou Google Drive — chave de service account ou OAuth — para
+  evidências anexadas), SMTP (reset de senha por email), **Conectores** (conectar/desconectar um
+  workspace do Slack via OAuth de bot token — fundação para uma integração completa com o Slack; ver
+  [docs/SLACK_APP_SETUP.pt-BR.md](docs/SLACK_APP_SETUP.pt-BR.md)), Users & Roles, Identity Providers
+  (LDAP/SAML — configurar, atualizar e remover), Tags (também auto-criadas a partir de alertas
+  vindos de webhook), Escala de Atendimento, SLAs de Incidentes, Escalonamento de Plantão
+  (PagerDuty/Slack/webhook genérico), Exportação de Auditoria (CEF ou JSON) e Banco de Dados Externo
+  (migração assistida do Postgres embutido para um Postgres gerenciado pelo cliente).
 
 ## Testes
 
