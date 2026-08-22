@@ -211,9 +211,10 @@ compiles.
 
 Documentation: [CHANGELOG.md](CHANGELOG.md) (what changed and when),
 [docs/API_INTEGRATION.md](docs/API_INTEGRATION.md) (how an external SIEM/XDR sends alerts via
-webhook), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (known deploy/testing gotchas),
-[docs/openapi.yaml](docs/openapi.yaml) (the `/api/v1/**` API contract — kept in English on purpose,
-it's a machine-consumed technical spec, not translated).
+webhook), [docs/SLACK_APP_SETUP.md](docs/SLACK_APP_SETUP.md) (creating the Slack App the Settings →
+Conectores → Slack integration connects to), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+(known deploy/testing gotchas), [docs/openapi.yaml](docs/openapi.yaml) (the `/api/v1/**` API
+contract — kept in English on purpose, it's a machine-consumed technical spec, not translated).
 
 See the open-source governance files:
 - [LICENSE](LICENSE) (Apache 2.0)

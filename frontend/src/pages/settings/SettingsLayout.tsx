@@ -10,6 +10,7 @@ import { IdentityProvidersPanel } from "./IdentityProvidersPanel";
 import { TagsPanel } from "./TagsPanel";
 import { StorageIntegrationPanel } from "./StorageIntegrationPanel";
 import { SMTPConfigPanel } from "./SMTPConfigPanel";
+import { SlackIntegrationPanel } from "./SlackIntegrationPanel";
 import { OnCallSchedulesListPage } from "./OnCallSchedulesListPage";
 import { OnCallScheduleDetailPage } from "./OnCallScheduleDetailPage";
 import { IncidentSLAPanel } from "./IncidentSLAPanel";
@@ -39,6 +40,16 @@ const NAV_GROUPS = [
       { to: "/settings/storage", labelKey: "settings.nav.storage" },
       { to: "/settings/smtp", labelKey: "settings.nav.smtp" },
     ],
+  },
+  {
+    // Deliberately its own top-level group, not folded into "Integrações"
+    // above -- Slack (and future connectors alongside it) is a different
+    // kind of integration: a live, bot-driven, bidirectional link into
+    // another product, not a one-way data sink/source config like
+    // webhooks/storage/SMTP. See the Slack integration foundation plan for
+    // why this distinction was called out explicitly.
+    labelKey: "settings.navGroups.connectors",
+    items: [{ to: "/settings/integrations/slack", labelKey: "settings.nav.slack" }],
   },
   {
     labelKey: "settings.navGroups.identityAccess",
@@ -99,6 +110,7 @@ export function SettingsLayout() {
             <Route path="identity-providers" element={<IdentityProvidersPanel />} />
             <Route path="storage" element={<StorageIntegrationPanel />} />
             <Route path="smtp" element={<SMTPConfigPanel />} />
+            <Route path="integrations/slack" element={<SlackIntegrationPanel />} />
             <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
             <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
             <Route path="incident-sla" element={<IncidentSLAPanel />} />
