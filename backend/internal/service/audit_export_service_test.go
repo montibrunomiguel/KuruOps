@@ -62,6 +62,38 @@ func TestAuditExportService_ExportCEF(t *testing.T) {
 	})
 }
 
+// TestAuditExportService_ExportJSON only covers what's actually different
+// from ExportCEF (the domain.AuditEvent values returned instead of
+// formatted CEF lines) -- pagination and tenant isolation are the shared
+// exportEvents helper both methods call, already covered above.
+func TestAuditExportService_ExportJSON(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	alertRepo := repository.NewAlertRepository()
+	svc := service.NewAuditExportService(pool, repository.NewAuditRepository())
+
+	tx := testutil.BeginTx(t, pool, tenantID)
+	a := &domain.Alert{
+		TenantID: tenantID, Title: "Suspicious login", Source: "test",
+		Severity: domain.SeverityHigh, OriginalSeverity: domain.SeverityHigh, Status: domain.AlertStatusOpen,
+		Tags: []string{}, Payload: json.RawMessage(`{}`), ReceivedAt: time.Now(),
+	}
+	require.NoError(t, alertRepo.Insert(t.Context(), tx, a))
+	require.NoError(t, alertRepo.InsertEvent(t.Context(), tx, &domain.AlertEvent{
+		AlertID: a.ID, TenantID: tenantID, EventType: domain.AlertEventReceived,
+		ActorType: domain.ActorSystem, Data: json.RawMessage(`{}`),
+	}))
+	require.NoError(t, tx.Commit(t.Context()))
+
+	events, next, err := svc.ExportJSON(t.Context(), tenantID, nil, 100)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "alert", events[0].Kind)
+	assert.Equal(t, a.ID, events[0].ContextID)
+	assert.Equal(t, string(domain.AlertEventReceived), events[0].EventType)
+	assert.Nil(t, next)
+}
+
 func TestAuditExportService_ExportCEF_TenantIsolation(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantA := testutil.NewTenant(t)

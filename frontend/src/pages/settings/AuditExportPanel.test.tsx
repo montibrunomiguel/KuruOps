@@ -50,6 +50,33 @@ describe("AuditExportPanel", () => {
     clickSpy.mockRestore();
   });
 
+  it("clicking Export as JSON fetches the json export endpoint and triggers a download", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"eventId":"1"}\n', {
+        status: 200,
+        headers: {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "content-disposition": 'attachment; filename="argusops-audit-20260806T000000Z.ndjson"',
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderPanel();
+    await userEvent.click(screen.getByRole("button", { name: "Export as JSON" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/settings/audit-export/json",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      ),
+    );
+    expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+  });
+
   it("shows the server's error message on a failed export", async () => {
     vi.stubGlobal(
       "fetch",

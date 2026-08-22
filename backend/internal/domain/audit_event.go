@@ -17,13 +17,13 @@ import (
 // paired with CreatedAt as an export keyset cursor, never as a
 // globally-unique identifier on its own.
 type AuditEvent struct {
-	EventID      string
-	Kind         string // "alert" or "incident"
-	ContextID    uuid.UUID
-	ContextTitle string
-	EventType    string
-	ActorType    ActorType
-	ActorID      *uuid.UUID
-	Data         json.RawMessage
-	CreatedAt    time.Time
+	EventID      string          `json:"eventId"`
+	Kind         string          `json:"kind"` // "alert" or "incident"
+	ContextID    uuid.UUID       `json:"contextId"`
+	ContextTitle string          `json:"contextTitle"`
+	EventType    string          `json:"eventType"`
+	ActorType    ActorType       `json:"actorType"`
+	ActorID      *uuid.UUID      `json:"actorId,omitempty"`
+	Data         json.RawMessage `json:"data"`
+	CreatedAt    time.Time       `json:"createdAt"`
 }
