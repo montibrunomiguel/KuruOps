@@ -97,13 +97,17 @@ rules for:
   AI" works end-to-end with a real provider, not just mocked), MCP servers (tool allow-list + a list
   of side-effecting tools that always require approval — see `service.EvaluateToolInvocation`),
   users/roles and LDAP/SAML group → role/tags mapping (with a button to remove a configuration, in
-  addition to create/update), evidence storage integration (S3/GCS — `S3Store` validated live
-  against a real bucket: uploading an image via `POST /api/v1/uploads/images`, then `GET`-ing it
-  back and confirming the same content, with latency consistent with a real network call to AWS,
-  not local disk; `GCSStore` not yet validated against a real GCP account), SMTP (email password
-  reset), tags, on-call schedules, per-severity×priority incident SLAs, escalation policies
-  (PagerDuty/Slack/generic webhook), CEF audit export, and assisted migration to an external
-  Postgres (Settings → External Database)
+  addition to create/update), evidence storage integration (S3/GCS/Google Drive — `S3Store`
+  validated live against a real bucket: uploading an image via `POST /api/v1/uploads/images`, then
+  `GET`-ing it back and confirming the same content, with latency consistent with a real network
+  call to AWS, not local disk; `GCSStore`/`GDriveStore` not yet validated against a real GCP/Drive
+  account — `GDriveStore`'s own unit tests mock the Drive v3 REST API instead, see
+  `internal/blobstore/gdrive_test.go`), a Slack workspace connect/disconnect foundation
+  (`internal/slackclient`, bot-token OAuth — not yet validated against a real Slack App/workspace,
+  see `docs/SLACK_APP_SETUP.md`), SMTP (email password reset), tags, on-call schedules,
+  per-severity×priority incident SLAs, escalation policies (PagerDuty/Slack/generic webhook), CEF
+  or JSON audit export, and assisted migration to an external Postgres (Settings → External
+  Database)
 - Webhook ingestion with generic normalization, MTTA/MTTR computed as a materialized view instead
   of client-side
 - **Authentication**: local login (argon2id + JWT RS256), LDAP bind (`internal/authn/ldap.go`,

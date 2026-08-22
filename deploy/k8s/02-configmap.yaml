@@ -40,3 +40,10 @@ data:
   # manifest itself.
   BACKUP_S3_BUCKET: "CHANGEME"
   BACKUP_AWS_REGION: "us-east-1"
+  # OAuth client IDs are not confidential (they're visible in the browser's
+  # redirect URL either way) -- only the matching *_CLIENT_SECRET values
+  # (01-secret.example.yaml) need to stay out of this ConfigMap. Empty/
+  # omitted disables each integration's OAuth "Connect" button; the
+  # service-account alternative for Google Drive is unaffected.
+  GOOGLE_OAUTH_CLIENT_ID: "CHANGEME"
+  SLACK_CLIENT_ID: "CHANGEME"

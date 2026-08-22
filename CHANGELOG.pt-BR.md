@@ -14,6 +14,19 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Configurações → Conectores → Slack: conectar/desconectar um workspace do Slack via OAuth de bot
+  token (`internal/slackclient`, `SlackConfigService`). Apenas a fundação -- ainda sem sincronia de
+  mensagens/threads/canais; um `SlackConfigService.Get` não-nulo é o gate que futuros recursos do
+  Slack vão checar antes de oferecer sua UI. Ver `docs/SLACK_APP_SETUP.pt-BR.md` para o Manifesto
+  de App do Slack necessário para configurar `SLACK_CLIENT_ID`/`SLACK_CLIENT_SECRET`. Introduz uma
+  tabela compartilhada `oauth_states`/`OAuthStateService` (token CSRF de uso único, persistido no
+  banco) reaproveitada pelo fluxo OAuth do Google Drive abaixo.
+- Google Drive como um terceiro provedor de Integração de Armazenamento (além de S3/GCS), com a
+  opção de colar uma chave de service account ou um fluxo completo de "Conectar sua conta Google"
+  via OAuth (`blobstore.GDriveStore`, `StorageConfigService.SaveGDriveServiceAccount`/
+  `HandleGDriveOAuthCallback`).
+- Exportação em JSON (`GET /api/v1/settings/audit-export/json`, newline-delimited) além da
+  exportação CEF já existente, compartilhando a mesma lógica de cursor com paginação keyset.
 - Diagrama de arquitetura (mermaid) no README raiz, `CHANGELOG.md`, `docs/TROUBLESHOOTING.md` e
   spec OpenAPI para `/api/v1/**` (documentação que estava só em prosa, ou faltando).
 - `golangci-lint` (backend) e ESLint (frontend) configurados do zero, com gate próprio no

@@ -131,6 +131,21 @@ services:
       # inert (see internal/telemetry.Setup's doc comment).
       LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-20}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Settings -> Storage Integration -> Google Drive's "Connect your
+      # Google account" OAuth path -- both empty (the default) disables it
+      # entirely, leaving the service-account alternative unaffected. See
+      # config.Config.GoogleOAuthClientID's doc comment.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Settings -> Conectores -> Slack's "Conectar ao Slack" OAuth path --
+      # empty disables it. See docs/SLACK_APP_SETUP.md for how to obtain
+      # these from a Slack App. SLACK_SIGNING_SECRET is unused until a
+      # future release adds an inbound Slack Events receiver, but is
+      # collected now since the Slack App fixes it at creation time
+      # regardless.
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:-}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
     volumes:
       - uploads:/data/uploads
       # Survives `docker compose restart`/`down` (without -v) so the

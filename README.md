@@ -92,11 +92,14 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
 - **Settings** (admin) — Webhook Endpoints (token with an expiration/rotation policy — 90 days by
   default, configurable at creation/regeneration), AI Integration (LLM providers, with an option to
   analyze every alert automatically on ingest or only on demand), MCP Servers (with a pending-approvals
-  panel for side-effecting tools the AI proposes using), Storage Integration (S3/GCS, for attached
-  evidence), SMTP (password-reset emails), Users & Roles, Identity Providers (LDAP/SAML — configure,
-  update, and remove), Tags (also auto-created from webhook-ingested alerts), On-Call Schedules,
-  Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Export (CEF), and
-  External Database (assisted migration from the bundled Postgres to a customer-managed Postgres).
+  panel for side-effecting tools the AI proposes using), Storage Integration (S3, GCS, or Google Drive
+  — service-account key or OAuth — for attached evidence), SMTP (password-reset emails), **Conectores**
+  (Slack workspace connect/disconnect via bot-token OAuth — foundation for a fuller Slack integration;
+  see [docs/SLACK_APP_SETUP.md](docs/SLACK_APP_SETUP.md)), Users & Roles, Identity Providers (LDAP/SAML
+  — configure, update, and remove), Tags (also auto-created from webhook-ingested alerts), On-Call
+  Schedules, Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Export (CEF or
+  JSON), and External Database (assisted migration from the bundled Postgres to a customer-managed
+  Postgres).
 
 ## Tests
 

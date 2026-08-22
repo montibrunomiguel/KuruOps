@@ -97,13 +97,17 @@ regras de negócio para:
   com IA" funciona ponta a ponta com um provedor real, não só mockado), servidores MCP (allow-list de tools + lista de tools com efeito
   colateral que sempre exigem aprovação — ver `service.EvaluateToolInvocation`), usuários/roles e
   mapeamento de grupo LDAP/SAML → role/tags (com botão de remover configuração, além de
-  criar/atualizar), integração de armazenamento de evidências (S3/GCS — `S3Store` validado ao vivo
-  contra um bucket real: upload de uma imagem via `POST /api/v1/uploads/images`, depois `GET` de
-  volta confirmando o mesmo conteúdo, latência consistente com uma chamada de rede real à AWS, não
-  disco local; `GCSStore` ainda não validado contra uma conta GCP real), SMTP (reset de senha por
-  email), tags, escalas de plantão, SLAs de incidente por severidade×prioridade, políticas de
-  escalonamento (PagerDuty/Slack/webhook genérico), exportação de auditoria em CEF, e migração
-  assistida para um Postgres externo (Settings → Banco de Dados Externo)
+  criar/atualizar), integração de armazenamento de evidências (S3/GCS/Google Drive — `S3Store`
+  validado ao vivo contra um bucket real: upload de uma imagem via `POST /api/v1/uploads/images`,
+  depois `GET` de volta confirmando o mesmo conteúdo, latência consistente com uma chamada de rede
+  real à AWS, não disco local; `GCSStore`/`GDriveStore` ainda não validados contra uma conta
+  GCP/Drive real — os testes unitários do próprio `GDriveStore` mockam a API REST do Drive v3, ver
+  `internal/blobstore/gdrive_test.go`), uma fundação de conectar/desconectar um workspace do Slack
+  (`internal/slackclient`, OAuth de bot token — ainda não validado contra um App/workspace do Slack
+  real, ver `docs/SLACK_APP_SETUP.pt-BR.md`), SMTP (reset de senha por email), tags, escalas de
+  plantão, SLAs de incidente por severidade×prioridade, políticas de escalonamento
+  (PagerDuty/Slack/webhook genérico), exportação de auditoria em CEF ou JSON, e migração assistida
+  para um Postgres externo (Settings → Banco de Dados Externo)
 - Ingestão de webhook com normalização genérica, cálculo de MTTA/MTTR como materialized view em
   vez de client-side
 - **Autenticação**: login local (argon2id + JWT RS256), bind LDAP (`internal/authn/ldap.go`, com
