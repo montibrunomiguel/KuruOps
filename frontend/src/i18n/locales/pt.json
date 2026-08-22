@@ -757,7 +757,7 @@
     },
     "storage": {
       "title": "Integração de Armazenamento",
-      "helper": "Onde as imagens de evidência de alertas/incidentes são armazenadas. Sem integração configurada, os uploads vão para o disco local do servidor da API. Configurar S3 ou GCS move todo upload novo para o bucket -- arquivos já salvos localmente não são migrados.",
+      "helper": "Onde as imagens de evidência de alertas/incidentes são armazenadas. Sem integração configurada, os uploads vão para o disco local do servidor da API. Configurar S3, GCS ou Google Drive move todo upload novo para o destino escolhido -- arquivos já salvos localmente não são migrados.",
       "configured": "{{provider}} configurado",
       "saved": "Configuração salva.",
       "provider": "Provider",
@@ -775,6 +775,19 @@
         "bucket": "Bucket",
         "projectId": "Project ID",
         "credentialsJson": "Credenciais da Service Account (JSON)"
+      },
+      "gdrive": {
+        "authMethod": "Método de autenticação",
+        "serviceAccount": "Service account",
+        "connectGoogleAccount": "Conectar conta Google",
+        "folderId": "ID da Pasta",
+        "folderIdHint": "O ID da URL da pasta no Drive (a parte depois de /folders/). A pasta precisa já existir.",
+        "folderIdRequired": "O ID da pasta é obrigatório.",
+        "serviceAccountJson": "Credenciais da Service Account (JSON)",
+        "serviceAccountHint": "A service account precisa já ter essa pasta compartilhada com ela pelo lado do Drive -- o ArgusOps não consegue conceder esse acesso por você.",
+        "connectButton": "Conectar com Google",
+        "connectedAs": "Conectado como {{email}}",
+        "oauthHint": "Você será redirecionado ao Google para conceder acesso, e voltará para cá em seguida."
       }
     },
     "smtp": {

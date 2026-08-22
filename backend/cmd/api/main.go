@@ -203,8 +203,11 @@ func main() {
 		logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
 		os.Exit(1)
 	}
+	oauthStateService := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
+
 	storageConfigRepo := repository.NewStorageConfigRepository()
-	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir)
+	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir,
+		oauthStateService, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.AppBaseURL+"/auth/oauth/gdrive/callback")
 	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
 	uploadKeyRepo := repository.NewUploadKeyRepository()
 	uploadKeyService := service.NewUploadKeyService(pool, uploadKeyRepo)
@@ -248,6 +251,13 @@ func main() {
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 
+	// Every 3rd-party OAuth provider's callback (Google Drive today) --
+	// needs authService to resolve the tenant the same way AuthHandlers'
+	// SAML ACS endpoint does, so this is wired here, after authService
+	// exists, even though storageConfigService (constructed earlier) is
+	// its other dependency -- see OAuthCallbackHandlers' doc comment.
+	oauthCallbackHandlers := handlers.NewOAuthCallbackHandlers(authService, storageConfigService, cfg.AppBaseURL)
+
 	authMiddleware := middleware.JWTAuth(verifier, apiTokenService)
 	if useDevHeaderAuth {
 		authMiddleware = middleware.DevHeaderAuth
@@ -283,6 +293,7 @@ func main() {
 		AuditExportHandlers:          auditExportHandlers,
 		DatabaseMigrationHandlers:    dbMigrationHandlers,
 		EventsHandlers:               eventsHandlers,
+		OAuthCallbackHandlers:        oauthCallbackHandlers,
 		AuthMiddleware:               authMiddleware,
 		Logger:                       logger,
 		HealthCheck:                  httpserver.HealthCheck(pool.Pool),

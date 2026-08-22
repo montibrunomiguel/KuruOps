@@ -37,4 +37,5 @@ var (
 	_ Store = (*LocalStore)(nil)
 	_ Store = (*S3Store)(nil)
 	_ Store = (*GCSStore)(nil)
+	_ Store = (*GDriveStore)(nil)
 )

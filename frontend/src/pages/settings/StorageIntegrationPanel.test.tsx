@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { StorageIntegrationPanel } from "./StorageIntegrationPanel";
 import { AuthProvider } from "../../auth/AuthContext";
 
@@ -8,11 +9,17 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function renderPanel() {
+// initialPath lets a test simulate landing back on this page after the
+// Google Drive OAuth redirect (?gdrive_connected=1 / ?gdrive_error=...) --
+// useSearchParams needs a Router context, hence MemoryRouter here (this
+// panel is otherwise router-agnostic, unlike AlertsListPage).
+function renderPanel(initialPath = "/") {
   return render(
-    <AuthProvider>
-      <StorageIntegrationPanel />
-    </AuthProvider>,
+    <MemoryRouter initialEntries={[initialPath]}>
+      <AuthProvider>
+        <StorageIntegrationPanel />
+      </AuthProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -116,5 +123,120 @@ describe("StorageIntegrationPanel", () => {
     renderPanel();
 
     expect(await screen.findByText("internal error")).toBeInTheDocument();
+  });
+
+  it("switching to the Google Drive tab defaults to the service account sub-method", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(null)));
+    renderPanel();
+
+    await screen.findByLabelText("Bucket");
+    await userEvent.click(screen.getByRole("button", { name: "Google Drive" }));
+
+    expect(screen.getByLabelText("Folder ID")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Service Account Credentials/)).toBeInTheDocument();
+    expect(screen.queryByText("You'll be redirected to Google to grant access, then brought back here.")).not.toBeInTheDocument();
+  });
+
+  it("saving Google Drive via service account PUTs the folder ID and JSON key", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(jsonResponse(null));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+
+    await screen.findByLabelText("Bucket");
+    await userEvent.click(screen.getByRole("button", { name: "Google Drive" }));
+    await userEvent.type(screen.getByLabelText("Folder ID"), "folder-123");
+    await userEvent.type(screen.getByLabelText(/Service Account Credentials/), '{{"type":"service_account"}}');
+    await userEvent.click(screen.getByRole("button", { name: "Configure" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/settings/storage/gdrive/service-account",
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+    expect(await screen.findByText("Configuration saved.")).toBeInTheDocument();
+  });
+
+  it("Google Drive OAuth sub-tab shows the redirect hint instead of a credentials field", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(null)));
+    renderPanel();
+
+    await screen.findByLabelText("Bucket");
+    await userEvent.click(screen.getByRole("button", { name: "Google Drive" }));
+    await userEvent.click(screen.getByRole("button", { name: "Connect Google account" }));
+
+    expect(screen.getByText("You'll be redirected to Google to grant access, then brought back here.")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Service Account Credentials/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect with Google" })).toBeInTheDocument();
+  });
+
+  it("Google Drive OAuth sub-tab redirects the page to the returned authorize URL", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === "string" && url.includes("authorize-url")) {
+        return Promise.resolve(jsonResponse({ url: "https://accounts.google.com/o/oauth2/auth?state=abc" }));
+      }
+      return Promise.resolve(jsonResponse(null));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const originalLocation = window.location;
+    // jsdom throws on direct assignment to window.location.href; replace the
+    // whole object for this test only, matching the pattern used wherever
+    // this codebase asserts on a real page navigation.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, href: "" },
+    });
+
+    renderPanel();
+    await screen.findByLabelText("Bucket");
+    await userEvent.click(screen.getByRole("button", { name: "Google Drive" }));
+    await userEvent.click(screen.getByRole("button", { name: "Connect Google account" }));
+    await userEvent.type(screen.getByLabelText("Folder ID"), "folder-123");
+    await userEvent.click(screen.getByRole("button", { name: "Connect with Google" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/storage/gdrive/oauth/authorize-url?folderId=folder-123"),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() => expect(window.location.href).toBe("https://accounts.google.com/o/oauth2/auth?state=abc"));
+
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation });
+  });
+
+  it("shows the connected-as email badge for an OAuth-linked Drive config", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          provider: "gdrive",
+          gdriveFolderId: "folder-123",
+          gdriveAuthMethod: "oauth",
+          gdriveOauthConnectedEmail: "admin@example.com",
+        }),
+      ),
+    );
+    renderPanel();
+
+    expect(await screen.findByText("Connected as admin@example.com")).toBeInTheDocument();
+  });
+
+  it("surfaces a gdrive_error query param from the OAuth redirect as an error banner", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(null)));
+    renderPanel("/?gdrive_error=access_denied");
+
+    expect(await screen.findByText("access_denied")).toBeInTheDocument();
+  });
+
+  it("surfaces a gdrive_connected query param from the OAuth redirect as a success message", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(null)));
+    renderPanel("/?gdrive_connected=1");
+
+    expect(await screen.findByText("Configuration saved.")).toBeInTheDocument();
   });
 });

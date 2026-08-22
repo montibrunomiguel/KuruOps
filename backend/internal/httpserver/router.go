@@ -39,6 +39,10 @@ type Options struct {
 	AuditExportHandlers          *handlers.AuditExportHandlers
 	DatabaseMigrationHandlers    *handlers.DatabaseMigrationHandlers
 	EventsHandlers               *handlers.EventsHandlers
+	// OAuthCallbackHandlers serves every 3rd-party OAuth provider's
+	// callback (Google Drive today) -- mounted unauthenticated at
+	// /auth/oauth, not under /api/v1 -- see that handler's doc comment.
+	OAuthCallbackHandlers *handlers.OAuthCallbackHandlers
 	// LoginRateLimiter is built by cmd/api (needs a *pgxpool.Pool, which
 	// this package otherwise has no reason to depend on -- see
 	// middleware.NewRateLimiter) and applied to /auth below.
@@ -129,6 +133,14 @@ func NewRouter(opts Options) http.Handler {
 	r.Route("/auth", func(auth chi.Router) {
 		auth.Use(opts.LoginRateLimiter)
 		opts.AuthHandlers.Routes(auth)
+
+		// OAuth provider callbacks -- same unauthenticated-top-level-GET
+		// shape as /auth's own login routes (and the same threat class:
+		// LoginRateLimiter applies here too), just not a login flow
+		// themselves. Nested under /auth specifically because
+		// frontend/nginx.conf only proxies /api/ and /auth/ to the backend
+		// -- see OAuthCallbackHandlers' doc comment.
+		auth.Route("/oauth", opts.OAuthCallbackHandlers.Routes)
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {
