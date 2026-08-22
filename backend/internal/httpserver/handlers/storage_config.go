@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -23,6 +24,8 @@ func (h *StorageConfigHandlers) Routes(r chi.Router) {
 	r.Get("/", h.get)
 	r.Put("/s3", h.saveS3)
 	r.Put("/gcs", h.saveGCS)
+	r.Put("/gdrive/service-account", h.saveGDriveServiceAccount)
+	r.Get("/gdrive/oauth/authorize-url", h.gdriveAuthorizeURL)
 	r.Delete("/", h.delete)
 }
 
@@ -94,6 +97,58 @@ func (h *StorageConfigHandlers) saveGCS(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type saveGDriveServiceAccountRequest struct {
+	FolderID           string `json:"folderId"`
+	ServiceAccountJSON string `json:"serviceAccountJson"`
+}
+
+func (h *StorageConfigHandlers) saveGDriveServiceAccount(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+
+	var req saveGDriveServiceAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	err := h.svc.SaveGDriveServiceAccount(r.Context(), tenantID, service.SaveGDriveServiceAccountInput{
+		FolderID: req.FolderID, ServiceAccountJSON: req.ServiceAccountJSON,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// gdriveAuthorizeURL is the admin-initiated, already-authenticated first
+// step of the OAuth flow -- returns {url} for the frontend to redirect
+// the browser to. The unauthenticated second half (Google's callback)
+// lives in OAuthCallbackHandlers, mounted separately outside /api/v1 --
+// see that handler's doc comment for why.
+func (h *StorageConfigHandlers) gdriveAuthorizeURL(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
+	folderID := r.URL.Query().Get("folderId")
+	url, err := h.svc.GetGDriveAuthorizeURL(r.Context(), tenantID, userID, folderID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
 func (h *StorageConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {

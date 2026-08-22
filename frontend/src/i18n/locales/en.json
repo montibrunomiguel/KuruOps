@@ -757,7 +757,7 @@
     },
     "storage": {
       "title": "Storage Integration",
-      "helper": "Where alert/incident evidence images are stored. When no integration is configured, uploads are written to the API server's local disk. Configuring S3 or GCS moves every new upload to the bucket instead -- existing local files are not migrated.",
+      "helper": "Where alert/incident evidence images are stored. When no integration is configured, uploads are written to the API server's local disk. Configuring S3, GCS, or Google Drive moves every new upload to the destination instead -- existing local files are not migrated.",
       "configured": "{{provider}} configured",
       "saved": "Configuration saved.",
       "provider": "Provider",
@@ -775,6 +775,19 @@
         "bucket": "Bucket",
         "projectId": "Project ID",
         "credentialsJson": "Service Account Credentials (JSON)"
+      },
+      "gdrive": {
+        "authMethod": "Authentication method",
+        "serviceAccount": "Service account",
+        "connectGoogleAccount": "Connect Google account",
+        "folderId": "Folder ID",
+        "folderIdHint": "The ID from the target folder's Drive URL (the part after /folders/). The folder must already exist.",
+        "folderIdRequired": "Folder ID is required.",
+        "serviceAccountJson": "Service Account Credentials (JSON)",
+        "serviceAccountHint": "The service account must already have this folder shared with it from the Drive side -- ArgusOps can't grant that access for you.",
+        "connectButton": "Connect with Google",
+        "connectedAs": "Connected as {{email}}",
+        "oauthHint": "You'll be redirected to Google to grant access, then brought back here."
       }
     },
     "smtp": {

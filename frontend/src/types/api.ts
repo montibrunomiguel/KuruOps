@@ -292,12 +292,15 @@ export interface SAMLConfig {
 // same reasoning as LDAPConfig/SAMLConfig above.
 export interface StorageConfig {
   tenantId: string;
-  provider: "s3" | "gcs";
+  provider: "s3" | "gcs" | "gdrive";
   s3Bucket?: string;
   s3Region?: string;
   s3AccessKeyId?: string;
   gcsBucket?: string;
   gcsProjectId?: string;
+  gdriveFolderId?: string;
+  gdriveAuthMethod?: "service_account" | "oauth";
+  gdriveOauthConnectedEmail?: string;
   createdAt: string;
   updatedAt: string;
 }

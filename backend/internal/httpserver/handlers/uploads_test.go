@@ -79,7 +79,7 @@ func setupUploadHandlersWithPool(t *testing.T) (h *handlers.UploadHandlers, aler
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc = service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir)
+	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
 
 	h = handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
@@ -104,7 +104,7 @@ func TestUploadHandlers_UploadFailure_LocalStoreError(t *testing.T) {
 	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir)
+	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir, nil, "", "", "")
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
 	h := handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
 	tenantID := testutil.NewTenant(t)

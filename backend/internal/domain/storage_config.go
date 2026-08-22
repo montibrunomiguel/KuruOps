@@ -12,8 +12,19 @@ import (
 type StorageProvider string
 
 const (
-	StorageProviderS3  StorageProvider = "s3"
-	StorageProviderGCS StorageProvider = "gcs"
+	StorageProviderS3     StorageProvider = "s3"
+	StorageProviderGCS    StorageProvider = "gcs"
+	StorageProviderGDrive StorageProvider = "gdrive"
+)
+
+// GDriveAuthMethod selects how a StorageConfig with Provider ==
+// StorageProviderGDrive authenticates against the Drive API -- see
+// blobstore.GDriveStore's two constructors.
+type GDriveAuthMethod string
+
+const (
+	GDriveAuthMethodServiceAccount GDriveAuthMethod = "service_account"
+	GDriveAuthMethodOAuth          GDriveAuthMethod = "oauth"
 )
 
 // StorageConfig mirrors `tenant_storage_config` (see
@@ -34,6 +45,12 @@ type StorageConfig struct {
 	GCSBucket                   *string `json:"gcsBucket,omitempty"`
 	GCSProjectID                *string `json:"gcsProjectId,omitempty"`
 	GCSCredentialsJSONSecretRef string  `json:"-"`
+
+	GDriveFolderID                    *string           `json:"gdriveFolderId,omitempty"`
+	GDriveAuthMethod                  *GDriveAuthMethod `json:"gdriveAuthMethod,omitempty"`
+	GDriveServiceAccountJSONSecretRef string            `json:"-"`
+	GDriveOAuthRefreshTokenSecretRef  string            `json:"-"`
+	GDriveOAuthConnectedEmail         *string           `json:"gdriveOauthConnectedEmail,omitempty"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

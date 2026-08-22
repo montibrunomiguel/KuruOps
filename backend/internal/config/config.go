@@ -131,6 +131,16 @@ type Config struct {
 	// real distributed tracing. Empty (the default) keeps tracing fully
 	// inert -- see telemetry.Setup's doc comment.
 	OTelExporterOTLPEndpoint string
+
+	// GoogleOAuthClientID/Secret are the app-level Google OAuth client
+	// every tenant's Settings -> Storage Integration "Connect your Google
+	// account" flow authenticates through (see
+	// StorageConfigService.GetGDriveAuthorizeURL). Optional -- empty
+	// disables that path entirely; the service-account alternative is
+	// unaffected. The redirect URI is derived from AppBaseURL, not a
+	// separate env var (it must always match AppBaseURL's origin anyway).
+	GoogleOAuthClientID     string
+	GoogleOAuthClientSecret string
 }
 
 func Load(logger *slog.Logger) (Config, error) {
@@ -167,6 +177,9 @@ func Load(logger *slog.Logger) (Config, error) {
 		WebhookRateLimitPerMinute: int(getEnvInt32Default(logger, "WEBHOOK_RATE_LIMIT_PER_MINUTE", 60)),
 
 		OTelExporterOTLPEndpoint: getEnvDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+
+		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 	}
 
 	if cfg.DatabaseURL == "" {

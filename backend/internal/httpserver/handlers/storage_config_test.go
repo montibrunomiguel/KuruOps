@@ -20,7 +20,7 @@ import (
 func TestStorageConfigHandlers_S3(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir())
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -69,7 +69,7 @@ func TestStorageConfigHandlers_S3(t *testing.T) {
 func TestStorageConfigHandlers_GCS(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir())
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -102,12 +102,75 @@ func TestStorageConfigHandlers_GCS(t *testing.T) {
 	assert.Contains(t, getRec.Body.String(), `"provider":"gcs"`)
 }
 
+func TestStorageConfigHandlers_GDriveServiceAccount(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+	h := handlers.NewStorageConfigHandlers(svc)
+	r := newRouter(h.Routes)
+
+	t.Run("save without a folder id -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"serviceAccountJson": `{"type":"service_account"}`})
+		req := withClaims(httptest.NewRequest("PUT", "/gdrive/service-account", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("save without credentials on initial configuration -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"folderId": "folder-1"})
+		req := withClaims(httptest.NewRequest("PUT", "/gdrive/service-account", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	body, _ := json.Marshal(map[string]string{
+		"folderId": "folder-1", "serviceAccountJson": `{"type":"service_account","private_key":"top-secret-key-material"}`,
+	})
+	req := withClaims(httptest.NewRequest("PUT", "/gdrive/service-account", bytes.NewReader(body)), tenantID, uuid.New(), nil)
+	assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+	getReq := withClaims(httptest.NewRequest("GET", "/", nil), tenantID, uuid.New(), nil)
+	getRec := doRequest(r, getReq)
+	assert.NotContains(t, getRec.Body.String(), "top-secret-key-material", "the plaintext credentials JSON never lands in the GET response")
+	assert.Contains(t, getRec.Body.String(), `"provider":"gdrive"`)
+	assert.Contains(t, getRec.Body.String(), `"gdriveAuthMethod":"service_account"`)
+}
+
+func TestStorageConfigHandlers_GDriveAuthorizeURL(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	// oauth_states.user_id is a real FK to users(id) (the installing
+	// admin's identity is meaningful, not a throwaway) -- unlike most
+	// handler tests here, this one can't get away with a random uuid.New().
+	userID := testutil.NewUser(t, tenantID, "admin", nil)
+
+	t.Run("no Google OAuth client configured -- 400", func(t *testing.T) {
+		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+		h := handlers.NewStorageConfigHandlers(svc)
+		r := newRouter(h.Routes)
+
+		req := withClaims(httptest.NewRequest("GET", "/gdrive/oauth/authorize-url?folderId=folder-1", nil), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("configured client returns a redirect url", func(t *testing.T) {
+		oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
+		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
+			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback")
+		h := handlers.NewStorageConfigHandlers(svc)
+		r := newRouter(h.Routes)
+
+		req := withClaims(httptest.NewRequest("GET", "/gdrive/oauth/authorize-url?folderId=folder-1", nil), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "accounts.google.com")
+	})
+}
+
 func TestStorageConfigHandlers_MissingTenantContext(t *testing.T) {
 	h := handlers.NewStorageConfigHandlers(nil)
 	r := newRouter(h.Routes)
 
 	for _, tc := range []struct{ method, path string }{
-		{"GET", "/"}, {"DELETE", "/"},
+		{"GET", "/"}, {"DELETE", "/"}, {"GET", "/gdrive/oauth/authorize-url"},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, nil)
