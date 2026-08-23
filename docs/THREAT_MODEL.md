@@ -41,6 +41,36 @@ Postgres -- RLS by tenant_id
   `postgres` role (superuser, used only by migrations/`task db:*`) bypasses RLS entirely, on
   purpose — it's never the role a user request uses.
 
+## OAuth redirect/callback trust boundary
+
+Google Drive and Slack are connected via a standard authorization-code OAuth flow
+(`internal/service/storage_config_service.go`'s `HandleGDriveOAuthCallback`,
+`internal/service/slack_config_service.go`'s `HandleOAuthCallback`), both landing on
+`OAuthCallbackHandlers` (`internal/httpserver/handlers/oauth_callback.go`) — the one deliberately
+unauthenticated top-level route family in this app (`/auth/oauth/...`, not under `/api/v1`), since
+a provider's redirect is a plain browser GET with no JWT to attach.
+
+- **`state` is the entire trust anchor.** There is no session at this point — the callback proves
+  nothing about who's making the request except whatever the `state` param's matching
+  `oauth_states` row (`internal/repository/oauth_state_repository.go`) says: a single-use,
+  DB-backed, TTL'd token minted when the flow was started from an authenticated Settings page.
+  Anyone who can guess or intercept a valid `state` value before it's consumed could complete the
+  flow in the victim's place; it's opaque, generated with `crypto/rand`, and consumed exactly once
+  to close that window.
+- **The `code`→token exchange happens server-side only** — the callback never trusts anything the
+  browser claims about the outcome, only what Google/Slack's own token endpoint returns for the
+  `code` this handler received directly.
+- **Errors from either provider are echoed back verbatim** (`?gdrive_error=access_denied`, etc) —
+  that's provider-supplied text describing a user-facing outcome (declined consent, expired code),
+  not this app's own internal state. A failure *inside* `HandleGDriveOAuthCallback`/
+  `HandleOAuthCallback` (a DB error, a state-lookup failure, a malformed token response) is logged
+  server-side only and redirects with a fixed generic code (`?gdrive_error=connection_failed`) —
+  the raw Go error text is never placed in a redirect URL, which browser history, `Referer`
+  headers, and any proxy access log along the path could otherwise capture.
+- **The tenant is always resolved the same way** (`AuthService.ResolveDefaultTenant`), matching
+  every other unauthenticated entry point in this single-tenant app (the SAML ACS endpoint, the
+  seeded default admin) — there's no tenant ambiguity for an attacker to exploit at this boundary.
+
 ## What Row-Level Security guarantees — and what it doesn't
 
 RLS filters every query by the session's `tenant_id` (`set_config('app.tenant_id', ...)`, see
@@ -66,6 +96,36 @@ without a schema rewrite.
   comment on/view sub-resources of an incident outside their `allowedTags` if they know the ID.
   Known gap, not a new finding from this review.
 
+## What the data retention sweep guarantees — and what it doesn't
+
+Settings → Data & Audit → Retention configures how long a **closed** alert/incident stays in
+ArgusOps before `cmd/worker`'s hourly `sweepDataRetention` job permanently deletes it (default 18
+months, separately configurable per resource type — `internal/service/retention_config_service.go`).
+
+- **Deletion is hard, not soft-archive, and irreversible.** There is no undelete, no trash, no
+  export-on-delete step — a row past its configured retention window is gone once the sweep runs.
+  An admin who wants a copy of what will be purged needs to export it first (Settings → Data &
+  Audit → Audit Export) before lowering a retention period below an existing record's age.
+- **Only `closed_at` gates eligibility** — an open alert/incident is never touched no matter its
+  age, and an incident reopened after closing (clearing `closed_at`) is excluded even if it was
+  eligible moments earlier: the sweep selects and deletes each resource type in one atomic
+  `WITH ... FOR UPDATE ... DELETE` statement, so Postgres re-validates eligibility against each
+  row's current committed state, not a snapshot taken before the delete.
+- **Evidence in blob storage is never touched.** Alert/incident comment attachments live in
+  whatever storage backend a tenant has configured (S3/GCS/Google Drive/local disk), referenced by
+  URL/key — `internal/blobstore.Store` has no `Delete` method anywhere in this codebase, so a purge
+  here can only ever remove ArgusOps's own database record, never the underlying file. This is a
+  known, deliberate scope limit, not an oversight: cleaning up orphaned blob storage is unimplemented.
+- **Who can configure it**: same admin-only gate as every other Settings panel
+  (`middleware.RequireRole("admin")`) — lowering a retention period is effectively a
+  data-destruction action available to anyone with that role, which is why the frontend gates a
+  *lowered* value behind an explicit inline confirmation (raising a value, or saving for the first
+  time, needs no confirmation since neither can delete anything that wasn't already going to be
+  deleted).
+- **Blast radius per tick is bounded** (`retentionSweepBatchLimit`, 5000 rows per resource type per
+  hourly tick) — a large backlog on first deploy of this feature is worked off incrementally across
+  ticks instead of one unbounded transaction competing with live traffic for the same tables.
+
 ## Secrets: how they never travel in plaintext to Postgres
 
 `secrets.Store` (`Put`/`Resolve`) is the only way application code handles a third-party
@@ -88,6 +148,33 @@ the old ref — a real availability bug, discovered during live LDAP/SAML testin
 Switching to `PersistentEnvStore` trades "never touches disk" for "survives a restart," mitigated
 by AES-256-GCM encryption before the write — it isn't a free fix, it's a durability-vs-surface
 tradeoff, documented here on purpose.
+
+**The `.env.example` default key is refused outside dev mode.** `.env.example` ships a real,
+working `SECRETS_ENCRYPTION_KEY` so `docker compose up` works out of the box for local dev — the
+same convenience makes it a known, publicly-visible key if it's ever copy-pasted straight into a
+real deployment instead of generated fresh. `secrets.NewFromConfig` hard-fails at startup if the
+configured key still equals that exact value and `AUTH_MODE` isn't `dev`/`dev-headers`.
+
+## Outbound requests to admin-configured URLs: SSRF protection
+
+Three settings accept a URL that this codebase then dials on the tenant's behalf: an escalation
+policy's webhook `Destination` (`internal/notifier/webhook.go`), an MCP server's `endpoint`
+(`internal/mcpclient/jsonrpc.go`), and an LLM provider's `base_url` for the
+`openai_compatible`/`azure_openai`/`self_hosted` kinds (`internal/llmclient/llmclient.go`) —
+anthropic's fixed `api.anthropic.com` isn't user-configurable, so it isn't in scope here. Anyone
+with Settings access to those three areas can otherwise point them at `http://169.254.169.254/...`
+(a cloud metadata endpoint) or `http://localhost:5432/...` (an internal service that trusts
+requests originating from this process) and get argusops-api/argusops-worker to make that request
+for them — a classic SSRF pivot from "can edit config" to "can reach internal-only network".
+
+All three now dial through `internal/httpguard.NewClient`, whose `Transport.DialContext` resolves
+the target host and refuses to connect if any resolved IP is loopback, link-local, or private
+(RFC1918/RFC4193) — checked against the IP actually being connected to, not just the URL's
+hostname string, so it isn't bypassed by DNS rebinding (a name that resolves to a public IP when
+the config is saved but a private one when the request is actually made) or by entering a raw
+private IP directly. A genuinely on-prem deployment, where a webhook receiver or MCP server or
+self-hosted LLM endpoint legitimately lives in private address space, sets
+`ALLOW_PRIVATE_NETWORK_TARGETS=true` to opt the whole process out of this guard.
 
 ## SAML `SameSite` cookie: why `RelayState` is the primary channel
 

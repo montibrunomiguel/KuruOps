@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -56,7 +57,13 @@ func (h *OAuthCallbackHandlers) gdriveCallback(w http.ResponseWriter, r *http.Re
 
 	err = h.storageConfig.HandleGDriveOAuthCallback(r.Context(), tenant.ID, q.Get("code"), q.Get("state"))
 	if err != nil {
-		http.Redirect(w, r, settingsURL+"?gdrive_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		// The real err (which can carry internal detail -- a DB error, a
+		// state-mismatch reason, etc) is logged server-side only; the
+		// redirect gets a generic code so nothing internal leaks into a
+		// URL that ends up in browser history, referrer headers, and any
+		// proxy/access log along the way.
+		slog.Error("gdrive oauth callback failed", "tenant_id", tenant.ID, "error", err)
+		http.Redirect(w, r, settingsURL+"?gdrive_error=connection_failed", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, settingsURL+"?gdrive_connected=1", http.StatusFound)
@@ -81,7 +88,8 @@ func (h *OAuthCallbackHandlers) slackCallback(w http.ResponseWriter, r *http.Req
 
 	err = h.slackConfig.HandleOAuthCallback(r.Context(), tenant.ID, q.Get("code"), q.Get("state"))
 	if err != nil {
-		http.Redirect(w, r, settingsURL+"?slack_error="+url.QueryEscape(err.Error()), http.StatusFound)
+		slog.Error("slack oauth callback failed", "tenant_id", tenant.ID, "error", err)
+		http.Redirect(w, r, settingsURL+"?slack_error=connection_failed", http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, settingsURL+"?slack_connected=1", http.StatusFound)

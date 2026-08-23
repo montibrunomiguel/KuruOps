@@ -6,6 +6,7 @@ import { mutationErrorMessage } from "../api/hooks";
 import { useEventStream } from "../api/eventStream";
 import type { AnalysisChatMessage, AnalysisChatTranscript } from "../types/api";
 import { renderMarkdown } from "../lib/markdown";
+import { Modal } from "./Modal";
 
 interface AnalysisChatProps {
   contextType: "alert" | "incident";
@@ -97,72 +98,66 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        style={{ maxWidth: 640, display: "flex", flexDirection: "column", height: "min(680px, 85vh)" }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="panel-header">
-          <h2 className="modal-title" style={{ marginBottom: 0 }}>
-            {t("analysisChat.title")}
-          </h2>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}>
-            ×
-          </button>
-        </div>
-
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "6px 2px" }}>
-          {loading && <div className="empty-state">{t("common.loading")}</div>}
-
-          {!loading && transcript && transcript.messages.length === 0 && !busy && (
-            <div className="empty-state">{t("analysisChat.empty")}</div>
-          )}
-
-          {transcript?.messages.map((m, idx) => <ChatBubble key={idx} message={m} />)}
-
-          {transcript?.status === "running" && <p className="helper-text">{t("analysisChat.thinking")}</p>}
-
-          {transcript?.status === "paused" && transcript.pendingToolCallId != null && (
-            <div className="panel" style={{ borderColor: "var(--accent)", marginBottom: 0 }}>
-              <p className="row-title" style={{ marginBottom: 8 }}>
-                {t("analysisChat.approvalNeeded")}
-              </p>
-              <div className="row-actions">
-                <button className="btn btn-primary btn-sm" disabled={deciding} onClick={() => decide("approve")}>
-                  {t("settings.mcp.approvals.approve")}
-                </button>
-                <button className="btn btn-danger btn-sm" disabled={deciding} onClick={() => decide("reject")}>
-                  {t("settings.mcp.approvals.reject")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {transcript?.status === "failed" && transcript.error && (
-            <div className="error-banner">{transcript.error}</div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-
-        {error && <div className="error-banner">{error}</div>}
-
-        <form onSubmit={send} style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <input
-            className="input"
-            style={{ flex: 1 }}
-            placeholder={t("analysisChat.placeholder")}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            disabled={sending || busy}
-          />
-          <button type="submit" className="btn btn-primary btn-sm" disabled={sending || busy || !text.trim()}>
-            {sending ? t("analysisChat.sending") : t("analysisChat.send")}
-          </button>
-        </form>
+    <Modal onClose={onClose} style={{ maxWidth: 640, display: "flex", flexDirection: "column", height: "min(680px, 85vh)" }}>
+      <div className="panel-header">
+        <h2 className="modal-title" style={{ marginBottom: 0 }}>
+          {t("analysisChat.title")}
+        </h2>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}>
+          ×
+        </button>
       </div>
-    </div>
+
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "6px 2px" }}>
+        {loading && <div className="empty-state">{t("common.loading")}</div>}
+
+        {!loading && transcript && transcript.messages.length === 0 && !busy && (
+          <div className="empty-state">{t("analysisChat.empty")}</div>
+        )}
+
+        {transcript?.messages.map((m, idx) => <ChatBubble key={idx} message={m} />)}
+
+        {transcript?.status === "running" && <p className="helper-text">{t("analysisChat.thinking")}</p>}
+
+        {transcript?.status === "paused" && transcript.pendingToolCallId != null && (
+          <div className="panel" style={{ borderColor: "var(--accent)", marginBottom: 0 }}>
+            <p className="row-title" style={{ marginBottom: 8 }}>
+              {t("analysisChat.approvalNeeded")}
+            </p>
+            <div className="row-actions">
+              <button className="btn btn-primary btn-sm" disabled={deciding} onClick={() => decide("approve")}>
+                {t("settings.mcp.approvals.approve")}
+              </button>
+              <button className="btn btn-danger btn-sm" disabled={deciding} onClick={() => decide("reject")}>
+                {t("settings.mcp.approvals.reject")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {transcript?.status === "failed" && transcript.error && (
+          <div className="error-banner">{transcript.error}</div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      <form onSubmit={send} style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <input
+          className="input"
+          style={{ flex: 1 }}
+          placeholder={t("analysisChat.placeholder")}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={sending || busy}
+        />
+        <button type="submit" className="btn btn-primary btn-sm" disabled={sending || busy || !text.trim()}>
+          {sending ? t("analysisChat.sending") : t("analysisChat.send")}
+        </button>
+      </form>
+    </Modal>
   );
 }
 

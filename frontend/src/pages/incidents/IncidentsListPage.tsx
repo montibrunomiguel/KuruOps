@@ -15,6 +15,7 @@ import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator"
 import { SeverityFilter } from "../../components/SeverityFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { Pagination } from "../../components/Pagination";
+import { Modal } from "../../components/Modal";
 import { formatDuration, shortId } from "../../lib/format";
 
 type SlaFilter = "" | "breached" | "ok";
@@ -263,81 +264,79 @@ function CreateIncidentForm({
   }
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <form onSubmit={handleSubmit} className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-header">
-          <h2 className="modal-title" style={{ marginBottom: 0 }}>
-            {t("incidents.createForm.title")}
-          </h2>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} aria-label={t("common.close")}>
-            ×
-          </button>
-        </div>
-        {error && <div className="error-banner">{error}</div>}
-        <div className="field">
-          <label htmlFor="inc-title">{t("incidents.createForm.titleLabel")}</label>
-          <input
-            id="inc-title"
-            className="input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={t("incidents.createForm.titlePlaceholder")}
-            required
-          />
-        </div>
-        <div className="form-grid">
-          <div className="field">
-            <label htmlFor="inc-severity">{t("incidents.createForm.severity")}</label>
-            <select
-              id="inc-severity"
-              className="select"
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value as Severity)}
-            >
-              <option value="critical">{t("common.severity.critical")}</option>
-              <option value="high">{t("common.severity.high")}</option>
-              <option value="medium">{t("common.severity.medium")}</option>
-              <option value="low">{t("common.severity.low")}</option>
-              <option value="informational">{t("common.severity.informational")}</option>
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="inc-priority">{t("incidents.createForm.priority")}</label>
-            <select
-              id="inc-priority"
-              className="select"
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as IncidentPriority)}
-            >
-              <option value="p1">P1</option>
-              <option value="p2">P2</option>
-              <option value="p3">P3</option>
-              <option value="p4">P4</option>
-            </select>
-          </div>
-        </div>
-        <div className="field">
-          <label>{t("incidents.createForm.assignees")}</label>
-          <AssigneePicker value={assigneeIds} onChange={setAssigneeIds} />
-        </div>
-        <div className="field">
-          <label htmlFor="inc-desc">{t("incidents.createForm.description")}</label>
-          <textarea
-            id="inc-desc"
-            className="textarea"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder={t("incidents.createForm.descriptionPlaceholder")}
-          />
-        </div>
-        <div className="field">
-          <label>{t("incidents.createForm.tags")}</label>
-          <TagPicker value={tags} onChange={setTags} />
-        </div>
-        <button type="submit" className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={submitting}>
-          {submitting ? t("incidents.createForm.submitting") : t("incidents.createForm.submit")}
+    <Modal onClose={onCancel} as="form" onSubmit={handleSubmit}>
+      <div className="panel-header">
+        <h2 className="modal-title" style={{ marginBottom: 0 }}>
+          {t("incidents.createForm.title")}
+        </h2>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} aria-label={t("common.close")}>
+          ×
         </button>
-      </form>
-    </div>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="field">
+        <label htmlFor="inc-title">{t("incidents.createForm.titleLabel")}</label>
+        <input
+          id="inc-title"
+          className="input"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={t("incidents.createForm.titlePlaceholder")}
+          required
+        />
+      </div>
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="inc-severity">{t("incidents.createForm.severity")}</label>
+          <select
+            id="inc-severity"
+            className="select"
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value as Severity)}
+          >
+            <option value="critical">{t("common.severity.critical")}</option>
+            <option value="high">{t("common.severity.high")}</option>
+            <option value="medium">{t("common.severity.medium")}</option>
+            <option value="low">{t("common.severity.low")}</option>
+            <option value="informational">{t("common.severity.informational")}</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="inc-priority">{t("incidents.createForm.priority")}</label>
+          <select
+            id="inc-priority"
+            className="select"
+            value={priority}
+            onChange={(e) => setPriority(e.target.value as IncidentPriority)}
+          >
+            <option value="p1">P1</option>
+            <option value="p2">P2</option>
+            <option value="p3">P3</option>
+            <option value="p4">P4</option>
+          </select>
+        </div>
+      </div>
+      <div className="field">
+        <label>{t("incidents.createForm.assignees")}</label>
+        <AssigneePicker value={assigneeIds} onChange={setAssigneeIds} />
+      </div>
+      <div className="field">
+        <label htmlFor="inc-desc">{t("incidents.createForm.description")}</label>
+        <textarea
+          id="inc-desc"
+          className="textarea"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder={t("incidents.createForm.descriptionPlaceholder")}
+        />
+      </div>
+      <div className="field">
+        <label>{t("incidents.createForm.tags")}</label>
+        <TagPicker value={tags} onChange={setTags} />
+      </div>
+      <button type="submit" className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={submitting}>
+        {submitting ? t("incidents.createForm.submitting") : t("incidents.createForm.submit")}
+      </button>
+    </Modal>
   );
 }

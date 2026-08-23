@@ -56,6 +56,18 @@ describe("ResetPasswordPage", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("rejects a password with only digits without calling the API", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    renderPage();
+
+    await userEvent.type(screen.getByLabelText("New password"), "12345678");
+    await userEvent.type(screen.getByLabelText("Confirm new password"), "12345678");
+    await userEvent.click(screen.getByRole("button", { name: "Reset password" }));
+
+    expect(await screen.findByText("The new password must contain at least one letter and one digit.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("submits the token and new password, then shows the done message", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);

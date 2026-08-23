@@ -13,6 +13,12 @@ import (
 )
 
 func TestWebhookSender_Send(t *testing.T) {
+	// WebhookSender dials through httpguard (see webhook.go), which refuses
+	// loopback destinations by default -- httptest.NewServer always binds
+	// to 127.0.0.1, so this test needs the same escape hatch a genuine
+	// on-prem deployment would set.
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
@@ -32,6 +38,8 @@ func TestWebhookSender_Send(t *testing.T) {
 }
 
 func TestWebhookSender_Send_ErrorResponse(t *testing.T) {
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))

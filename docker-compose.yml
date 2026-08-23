@@ -182,6 +182,12 @@ services:
     environment:
       DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
       HTTP_ADDR: :8081
+      # ingest has no JWT auth surface of its own (webhook ingest is
+      # authenticated by a per-endpoint token, not a login session) -- this
+      # only matters here as the same dev/production signal
+      # secrets.NewFromConfig checks before allowing the default
+      # SECRETS_ENCRYPTION_KEY below. See the api service's own comment.
+      AUTH_MODE: ${AUTH_MODE:-dev}
       # Must match the api service's key -- both resolve refs written by
       # either service (webhook/AI-analysis secrets can be set from either
       # side). See the api service's own comment above.
@@ -213,6 +219,11 @@ services:
       # across all tenants. See db/init/argusops_worker_role.sql.
       DATABASE_URL: postgres://argusops_worker:${ARGUSOPS_WORKER_PASSWORD:-argusops_worker}@postgres:5432/argusops?sslmode=disable
       HTTP_ADDR: :8082
+      # worker has no HTTP auth surface at all -- this only matters here as
+      # the same dev/production signal secrets.NewFromConfig checks before
+      # allowing the default SECRETS_ENCRYPTION_KEY below. See the api
+      # service's own comment.
+      AUTH_MODE: ${AUTH_MODE:-dev}
       # Must match the api service's key -- see its comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}

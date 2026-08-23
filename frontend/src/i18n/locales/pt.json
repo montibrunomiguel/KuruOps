@@ -127,7 +127,8 @@
     "submit": "Salvar nova senha",
     "submitting": "Salvando...",
     "mismatch": "As senhas novas não coincidem.",
-    "tooShort": "A nova senha precisa ter pelo menos 8 caracteres."
+    "tooShort": "A nova senha precisa ter pelo menos 8 caracteres.",
+    "needsLetterAndDigit": "A nova senha precisa ter pelo menos uma letra e um número."
   },
   "profile": {
     "title": "Minha Conta",
@@ -343,6 +344,7 @@
       "linkedAlertsTitle": "Alertas Vinculados",
       "linkSearchPlaceholder": "Buscar alertas por ID ou título para vincular...",
       "noLinkedAlerts": "Nenhum alerta vinculado ainda.",
+      "unlinkAlert": "Desvincular alerta {{id}}",
       "metadataTitle": "Metadados do Alerta",
       "ruleId": "ID da Regra",
       "asset": "Ativo",
@@ -450,6 +452,10 @@
   "settings": {
     "title": "Configurações",
     "subtitle": "Integrações, identidade, operação e auditoria do ArgusOps.",
+    "panelError": {
+      "message": "Não foi possível carregar este painel. O restante das Configurações não foi afetado.",
+      "reload": "Recarregar página"
+    },
     "navGroups": {
       "integrations": "Integrações",
       "connectors": "Conectores",
@@ -855,6 +861,8 @@
         "handoverAt": "Horário de transição",
         "timezone": "Fuso horário",
         "concurrentShifts": "Qtd. de analistas no plantão",
+        "decreaseConcurrent": "Diminuir analistas no plantão",
+        "increaseConcurrent": "Aumentar analistas no plantão",
         "cadence": "Trocar turnos",
         "cadenceOption": {
           "daily": "Diariamente",
