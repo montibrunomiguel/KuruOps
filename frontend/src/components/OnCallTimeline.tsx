@@ -7,6 +7,7 @@ import type { OnCallParticipant, OnCallSchedule } from "../types/onCallSchedule"
 import type { UserSummary } from "../types/users";
 import { resolveOnCallSet } from "../lib/onCallRotation";
 import { personColor } from "../lib/personColor";
+import { Modal } from "./Modal";
 
 const ZOOM_OPTIONS = [1, 2, 4] as const;
 type ZoomWeeks = (typeof ZOOM_OPTIONS)[number];
@@ -227,25 +228,23 @@ export function OnCallTimeline({
       </div>
 
       {popoverDate && (
-        <div className="modal-overlay" onClick={() => setPopoverDate(null)}>
-          <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">
-              {t("settings.onCallSchedule.override.title", { date: popoverDate })}
-            </h3>
-            <OverridePopoverForm
-              scheduleId={schedule.id}
-              date={popoverDate}
-              existing={popoverOverride}
-              directory={directory}
-              token={token}
-              onClose={() => setPopoverDate(null)}
-              onSaved={() => {
-                setPopoverDate(null);
-                onOverrideChange();
-              }}
-            />
-          </div>
-        </div>
+        <Modal onClose={() => setPopoverDate(null)} style={{ maxWidth: 360 }}>
+          <h3 className="modal-title">
+            {t("settings.onCallSchedule.override.title", { date: popoverDate })}
+          </h3>
+          <OverridePopoverForm
+            scheduleId={schedule.id}
+            date={popoverDate}
+            existing={popoverOverride}
+            directory={directory}
+            token={token}
+            onClose={() => setPopoverDate(null)}
+            onSaved={() => {
+              setPopoverDate(null);
+              onOverrideChange();
+            }}
+          />
+        </Modal>
       )}
     </div>
   );

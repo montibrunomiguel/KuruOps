@@ -89,8 +89,8 @@ func (s *PasswordResetService) RequestReset(ctx context.Context, tenantID uuid.U
 // the same user -- an older still-unexpired link can't also be used
 // afterward.
 func (s *PasswordResetService) ConfirmReset(ctx context.Context, tenantID uuid.UUID, token, newPassword string) error {
-	if len(newPassword) < 8 {
-		return fmt.Errorf("new password must be at least 8 characters")
+	if err := validatePasswordPolicy(newPassword); err != nil {
+		return err
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		t, err := s.repo.GetByHash(ctx, tx, hashToken(token))

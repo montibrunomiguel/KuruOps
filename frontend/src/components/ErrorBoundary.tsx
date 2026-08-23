@@ -7,8 +7,14 @@ import { useTranslation } from "react-i18next";
 // Class component because componentDidCatch has no hook equivalent; the
 // actual fallback markup is a separate functional component below so it can
 // still use useTranslation.
-export class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: ReactNode }) {
+//
+// `fallback` is optional so the root boundary (main.tsx, no props passed)
+// keeps its original full-screen behavior, while a nested boundary (e.g.
+// around just the Settings panel routes) can render a scoped fallback that
+// doesn't blank out surrounding chrome like the nav that's still working
+// fine one level up.
+export class ErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode; fallback?: ReactNode }) {
     super(props);
     this.state = { hasError: false };
   }
@@ -23,7 +29,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { hasError
   }
 
   render() {
-    if (this.state.hasError) return <ErrorFallback />;
+    if (this.state.hasError) return this.props.fallback ?? <ErrorFallback />;
     return this.props.children;
   }
 }

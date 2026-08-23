@@ -275,6 +275,12 @@ func escalatedAtFor(t *testing.T, pool *db.Pool, alertID uuid.UUID) *time.Time {
 }
 
 func TestSweepEscalations(t *testing.T) {
+	// Escalation webhook steps fire through httpguard (see
+	// internal/notifier/webhook.go), which refuses loopback destinations
+	// by default -- newSweepTestChain's steps all point at
+	// httptest.NewServer, which always binds to 127.0.0.1.
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
 	appPool := testutil.RequireTestDB(t)
@@ -394,6 +400,8 @@ func noOnCallSMTP(pool *db.Pool, store secrets.Store) *service.SMTPConfigService
 // analyst on that shift gets emailed alongside the normal webhook firing --
 // neither replaces the other.
 func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
 	appPool := testutil.RequireTestDB(t)
@@ -437,6 +445,12 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 // alert's sla_escalation_step/escalated_at untouched so the next sweep tick
 // retries the same step, and must never reach the on-call email step either.
 func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
+	// Not strictly required for this test to pass (an httpguard refusal is
+	// itself a Send failure, which is what's being asserted either way),
+	// but without it the test would be exercising the wrong failure mode
+	// -- guard refusal instead of the intended "destination returns 500".
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	adminPool := sweepAdminPool(t)
 	workerPool := sweepWorkerPool(t)
 	appPool := testutil.RequireTestDB(t)

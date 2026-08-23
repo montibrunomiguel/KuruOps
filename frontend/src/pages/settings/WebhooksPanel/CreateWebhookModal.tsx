@@ -6,6 +6,7 @@ import { mutationErrorMessage } from "../../../api/hooks";
 import type { FieldMappingTemplate, WebhookEndpoint } from "../../../types/api";
 import { expiryOptions, expiryToDays } from "../../../lib/format";
 import { GroupByFieldsEditor } from "./GroupByFieldsEditor";
+import { Modal } from "../../../components/Modal";
 
 const DEFAULT_DEDUP_WINDOW_MINUTES = "30";
 
@@ -60,77 +61,75 @@ export function CreateWebhookModal({
   const options = expiryOptions(t);
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <form onSubmit={handleSubmit} className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-header">
-          <h2 className="modal-title" style={{ marginBottom: 0 }}>
-            {t("settings.webhooks.newEndpointTitle")}
-          </h2>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} aria-label={t("common.close")}>
-            ×
-          </button>
+    <Modal onClose={onCancel} as="form" onSubmit={handleSubmit}>
+      <div className="panel-header">
+        <h2 className="modal-title" style={{ marginBottom: 0 }}>
+          {t("settings.webhooks.newEndpointTitle")}
+        </h2>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} aria-label={t("common.close")}>
+          ×
+        </button>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="wh-name">{t("settings.webhooks.form.name")}</label>
+          <input id="wh-name" className="input" value={name} onChange={(e) => setName(e.target.value)} required />
         </div>
-        {error && <div className="error-banner">{error}</div>}
-        <div className="form-grid">
-          <div className="field">
-            <label htmlFor="wh-name">{t("settings.webhooks.form.name")}</label>
-            <input id="wh-name" className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div className="field">
-            <label htmlFor="wh-source">{t("settings.webhooks.form.source")}</label>
-            <input
-              id="wh-source"
-              className="input"
-              placeholder={t("settings.webhooks.form.sourcePlaceholder")}
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              required
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="wh-expiry">{t("settings.webhooks.form.tokenExpiry")}</label>
-            <select id="wh-expiry" className="select" value={expiresInDays} onChange={(e) => setExpiresInDays(e.target.value)}>
-              {options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="wh-field-mapping-template">{t("settings.webhooks.fieldMappingTemplate")}</label>
-            <select
-              id="wh-field-mapping-template"
-              className="select"
-              value={fieldMappingTemplateId}
-              onChange={(e) => setFieldMappingTemplateId(e.target.value)}
-            >
-              <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
-              {templates.map((tmpl) => (
-                <option key={tmpl.id} value={tmpl.id}>
-                  {tmpl.name}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="field">
+          <label htmlFor="wh-source">{t("settings.webhooks.form.source")}</label>
+          <input
+            id="wh-source"
+            className="input"
+            placeholder={t("settings.webhooks.form.sourcePlaceholder")}
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            required
+          />
         </div>
+        <div className="field">
+          <label htmlFor="wh-expiry">{t("settings.webhooks.form.tokenExpiry")}</label>
+          <select id="wh-expiry" className="select" value={expiresInDays} onChange={(e) => setExpiresInDays(e.target.value)}>
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="wh-field-mapping-template">{t("settings.webhooks.fieldMappingTemplate")}</label>
+          <select
+            id="wh-field-mapping-template"
+            className="select"
+            value={fieldMappingTemplateId}
+            onChange={(e) => setFieldMappingTemplateId(e.target.value)}
+          >
+            <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
+            {templates.map((tmpl) => (
+              <option key={tmpl.id} value={tmpl.id}>
+                {tmpl.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
 
-        <GroupByFieldsEditor
-          fields={groupByFields}
-          windowMinutes={dedupWindowMinutes}
-          onFieldsChange={setGroupByFields}
-          onWindowChange={setDedupWindowMinutes}
-        />
+      <GroupByFieldsEditor
+        fields={groupByFields}
+        windowMinutes={dedupWindowMinutes}
+        onFieldsChange={setGroupByFields}
+        onWindowChange={setDedupWindowMinutes}
+      />
 
-        <div className="row-actions" style={{ marginTop: 10 }}>
-          <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-            {submitting ? t("common.creating") : t("common.create")}
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
-            {t("common.cancel")}
-          </button>
-        </div>
-      </form>
-    </div>
+      <div className="row-actions" style={{ marginTop: 10 }}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+          {submitting ? t("common.creating") : t("common.create")}
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+          {t("common.cancel")}
+        </button>
+      </div>
+    </Modal>
   );
 }

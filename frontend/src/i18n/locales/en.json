@@ -127,7 +127,8 @@
     "submit": "Save new password",
     "submitting": "Saving...",
     "mismatch": "The new passwords don't match.",
-    "tooShort": "The new password must be at least 8 characters."
+    "tooShort": "The new password must be at least 8 characters.",
+    "needsLetterAndDigit": "The new password must contain at least one letter and one digit."
   },
   "profile": {
     "title": "My Account",
@@ -343,6 +344,7 @@
       "linkedAlertsTitle": "Linked Alerts",
       "linkSearchPlaceholder": "Search alerts by ID or title to link...",
       "noLinkedAlerts": "No linked alerts yet.",
+      "unlinkAlert": "Unlink alert {{id}}",
       "metadataTitle": "Alert Metadata",
       "ruleId": "Rule ID",
       "asset": "Asset",
@@ -450,6 +452,10 @@
   "settings": {
     "title": "Settings",
     "subtitle": "Integrations, identity, operations, and audit for ArgusOps.",
+    "panelError": {
+      "message": "This panel failed to load. The rest of Settings is unaffected.",
+      "reload": "Reload page"
+    },
     "navGroups": {
       "integrations": "Integrations",
       "connectors": "Connectors",
@@ -855,6 +861,8 @@
         "handoverAt": "Handover time",
         "timezone": "Timezone",
         "concurrentShifts": "Analysts on duty",
+        "decreaseConcurrent": "Decrease analysts on duty",
+        "increaseConcurrent": "Increase analysts on duty",
         "cadence": "Change shifts",
         "cadenceOption": {
           "daily": "Daily",

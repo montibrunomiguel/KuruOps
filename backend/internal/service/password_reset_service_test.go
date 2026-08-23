@@ -92,6 +92,11 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 		assert.ErrorContains(t, err, "at least 8 characters")
 	})
 
+	t.Run("rejects a new password with only digits", func(t *testing.T) {
+		err := resetSvc.ConfirmReset(t.Context(), tenantID, "whatever", "12345678")
+		assert.ErrorContains(t, err, "at least one letter and one digit")
+	})
+
 	require.NoError(t, resetSvc.RequestReset(t.Context(), tenantID, user.Email))
 	require.Len(t, sender.sent, 1)
 	token := extractResetToken(t, sender.sent[0].Body)

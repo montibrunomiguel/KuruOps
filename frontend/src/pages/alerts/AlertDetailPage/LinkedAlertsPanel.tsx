@@ -48,7 +48,7 @@ export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
           {linked.map((a) => (
             <span className="linked-chip" key={a.id}>
               <span className="mono">{shortId(a.id)}</span> · {a.title}
-              <button type="button" onClick={() => unlink(a.id)} aria-label="unlink">
+              <button type="button" onClick={() => unlink(a.id)} aria-label={t("alerts.detail.unlinkAlert", { id: shortId(a.id) })}>
                 ×
               </button>
             </span>
