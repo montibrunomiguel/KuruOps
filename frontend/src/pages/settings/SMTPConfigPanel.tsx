@@ -2,9 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { mutationErrorMessage } from "../../api/hooks";
 import type { SMTPConfig } from "../../types/api";
 import { useConfirm } from "../../hooks/useConfirm";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
 
 // Settings -> SMTP: lets an admin point outbound transactional email
 // (password reset, and any future notification) at a real relay. Same
@@ -14,8 +15,9 @@ import { useConfirm } from "../../hooks/useConfirm";
 export function SMTPConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<SMTPConfig | null>(["smtp-config"], (tok) =>
-    api.get<SMTPConfig | null>("/api/v1/settings/smtp", tok),
+  const { data: existing, loading, error, configured, saveError, submitting, saved, save } = useAdminSingletonConfig<SMTPConfig | null>(
+    ["smtp-config"],
+    (tok) => api.get<SMTPConfig | null>("/api/v1/settings/smtp", tok),
   );
 
   const [host, setHost] = useState("");
@@ -26,9 +28,6 @@ export function SMTPConfigPanel() {
   const [fromAddress, setFromAddress] = useState("");
   const [fromName, setFromName] = useState("");
 
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
@@ -51,42 +50,30 @@ export function SMTPConfigPanel() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    await save(async () => {
       await api.put(
         "/api/v1/settings/smtp",
         { host, port: Number(port), useTls, username, password, fromAddress, fromName },
         token,
       );
       setPassword("");
-      setSaved(true);
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   async function handleRemove() {
     cancelRemove();
-    setSubmitting(true);
-    try {
-      await api.del("/api/v1/settings/smtp", token);
-      setHost("");
-      setPort("587");
-      setUseTls(true);
-      setUsername("");
-      setFromAddress("");
-      setFromName("");
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    await save(
+      async () => {
+        await api.del("/api/v1/settings/smtp", token);
+        setHost("");
+        setPort("587");
+        setUseTls(true);
+        setUsername("");
+        setFromAddress("");
+        setFromName("");
+      },
+      { markSavedOnSuccess: false },
+    );
   }
 
   async function handleSendTest(e: FormEvent) {
@@ -110,7 +97,7 @@ export function SMTPConfigPanel() {
       <form onSubmit={handleSubmit} className="panel">
         <div className="panel-header">
           <h2 className="panel-title">{t("settings.smtp.title")}</h2>
-          {existing && (
+          {configured && (
             <span className="badge badge-success">
               <span className="badge-status-dot" />
               {t("settings.smtp.configured")}
@@ -143,7 +130,7 @@ export function SMTPConfigPanel() {
           <div className="field">
             <label htmlFor="smtp-password">
               {t("settings.smtp.password")}{" "}
-              {existing && <span className="field-hint">{t("settings.smtp.keepCurrent")}</span>}
+              {configured && <span className="field-hint">{t("settings.smtp.keepCurrent")}</span>}
             </label>
             <input id="smtp-password" className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
@@ -167,14 +154,14 @@ export function SMTPConfigPanel() {
 
         <div className="row-actions">
           <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-            {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.smtp.configureButton")}
+            {submitting ? t("common.saving") : configured ? t("common.update") : t("settings.smtp.configureButton")}
           </button>
-          {existing && !confirmingRemove && (
+          {configured && !confirmingRemove && (
             <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
               {t("settings.smtp.remove")}
             </button>
           )}
-          {existing && confirmingRemove && (
+          {configured && confirmingRemove && (
             <>
               <span className="helper-text">{t("settings.smtp.removeConfirm")}</span>
               <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
@@ -188,7 +175,7 @@ export function SMTPConfigPanel() {
         </div>
       </form>
 
-      {existing && (
+      {configured && (
         <form onSubmit={handleSendTest} className="panel" style={{ marginTop: 16 }}>
           <h2 className="panel-title">{t("settings.smtp.sendTest")}</h2>
           {testResult && (

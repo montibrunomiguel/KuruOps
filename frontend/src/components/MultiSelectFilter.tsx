@@ -10,8 +10,8 @@ export interface MultiSelectOption {
 // same "chips + a <select> to add another" idiom TagPicker/AssigneePicker
 // already use for their own (API-sourced) catalogs, so every multi-select
 // control in the app looks and behaves the same way. Kept separate from
-// SeverityFilter/PersonFilter, which wrap a single-value <select> and are
-// still used as-is on AlertsListPage/IncidentsListPage -- changing their
+// SeverityFilter, which wraps a single-value <select> and is
+// still used as-is on AlertsListPage/IncidentsListPage -- changing its
 // value shape would break those single-select call sites.
 export function MultiSelectFilter({
   options,

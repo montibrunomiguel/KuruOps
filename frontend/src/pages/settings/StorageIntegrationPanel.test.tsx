@@ -239,4 +239,13 @@ describe("StorageIntegrationPanel", () => {
 
     expect(await screen.findByText("Configuration saved.")).toBeInTheDocument();
   });
+
+  it("a fetch error does not show the 'configured' badge or remove button -- those stay gated on a real config existing, not on the request merely having failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "internal error" }, 500)));
+    renderPanel();
+
+    await screen.findByText("internal error");
+    expect(screen.queryByText(/^Configured/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove integration" })).not.toBeInTheDocument();
+  });
 });

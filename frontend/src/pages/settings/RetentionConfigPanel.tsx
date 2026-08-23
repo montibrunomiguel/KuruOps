@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
 import type { RetentionConfig } from "../../types/api";
 
 // Settings -> Data & Audit -> Retention: how long a CLOSED alert/incident
@@ -12,19 +12,18 @@ import type { RetentionConfig } from "../../types/api";
 // null: retention is on by default (18 months each), so this panel always
 // has real numbers to show, pre-filled even before an admin ever saves
 // anything -- `existing.configured` just distinguishes that default from a
-// value someone actually chose.
+// value someone actually chose (a different thing from useAdminSingletonConfig's
+// own `configured`, which just means "loaded without error").
 export function RetentionConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<RetentionConfig>(["retention-config"], (tok) =>
-    api.get<RetentionConfig>("/api/v1/settings/retention", tok),
+  const { data: existing, loading, error, saveError, submitting, saved, save } = useAdminSingletonConfig<RetentionConfig>(
+    ["retention-config"],
+    (tok) => api.get<RetentionConfig>("/api/v1/settings/retention", tok),
   );
 
   const [alertMonths, setAlertMonths] = useState("18");
   const [incidentMonths, setIncidentMonths] = useState("18");
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (existing) {
@@ -35,22 +34,13 @@ export function RetentionConfigPanel() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    await save(async () => {
       await api.put(
         "/api/v1/settings/retention",
         { alertRetentionMonths: Number(alertMonths), incidentRetentionMonths: Number(incidentMonths) },
         token,
       );
-      setSaved(true);
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;

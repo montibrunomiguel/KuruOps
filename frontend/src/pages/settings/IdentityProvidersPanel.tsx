@@ -2,8 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
 import { useConfirm } from "../../hooks/useConfirm";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
 import type { LDAPConfig, SAMLConfig } from "../../types/api";
 
 export function IdentityProvidersPanel() {
@@ -18,8 +18,9 @@ export function IdentityProvidersPanel() {
 function LDAPPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<LDAPConfig | null>(["identity-provider-ldap"], (tok) =>
-    api.get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", tok),
+  const { data: existing, loading, error, configured, saveError, submitting, saved, save } = useAdminSingletonConfig<LDAPConfig | null>(
+    ["identity-provider-ldap"],
+    (tok) => api.get<LDAPConfig | null>("/api/v1/settings/identity-providers/ldap", tok),
   );
 
   const [host, setHost] = useState("");
@@ -31,9 +32,6 @@ function LDAPPanel() {
   const [userFilter, setUserFilter] = useState("(mail=%s)");
   const [groupBaseDn, setGroupBaseDn] = useState("");
   const [groupAttribute, setGroupAttribute] = useState("memberOf");
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
@@ -54,45 +52,33 @@ function LDAPPanel() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    await save(async () => {
       await api.put(
         "/api/v1/settings/identity-providers/ldap",
         { host, port, useTls, bindDn, bindPassword, userBaseDn, userFilter, groupBaseDn, groupAttribute },
         token,
       );
-      setSaved(true);
       setBindPassword("");
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   async function handleRemove() {
     cancelRemove();
-    setSubmitting(true);
-    setSaveError(null);
-    try {
-      await api.del("/api/v1/settings/identity-providers/ldap", token);
-      setHost("");
-      setPort(636);
-      setUseTls(true);
-      setBindDn("");
-      setBindPassword("");
-      setUserBaseDn("");
-      setUserFilter("(mail=%s)");
-      setGroupBaseDn("");
-      setGroupAttribute("memberOf");
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    await save(
+      async () => {
+        await api.del("/api/v1/settings/identity-providers/ldap", token);
+        setHost("");
+        setPort(636);
+        setUseTls(true);
+        setBindDn("");
+        setBindPassword("");
+        setUserBaseDn("");
+        setUserFilter("(mail=%s)");
+        setGroupBaseDn("");
+        setGroupAttribute("memberOf");
+      },
+      { markSavedOnSuccess: false },
+    );
   }
 
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
@@ -101,7 +87,7 @@ function LDAPPanel() {
     <form onSubmit={handleSubmit} className="panel">
       <div className="panel-header">
         <h2 className="panel-title">{t("settings.identityProviders.ldap.title")}</h2>
-        {existing && (
+        {configured && (
           <span className="badge badge-success">
             <span className="badge-status-dot" />
             {t("settings.identityProviders.ldap.configured")}
@@ -138,9 +124,9 @@ function LDAPPanel() {
         <div className="field">
           <label htmlFor="ldap-bindpw">
             {t("settings.identityProviders.ldap.bindPassword")}{" "}
-            {existing && <span className="field-hint">{t("settings.identityProviders.ldap.keepCurrent")}</span>}
+            {configured && <span className="field-hint">{t("settings.identityProviders.ldap.keepCurrent")}</span>}
           </label>
-          <input id="ldap-bindpw" className="input" type="password" value={bindPassword} onChange={(e) => setBindPassword(e.target.value)} required={!existing} />
+          <input id="ldap-bindpw" className="input" type="password" value={bindPassword} onChange={(e) => setBindPassword(e.target.value)} required={!configured} />
         </div>
         <div className="field field-full">
           <label htmlFor="ldap-userbase">{t("settings.identityProviders.ldap.userBaseDn")}</label>
@@ -168,14 +154,14 @@ function LDAPPanel() {
 
       <div className="row-actions">
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-          {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
+          {submitting ? t("common.saving") : configured ? t("common.update") : t("settings.identityProviders.ldap.configureButton")}
         </button>
-        {existing && !confirmingRemove && (
+        {configured && !confirmingRemove && (
           <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.ldap.remove")}
           </button>
         )}
-        {existing && confirmingRemove && (
+        {configured && confirmingRemove && (
           <>
             <span className="helper-text">{t("settings.identityProviders.ldap.removeConfirm")}</span>
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>
@@ -194,8 +180,9 @@ function LDAPPanel() {
 function SAMLPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<SAMLConfig | null>(["identity-provider-saml"], (tok) =>
-    api.get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", tok),
+  const { data: existing, loading, error, configured, saveError, submitting, saved, save } = useAdminSingletonConfig<SAMLConfig | null>(
+    ["identity-provider-saml"],
+    (tok) => api.get<SAMLConfig | null>("/api/v1/settings/identity-providers/saml", tok),
   );
 
   const [metadataMode, setMetadataMode] = useState<"url" | "xml">("url");
@@ -204,9 +191,6 @@ function SAMLPanel() {
   const [spEntityId, setSpEntityId] = useState(() => `${window.location.origin}/auth/saml`);
   const [acsUrl, setAcsUrl] = useState(() => `${window.location.origin}/auth/saml/acs`);
   const [groupAttribute, setGroupAttribute] = useState("groups");
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
@@ -229,10 +213,7 @@ function SAMLPanel() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    await save(async () => {
       await api.put(
         "/api/v1/settings/identity-providers/saml",
         {
@@ -244,32 +225,23 @@ function SAMLPanel() {
         },
         token,
       );
-      setSaved(true);
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   async function handleRemove() {
     cancelRemove();
-    setSubmitting(true);
-    setSaveError(null);
-    try {
-      await api.del("/api/v1/settings/identity-providers/saml", token);
-      setMetadataMode("url");
-      setIdpMetadataUrl("");
-      setIdpMetadataXml("");
-      setSpEntityId(`${window.location.origin}/auth/saml`);
-      setAcsUrl(`${window.location.origin}/auth/saml/acs`);
-      setGroupAttribute("groups");
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    await save(
+      async () => {
+        await api.del("/api/v1/settings/identity-providers/saml", token);
+        setMetadataMode("url");
+        setIdpMetadataUrl("");
+        setIdpMetadataXml("");
+        setSpEntityId(`${window.location.origin}/auth/saml`);
+        setAcsUrl(`${window.location.origin}/auth/saml/acs`);
+        setGroupAttribute("groups");
+      },
+      { markSavedOnSuccess: false },
+    );
   }
 
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
@@ -281,7 +253,7 @@ function SAMLPanel() {
     <form onSubmit={handleSubmit} className="panel">
       <div className="panel-header">
         <h2 className="panel-title">{t("settings.identityProviders.saml.title")}</h2>
-        {existing && (
+        {configured && (
           <span className="badge badge-success">
             <span className="badge-status-dot" />
             {t("settings.identityProviders.saml.configured")}
@@ -296,7 +268,7 @@ function SAMLPanel() {
       {saveError && <div className="error-banner">{saveError}</div>}
       {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.identityProviders.saml.saved")}</div>}
 
-      {existing && (
+      {configured && (
         <div className="panel" style={{ background: "var(--surface-2)", marginBottom: 14 }}>
           <p className="row-title" style={{ marginBottom: 8 }}>{t("settings.identityProviders.saml.registerWithIdp")}</p>
           <div className="field" style={{ marginBottom: 8 }}>
@@ -378,14 +350,14 @@ function SAMLPanel() {
 
       <div className="row-actions">
         <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-          {submitting ? t("common.saving") : existing ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
+          {submitting ? t("common.saving") : configured ? t("common.update") : t("settings.identityProviders.saml.configureButton")}
         </button>
-        {existing && !confirmingRemove && (
+        {configured && !confirmingRemove && (
           <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.identityProviders.saml.remove")}
           </button>
         )}
-        {existing && confirmingRemove && (
+        {configured && confirmingRemove && (
           <>
             <span className="helper-text">{t("settings.identityProviders.saml.removeConfirm")}</span>
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>

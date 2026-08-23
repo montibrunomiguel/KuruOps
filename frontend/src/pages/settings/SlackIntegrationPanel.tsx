@@ -3,8 +3,9 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { mutationErrorMessage } from "../../api/hooks";
 import { useConfirm } from "../../hooks/useConfirm";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
 import type { SlackConfig } from "../../types/api";
 
 // Settings -> Conectores -> Slack: connect/disconnect a Slack workspace via
@@ -24,8 +25,14 @@ import type { SlackConfig } from "../../types/api";
 export function SlackIntegrationPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<SlackConfig | null>(["slack-config"], (tok) =>
-    api.get<SlackConfig | null>("/api/v1/settings/integrations/slack", tok),
+  // Only the GET/reload/configured half of the hook fits here -- Slack's
+  // two actions (connect via OAuth redirect, disconnect via DELETE) don't
+  // share a single save() shape the way a plain PUT-a-form panel does (see
+  // useAdminSingletonConfig's own doc comment), so this panel keeps its own
+  // connecting/disconnecting/actionError state below.
+  const { data: existing, loading, error, configured, reload } = useAdminSingletonConfig<SlackConfig | null>(
+    ["slack-config"],
+    (tok) => api.get<SlackConfig | null>("/api/v1/settings/integrations/slack", tok),
   );
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -81,7 +88,7 @@ export function SlackIntegrationPanel() {
     <div className="panel">
       <div className="panel-header">
         <h2 className="panel-title">{t("settings.slack.title")}</h2>
-        {existing && (
+        {configured && existing && (
           <span className="badge badge-success">
             <span className="badge-status-dot" />
             {t("settings.slack.connectedBadge", { team: existing.teamName })}
@@ -96,7 +103,13 @@ export function SlackIntegrationPanel() {
       {actionError && <div className="error-banner">{actionError}</div>}
       {connected && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.slack.connectedMessage")}</div>}
 
-      {existing ? (
+      {error ? (
+        // A failed GET must never fall through to the "not connected"
+        // Connect button -- we genuinely don't know the current state here
+        // (a workspace could already be connected), and clicking Connect
+        // would start a fresh OAuth flow on top of that unknown state.
+        <p className="helper-text">{t("settings.slack.unknownStatus")}</p>
+      ) : existing ? (
         <>
           <div className="form-grid">
             <div className="field">

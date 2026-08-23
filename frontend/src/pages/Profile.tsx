@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { useList, mutationErrorMessage } from "../api/hooks";
+import { useSavedFlag } from "../hooks/useSavedFlag";
 import type { UserAPIToken } from "../types/api";
 import { formatDateTime, validateNewPassword, expiryOptions, expiryToDays } from "../lib/format";
 
@@ -38,7 +39,7 @@ function ProfileForm() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const { saved, markSaved, clearSaved } = useSavedFlag();
 
   const emailChanged = email !== user?.email;
 
@@ -46,7 +47,7 @@ function ProfileForm() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    setSaved(false);
+    clearSaved();
     try {
       await api.put(
         "/api/v1/account/profile",
@@ -55,7 +56,7 @@ function ProfileForm() {
       );
       updateProfile(name, email, phone);
       setCurrentPassword("");
-      setSaved(true);
+      markSaved();
     } catch (err) {
       setError(mutationErrorMessage(err));
     } finally {
@@ -134,13 +135,13 @@ function PasswordSection() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const { saved, markSaved, clearSaved } = useSavedFlag();
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setSaved(false);
+    clearSaved();
     const validationError = validateNewPassword(newPassword, confirmPassword, t);
     if (validationError) {
       setError(validationError);
@@ -158,7 +159,7 @@ function PasswordSection() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setSaved(true);
+      markSaved();
     } catch (err) {
       setError(mutationErrorMessage(err));
     } finally {
