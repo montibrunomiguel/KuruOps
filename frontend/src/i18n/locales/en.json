@@ -968,7 +968,9 @@
       "usingDefault": "Using default (18 months)",
       "alertRetentionMonths": "Alert retention (months)",
       "incidentRetentionMonths": "Incident retention (months)",
-      "saved": "Retention settings saved."
+      "saved": "Retention settings saved.",
+      "lowerConfirmBanner": "This lowers a retention period below its current value -- any closed alert or incident already older than the new value will be permanently deleted on the next sweep. This cannot be undone.",
+      "confirmLower": "Save anyway"
     },
     "databaseMigration": {
       "title": "External Database",

@@ -968,7 +968,9 @@
       "usingDefault": "Usando o padrão (18 meses)",
       "alertRetentionMonths": "Retenção de alertas (meses)",
       "incidentRetentionMonths": "Retenção de incidentes (meses)",
-      "saved": "Configurações de retenção salvas."
+      "saved": "Configurações de retenção salvas.",
+      "lowerConfirmBanner": "Isso reduz um prazo de retenção abaixo do valor atual -- qualquer alerta ou incidente fechado já mais antigo que o novo valor será excluído permanentemente na próxima varredura. Isso não pode ser desfeito.",
+      "confirmLower": "Salvar mesmo assim"
     },
     "databaseMigration": {
       "title": "Banco de Dados Externo",

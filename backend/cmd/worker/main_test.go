@@ -662,6 +662,30 @@ func insertSweepTestClosedAlert(t *testing.T, pool *db.Pool, tenantID uuid.UUID,
 	return alertID
 }
 
+// insertSweepTestClosedAlertsBulk inserts n closed, retention-eligible
+// alerts for tenantID in a single statement (via generate_series) -- used
+// only by the batch-limit test, where inserting retentionSweepBatchLimit+5
+// rows one at a time would make the test far slower than the sweep it's
+// verifying.
+func insertSweepTestClosedAlertsBulk(t *testing.T, pool *db.Pool, tenantID uuid.UUID, n int, closedAt time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		insert into alerts (id, tenant_id, title, source, severity, original_severity, status, classification, tags, payload, received_at, closed_at)
+		select gen_random_uuid(), $1, 'sweep retention batch test alert', 'test', 'critical', 'critical', 'closed', 'true_positive', '{}', '{}', $2, $2
+		from generate_series(1, $3)`,
+		tenantID, closedAt, n,
+	)
+	require.NoError(t, err)
+}
+
+func countAlertsForTenant(t *testing.T, pool *db.Pool, tenantID uuid.UUID) int {
+	t.Helper()
+	var count int
+	err := pool.QueryRow(context.Background(), `select count(*) from alerts where tenant_id = $1`, tenantID).Scan(&count)
+	require.NoError(t, err)
+	return count
+}
+
 // insertSweepTestClosedIncident mirrors insertSweepTestClosedAlert for
 // incidents -- phase 'post_incident' plus an explicit closed_at (the two
 // only ever agree in practice via IncidentService.Close/
@@ -861,6 +885,69 @@ func TestSweepDataRetention(t *testing.T) {
 
 		assert.False(t, alertExists(t, adminPool, alertID), "alert_retention_months=0 must purge a just-closed alert immediately")
 		assert.True(t, incidentExists(t, adminPool, incidentID), "incident_retention_months=100 must keep a 19-month-old incident well within its window")
+	})
+
+	t.Run("a backlog bigger than retentionSweepBatchLimit is worked off incrementally, one batch per tick", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		total := retentionSweepBatchLimit + 5
+		insertSweepTestClosedAlertsBulk(t, adminPool, tenantID, total, time.Now().AddDate(0, -19, 0))
+
+		sweepDataRetention(ctx, workerPool, logger)
+		afterFirstTick := countAlertsForTenant(t, adminPool, tenantID)
+		assert.Equal(t, 5, afterFirstTick, "the first tick must purge exactly retentionSweepBatchLimit rows, leaving the rest for the next tick")
+
+		sweepDataRetention(ctx, workerPool, logger)
+		afterSecondTick := countAlertsForTenant(t, adminPool, tenantID)
+		assert.Equal(t, 0, afterSecondTick, "the remaining backlog must clear on the following tick")
+	})
+
+	// Regression test for the TOCTOU fix: deleteEligibleIncidents used to
+	// select doomed ids in one statement and delete-by-id in a second,
+	// separate statement -- a real window in which a concurrent reopen
+	// (clearing closed_at) could commit in between, and the second
+	// statement, which never re-checked closed_at, purged the now-active
+	// incident anyway. It's now a single `WITH ... FOR UPDATE` CTE feeding
+	// the DELETE, so Postgres re-validates the WHERE clause against each
+	// row's current committed values before returning it -- this test
+	// proves that by holding an uncommitted "reopen" transaction's row lock
+	// while the sweep runs concurrently, forcing the sweep to actually wait
+	// on it rather than just happening to run before/after.
+	t.Run("an incident reopened concurrently with the sweep is not purged, even though it was eligible when the sweep started", func(t *testing.T) {
+		tenantID := insertSweepTestTenant(t, adminPool)
+		incidentID := insertSweepTestClosedIncident(t, adminPool, tenantID, time.Now().AddDate(0, -19, 0))
+
+		reopenTx, err := adminPool.Begin(ctx)
+		require.NoError(t, err)
+		// Acquires the row lock immediately -- the sweep's own FOR UPDATE
+		// will block on this exact row until reopenTx commits or rolls back.
+		_, err = reopenTx.Exec(ctx, `update incidents set closed_at = null where id = $1`, incidentID)
+		require.NoError(t, err)
+
+		sweepDone := make(chan struct{})
+		go func() {
+			defer close(sweepDone)
+			sweepDataRetention(ctx, workerPool, logger)
+		}()
+
+		// Give the sweep time to actually reach and block on the locked
+		// row before releasing the lock -- if it were racing ahead
+		// uncontested, holding the lock for a bit and then committing
+		// still exercises the real EvalPlanQual re-check path (the lock
+		// wait is what forces that re-check; without ever blocking, this
+		// test wouldn't prove anything a sequential test doesn't already).
+		time.Sleep(200 * time.Millisecond)
+		require.NoError(t, reopenTx.Commit(ctx))
+
+		select {
+		case <-sweepDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("sweepDataRetention did not complete after the reopen committed -- still blocked?")
+		}
+
+		assert.True(t, incidentExists(t, adminPool, incidentID), "a concurrently-reopened incident must survive the sweep")
+		var closedAt *time.Time
+		require.NoError(t, adminPool.QueryRow(ctx, `select closed_at from incidents where id = $1`, incidentID).Scan(&closedAt))
+		assert.Nil(t, closedAt, "the reopen must have taken effect -- closed_at should be null")
 	})
 
 	// Same "log and return, never panic" DB-error coverage as the other
