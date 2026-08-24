@@ -64,6 +64,9 @@ type ListIncidentsFilter struct {
 	// 'commander' role -- the Dashboard Incidents tab's commander filter
 	// (see repository.StatsFilter.CommanderID).
 	CommanderID *uuid.UUID
+	// Q full-text-matches against title/description (see the generated
+	// search_vector column, db/migrations/0008_fulltext_search).
+	Q *string
 	// AllowedTags scopes results to the caller's tag-based access -- see
 	// the identical field on ListAlertsFilter for the full explanation.
 	AllowedTags []string
@@ -117,6 +120,10 @@ func incidentWhereClause(f ListIncidentsFilter) (string, []any) {
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
 		query += fmt.Sprintf(" and tags && $%d", len(args))
+	}
+	if f.Q != nil {
+		args = append(args, *f.Q)
+		query += fmt.Sprintf(" and search_vector @@ plainto_tsquery('english', $%d)", len(args))
 	}
 
 	return query, args

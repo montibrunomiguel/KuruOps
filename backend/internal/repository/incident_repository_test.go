@@ -198,6 +198,45 @@ func TestIncidentRepository_List_Filters(t *testing.T) {
 	})
 }
 
+func TestIncidentRepository_List_FilterByQ(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewIncidentRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	ransomware := newTestIncident(tenantID, domain.SeverityCritical, domain.PriorityP1, nil)
+	ransomware.Title = "Ransomware suspected on file server"
+	require.NoError(t, repo.Insert(t.Context(), tx, ransomware))
+
+	phishing := newTestIncident(tenantID, domain.SeverityLow, domain.PriorityP3, nil)
+	phishing.Title = "Suspicious email campaign"
+	phishing.Description = "Multiple users reported a phishing link in their inbox"
+	require.NoError(t, repo.Insert(t.Context(), tx, phishing))
+
+	t.Run("matches a word in the title", func(t *testing.T) {
+		q := "ransomware"
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{Q: &q})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, ransomware.ID, list[0].ID)
+	})
+
+	t.Run("matches a word in the description, not just title", func(t *testing.T) {
+		q := "phishing"
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{Q: &q})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, phishing.ID, list[0].ID)
+	})
+
+	t.Run("no matches returns empty, not an error", func(t *testing.T) {
+		q := "nonexistentkeyword"
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{Q: &q})
+		require.NoError(t, err)
+		assert.Empty(t, list)
+	})
+}
+
 // TestIncidentRepository_Count is the regression test for real page-number
 // pagination: Count must apply the same filters as List but ignore
 // Limit/Offset entirely, so a caller can compute total pages independent of

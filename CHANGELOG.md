@@ -13,6 +13,11 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Full-text search on Alerts and Incidents: a `q` filter on both list pages matches against title,
+  source, rule ID and asset for alerts, and title/description for incidents — backed by a Postgres
+  generated `tsvector` column and GIN index per table (`db/migrations/0008_fulltext_search`), not a
+  slower `ILIKE` scan. The search box is debounced (300ms) before it re-queries, same as every
+  other filter on these list pages resetting to page 1 on change.
 - Settings → Data & Audit → Audit Log: an append-only record of every Settings change any admin
   has made — area, action, actor, and a before/after diff (`admin_audit_events` table,
   `AdminAuditEventRepository.InsertEvent`). Covers all ~15 Settings areas (Webhooks, Field Mapping

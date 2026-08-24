@@ -72,8 +72,10 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   recomputing this on every request. "Live" counters (open, critical) and the recent list/activity
   feed update via SSE, no page reload needed. The time-range filter accepts either a preset
   (24h/7d/30d/90d) or a custom range with exact date and time.
-- **Alerts / Incidents** — listing with filters and pagination (`Load more`), a detail view with an
-  event timeline, comments, alert↔incident linking, and AI analysis (manual via a button, or
+- **Alerts / Incidents** — listing with filters, full-text search (title/source/rule/asset for
+  alerts, title/description for incidents, backed by a Postgres `tsvector` + GIN index, not a slow
+  `ILIKE` scan), and pagination (`Load more`); a detail view with an event timeline, comments,
+  alert↔incident linking, and AI analysis (manual via a button, or
   automatic on ingest if an LLM provider is configured for it). An alert received via webhook can
   carry custom metadata (a Slack channel, an external playbook link, an environment, or any
   key/value the source wants to send), rendered in a dedicated panel on the detail view. See

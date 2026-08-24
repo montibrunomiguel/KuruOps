@@ -298,6 +298,7 @@
   "alerts": {
     "title": "Alerts",
     "subtitle": "All webhook-ingested security alerts",
+    "searchPlaceholder": "Search title, source, rule or asset...",
     "count_one": "{{count}} alert",
     "count_other": "{{count}} alerts",
     "duplicateBadgeTitle_one": "{{count}} duplicate alert suppressed",
@@ -365,6 +366,7 @@
   "incidents": {
     "title": "Incidents",
     "subtitle": "NIST-aligned incident tracking",
+    "searchPlaceholder": "Search title or description...",
     "count_one": "{{count}} incident",
     "count_other": "{{count}} incidents",
     "newIncident": "New Incident",

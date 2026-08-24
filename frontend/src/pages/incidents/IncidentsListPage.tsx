@@ -5,6 +5,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { usePagedList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import type { Severity } from "../../types/alerts";
 import type { Incident, IncidentPhase, IncidentPriority } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
@@ -27,6 +28,8 @@ export function IncidentsListPage() {
   const [priority, setPriority] = useState<IncidentPriority | "">("");
   const [phase, setPhase] = useState<IncidentPhase | "">("");
   const [sla, setSla] = useState<SlaFilter>("");
+  const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [showCreate, setShowCreate] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
@@ -46,13 +49,14 @@ export function IncidentsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Incident>(
-    ["incidents", severity, priority, phase, sla, range.since, range.until],
+    ["incidents", severity, priority, phase, sla, debouncedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
       if (priority) params.set("priority", priority);
       if (phase) params.set("phase", phase);
       if (sla) params.set("sla", sla);
+      if (debouncedQ) params.set("q", debouncedQ);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
@@ -93,6 +97,12 @@ export function IncidentsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input
+            className="input input-search"
+            placeholder={t("incidents.searchPlaceholder")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
           <SeverityFilter value={severity} onChange={setSeverity} />
           <select
             className="select"

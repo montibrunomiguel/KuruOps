@@ -441,6 +441,10 @@ paths:
           in: query
           description: 'true or false; filters to alerts that are/aren''t linked to another alert.'
           schema: { type: string }
+        - name: q
+          in: query
+          description: Full-text search against title, source, ruleId and asset.
+          schema: { type: string }
         - name: since
           in: query
           description: RFC3339 lower bound on receivedAt. Malformed values are silently ignored (treated as absent).
@@ -806,6 +810,10 @@ paths:
           schema: { $ref: '#/components/schemas/IncidentPhase' }
         - name: tag
           in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          description: Full-text search against title and description.
           schema: { type: string }
         - name: since
           in: query

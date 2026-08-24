@@ -74,6 +74,9 @@ type ListAlertsFilter struct {
 	Source     *string
 	Tag        *string
 	Correlated *bool
+	// Q full-text-matches against title/source/ruleId/asset (see the
+	// generated search_vector column, db/migrations/0008_fulltext_search).
+	Q *string
 	// ReceivedSince/ReceivedUntil restrict to alerts received within
 	// [ReceivedSince, ReceivedUntil] -- the Dashboard's time-range filter
 	// (see repository.StatsFilter.Since/Until), either end optional.
@@ -144,6 +147,10 @@ func alertWhereClause(f ListAlertsFilter) (string, []any) {
 	if len(f.AllowedTags) > 0 {
 		args = append(args, f.AllowedTags)
 		query += fmt.Sprintf(" and a.tags && $%d", len(args))
+	}
+	if f.Q != nil {
+		args = append(args, *f.Q)
+		query += fmt.Sprintf(" and a.search_vector @@ plainto_tsquery('english', $%d)", len(args))
 	}
 
 	return query, args

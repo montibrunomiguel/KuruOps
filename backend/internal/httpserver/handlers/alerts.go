@@ -78,6 +78,9 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 		b := v == "true"
 		f.Correlated = &b
 	}
+	if v := r.URL.Query().Get("q"); v != "" {
+		f.Q = &v
+	}
 	f.ReceivedSince = parseSince(r)
 	f.ReceivedUntil = parseUntil(r)
 	f.Limit, f.Offset = parsePaging(r)

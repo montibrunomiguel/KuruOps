@@ -87,6 +87,9 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 		b := v == "breached"
 		f.SLABreached = &b
 	}
+	if v := r.URL.Query().Get("q"); v != "" {
+		f.Q = &v
+	}
 	f.OpenedSince = parseSince(r)
 	f.OpenedUntil = parseUntil(r)
 	f.CommanderID = parseUUIDQueryParam(r, "commanderId")
