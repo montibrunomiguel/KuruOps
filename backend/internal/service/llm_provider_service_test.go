@@ -1,23 +1,59 @@
 package service_test
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/secrets"
 	"github.com/argusops/argusops/internal/service"
 	"github.com/argusops/argusops/internal/testutil"
 )
 
+// fakeLLMProviderRepo lets a test fail a specific repo call on demand --
+// LLMProviderService takes an interface (not the concrete
+// *repository.LLMProviderRepository) specifically so this is possible. See
+// fakeStorageConfigRepo (storage_config_service_test.go) for the fuller
+// version of this reasoning.
+type fakeLLMProviderRepo struct {
+	listErr       error
+	getErr        error
+	insertErr     error
+	updateErr     error
+	setDefaultErr error
+	deleteErr     error
+	get           *domain.LLMProvider
+}
+
+func (f *fakeLLMProviderRepo) List(context.Context, pgx.Tx) ([]domain.LLMProvider, error) {
+	return nil, f.listErr
+}
+func (f *fakeLLMProviderRepo) Get(context.Context, pgx.Tx, uuid.UUID) (*domain.LLMProvider, error) {
+	return f.get, f.getErr
+}
+func (f *fakeLLMProviderRepo) Insert(context.Context, pgx.Tx, *domain.LLMProvider) error {
+	return f.insertErr
+}
+func (f *fakeLLMProviderRepo) Update(context.Context, pgx.Tx, *domain.LLMProvider) error {
+	return f.updateErr
+}
+func (f *fakeLLMProviderRepo) SetDefault(context.Context, pgx.Tx, uuid.UUID, uuid.UUID) error {
+	return f.setDefaultErr
+}
+func (f *fakeLLMProviderRepo) Delete(context.Context, pgx.Tx, uuid.UUID) error { return f.deleteErr }
+
 func TestLLMProviderService_Create(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore())
+	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 
 	t.Run("anthropic rejects a custom base_url", func(t *testing.T) {
 		baseURL := "https://sketchy-proxy.example.com"
@@ -62,7 +98,7 @@ func TestLLMProviderService_Update(t *testing.T) {
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	store := secrets.NewEnvStore()
-	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
+	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository())
 
 	p, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-original",
@@ -71,7 +107,7 @@ func TestLLMProviderService_Update(t *testing.T) {
 	originalRef := p.APIKeySecretRef
 
 	t.Run("empty APIKey on update keeps the existing secret ref", func(t *testing.T) {
-		updated, err := svc.Update(t.Context(), tenantID, p.ID, service.LLMProviderSaveInput{
+		updated, err := svc.Update(t.Context(), tenantID, actorID, p.ID, service.LLMProviderSaveInput{
 			Name: "OpenAI Renamed", Kind: "openai_compatible", Model: "gpt-4o-mini", APIKey: "",
 		})
 		require.NoError(t, err)
@@ -80,20 +116,20 @@ func TestLLMProviderService_Update(t *testing.T) {
 	})
 
 	t.Run("updating a nonexistent provider fails", func(t *testing.T) {
-		_, err := svc.Update(t.Context(), tenantID, uuid.New(), service.LLMProviderSaveInput{
+		_, err := svc.Update(t.Context(), tenantID, actorID, uuid.New(), service.LLMProviderSaveInput{
 			Name: "x", Kind: "openai_compatible", Model: "m",
 		})
 		assert.ErrorContains(t, err, "not found")
 	})
 
 	t.Run("AutoAnalyzeAllAlerts fully replaces on every update, same as Name/Kind/Model", func(t *testing.T) {
-		updated, err := svc.Update(t.Context(), tenantID, p.ID, service.LLMProviderSaveInput{
+		updated, err := svc.Update(t.Context(), tenantID, actorID, p.ID, service.LLMProviderSaveInput{
 			Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", AutoAnalyzeAllAlerts: true,
 		})
 		require.NoError(t, err)
 		assert.True(t, updated.AutoAnalyzeAllAlerts)
 
-		updated, err = svc.Update(t.Context(), tenantID, p.ID, service.LLMProviderSaveInput{
+		updated, err = svc.Update(t.Context(), tenantID, actorID, p.ID, service.LLMProviderSaveInput{
 			Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", AutoAnalyzeAllAlerts: false,
 		})
 		require.NoError(t, err)
@@ -105,21 +141,82 @@ func TestLLMProviderService_SetDefaultAndDelete(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore())
+	auditRepo := repository.NewAdminAuditEventRepository()
+	svc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore(), auditRepo)
 
 	p, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "OpenAI", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-1",
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, svc.SetDefault(t.Context(), tenantID, p.ID))
+	require.NoError(t, svc.SetDefault(t.Context(), tenantID, actorID, p.ID))
 	list, err := svc.List(t.Context(), tenantID)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	assert.True(t, list[0].IsDefault)
 
-	require.NoError(t, svc.Delete(t.Context(), tenantID, p.ID))
+	require.NoError(t, svc.Delete(t.Context(), tenantID, actorID, p.ID))
 	list, err = svc.List(t.Context(), tenantID)
 	require.NoError(t, err)
 	assert.Empty(t, list)
+
+	t.Run("create/set-default/delete each record an admin audit event", func(t *testing.T) {
+		tx := testutil.BeginTx(t, pool, tenantID)
+		events, err := auditRepo.List(t.Context(), tx, nil, 10)
+		require.NoError(t, err)
+		var actions []string
+		for _, e := range events {
+			assert.Equal(t, "ai-integration", e.Area)
+			actions = append(actions, e.Action)
+		}
+		assert.Contains(t, actions, "create")
+		assert.Contains(t, actions, "set-default")
+		assert.Contains(t, actions, "delete")
+	})
+}
+
+// TestLLMProviderService_RepoErrors exercises each mutating method's "load
+// existing provider to build the audit diff, then persist" error-wrapping
+// branches -- unreachable via a real Postgres integration test.
+func TestLLMProviderService_RepoErrors(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	validInput := service.LLMProviderSaveInput{Name: "X", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-test"}
+
+	t.Run("Create wraps an Insert failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{insertErr: errors.New("insert boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		_, err := svc.Create(t.Context(), tenantID, actorID, validInput)
+		assert.ErrorContains(t, err, "insert boom")
+	})
+
+	t.Run("Update wraps a load-existing failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{getErr: errors.New("get boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		_, err := svc.Update(t.Context(), tenantID, actorID, uuid.New(), validInput)
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("Update wraps an Update failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{get: &domain.LLMProvider{}, updateErr: errors.New("update boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		_, err := svc.Update(t.Context(), tenantID, actorID, uuid.New(), validInput)
+		assert.ErrorContains(t, err, "update boom")
+	})
+
+	t.Run("SetDefault wraps a SetDefault failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{setDefaultErr: errors.New("set-default boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		err := svc.SetDefault(t.Context(), tenantID, actorID, uuid.New())
+		assert.ErrorContains(t, err, "set-default boom")
+	})
+
+	t.Run("Delete wraps a Get failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{getErr: errors.New("get boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		err := svc.Delete(t.Context(), tenantID, actorID, uuid.New())
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("Delete wraps a Delete failure", func(t *testing.T) {
+		svc := service.NewLLMProviderService(pool, &fakeLLMProviderRepo{deleteErr: errors.New("delete boom")}, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+		err := svc.Delete(t.Context(), tenantID, actorID, uuid.New())
+		assert.ErrorContains(t, err, "delete boom")
+	})
 }

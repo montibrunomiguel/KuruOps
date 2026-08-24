@@ -480,6 +480,7 @@
       "onCallSchedule": "On-Call Schedule",
       "incidentSla": "Incident SLAs",
       "escalationPolicies": "Escalation Chain",
+      "auditLog": "Audit Log",
       "auditExport": "Audit Export",
       "retention": "Retention",
       "databaseMigration": "External Database"
@@ -955,6 +956,20 @@
         },
         "webhookPayloadTemplate": "Custom payload (optional)",
         "webhookPayloadTemplateHelp": "Leave blank to send the default payload. Available placeholders:"
+      }
+    },
+    "auditLog": {
+      "title": "Audit Log",
+      "helper": "Every change any admin has made across Settings -- who, what area, what action, and the before/after values. Append-only, never edited or deleted.",
+      "empty": "No settings changes recorded yet.",
+      "unknownActor": "Unknown user",
+      "loadMore": "Load more",
+      "table": {
+        "when": "When",
+        "area": "Area",
+        "action": "Action",
+        "actor": "Actor",
+        "diff": "Diff"
       }
     },
     "auditExport": {

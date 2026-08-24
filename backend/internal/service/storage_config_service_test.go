@@ -1,8 +1,11 @@
 package service_test
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -13,6 +16,27 @@ import (
 	"github.com/argusops/argusops/internal/service"
 	"github.com/argusops/argusops/internal/testutil"
 )
+
+// fakeStorageConfigRepo lets a test fail a specific repo call on demand --
+// StorageConfigService takes an interface (not the concrete
+// *repository.StorageConfigRepository) specifically so this is possible.
+// Every mutating method fetches the existing config first to build the
+// audit-diff, then upserts/deletes; a real Postgres integration test has no
+// way to make either of those two calls fail mid-transaction, so those
+// error-wrapping branches would otherwise never run.
+type fakeStorageConfigRepo struct {
+	getErr    error
+	upsertErr error
+	deleteErr error
+}
+
+func (f *fakeStorageConfigRepo) Get(context.Context, pgx.Tx) (*domain.StorageConfig, error) {
+	return nil, f.getErr
+}
+func (f *fakeStorageConfigRepo) Upsert(context.Context, pgx.Tx, *domain.StorageConfig) error {
+	return f.upsertErr
+}
+func (f *fakeStorageConfigRepo) Delete(context.Context, pgx.Tx) error { return f.deleteErr }
 
 // newStorageConfigServiceWithOAuth wires a real OAuthStateService plus a
 // (fake, unreachable-endpoint) Google OAuth client -- everything short of
@@ -27,21 +51,23 @@ func newStorageConfigServiceWithOAuth(t *testing.T, dir string) *service.Storage
 	pool := testutil.RequireTestDB(t)
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	return service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir,
-		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback")
+		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 }
 
 func TestStorageConfigService_S3(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	dir := t.TempDir()
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
+	auditRepo := repository.NewAdminAuditEventRepository()
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", auditRepo)
 
 	t.Run("initial save requires a secret access key", func(t *testing.T) {
-		err := svc.SaveS3(t.Context(), tenantID, service.SaveS3Input{Bucket: "b", Region: "us-east-1", AccessKeyID: "AKIA"})
+		err := svc.SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{Bucket: "b", Region: "us-east-1", AccessKeyID: "AKIA"})
 		assert.ErrorContains(t, err, "credential value is required")
 	})
 
-	require.NoError(t, svc.SaveS3(t.Context(), tenantID, service.SaveS3Input{
+	require.NoError(t, svc.SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{
 		Bucket: "evidence", Region: "us-east-1", AccessKeyID: "AKIA", SecretAccessKey: "s3cret",
 	}))
 
@@ -51,7 +77,7 @@ func TestStorageConfigService_S3(t *testing.T) {
 	assert.NotContains(t, cfg.S3SecretAccessKeySecretRef, "s3cret", "the plaintext secret key never lands in the stored ref")
 
 	t.Run("re-saving without a new secret keeps the existing one", func(t *testing.T) {
-		require.NoError(t, svc.SaveS3(t.Context(), tenantID, service.SaveS3Input{
+		require.NoError(t, svc.SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{
 			Bucket: "evidence-renamed", Region: "us-east-1", AccessKeyID: "AKIA",
 		}))
 		got, err := svc.Get(t.Context(), tenantID)
@@ -59,20 +85,32 @@ func TestStorageConfigService_S3(t *testing.T) {
 		assert.Equal(t, "evidence-renamed", *got.S3Bucket)
 		assert.Equal(t, cfg.S3SecretAccessKeySecretRef, got.S3SecretAccessKeySecretRef)
 	})
+
+	t.Run("each successful save records an admin audit event", func(t *testing.T) {
+		tx := testutil.BeginTx(t, pool, tenantID)
+		events, err := auditRepo.List(t.Context(), tx, nil, 10)
+		require.NoError(t, err)
+		require.Len(t, events, 2)
+		for _, e := range events {
+			assert.Equal(t, "storage-config", e.Area)
+			assert.Equal(t, "save-s3", e.Action)
+		}
+	})
 }
 
 func TestStorageConfigService_GCS(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	dir := t.TempDir()
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", repository.NewAdminAuditEventRepository())
 
 	t.Run("initial save requires credentials JSON", func(t *testing.T) {
-		err := svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{Bucket: "b", ProjectID: "p"})
+		err := svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{Bucket: "b", ProjectID: "p"})
 		assert.ErrorContains(t, err, "credential value is required")
 	})
 
-	require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+	require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
 		Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
 	}))
 
@@ -83,7 +121,7 @@ func TestStorageConfigService_GCS(t *testing.T) {
 	assert.NotContains(t, cfg.GCSCredentialsJSONSecretRef, "service_account", "the plaintext credentials JSON never lands in the stored ref")
 
 	t.Run("re-saving without new credentials keeps the existing ones", func(t *testing.T) {
-		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
 			Bucket: "evidence-renamed", ProjectID: "argusops-prod",
 		}))
 		got, err := svc.Get(t.Context(), tenantID)
@@ -96,20 +134,21 @@ func TestStorageConfigService_GCS(t *testing.T) {
 func TestStorageConfigService_GDriveServiceAccount(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	dir := t.TempDir()
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", repository.NewAdminAuditEventRepository())
 
 	t.Run("requires a folder id", func(t *testing.T) {
-		err := svc.SaveGDriveServiceAccount(t.Context(), tenantID, service.SaveGDriveServiceAccountInput{ServiceAccountJSON: `{}`})
+		err := svc.SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{ServiceAccountJSON: `{}`})
 		assert.ErrorContains(t, err, "folderId is required")
 	})
 
 	t.Run("initial save requires a service account JSON value", func(t *testing.T) {
-		err := svc.SaveGDriveServiceAccount(t.Context(), tenantID, service.SaveGDriveServiceAccountInput{FolderID: "folder-1"})
+		err := svc.SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{FolderID: "folder-1"})
 		assert.ErrorContains(t, err, "credential value is required")
 	})
 
-	require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, service.SaveGDriveServiceAccountInput{
+	require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
 		FolderID: "folder-1", ServiceAccountJSON: `{"type":"service_account"}`,
 	}))
 
@@ -123,7 +162,7 @@ func TestStorageConfigService_GDriveServiceAccount(t *testing.T) {
 	assert.NotContains(t, cfg.GDriveServiceAccountJSONSecretRef, "service_account", "the plaintext credentials JSON never lands in the stored ref")
 
 	t.Run("re-saving without new credentials keeps the existing ones", func(t *testing.T) {
-		require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, service.SaveGDriveServiceAccountInput{
+		require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
 			FolderID: "folder-2",
 		}))
 		got, err := svc.Get(t.Context(), tenantID)
@@ -139,7 +178,7 @@ func TestStorageConfigService_GDriveOAuth(t *testing.T) {
 
 	t.Run("GetGDriveAuthorizeURL refuses when no Google OAuth client is configured", func(t *testing.T) {
 		pool := testutil.RequireTestDB(t)
-		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 		_, err := svc.GetGDriveAuthorizeURL(t.Context(), tenantID, userID, "folder-1")
 		assert.ErrorContains(t, err, "not configured")
 	})
@@ -169,8 +208,9 @@ func TestStorageConfigService_GDriveOAuth(t *testing.T) {
 func TestStorageConfigService_BuildStore(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	dir := t.TempDir()
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", repository.NewAdminAuditEventRepository())
 
 	t.Run("no config configured falls back to local disk", func(t *testing.T) {
 		store, err := svc.BuildStore(t.Context(), tenantID)
@@ -180,7 +220,7 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 	})
 
 	t.Run("s3 configured builds an S3Store", func(t *testing.T) {
-		require.NoError(t, svc.SaveS3(t.Context(), tenantID, service.SaveS3Input{
+		require.NoError(t, svc.SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{
 			Bucket: "evidence", Region: "us-east-1", AccessKeyID: "AKIA", SecretAccessKey: "s3cret",
 		}))
 		store, err := svc.BuildStore(t.Context(), tenantID)
@@ -190,7 +230,7 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 	})
 
 	t.Run("deleting the config reverts to local disk", func(t *testing.T) {
-		require.NoError(t, svc.Delete(t.Context(), tenantID))
+		require.NoError(t, svc.Delete(t.Context(), tenantID, actorID))
 		store, err := svc.BuildStore(t.Context(), tenantID)
 		require.NoError(t, err)
 		_, ok := store.(*blobstore.LocalStore)
@@ -206,7 +246,7 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 		// gcs client" error-wrap branch. The success branch needs a fully
 		// valid credential and is exercised against real GCS in Fase 3, not
 		// here.
-		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, service.SaveGCSInput{
+		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
 			Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
 		}))
 		_, err := svc.BuildStore(t.Context(), tenantID)
@@ -214,7 +254,7 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 	})
 
 	t.Run("gdrive service-account configured builds a *blobstore.GDriveStore", func(t *testing.T) {
-		require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, service.SaveGDriveServiceAccountInput{
+		require.NoError(t, svc.SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
 			FolderID: "folder-1", ServiceAccountJSON: driveTestServiceAccountJSON,
 		}))
 		store, err := svc.BuildStore(t.Context(), tenantID)
@@ -238,3 +278,69 @@ const driveTestServiceAccountJSON = `{
 	"client_id": "123456789",
 	"token_uri": "https://oauth2.googleapis.com/token"
 }`
+
+// TestStorageConfigService_RepoErrors exercises the "load existing config to
+// build the audit diff" and "persist" error-wrapping branches every
+// mutating method has -- unreachable via a real Postgres integration test,
+// since nothing in these tests can make an otherwise-healthy query fail
+// mid-transaction. See fakeStorageConfigRepo's doc comment.
+func TestStorageConfigService_RepoErrors(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	newSvc := func(fake *fakeStorageConfigRepo) *service.StorageConfigService {
+		return service.NewStorageConfigService(pool, fake, secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
+	}
+
+	t.Run("Delete wraps a Get failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{getErr: errors.New("get boom")}).Delete(t.Context(), tenantID, actorID)
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("Delete wraps a Delete failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{deleteErr: errors.New("delete boom")}).Delete(t.Context(), tenantID, actorID)
+		assert.ErrorContains(t, err, "delete boom")
+	})
+
+	t.Run("SaveS3 wraps a Get failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{getErr: errors.New("get boom")}).SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{
+			Bucket: "b", Region: "r", AccessKeyID: "a", SecretAccessKey: "s",
+		})
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("SaveS3 wraps an Upsert failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{upsertErr: errors.New("upsert boom")}).SaveS3(t.Context(), tenantID, actorID, service.SaveS3Input{
+			Bucket: "b", Region: "r", AccessKeyID: "a", SecretAccessKey: "s",
+		})
+		assert.ErrorContains(t, err, "upsert boom")
+	})
+
+	t.Run("SaveGCS wraps a Get failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{getErr: errors.New("get boom")}).SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
+			Bucket: "b", ProjectID: "p", CredentialsJSON: "{}",
+		})
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("SaveGCS wraps an Upsert failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{upsertErr: errors.New("upsert boom")}).SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
+			Bucket: "b", ProjectID: "p", CredentialsJSON: "{}",
+		})
+		assert.ErrorContains(t, err, "upsert boom")
+	})
+
+	t.Run("SaveGDriveServiceAccount wraps a Get failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{getErr: errors.New("get boom")}).SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
+			FolderID: "f", ServiceAccountJSON: "{}",
+		})
+		assert.ErrorContains(t, err, "get boom")
+	})
+
+	t.Run("SaveGDriveServiceAccount wraps an Upsert failure", func(t *testing.T) {
+		err := newSvc(&fakeStorageConfigRepo{upsertErr: errors.New("upsert boom")}).SaveGDriveServiceAccount(t.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
+			FolderID: "f", ServiceAccountJSON: "{}",
+		})
+		assert.ErrorContains(t, err, "upsert boom")
+	})
+}

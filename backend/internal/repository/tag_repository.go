@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -35,9 +36,18 @@ func (r *TagRepository) Create(ctx context.Context, tx pgx.Tx, t *domain.Tag) er
 	return nil
 }
 
-func (r *TagRepository) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `delete from tags where id = $1`, id)
-	return err
+// Delete returns the deleted tag's name (empty if id didn't match any row)
+// so callers can record a meaningful audit diff without a separate fetch.
+func (r *TagRepository) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) (string, error) {
+	var name string
+	err := tx.QueryRow(ctx, `delete from tags where id = $1 returning name`, id).Scan(&name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return name, nil
 }
 
 // FilterKnown returns the subset of names that exist in the tenant's tag

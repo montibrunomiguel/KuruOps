@@ -47,7 +47,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 
 	tenants := repository.NewTenantRepository()
 	users := repository.NewUserRepository()
-	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), roleSvc, issuer)
 	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
@@ -56,7 +56,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	// noopSender is defined in smtp_config_test.go (same package) -- these
 	// login/refresh/SAML tests never actually exercise password-reset email
 	// delivery, so a real Sender isn't needed here.
-	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{})
+	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{}, repository.NewAdminAuditEventRepository())
 	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, smtpSvc, "http://localhost:3000")
 
 	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc)

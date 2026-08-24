@@ -23,7 +23,7 @@ func newLLMProviderHandlerFixture(t *testing.T) (h *handlers.LLMProviderHandlers
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewLLMProviderHandlers(service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore()))
+	h = handlers.NewLLMProviderHandlers(service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository()))
 	return h, tenantID, actorID
 }
 

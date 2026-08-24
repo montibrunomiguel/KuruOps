@@ -59,7 +59,11 @@ func (h *LLMProviderHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveLLMProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,13 +91,18 @@ func (h *LLMProviderHandlers) update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req saveLLMProviderRequest
 	id, ok := decodeAndParseID(w, r, "provider", &req)
 	if !ok {
 		return
 	}
 
-	p, err := h.svc.Update(r.Context(), tenantID, id, service.LLMProviderSaveInput{
+	p, err := h.svc.Update(r.Context(), tenantID, userID, id, service.LLMProviderSaveInput{
 		Name: req.Name, Kind: req.Kind, BaseURL: req.BaseURL, Model: req.Model, APIKey: req.APIKey,
 		AutoAnalyzeAllAlerts: req.AutoAnalyzeAllAlerts,
 	})
@@ -109,12 +118,17 @@ func (h *LLMProviderHandlers) setDefault(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid provider id")
 		return
 	}
-	if err := h.svc.SetDefault(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.SetDefault(r.Context(), tenantID, userID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -126,12 +140,17 @@ func (h *LLMProviderHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid provider id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, userID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

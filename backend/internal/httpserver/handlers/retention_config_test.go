@@ -19,7 +19,7 @@ import (
 func TestRetentionConfigHandlers(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository())
+	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository(), repository.NewAdminAuditEventRepository())
 	h := handlers.NewRetentionConfigHandlers(svc)
 	r := newRouter(h.Routes)
 

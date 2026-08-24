@@ -40,6 +40,7 @@ func nilOptions() Options {
 		IncidentSLAHandlers:          &handlers.IncidentSLAHandlers{},
 		EscalationPolicyHandlers:     &handlers.EscalationPolicyHandlers{},
 		AuditExportHandlers:          &handlers.AuditExportHandlers{},
+		AdminAuditLogHandlers:        &handlers.AdminAuditLogHandlers{},
 		DatabaseMigrationHandlers:    &handlers.DatabaseMigrationHandlers{},
 		EventsHandlers:               &handlers.EventsHandlers{},
 		// A pass-through, not nil -- NewRouter wires this into the /auth

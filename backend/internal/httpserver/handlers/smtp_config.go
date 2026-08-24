@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -54,6 +55,11 @@ func (h *SMTPConfigHandlers) save(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveSMTPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -61,7 +67,7 @@ func (h *SMTPConfigHandlers) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.svc.Save(r.Context(), tenantID, service.SaveSMTPInput{
+	err := h.svc.Save(r.Context(), tenantID, actorID, service.SaveSMTPInput{
 		Host: req.Host, Port: req.Port, UseTLS: req.UseTLS,
 		Username: req.Username, Password: req.Password,
 		FromAddress: req.FromAddress, FromName: req.FromName,
@@ -78,7 +84,12 @@ func (h *SMTPConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID); err != nil {
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+	if err := h.svc.Delete(r.Context(), tenantID, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

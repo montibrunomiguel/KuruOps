@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -90,6 +91,11 @@ func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req createUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -97,7 +103,7 @@ func (h *UserHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, req.Email, req.Name, req.Phone, req.RoleID)
+	user, tempPassword, err := h.svc.CreateLocal(r.Context(), tenantID, actorID, req.Email, req.Name, req.Phone, req.RoleID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -114,13 +120,18 @@ func (h *UserHandlers) updateAccess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req updateAccessRequest
 	id, ok := decodeAndParseID(w, r, "user", &req)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.UpdateAccess(r.Context(), tenantID, id, req.RoleID); err != nil {
+	if err := h.svc.UpdateAccess(r.Context(), tenantID, actorID, id, req.RoleID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -139,13 +150,18 @@ func (h *UserHandlers) updatePhone(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req updatePhoneRequest
 	id, ok := decodeAndParseID(w, r, "user", &req)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.UpdatePhone(r.Context(), tenantID, id, req.Phone); err != nil {
+	if err := h.svc.UpdatePhone(r.Context(), tenantID, actorID, id, req.Phone); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -165,12 +181,17 @@ func (h *UserHandlers) setActive(w http.ResponseWriter, r *http.Request, active 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
-	if err := h.svc.SetActive(r.Context(), tenantID, id, active); err != nil {
+	if err := h.svc.SetActive(r.Context(), tenantID, actorID, id, active); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -217,13 +238,18 @@ func (h *UserHandlers) resetPassword(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
 
-	tempPassword, err := h.svc.ResetPassword(r.Context(), tenantID, id)
+	tempPassword, err := h.svc.ResetPassword(r.Context(), tenantID, actorID, id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -249,6 +275,11 @@ func (h *UserHandlers) saveGroupMapping(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	provider := domain.AuthProvider(chi.URLParam(r, "provider"))
 	group := chi.URLParam(r, "group")
 
@@ -258,7 +289,7 @@ func (h *UserHandlers) saveGroupMapping(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	m, err := h.svc.SaveGroupMapping(r.Context(), tenantID, provider, group, req.RoleID)
+	m, err := h.svc.SaveGroupMapping(r.Context(), tenantID, actorID, provider, group, req.RoleID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -271,12 +302,17 @@ func (h *UserHandlers) deleteGroupMapping(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mapping id")
 		return
 	}
-	if err := h.svc.DeleteGroupMapping(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.DeleteGroupMapping(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

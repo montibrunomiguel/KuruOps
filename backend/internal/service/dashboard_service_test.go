@@ -16,9 +16,9 @@ import (
 func newDashboardService(t *testing.T) *service.DashboardService {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	return service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 }
 
@@ -37,9 +37,9 @@ func TestDashboardService_Stats(t *testing.T) {
 func TestDashboardService_Stats_Filtered(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
@@ -64,9 +64,9 @@ func TestDashboardService_Stats_Filtered(t *testing.T) {
 func TestDashboardService_Stats_AllowedTagsScoping(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
@@ -89,9 +89,9 @@ func TestDashboardService_Stats_AllowedTagsScoping(t *testing.T) {
 func TestDashboardService_Activity_AllowedTagsScoping(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
@@ -113,9 +113,9 @@ func TestDashboardService_Activity_AllowedTagsScoping(t *testing.T) {
 func TestDashboardService_Activity(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 
 	_, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload}, nil, 0)
@@ -130,9 +130,9 @@ func TestDashboardService_Activity(t *testing.T) {
 func TestDashboardService_Activity_KindFilter(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 
 	_, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload}, nil, 0)
@@ -152,9 +152,9 @@ func TestDashboardService_Followup(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	dashSvc := service.NewDashboardService(pool, repository.NewDashboardRepository(), alertSvc, incSvc)
 
 	// An escalated alert, an investigating one, and a still-open (untriaged)

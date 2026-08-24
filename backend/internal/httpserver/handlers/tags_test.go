@@ -23,7 +23,7 @@ func newTagHandlerFixture(t *testing.T) (h *handlers.TagHandlers, tenantID, acto
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewTagHandlers(service.NewTagService(pool, repository.NewTagRepository()))
+	h = handlers.NewTagHandlers(service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()))
 	return h, tenantID, actorID
 }
 

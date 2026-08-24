@@ -64,7 +64,12 @@ func (h *SlackConfigHandlers) disconnect(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := h.svc.Disconnect(r.Context(), tenantID); err != nil {
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+	if err := h.svc.Disconnect(r.Context(), tenantID, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

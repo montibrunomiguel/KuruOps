@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
 import { useConfirm } from "../../hooks/useConfirm";
 import type { RetentionConfig } from "../../types/api";
 
@@ -26,9 +25,6 @@ export function RetentionConfigPanel() {
 
   const [alertMonths, setAlertMonths] = useState("18");
   const [incidentMonths, setIncidentMonths] = useState("18");
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   // Lowering either value below what's currently in effect queues an
   // existing closed alert/incident for permanent deletion on the next
   // sweep -- gated behind the same inline-confirm pattern every other
@@ -60,20 +56,16 @@ export function RetentionConfigPanel() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    await save(async () => {
     if (isLoweringRetention() && !confirmingLower) {
       confirmLower();
       return;
     }
-    void save();
+    void doSave();
   }
 
-  async function save() {
+  async function doSave() {
     cancelLower();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    await save(async () => {
       await api.put(
         "/api/v1/settings/retention",
         { alertRetentionMonths: Number(alertMonths), incidentRetentionMonths: Number(incidentMonths) },

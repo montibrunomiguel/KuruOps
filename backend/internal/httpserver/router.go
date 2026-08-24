@@ -38,6 +38,7 @@ type Options struct {
 	IncidentSLAHandlers          *handlers.IncidentSLAHandlers
 	EscalationPolicyHandlers     *handlers.EscalationPolicyHandlers
 	AuditExportHandlers          *handlers.AuditExportHandlers
+	AdminAuditLogHandlers        *handlers.AdminAuditLogHandlers
 	RetentionConfigHandlers      *handlers.RetentionConfigHandlers
 	DatabaseMigrationHandlers    *handlers.DatabaseMigrationHandlers
 	EventsHandlers               *handlers.EventsHandlers
@@ -247,6 +248,7 @@ func NewRouter(opts Options) http.Handler {
 				admin.Route("/settings/incident-sla", opts.IncidentSLAHandlers.Routes)
 				admin.Route("/settings/escalation-policies", opts.EscalationPolicyHandlers.Routes)
 				admin.Route("/settings/audit-export", opts.AuditExportHandlers.Routes)
+				admin.Route("/settings/audit-log", opts.AdminAuditLogHandlers.Routes)
 				admin.Route("/settings/retention", opts.RetentionConfigHandlers.Routes)
 			})
 		})

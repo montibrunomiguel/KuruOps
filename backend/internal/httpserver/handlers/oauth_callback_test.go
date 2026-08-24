@@ -27,13 +27,13 @@ func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *s
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(),
-		repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
+		repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
 
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
-		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback")
+		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 	slackSvc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
-		oauthStates, "test-slack-client-id", "test-slack-client-secret", "https://argusops.example/auth/oauth/slack/callback")
+		oauthStates, "test-slack-client-id", "test-slack-client-secret", "https://argusops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
 
 	return handlers.NewOAuthCallbackHandlers(authSvc, storageSvc, slackSvc, "https://argusops.example"), storageSvc, slackSvc
 }

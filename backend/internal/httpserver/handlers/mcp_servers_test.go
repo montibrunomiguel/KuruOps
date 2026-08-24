@@ -23,7 +23,7 @@ func newMCPServerHandlerFixture(t *testing.T) (h *handlers.MCPServerHandlers, te
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	svc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	toolSvc := service.NewMCPToolService(pool, repository.NewMCPServerRepository(), repository.NewAIToolCallRepository(), secrets.NewEnvStore())
 	h = handlers.NewMCPServerHandlers(svc, toolSvc)
 	return h, tenantID, actorID

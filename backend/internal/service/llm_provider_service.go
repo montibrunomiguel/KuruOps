@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -13,14 +14,47 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
-type LLMProviderService struct {
-	pool    *db.Pool
-	repo    *repository.LLMProviderRepository
-	secrets secrets.Store
+// llmProviderRepo is the subset of *repository.LLMProviderRepository this
+// service calls -- an interface, not the concrete type, purely so tests can
+// substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.LLMProviderRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected -- including the OTHER services (AIAnalysisService)
+// that also depend on the concrete repository type directly; that's a
+// separate field on a separate struct and is untouched.
+type llmProviderRepo interface {
+	List(ctx context.Context, tx pgx.Tx) ([]domain.LLMProvider, error)
+	Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.LLMProvider, error)
+	Insert(ctx context.Context, tx pgx.Tx, p *domain.LLMProvider) error
+	Update(ctx context.Context, tx pgx.Tx, p *domain.LLMProvider) error
+	SetDefault(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error
+	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 }
 
-func NewLLMProviderService(pool *db.Pool, repo *repository.LLMProviderRepository, store secrets.Store) *LLMProviderService {
-	return &LLMProviderService{pool: pool, repo: repo, secrets: store}
+type LLMProviderService struct {
+	pool    *db.Pool
+	repo    llmProviderRepo
+	secrets secrets.Store
+	audit   *repository.AdminAuditEventRepository
+}
+
+func NewLLMProviderService(pool *db.Pool, repo llmProviderRepo, store secrets.Store, audit *repository.AdminAuditEventRepository) *LLMProviderService {
+	return &LLMProviderService{pool: pool, repo: repo, secrets: store, audit: audit}
+}
+
+// llmProviderAuditFields is the subset of domain.LLMProvider safe to put in
+// an admin audit event's data column -- APIKeySecretRef is an opaque
+// reference into secrets.Store, not the plaintext key, so it's fine to
+// include, but is deliberately left out anyway since it's meaningless to a
+// human reading the audit log and only ever changes as a side effect of
+// AutoAnalyzeAllAlerts/other real field edits, never a fact worth diffing
+// on its own.
+func llmProviderAuditFields(p *domain.LLMProvider) map[string]any {
+	return map[string]any{
+		"name": p.Name, "kind": p.Kind, "baseURL": p.BaseURL, "model": p.Model,
+		"autoAnalyzeAllAlerts": p.AutoAnalyzeAllAlerts,
+	}
 }
 
 func (s *LLMProviderService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.LLMProvider, error) {
@@ -73,7 +107,13 @@ func (s *LLMProviderService) Create(ctx context.Context, tenantID, actorID uuid.
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Insert(ctx, tx, p)
+		if err := s.repo.Insert(ctx, tx, p); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": llmProviderAuditFields(p)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "ai-integration", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create llm provider: %w", err)
@@ -85,7 +125,7 @@ func (s *LLMProviderService) Create(ctx context.Context, tenantID, actorID uuid.
 // a non-empty one is supplied (an empty APIKey means "keep the existing
 // key" — the Settings form never round-trips the real key back to the
 // client to prefill it).
-func (s *LLMProviderService) Update(ctx context.Context, tenantID, id uuid.UUID, in LLMProviderSaveInput) (*domain.LLMProvider, error) {
+func (s *LLMProviderService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in LLMProviderSaveInput) (*domain.LLMProvider, error) {
 	if err := validateLLMKind(in.Kind, in.BaseURL); err != nil {
 		return nil, err
 	}
@@ -99,6 +139,8 @@ func (s *LLMProviderService) Update(ctx context.Context, tenantID, id uuid.UUID,
 		if existing == nil {
 			return fmt.Errorf("llm provider %s not found", id)
 		}
+		before := llmProviderAuditFields(existing)
+		before["apiKeyRotated"] = false
 
 		ref := existing.APIKeySecretRef
 		if in.APIKey != "" {
@@ -119,7 +161,13 @@ func (s *LLMProviderService) Update(ctx context.Context, tenantID, id uuid.UUID,
 			return fmt.Errorf("update llm provider: %w", err)
 		}
 		updated = existing
-		return nil
+
+		after := llmProviderAuditFields(existing)
+		after["apiKeyRotated"] = in.APIKey != ""
+		data, _ := json.Marshal(map[string]any{"from": before, "to": after})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "ai-integration", Action: "update", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -127,15 +175,35 @@ func (s *LLMProviderService) Update(ctx context.Context, tenantID, id uuid.UUID,
 	return updated, nil
 }
 
-func (s *LLMProviderService) SetDefault(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *LLMProviderService) SetDefault(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetDefault(ctx, tx, tenantID, id)
+		if err := s.repo.SetDefault(ctx, tx, tenantID, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"defaultProviderId": id}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "ai-integration", Action: "set-default", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
-func (s *LLMProviderService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *LLMProviderService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx, id)
+		before, err := s.repo.Get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx, id); err != nil {
+			return err
+		}
+		var from any
+		if before != nil {
+			from = llmProviderAuditFields(before)
+		}
+		data, _ := json.Marshal(map[string]any{"from": from, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "ai-integration", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 

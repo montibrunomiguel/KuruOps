@@ -335,6 +335,34 @@ export interface RetentionConfig {
   updatedAt?: string;
 }
 
+// AdminAuditLogEntry mirrors backend/internal/service.AdminAuditLogEntry --
+// one row of Settings -> Data & Audit's change log. `data` is the raw
+// {"from": ..., "to": ...} diff every feeding service writes (see
+// domain.AdminAuditEvent's doc comment); shape varies by `area`/`action`,
+// so it's left untyped here and rendered as formatted JSON rather than
+// modeled field-by-field for every one of the ~15 areas.
+export interface AdminAuditLogEntry {
+  id: number;
+  tenantId: string;
+  area: string;
+  action: string;
+  actorType: "user" | "system" | "ai";
+  actorId: string;
+  actorName: string;
+  data: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AdminAuditLogCursor {
+  createdAt: string;
+  id: number;
+}
+
+export interface AdminAuditLogPage {
+  events: AdminAuditLogEntry[];
+  nextCursor: AdminAuditLogCursor | null;
+}
+
 // SMTPConfig mirrors backend/internal/domain.SMTPConfig -- the password is
 // never sent back, same reasoning as StorageConfig above.
 export interface SMTPConfig {

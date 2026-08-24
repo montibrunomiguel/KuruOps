@@ -30,9 +30,9 @@ func newPasswordResetService(t *testing.T, sender *fakeSender) (*service.Passwor
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 	userRepo := repository.NewUserRepository()
-	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender)
+	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender, repository.NewAdminAuditEventRepository())
 	resetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), userRepo, smtpSvc, "http://localhost:3000")
-	return resetSvc, service.NewUserService(pool, userRepo)
+	return resetSvc, service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository())
 }
 
 func TestPasswordResetService_RequestReset(t *testing.T) {
@@ -47,7 +47,8 @@ func TestPasswordResetService_RequestReset(t *testing.T) {
 		assert.Empty(t, sender.sent)
 	})
 
-	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, actorID, "resetme@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
 	require.NoError(t, err)
 
 	t.Run("known user but SMTP not configured still succeeds, sends nothing", func(t *testing.T) {
@@ -56,8 +57,8 @@ func TestPasswordResetService_RequestReset(t *testing.T) {
 		assert.Empty(t, sender.sent, "no SMTPConfigService.Save has happened yet in this test")
 	})
 
-	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender)
-	require.NoError(t, smtpSvc.Save(t.Context(), tenantID, service.SaveSMTPInput{
+	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender, repository.NewAdminAuditEventRepository())
+	require.NoError(t, smtpSvc.Save(t.Context(), tenantID, actorID, service.SaveSMTPInput{
 		Host: "smtp.example.com", Port: 587, UseTLS: true, FromAddress: "no-reply@example.com", Password: "x",
 	}))
 
@@ -74,12 +75,13 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 	tenantID := testutil.NewTenant(t)
 	sender := &fakeSender{}
 	resetSvc, userSvc := newPasswordResetService(t, sender)
-	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender)
-	require.NoError(t, smtpSvc.Save(t.Context(), tenantID, service.SaveSMTPInput{
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender, repository.NewAdminAuditEventRepository())
+	require.NoError(t, smtpSvc.Save(t.Context(), tenantID, actorID, service.SaveSMTPInput{
 		Host: "smtp.example.com", Port: 587, UseTLS: true, FromAddress: "no-reply@example.com", Password: "x",
 	}))
 
-	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, "resetme2@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
+	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, actorID, "resetme2@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
 	require.NoError(t, err)
 
 	t.Run("rejects an unknown token", func(t *testing.T) {

@@ -18,8 +18,8 @@ import (
 func newIncidentServices(t *testing.T) (*db.Pool, *service.IncidentService, *service.TagService) {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	return pool, incSvc, tagSvc
 }
 
@@ -311,7 +311,7 @@ func TestIncidentService_SLADueAt(t *testing.T) {
 	pool, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	slaSvc := service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository())
+	slaSvc := service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository())
 
 	t.Run("Create with no configured policy leaves sla_due_at nil", func(t *testing.T) {
 		inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
@@ -321,7 +321,7 @@ func TestIncidentService_SLADueAt(t *testing.T) {
 		assert.Nil(t, inc.SLADueAt)
 	})
 
-	_, err := slaSvc.Save(t.Context(), tenantID, domain.SeverityCritical, domain.PriorityP1, 60)
+	_, err := slaSvc.Save(t.Context(), tenantID, actorID, domain.SeverityCritical, domain.PriorityP1, 60)
 	require.NoError(t, err)
 
 	t.Run("Create with a configured policy sets sla_due_at", func(t *testing.T) {
@@ -345,7 +345,7 @@ func TestIncidentService_SLADueAt(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, got.SLADueAt, "moving to an unconfigured pair must clear the stale due date")
 
-		_, err = slaSvc.Save(t.Context(), tenantID, domain.SeverityLow, domain.PriorityP4, 120)
+		_, err = slaSvc.Save(t.Context(), tenantID, actorID, domain.SeverityLow, domain.PriorityP4, 120)
 		require.NoError(t, err)
 		require.NoError(t, incSvc.SetSeverityAndPriority(t.Context(), tenantID, inc.ID, actorID, domain.SeverityLow, domain.PriorityP4, nil))
 		got, err = incSvc.Get(t.Context(), tenantID, inc.ID, nil)
@@ -403,7 +403,7 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 	pool, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{Title: "t", Severity: domain.SeverityLow, Priority: domain.PriorityP4})
 	require.NoError(t, err)

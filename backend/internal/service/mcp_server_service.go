@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -14,14 +15,47 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
-type MCPServerService struct {
-	pool    *db.Pool
-	repo    *repository.MCPServerRepository
-	secrets secrets.Store
+// mcpServerRepo is the subset of *repository.MCPServerRepository this
+// service calls -- an interface, not the concrete type, purely so tests can
+// substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.MCPServerRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected -- including the OTHER services (MCPToolService,
+// AIAnalysisService) that also depend on the concrete repository type
+// directly; that's a separate field on a separate struct and is untouched.
+type mcpServerRepo interface {
+	List(ctx context.Context, tx pgx.Tx) ([]domain.MCPServer, error)
+	Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.MCPServer, error)
+	Insert(ctx context.Context, tx pgx.Tx, s *domain.MCPServer) error
+	Update(ctx context.Context, tx pgx.Tx, s *domain.MCPServer) error
+	SetEnabled(ctx context.Context, tx pgx.Tx, id uuid.UUID, enabled bool) error
+	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
 }
 
-func NewMCPServerService(pool *db.Pool, repo *repository.MCPServerRepository, store secrets.Store) *MCPServerService {
-	return &MCPServerService{pool: pool, repo: repo, secrets: store}
+type MCPServerService struct {
+	pool    *db.Pool
+	repo    mcpServerRepo
+	secrets secrets.Store
+	audit   *repository.AdminAuditEventRepository
+}
+
+func NewMCPServerService(pool *db.Pool, repo mcpServerRepo, store secrets.Store, audit *repository.AdminAuditEventRepository) *MCPServerService {
+	return &MCPServerService{pool: pool, repo: repo, secrets: store, audit: audit}
+}
+
+// mcpServerAuditFields is the subset of domain.MCPServer safe to put in an
+// admin audit event's data column -- AuthSecretRef is an opaque reference
+// into secrets.Store, not the plaintext token, but is left out anyway since
+// it's meaningless to a human reader; "authTokenSet" signals whether one is
+// configured without exposing it.
+func mcpServerAuditFields(s *domain.MCPServer) map[string]any {
+	return map[string]any{
+		"name": s.Name, "transport": s.Transport, "endpointOrCommand": s.EndpointOrCommand,
+		"authTokenSet": s.AuthSecretRef != nil,
+		"allowedTools": s.AllowedTools, "enabledFor": s.EnabledFor, "sideEffectingTools": s.SideEffectingTools,
+		"isEnabled": s.IsEnabled,
+	}
 }
 
 func (s *MCPServerService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.MCPServer, error) {
@@ -78,7 +112,13 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 	}
 
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Insert(ctx, tx, server)
+		if err := s.repo.Insert(ctx, tx, server); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": mcpServerAuditFields(server)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "mcp-servers", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create mcp server: %w", err)
@@ -86,7 +126,7 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 	return server, nil
 }
 
-func (s *MCPServerService) Update(ctx context.Context, tenantID, id uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
+func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
 	if err := validateToolLists(in.AllowedTools, in.SideEffectingTools); err != nil {
 		return nil, err
 	}
@@ -100,6 +140,7 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, id uuid.UUID, i
 		if existing == nil {
 			return fmt.Errorf("mcp server %s not found", id)
 		}
+		before := mcpServerAuditFields(existing)
 
 		authRef := existing.AuthSecretRef
 		if in.AuthToken != "" {
@@ -122,7 +163,11 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, id uuid.UUID, i
 			return fmt.Errorf("update mcp server: %w", err)
 		}
 		updated = existing
-		return nil
+
+		data, _ := json.Marshal(map[string]any{"from": before, "to": mcpServerAuditFields(existing)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "mcp-servers", Action: "update", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -130,15 +175,35 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, id uuid.UUID, i
 	return updated, nil
 }
 
-func (s *MCPServerService) SetEnabled(ctx context.Context, tenantID, id uuid.UUID, enabled bool) error {
+func (s *MCPServerService) SetEnabled(ctx context.Context, tenantID, actorID, id uuid.UUID, enabled bool) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetEnabled(ctx, tx, id, enabled)
+		if err := s.repo.SetEnabled(ctx, tx, id, enabled); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"isEnabled": enabled}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "mcp-servers", Action: "set-enabled", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
-func (s *MCPServerService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *MCPServerService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx, id)
+		before, err := s.repo.Get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx, id); err != nil {
+			return err
+		}
+		var from any
+		if before != nil {
+			from = mcpServerAuditFields(before)
+		}
+		data, _ := json.Marshal(map[string]any{"from": from, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "mcp-servers", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 

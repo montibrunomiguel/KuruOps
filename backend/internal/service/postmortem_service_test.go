@@ -24,7 +24,7 @@ func TestPostmortemService_Generate_NotFound(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	incidentRepo := repository.NewIncidentRepository()
-	incSvc := service.NewIncidentService(pool, incidentRepo, service.NewTagService(pool, repository.NewTagRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, incidentRepo, service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	aiSvc, _ := newAIAnalysisService(pool, store)
 	pmSvc := service.NewPostmortemService(incSvc, aiSvc)
 
@@ -46,8 +46,8 @@ func TestPostmortemService_Generate_WithoutAIProvider(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	incidentRepo := repository.NewIncidentRepository()
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	aiSvc, _ := newAIAnalysisService(pool, store)
 	pmSvc := service.NewPostmortemService(incSvc, aiSvc)
@@ -109,11 +109,11 @@ func TestPostmortemService_Generate_WithAIProvider(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	incidentRepo := repository.NewIncidentRepository()
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	aiSvc, _ := newAIAnalysisService(pool, store)
 	pmSvc := service.NewPostmortemService(incSvc, aiSvc)
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -127,7 +127,7 @@ func TestPostmortemService_Generate_WithAIProvider(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -153,8 +153,8 @@ func TestPostmortemService_Generate_OutOfScopeTag(t *testing.T) {
 	store := secrets.NewEnvStore()
 
 	incidentRepo := repository.NewIncidentRepository()
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
-	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	aiSvc, _ := newAIAnalysisService(pool, store)
 	pmSvc := service.NewPostmortemService(incSvc, aiSvc)
 

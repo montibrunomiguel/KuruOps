@@ -480,6 +480,7 @@
       "onCallSchedule": "Escala de Atendimento",
       "incidentSla": "SLAs de Incidentes",
       "escalationPolicies": "Escala de Acionamento",
+      "auditLog": "Log de Auditoria",
       "auditExport": "Exportação de Auditoria",
       "retention": "Retenção",
       "databaseMigration": "Banco de Dados Externo"
@@ -955,6 +956,20 @@
         },
         "webhookPayloadTemplate": "Payload customizado (opcional)",
         "webhookPayloadTemplateHelp": "Deixe em branco para enviar o payload padrão. Placeholders disponíveis:"
+      }
+    },
+    "auditLog": {
+      "title": "Log de Auditoria",
+      "helper": "Todas as mudanças que qualquer admin fez nas Configurações -- quem, em qual área, qual ação, e os valores antes/depois. Somente inserção, nunca editado ou apagado.",
+      "empty": "Nenhuma mudança de configuração registrada ainda.",
+      "unknownActor": "Usuário desconhecido",
+      "loadMore": "Carregar mais",
+      "table": {
+        "when": "Quando",
+        "area": "Área",
+        "action": "Ação",
+        "actor": "Autor",
+        "diff": "Diferença"
       }
     },
     "auditExport": {

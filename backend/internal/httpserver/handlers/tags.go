@@ -55,7 +55,11 @@ func (h *TagHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req createTagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -76,12 +80,17 @@ func (h *TagHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tag id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, userID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

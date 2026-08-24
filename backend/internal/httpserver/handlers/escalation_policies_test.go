@@ -25,16 +25,17 @@ func newEscalationPolicyHandlerFixture(t *testing.T) (h *handlers.EscalationPoli
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
-	sched, err := onCallSvc.Create(t.Context(), tenantID, domain.SaveOnCallScheduleInput{
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	sched, err := onCallSvc.Create(t.Context(), tenantID, actorID, domain.SaveOnCallScheduleInput{
 		Name: "Primary", HandoverAt: time.Now(), PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
 	})
 	require.NoError(t, err)
 	scheduleID = sched.ID
 
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
-	svc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secrets.NewEnvStore())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
+	svc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	h = handlers.NewEscalationPolicyHandlers(svc)
 	return h, tenantID, scheduleID
 }

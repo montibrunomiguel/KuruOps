@@ -54,7 +54,11 @@ func (h *FieldMappingTemplateHandlers) create(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req fieldMappingTemplateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -75,13 +79,18 @@ func (h *FieldMappingTemplateHandlers) update(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req fieldMappingTemplateRequest
 	id, ok := decodeAndParseID(w, r, "template", &req)
 	if !ok {
 		return
 	}
 
-	template, err := h.svc.Update(r.Context(), tenantID, id, req.Name, req.Rules)
+	template, err := h.svc.Update(r.Context(), tenantID, userID, id, req.Name, req.Rules)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -94,12 +103,17 @@ func (h *FieldMappingTemplateHandlers) delete(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid template id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, userID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

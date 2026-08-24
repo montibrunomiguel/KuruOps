@@ -27,11 +27,11 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 	actorID = testutil.NewUser(t, tenantID, "analyst", nil)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	incidentRepo := repository.NewIncidentRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
-	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	secretStore := secrets.NewEnvStore()
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
@@ -40,10 +40,10 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
-	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore, repository.NewAdminAuditEventRepository())
 	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
 	h = handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
@@ -62,7 +62,7 @@ func newSecondAlert(t *testing.T, h *handlers.AlertHandlers, tenantID uuid.UUID)
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	a, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 		Title: "Second alert", Source: "wazuh", Severity: domain.SeverityMedium,
 		Payload: json.RawMessage(`{}`),
@@ -125,12 +125,12 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	secretStore := secrets.NewEnvStore()
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	incidentRepo := repository.NewIncidentRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	alertSvc.EnableAnalysisLookup(repository.NewAIAnalysisRunRepository())
-	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
@@ -140,10 +140,10 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
-	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore, repository.NewAdminAuditEventRepository())
 	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
 	h := handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
@@ -157,12 +157,12 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"likely benign"}}]}`))
 	}))
 	defer srv.Close()
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore, repository.NewAdminAuditEventRepository())
 	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	r := newRouter(h.Routes)
 	req := withClaims(httptest.NewRequest("POST", "/"+alert.ID.String()+"/analyze", nil), tenantID, actorID, nil)
@@ -196,11 +196,11 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	secretStore := secrets.NewEnvStore()
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	incidentRepo := repository.NewIncidentRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
-	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
@@ -210,10 +210,10 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
-	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore, repository.NewAdminAuditEventRepository())
 	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
 	h := handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc)
 
@@ -230,12 +230,12 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"..."}}]}`))
 	}))
 	defer srv.Close()
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore, repository.NewAdminAuditEventRepository())
 	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	r := newRouter(h.Routes)
 	first := withClaims(httptest.NewRequest("POST", "/"+alert.ID.String()+"/analyze", nil), tenantID, actorID, nil)
@@ -461,7 +461,7 @@ func TestAlertHandlers_Escalate(t *testing.T) {
 
 	t.Run("the new incident's priority is seeded from the alert's severity, not hardcoded p3", func(t *testing.T) {
 		pool := testutil.RequireTestDB(t)
-		incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+		incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 		incident, err := incidentSvc.Get(t.Context(), tenantID, resp.IncidentID, nil)
 		require.NoError(t, err)
 		require.NotNil(t, incident)

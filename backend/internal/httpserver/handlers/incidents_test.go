@@ -26,10 +26,10 @@ func newIncidentHandlerFixture(t *testing.T) (h *handlers.IncidentHandlers, tena
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "analyst", nil)
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	incidentRepo := repository.NewIncidentRepository()
-	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	secretStore := secrets.NewEnvStore()
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
@@ -68,11 +68,11 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	secretStore := secrets.NewEnvStore()
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	incidentRepo := repository.NewIncidentRepository()
-	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	incSvc.EnableAnalysisLookup(repository.NewAIAnalysisRunRepository())
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
@@ -95,12 +95,12 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"recommend containment"}}]}`))
 	}))
 	defer srv.Close()
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore, repository.NewAdminAuditEventRepository())
 	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	r := newRouter(h.Routes)
 	req := withClaims(httptest.NewRequest("POST", "/"+inc.ID.String()+"/analyze", nil), tenantID, actorID, nil)
@@ -364,7 +364,7 @@ func TestIncidentHandlers_TimelineCommentsAndAlertLinks(t *testing.T) {
 	})
 
 	t.Run("alert links", func(t *testing.T) {
-		tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+		tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 		alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 			Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: json.RawMessage(`{}`),

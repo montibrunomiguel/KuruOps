@@ -14,6 +14,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Configurações → Dados & Auditoria → Log de Auditoria: um registro somente-inserção de toda
+  mudança de Configurações que qualquer admin fez -- área, ação, autor, e um diff antes/depois
+  (tabela `admin_audit_events`, `AdminAuditEventRepository.InsertEvent`). Cobre todas as ~15 áreas
+  de Configurações (Webhooks, Templates de Mapeamento de Campos, Integração de IA, Servidores MCP,
+  Usuários, Papéis, Provedores de Identidade, Tags, Integração de Armazenamento, SMTP, Slack,
+  Escala de Atendimento, SLAs de Incidentes, Escala de Acionamento, Retenção) -- todo método que
+  muda estado em cada um desses services agora grava um evento na mesma transação da mudança que
+  registra, então uma falha ao gravar o evento desfaz a mudança também. Distinto da Exportação de
+  Auditoria já existente (`AuditExportService`), que cobre o histórico de alertas/incidentes para
+  exportação a um SIEM, não mudanças de Configurações. Lido via `GET /api/v1/settings/audit-log`,
+  paginado por keyset, mais recente primeiro.
 - Configurações → Dados & Auditoria → Retenção: retenção de dados configurável para alertas/
   incidentes fechados (padrão de 18 meses, configurável separadamente por tipo de recurso). Um
   alerta/incidente fechado é excluído permanentemente pelo job `sweepDataRetention` (roda a cada

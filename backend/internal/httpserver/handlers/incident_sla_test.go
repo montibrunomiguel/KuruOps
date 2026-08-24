@@ -21,7 +21,7 @@ import (
 func TestIncidentSLAHandlers(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository())
+	svc := service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository())
 	h := handlers.NewIncidentSLAHandlers(svc)
 	r := newRouter(h.Routes)
 

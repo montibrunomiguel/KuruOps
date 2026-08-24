@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -60,6 +61,11 @@ func (h *IdentityConfigHandlers) saveLDAP(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveLDAPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,7 +73,7 @@ func (h *IdentityConfigHandlers) saveLDAP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err := h.svc.SaveLDAPConfig(r.Context(), tenantID, service.SaveLDAPConfigInput{
+	err := h.svc.SaveLDAPConfig(r.Context(), tenantID, actorID, service.SaveLDAPConfigInput{
 		Host: req.Host, Port: req.Port, UseTLS: req.UseTLS, BindDN: req.BindDN,
 		BindPassword: req.BindPassword, UserBaseDN: req.UserBaseDN, UserFilter: req.UserFilter,
 		GroupBaseDN: req.GroupBaseDN, GroupAttribute: req.GroupAttribute,
@@ -84,7 +90,12 @@ func (h *IdentityConfigHandlers) deleteLDAP(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteLDAPConfig(r.Context(), tenantID); err != nil {
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+	if err := h.svc.DeleteLDAPConfig(r.Context(), tenantID, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -117,6 +128,11 @@ func (h *IdentityConfigHandlers) saveSAML(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveSAMLConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -124,7 +140,7 @@ func (h *IdentityConfigHandlers) saveSAML(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err := h.svc.SaveSAMLConfig(r.Context(), tenantID, service.SaveSAMLConfigInput{
+	err := h.svc.SaveSAMLConfig(r.Context(), tenantID, actorID, service.SaveSAMLConfigInput{
 		IDPMetadataURL: req.IDPMetadataURL, IDPMetadataXML: req.IDPMetadataXML,
 		ACSURL: req.ACSURL, SPEntityID: req.SPEntityID, GroupAttribute: req.GroupAttribute,
 	})
@@ -140,7 +156,12 @@ func (h *IdentityConfigHandlers) deleteSAML(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteSAMLConfig(r.Context(), tenantID); err != nil {
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+	if err := h.svc.DeleteSAMLConfig(r.Context(), tenantID, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

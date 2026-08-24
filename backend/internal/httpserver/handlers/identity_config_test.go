@@ -20,7 +20,7 @@ import (
 func TestIdentityConfigHandlers_LDAP(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	h := handlers.NewIdentityConfigHandlers(service.NewIdentityConfigService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore()))
+	h := handlers.NewIdentityConfigHandlers(service.NewIdentityConfigService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository()))
 	r := newRouter(h.Routes)
 
 	t.Run("get before any config -- 200 with null body", func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestIdentityConfigHandlers_LDAP(t *testing.T) {
 func TestIdentityConfigHandlers_SAML(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	h := handlers.NewIdentityConfigHandlers(service.NewIdentityConfigService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore()))
+	h := handlers.NewIdentityConfigHandlers(service.NewIdentityConfigService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository()))
 	r := newRouter(h.Routes)
 
 	t.Run("get before any config", func(t *testing.T) {

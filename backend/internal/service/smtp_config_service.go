@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -14,19 +15,43 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
+// smtpConfigRepo is the subset of *repository.SMTPConfigRepository this
+// service calls -- an interface, not the concrete type, purely so tests can
+// substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.SMTPConfigRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected.
+type smtpConfigRepo interface {
+	Get(ctx context.Context, tx pgx.Tx) (*domain.SMTPConfig, error)
+	Upsert(ctx context.Context, tx pgx.Tx, c *domain.SMTPConfig) error
+	Delete(ctx context.Context, tx pgx.Tx) error
+}
+
 // SMTPConfigService is Settings -> SMTP: lets an admin point outbound
 // transactional email (password reset, and any future notification) at a
 // real relay. Mirrors StorageConfigService's shape -- same "empty string on
 // save means keep the existing secret" convention.
 type SMTPConfigService struct {
 	pool    *db.Pool
-	repo    *repository.SMTPConfigRepository
+	repo    smtpConfigRepo
 	secrets secrets.Store
 	sender  mailer.Sender
+	audit   *repository.AdminAuditEventRepository
 }
 
-func NewSMTPConfigService(pool *db.Pool, repo *repository.SMTPConfigRepository, store secrets.Store, sender mailer.Sender) *SMTPConfigService {
-	return &SMTPConfigService{pool: pool, repo: repo, secrets: store, sender: sender}
+func NewSMTPConfigService(pool *db.Pool, repo smtpConfigRepo, store secrets.Store, sender mailer.Sender, audit *repository.AdminAuditEventRepository) *SMTPConfigService {
+	return &SMTPConfigService{pool: pool, repo: repo, secrets: store, sender: sender, audit: audit}
+}
+
+func smtpConfigAuditFields(c *domain.SMTPConfig) map[string]any {
+	if c == nil {
+		return nil
+	}
+	return map[string]any{
+		"host": c.Host, "port": c.Port, "useTLS": c.UseTLS, "username": c.Username,
+		"passwordSet": c.PasswordSecretRef != "", "fromAddress": c.FromAddress, "fromName": c.FromName,
+	}
 }
 
 func (s *SMTPConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*domain.SMTPConfig, error) {
@@ -39,9 +64,19 @@ func (s *SMTPConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*domai
 	return cfg, err
 }
 
-func (s *SMTPConfigService) Delete(ctx context.Context, tenantID uuid.UUID) error {
+func (s *SMTPConfigService) Delete(ctx context.Context, tenantID, actorID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx)
+		existing, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": smtpConfigAuditFields(existing), "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "smtp-config", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -55,11 +90,15 @@ type SaveSMTPInput struct {
 	FromName    string // "" means no display name
 }
 
-func (s *SMTPConfigService) Save(ctx context.Context, tenantID uuid.UUID, in SaveSMTPInput) error {
+func (s *SMTPConfigService) Save(ctx context.Context, tenantID, actorID uuid.UUID, in SaveSMTPInput) error {
 	if in.Host == "" || in.Port <= 0 || in.FromAddress == "" {
 		return fmt.Errorf("host, port, and fromAddress are required")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing smtp config: %w", err)
+		}
 		ref, err := s.resolveSecretRef(ctx, tx, tenantID, in.Password)
 		if err != nil {
 			return err
@@ -68,10 +107,17 @@ func (s *SMTPConfigService) Save(ctx context.Context, tenantID uuid.UUID, in Sav
 		if in.FromName != "" {
 			fromName = &in.FromName
 		}
-		return s.repo.Upsert(ctx, tx, &domain.SMTPConfig{
+		cfg := &domain.SMTPConfig{
 			TenantID: tenantID, Host: in.Host, Port: in.Port, UseTLS: in.UseTLS,
 			Username: in.Username, PasswordSecretRef: ref,
 			FromAddress: in.FromAddress, FromName: fromName,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": smtpConfigAuditFields(before), "to": smtpConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "smtp-config", Action: "save", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
 }

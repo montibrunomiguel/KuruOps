@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -25,12 +26,13 @@ import (
 // domain.RetentionConfig back, with Configured=false marking it as the
 // synthesized default rather than something an admin actually saved.
 type RetentionConfigService struct {
-	pool *db.Pool
-	repo *repository.RetentionConfigRepository
+	pool  *db.Pool
+	repo  *repository.RetentionConfigRepository
+	audit *repository.AdminAuditEventRepository
 }
 
-func NewRetentionConfigService(pool *db.Pool, repo *repository.RetentionConfigRepository) *RetentionConfigService {
-	return &RetentionConfigService{pool: pool, repo: repo}
+func NewRetentionConfigService(pool *db.Pool, repo *repository.RetentionConfigRepository, audit *repository.AdminAuditEventRepository) *RetentionConfigService {
+	return &RetentionConfigService{pool: pool, repo: repo, audit: audit}
 }
 
 func (s *RetentionConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*domain.RetentionConfig, error) {
@@ -66,15 +68,28 @@ type SaveRetentionInput struct {
 // {DefaultRetentionMonths, DefaultRetentionMonths} already reaches the same
 // effective state, so a separate "delete" would just be a second way to
 // get there.
-func (s *RetentionConfigService) Save(ctx context.Context, tenantID uuid.UUID, in SaveRetentionInput) error {
+func (s *RetentionConfigService) Save(ctx context.Context, tenantID, actorID uuid.UUID, in SaveRetentionInput) error {
 	if in.AlertRetentionMonths < 0 || in.IncidentRetentionMonths < 0 {
 		return fmt.Errorf("alertRetentionMonths and incidentRetentionMonths must be zero or positive")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Upsert(ctx, tx, &domain.RetentionConfig{
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Upsert(ctx, tx, &domain.RetentionConfig{
 			TenantID:                tenantID,
 			AlertRetentionMonths:    in.AlertRetentionMonths,
 			IncidentRetentionMonths: in.IncidentRetentionMonths,
+		}); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{
+			"from": before, // nil when this is the tenant's first-ever save (no row existed yet)
+			"to":   map[string]int{"alertRetentionMonths": in.AlertRetentionMonths, "incidentRetentionMonths": in.IncidentRetentionMonths},
+		})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "retention", Action: "save", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -17,12 +18,13 @@ import (
 )
 
 type UserService struct {
-	pool *db.Pool
-	repo *repository.UserRepository
+	pool  *db.Pool
+	repo  *repository.UserRepository
+	audit *repository.AdminAuditEventRepository
 }
 
-func NewUserService(pool *db.Pool, repo *repository.UserRepository) *UserService {
-	return &UserService{pool: pool, repo: repo}
+func NewUserService(pool *db.Pool, repo *repository.UserRepository, audit *repository.AdminAuditEventRepository) *UserService {
+	return &UserService{pool: pool, repo: repo, audit: audit}
 }
 
 func (s *UserService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.User, error) {
@@ -70,7 +72,7 @@ func (s *UserService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.
 // the new user to set their own on first login (same flow as the seeded
 // default admin from db/migrations/0002_seed_default_admin.up.sql). The plaintext
 // password is returned once here and never stored or logged anywhere else.
-func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email, name, phone string, roleID uuid.UUID) (*domain.User, string, error) {
+func (s *UserService) CreateLocal(ctx context.Context, tenantID, actorID uuid.UUID, email, name, phone string, roleID uuid.UUID) (*domain.User, string, error) {
 	email = strings.TrimSpace(email)
 	name = strings.TrimSpace(name)
 	phone = strings.TrimSpace(phone)
@@ -106,7 +108,15 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID uuid.UUID, email
 		Phone:        phonePtr,
 	}
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.CreateLocal(ctx, tx, u, hash)
+		if err := s.repo.CreateLocal(ctx, tx, u, hash); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": map[string]any{
+			"email": u.Email, "name": u.Name, "roleId": u.RoleID, "phone": u.Phone,
+		}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("create user: %w", err)
@@ -131,9 +141,25 @@ func generateTempPassword() (string, error) {
 // here: they come from the identity source (local signup or the LDAP/SAML
 // provisioning flow in AuthGroupMapping), not from an admin hand-editing a
 // user record.
-func (s *UserService) UpdateAccess(ctx context.Context, tenantID, id, roleID uuid.UUID) error {
+func (s *UserService) UpdateAccess(ctx context.Context, tenantID, actorID, id, roleID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.UpdateAccess(ctx, tx, id, roleID)
+		existing, err := s.repo.Get(ctx, tx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.UpdateAccess(ctx, tx, id, roleID); err != nil {
+			return err
+		}
+		var fromRoleID any
+		if existing != nil {
+			fromRoleID = existing.RoleID
+		}
+		data, _ := json.Marshal(map[string]any{
+			"from": map[string]any{"roleId": fromRoleID}, "to": map[string]any{"roleId": roleID},
+		})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "update-access", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -142,7 +168,7 @@ func (s *UserService) UpdateAccess(ctx context.Context, tenantID, id, roleID uui
 // UpdateAccess's own doc comment on why name/email aren't editable there),
 // but phone is ArgusOps-local metadata, not identity-sourced, so an admin
 // can set or clear it for any user regardless of auth provider.
-func (s *UserService) UpdatePhone(ctx context.Context, tenantID, id uuid.UUID, phone string) error {
+func (s *UserService) UpdatePhone(ctx context.Context, tenantID, actorID, id uuid.UUID, phone string) error {
 	phone = strings.TrimSpace(phone)
 	if err := domain.ValidatePhone(phone); err != nil {
 		return err
@@ -152,7 +178,23 @@ func (s *UserService) UpdatePhone(ctx context.Context, tenantID, id uuid.UUID, p
 		phonePtr = &phone
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.UpdatePhone(ctx, tx, id, phonePtr)
+		existing, err := s.repo.Get(ctx, tx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.UpdatePhone(ctx, tx, id, phonePtr); err != nil {
+			return err
+		}
+		var fromPhone any
+		if existing != nil {
+			fromPhone = existing.Phone
+		}
+		data, _ := json.Marshal(map[string]any{
+			"from": map[string]any{"phone": fromPhone}, "to": map[string]any{"phone": phonePtr},
+		})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "update-phone", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -163,7 +205,7 @@ func (s *UserService) UpdatePhone(ctx context.Context, tenantID, id uuid.UUID, p
 // authenticate against their identity provider, so resetting a local
 // password here would be a no-op that misleads the admin into thinking it
 // did something.
-func (s *UserService) ResetPassword(ctx context.Context, tenantID, userID uuid.UUID) (string, error) {
+func (s *UserService) ResetPassword(ctx context.Context, tenantID, actorID, userID uuid.UUID) (string, error) {
 	user, err := s.Get(ctx, tenantID, userID)
 	if err != nil {
 		return "", fmt.Errorf("load user: %w", err)
@@ -185,7 +227,13 @@ func (s *UserService) ResetPassword(ctx context.Context, tenantID, userID uuid.U
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetPasswordAndForceChange(ctx, tx, userID, hash)
+		if err := s.repo.SetPasswordAndForceChange(ctx, tx, userID, hash); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"passwordReset": true, "targetUserId": userID}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "reset-password", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return "", fmt.Errorf("reset password: %w", err)
@@ -193,9 +241,15 @@ func (s *UserService) ResetPassword(ctx context.Context, tenantID, userID uuid.U
 	return tempPassword, nil
 }
 
-func (s *UserService) SetActive(ctx context.Context, tenantID, id uuid.UUID, active bool) error {
+func (s *UserService) SetActive(ctx context.Context, tenantID, actorID, id uuid.UUID, active bool) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetActive(ctx, tx, id, active)
+		if err := s.repo.SetActive(ctx, tx, id, active); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"active": active, "targetUserId": id}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "set-active", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -214,7 +268,7 @@ func (s *UserService) ListGroupMappings(ctx context.Context, tenantID uuid.UUID)
 // time a federated user authenticates — see architecture review, "Auth:
 // local + LDAP + SAML", for why this is just-in-time rather than a one-time
 // import.
-func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID uuid.UUID, provider domain.AuthProvider, externalGroup string, roleID uuid.UUID) (*domain.AuthGroupMapping, error) {
+func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID, actorID uuid.UUID, provider domain.AuthProvider, externalGroup string, roleID uuid.UUID) (*domain.AuthGroupMapping, error) {
 	if provider != domain.AuthProviderLDAP && provider != domain.AuthProviderSAML {
 		return nil, fmt.Errorf("group mappings only apply to ldap or saml, got %q", provider)
 	}
@@ -225,7 +279,15 @@ func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID uuid.UUID, 
 		RoleID:        roleID,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.UpsertGroupMapping(ctx, tx, m)
+		if err := s.repo.UpsertGroupMapping(ctx, tx, m); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{
+			"provider": provider, "externalGroup": externalGroup, "roleId": roleID,
+		}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "save-group-mapping", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("save group mapping: %w", err)
@@ -233,8 +295,14 @@ func (s *UserService) SaveGroupMapping(ctx context.Context, tenantID uuid.UUID, 
 	return m, nil
 }
 
-func (s *UserService) DeleteGroupMapping(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *UserService) DeleteGroupMapping(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.DeleteGroupMapping(ctx, tx, id)
+		if err := s.repo.DeleteGroupMapping(ctx, tx, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": map[string]any{"id": id}, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "users", Action: "delete-group-mapping", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
