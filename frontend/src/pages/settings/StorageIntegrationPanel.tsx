@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
 import { useConfirm } from "../../hooks/useConfirm";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
 import type { StorageConfig } from "../../types/api";
 
 // Settings -> Storage Integration: lets an admin point alert/incident
@@ -25,10 +25,13 @@ import type { StorageConfig } from "../../types/api";
 export function StorageIntegrationPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<StorageConfig | null>(["storage-config"], (tok) =>
-    api.get<StorageConfig | null>("/api/v1/settings/storage", tok),
-  );
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: existing, loading, error, configured, saveError, setSaveError, submitting, saved, save } =
+    useAdminSingletonConfig<StorageConfig | null>(
+      ["storage-config"],
+      (tok) => api.get<StorageConfig | null>("/api/v1/settings/storage", tok),
+      { initialSaved: searchParams.get("gdrive_connected") === "1" },
+    );
 
   const [provider, setProvider] = useState<"s3" | "gcs" | "gdrive">("s3");
 
@@ -46,18 +49,21 @@ export function StorageIntegrationPanel() {
   const [gdriveServiceAccountJson, setGdriveServiceAccountJson] = useState("");
   const [connectingGoogle, setConnectingGoogle] = useState(false);
 
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(searchParams.get("gdrive_error"));
-  const [saved, setSaved] = useState(searchParams.get("gdrive_connected") === "1");
   // Inline confirm/cancel instead of window.confirm() -- some embedded
   // browser contexts silently auto-dismiss native confirm() dialogs, which
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
   const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
+  // Seeds saveError from ?gdrive_error=... once on mount -- useAdminSingletonConfig's
+  // own saveError starts null (it only knows about same-session save()
+  // failures), so the one-time OAuth-redirect error has to be pushed in
+  // separately, same reasoning as initialSaved above for the success case.
   // Clears gdrive_connected/gdrive_error from the URL once shown, so a
   // page refresh doesn't keep re-displaying a stale result from the OAuth
   // redirect.
   useEffect(() => {
+    const gdriveError = searchParams.get("gdrive_error");
+    if (gdriveError) setSaveError(gdriveError);
     if (searchParams.has("gdrive_connected") || searchParams.has("gdrive_error")) {
       setSearchParams({}, { replace: true });
     }
@@ -83,72 +89,70 @@ export function StorageIntegrationPanel() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
-      if (provider === "s3") {
-        await api.put(
-          "/api/v1/settings/storage/s3",
-          { bucket: s3Bucket, region: s3Region, accessKeyId: s3AccessKeyId, secretAccessKey: s3SecretAccessKey },
-          token,
-        );
-        setS3SecretAccessKey("");
-      } else if (provider === "gcs") {
-        await api.put(
-          "/api/v1/settings/storage/gcs",
-          { bucket: gcsBucket, projectId: gcsProjectId, credentialsJson: gcsCredentialsJson },
-          token,
-        );
-        setGcsCredentialsJson("");
-      } else if (gdriveAuthMethod === "service_account") {
-        await api.put(
-          "/api/v1/settings/storage/gdrive/service-account",
-          { folderId: gdriveFolderId, serviceAccountJson: gdriveServiceAccountJson },
-          token,
-        );
-        setGdriveServiceAccountJson("");
-      } else {
-        // OAuth: no PUT here -- redirect the whole page to Google's consent
-        // screen. Success/failure comes back as a query param on this same
-        // page (?gdrive_connected=1 / ?gdrive_error=...), not a response to
-        // this request.
-        if (!gdriveFolderId) throw new Error(t("settings.storage.gdrive.folderIdRequired"));
-        setConnectingGoogle(true);
-        const { url } = await api.get<{ url: string }>(
-          `/api/v1/settings/storage/gdrive/oauth/authorize-url?folderId=${encodeURIComponent(gdriveFolderId)}`,
-          token,
-        );
-        window.location.href = url;
-        return;
-      }
-      setSaved(true);
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-      setConnectingGoogle(false);
-    } finally {
-      setSubmitting(false);
-    }
+    // OAuth success is a page navigation, not a PUT response -- ?gdrive_connected=1
+    // (read via initialSaved above) is what actually confirms it, not this
+    // request, so it's excluded from the "mark saved" success case here.
+    const isOAuthConnect = provider === "gdrive" && gdriveAuthMethod === "oauth";
+    await save(
+      async () => {
+        if (provider === "s3") {
+          await api.put(
+            "/api/v1/settings/storage/s3",
+            { bucket: s3Bucket, region: s3Region, accessKeyId: s3AccessKeyId, secretAccessKey: s3SecretAccessKey },
+            token,
+          );
+          setS3SecretAccessKey("");
+        } else if (provider === "gcs") {
+          await api.put(
+            "/api/v1/settings/storage/gcs",
+            { bucket: gcsBucket, projectId: gcsProjectId, credentialsJson: gcsCredentialsJson },
+            token,
+          );
+          setGcsCredentialsJson("");
+        } else if (gdriveAuthMethod === "service_account") {
+          await api.put(
+            "/api/v1/settings/storage/gdrive/service-account",
+            { folderId: gdriveFolderId, serviceAccountJson: gdriveServiceAccountJson },
+            token,
+          );
+          setGdriveServiceAccountJson("");
+        } else {
+          // OAuth: no PUT here -- redirect the whole page to Google's consent
+          // screen. Success/failure comes back as a query param on this same
+          // page (?gdrive_connected=1 / ?gdrive_error=...), not a response to
+          // this request.
+          if (!gdriveFolderId) throw new Error(t("settings.storage.gdrive.folderIdRequired"));
+          setConnectingGoogle(true);
+          try {
+            const { url } = await api.get<{ url: string }>(
+              `/api/v1/settings/storage/gdrive/oauth/authorize-url?folderId=${encodeURIComponent(gdriveFolderId)}`,
+              token,
+            );
+            window.location.href = url;
+          } catch (err) {
+            setConnectingGoogle(false);
+            throw err;
+          }
+        }
+      },
+      { markSavedOnSuccess: !isOAuthConnect },
+    );
   }
 
   async function handleRemove() {
     cancelRemove();
-    setSubmitting(true);
-    try {
-      await api.del("/api/v1/settings/storage", token);
-      setS3Bucket("");
-      setS3Region("");
-      setS3AccessKeyId("");
-      setGcsBucket("");
-      setGcsProjectId("");
-      setGdriveFolderId("");
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    await save(
+      async () => {
+        await api.del("/api/v1/settings/storage", token);
+        setS3Bucket("");
+        setS3Region("");
+        setS3AccessKeyId("");
+        setGcsBucket("");
+        setGcsProjectId("");
+        setGdriveFolderId("");
+      },
+      { markSavedOnSuccess: false },
+    );
   }
 
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
@@ -157,7 +161,7 @@ export function StorageIntegrationPanel() {
     <form onSubmit={handleSubmit} className="panel">
       <div className="panel-header">
         <h2 className="panel-title">{t("settings.storage.title")}</h2>
-        {existing && (
+        {configured && existing && (
           <span className="badge badge-success">
             <span className="badge-status-dot" />
             {existing.provider === "gdrive" && existing.gdriveAuthMethod === "oauth" && existing.gdriveOauthConnectedEmail
@@ -312,16 +316,16 @@ export function StorageIntegrationPanel() {
               : t("settings.storage.gdrive.connectButton")
             : submitting
               ? t("common.saving")
-              : existing
+              : configured
                 ? t("common.update")
                 : t("settings.storage.configureButton")}
         </button>
-        {existing && !confirmingRemove && (
+        {configured && !confirmingRemove && (
           <button type="button" className="btn btn-danger btn-sm" onClick={() => confirmRemove()} disabled={submitting}>
             {t("settings.storage.remove")}
           </button>
         )}
-        {existing && confirmingRemove && (
+        {configured && confirmingRemove && (
           <>
             <span className="helper-text">{t("settings.storage.removeConfirm")}</span>
             <button type="button" className="btn btn-danger btn-sm" onClick={handleRemove} disabled={submitting}>

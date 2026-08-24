@@ -48,6 +48,19 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 - `AUTH_MODE=dev` now persists the generated JWT keypair in `.dev-keys/` (a named Docker volume)
   instead of generating a fresh one on every `api` container restart — sessions survive a normal
   `docker compose restart`/redeploy.
+- A settings-panel search box above the Settings nav groups (`SettingsLayout.tsx`) — filters items
+  by translated label as you type, collapsing a whole group once none of its items match, instead
+  of scrolling an ~18-item nav to find one you already know the name of.
+- Two shared hooks replacing hand-rolled boilerplate duplicated across 6+ Settings panels:
+  `useSavedFlag` (the "show a success message after a save" boolean) and
+  `useAdminSingletonConfig` (the "GET one config object or null, edit local form state, PUT/DELETE
+  to save, reload after success" shape), adopted by Retention/SMTP/Storage/Slack/Identity-Providers'
+  LDAP+SAML panels and Profile/Incident-SLA respectively.
+- Backend test coverage for previously-untested code: `internal/service/access.go`'s `tagsVisible`/
+  `latestAnalysisFields`/`orEmptySlice`, `internal/blobstore`'s `S3Store`/`GCSStore` (mocking each
+  SDK's own client the way `gdrive_test.go` already does for Google Drive), and a handler-level
+  test for `analysis_tool_calls.go`'s approve/reject endpoints' already-resolved-status guard
+  (previously only covered at the service layer, not through the HTTP handler).
 - A shared `Modal` component (`frontend/src/components/Modal.tsx`) replacing 7 independent copies
   of the same `modal-overlay`/`modal` markup (`CloseAlertModal`, `AnalysisChat`,
   `IncidentsListPage`'s create-incident form, `PlaybookViewModal`, `OnCallTimeline`'s override
@@ -84,6 +97,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 - `WebhooksPanel.tsx`: regenerating a webhook token revealed the plaintext value and then, right
   after, fired a reload that unmounted the row before the user could actually see the token — the
   whole point of revealing it was silently defeated.
+- `SlackIntegrationPanel.tsx` and its config-panel siblings (Retention/SMTP/Storage/Identity-
+  Providers' LDAP+SAML) derived "not configured yet" from bare truthiness of the fetched config
+  object, but a failed GET collapses to the same falsy value as "genuinely unconfigured" — a load
+  failure showed the empty-state "Connect"/"Configure" CTA (plus, for Slack specifically, a fully
+  clickable OAuth Connect button) as if nothing were set up, with only an easy-to-miss error banner
+  alongside it as the actual signal something was wrong. Fixed by `useAdminSingletonConfig`'s new
+  `configured` field, which is only true once loading and error have both resolved cleanly; Slack's
+  Connect button is now replaced entirely by a "couldn't load status" message on a load failure,
+  since clicking it in that state could start a fresh OAuth flow on top of unknown existing state.
+- Deleted `frontend/src/components/PersonFilter.tsx` (zero imports, confirmed dead).
 - **Security**: an escalation policy's webhook `Destination`, an MCP server's `endpoint`, and a
   self-hosted/OpenAI-compatible LLM provider's `base_url` were all dialed with a plain
   `http.Client` — anyone with Settings access to those three areas could point one at

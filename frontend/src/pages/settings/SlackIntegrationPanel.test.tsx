@@ -128,4 +128,19 @@ describe("SlackIntegrationPanel", () => {
 
     expect(await screen.findByText("internal error")).toBeInTheDocument();
   });
+
+  it("a fetch error never falls through to the Connect button -- true state is unknown, not 'not connected'", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "internal error" }, 500)));
+    renderPanel();
+
+    await screen.findByText("internal error");
+    // Before the fix, useObject's data collapsing null-on-error to the
+    // same falsy value as "genuinely not connected" meant this panel
+    // showed a fully clickable "Connect to Slack" button even though a
+    // workspace might already be connected -- clicking it would start a
+    // fresh OAuth flow on top of unknown existing state.
+    expect(screen.queryByRole("button", { name: "Connect to Slack" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Connected to/)).not.toBeInTheDocument();
+    expect(screen.getByText("Couldn't load the current connection status. Try reloading the page.")).toBeInTheDocument();
+  });
 });

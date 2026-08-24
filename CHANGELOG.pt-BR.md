@@ -49,6 +49,22 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 - `AUTH_MODE=dev` agora persiste o par de chaves JWT gerado em `.dev-keys/` (volume Docker
   nomeado) em vez de gerar um novo a cada restart do container `api` — sessões sobrevivem a um
   `docker compose restart`/redeploy normal.
+- Uma busca de configurações acima dos grupos de navegação de Settings (`SettingsLayout.tsx`) --
+  filtra os itens pelo label traduzido conforme você digita, recolhendo um grupo inteiro quando
+  nenhum de seus itens combina, em vez de rolar uma nav de ~18 itens pra achar um que você já sabe
+  o nome.
+- Dois hooks compartilhados substituindo boilerplate reimplementado do zero em 6+ painéis de
+  Settings: `useSavedFlag` (o booleano de "mostrar mensagem de sucesso após salvar") e
+  `useAdminSingletonConfig` (a forma "GET um objeto de config ou null, editar estado de formulário
+  local, PUT/DELETE pra salvar, reload após sucesso"), adotados pelos painéis de
+  Retenção/SMTP/Storage/Slack/Provedores de Identidade (LDAP+SAML) e Perfil/SLA de Incidente
+  respectivamente.
+- Cobertura de teste de backend pra código anteriormente sem testes: `tagsVisible`/
+  `latestAnalysisFields`/`orEmptySlice` de `internal/service/access.go`, `S3Store`/`GCSStore` de
+  `internal/blobstore` (mockando o cliente de cada SDK do mesmo jeito que `gdrive_test.go` já faz
+  pro Google Drive), e um teste no nível de handler pra guarda de status-já-resolvido dos endpoints
+  de aprovar/rejeitar de `analysis_tool_calls.go` (antes coberta só na camada de serviço, não
+  através do handler HTTP).
 - Um componente `Modal` compartilhado (`frontend/src/components/Modal.tsx`) substituindo 7 cópias
   independentes do mesmo markup `modal-overlay`/`modal` (`CloseAlertModal`, `AnalysisChat`, o
   formulário de criação de incidente do `IncidentsListPage`, `PlaybookViewModal`, o popover de
@@ -89,6 +105,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 - `WebhooksPanel.tsx`: regenerar um token de webhook revelava o valor em texto puro e, na sequência,
   disparava um reload que desmontava a linha antes do usuário conseguir ver o token — o próprio
   propósito da revelação era anulado silenciosamente.
+- `SlackIntegrationPanel.tsx` e seus painéis-irmãos de config (Retenção/SMTP/Storage/Provedores de
+  Identidade LDAP+SAML) derivavam "ainda não configurado" da truthiness pura do objeto de config
+  buscado, mas um GET que falha colapsa pro mesmo valor falsy de "genuinamente não configurado" --
+  uma falha de carregamento mostrava a CTA de "Conectar"/"Configurar" do estado vazio (mais, no caso
+  específico do Slack, um botão de Connect via OAuth totalmente clicável) como se nada estivesse
+  configurado, com só um banner de erro fácil de não notar como sinal real de que algo deu errado.
+  Corrigido pelo novo campo `configured` do `useAdminSingletonConfig`, só verdadeiro quando loading e
+  error já resolveram limpo; o botão Connect do Slack agora é totalmente substituído por uma
+  mensagem de "não foi possível carregar o status" numa falha de carregamento, já que clicar nele
+  nesse estado poderia iniciar um fluxo OAuth novo em cima de um estado existente desconhecido.
+- Removido `frontend/src/components/PersonFilter.tsx` (zero imports, confirmado morto).
 - **Segurança**: o `Destination` de webhook de uma política de escalonamento, o `endpoint` de um
   servidor MCP e o `base_url` de um provedor LLM self-hosted/compatível com OpenAI eram todos
   acessados com um `http.Client` simples — qualquer um com acesso de Settings a essas três áreas

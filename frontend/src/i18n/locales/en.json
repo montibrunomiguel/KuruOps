@@ -452,6 +452,8 @@
   "settings": {
     "title": "Settings",
     "subtitle": "Integrations, identity, operations, and audit for ArgusOps.",
+    "navSearchPlaceholder": "Search settings...",
+    "navSearchNoResults": "No matching settings.",
     "panelError": {
       "message": "This panel failed to load. The rest of Settings is unaffected.",
       "reload": "Reload page"
@@ -832,7 +834,8 @@
       "installedBy": "Connected by",
       "connectButton": "Connect to Slack",
       "disconnect": "Disconnect",
-      "disconnectConfirm": "Disconnect this Slack workspace? Every Slack-dependent feature stops working until reconnected."
+      "disconnectConfirm": "Disconnect this Slack workspace? Every Slack-dependent feature stops working until reconnected.",
+      "unknownStatus": "Couldn't load the current connection status. Try reloading the page."
     },
     "onCallSchedule": {
       "title": "On-Call Schedules",

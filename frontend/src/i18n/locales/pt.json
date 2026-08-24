@@ -452,6 +452,8 @@
   "settings": {
     "title": "Configurações",
     "subtitle": "Integrações, identidade, operação e auditoria do ArgusOps.",
+    "navSearchPlaceholder": "Buscar configurações...",
+    "navSearchNoResults": "Nenhuma configuração encontrada.",
     "panelError": {
       "message": "Não foi possível carregar este painel. O restante das Configurações não foi afetado.",
       "reload": "Recarregar página"
@@ -832,7 +834,8 @@
       "installedBy": "Conectado por",
       "connectButton": "Conectar ao Slack",
       "disconnect": "Desconectar",
-      "disconnectConfirm": "Desconectar este workspace do Slack? Todo recurso que depende do Slack para de funcionar até que seja reconectado."
+      "disconnectConfirm": "Desconectar este workspace do Slack? Todo recurso que depende do Slack para de funcionar até que seja reconectado.",
+      "unknownStatus": "Não foi possível carregar o status de conexão atual. Tente recarregar a página."
     },
     "onCallSchedule": {
       "title": "Escalas de Atendimento",
