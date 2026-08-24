@@ -128,6 +128,16 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		assert.ErrorContains(t, err, "at least 8 characters")
 	})
 
+	t.Run("rejects a new password with only letters", func(t *testing.T) {
+		_, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "onlyletters")
+		assert.ErrorContains(t, err, "at least one letter and one digit")
+	})
+
+	t.Run("rejects a new password with only digits", func(t *testing.T) {
+		_, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "12345678")
+		assert.ErrorContains(t, err, "at least one letter and one digit")
+	})
+
 	t.Run("rejects the wrong current password", func(t *testing.T) {
 		_, err := svc.ChangePassword(t.Context(), tenantID, userID, "wrong-current-password", "NewPassword123!")
 		assert.ErrorContains(t, err, "incorrect")

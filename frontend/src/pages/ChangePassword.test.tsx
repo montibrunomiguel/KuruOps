@@ -54,6 +54,32 @@ describe("ChangePasswordPage", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("rejects a new password with only letters, without calling the API", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    renderWithSession();
+
+    await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
+    await userEvent.type(screen.getByLabelText("New password"), "onlyletters");
+    await userEvent.type(screen.getByLabelText("Confirm new password"), "onlyletters");
+    await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
+
+    expect(await screen.findByText("The new password must contain at least one letter and one digit.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a new password with only digits, without calling the API", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    renderWithSession();
+
+    await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
+    await userEvent.type(screen.getByLabelText("New password"), "12345678");
+    await userEvent.type(screen.getByLabelText("Confirm new password"), "12345678");
+    await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
+
+    expect(await screen.findByText("The new password must contain at least one letter and one digit.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("submits the change and clears the error on success", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { token: "new.token.here" })));
     renderWithSession();

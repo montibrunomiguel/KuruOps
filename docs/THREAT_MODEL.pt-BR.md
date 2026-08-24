@@ -42,6 +42,37 @@ Postgres -- RLS por tenant_id
   O role `postgres` (superuser, usado só por migrations/`task db:*`) contorna RLS por completo,
   de propósito — nunca é o role que uma requisição de usuário usa.
 
+## Limite de confiança do redirect/callback OAuth
+
+Google Drive e Slack são conectados via um fluxo OAuth padrão de authorization-code
+(`internal/service/storage_config_service.go`'s `HandleGDriveOAuthCallback`,
+`internal/service/slack_config_service.go`'s `HandleOAuthCallback`), ambos caindo em
+`OAuthCallbackHandlers` (`internal/httpserver/handlers/oauth_callback.go`) — a única família de
+rotas top-level deliberadamente não autenticada deste app (`/auth/oauth/...`, fora de `/api/v1`),
+já que o redirect de um provedor é um GET simples do navegador, sem JWT pra anexar.
+
+- **`state` é toda a âncora de confiança.** Não há sessão nesse ponto — o callback não prova nada
+  sobre quem está fazendo a requisição, exceto o que a linha correspondente em `oauth_states`
+  (`internal/repository/oauth_state_repository.go`) diz: um token de uso único, persistido no
+  banco, com TTL, gerado quando o fluxo foi iniciado a partir de uma página de Settings
+  autenticada. Quem conseguir adivinhar ou interceptar um valor de `state` válido antes de ele ser
+  consumido poderia completar o fluxo no lugar da vítima; ele é opaco, gerado com `crypto/rand`, e
+  consumido exatamente uma vez pra fechar essa janela.
+- **A troca de `code` por token acontece só no servidor** — o callback nunca confia no que o
+  navegador afirma sobre o resultado, só no que o próprio endpoint de token do Google/Slack
+  retorna para o `code` que este handler recebeu diretamente.
+- **Erros de qualquer um dos provedores são ecoados verbatim** (`?gdrive_error=access_denied`,
+  etc) — esse é texto fornecido pelo provedor descrevendo um resultado visível ao usuário (consent
+  recusado, code expirado), não o estado interno deste app. Uma falha *dentro* de
+  `HandleGDriveOAuthCallback`/`HandleOAuthCallback` (um erro de banco, uma falha ao buscar o
+  state, uma resposta de token malformada) é logada só no servidor e redireciona com um código
+  genérico fixo (`?gdrive_error=connection_failed`) — o texto bruto do erro Go nunca vai parar numa
+  URL de redirect, que histórico do navegador, headers `Referer` e qualquer log de acesso de proxy
+  no caminho poderiam capturar.
+- **O tenant é sempre resolvido da mesma forma** (`AuthService.ResolveDefaultTenant`), igual a
+  todo outro ponto de entrada não autenticado deste app single-tenant (o endpoint ACS do SAML, o
+  admin padrão semeado) — não há ambiguidade de tenant pra um atacante explorar nesse limite.
+
 ## O que a Row-Level Security garante — e o que não garante
 
 RLS filtra toda query pelo `tenant_id` da sessão (`set_config('app.tenant_id', ...)`, ver
@@ -67,6 +98,41 @@ real no futuro sem reescrever schema.
   um incidente fora do seu `allowedTags` se souber o ID. Lacuna conhecida, não um achado novo desta
   revisão.
 
+## O que a varredura de retenção de dados garante — e o que não garante
+
+Settings → Dados & Auditoria → Retenção configura por quanto tempo um alerta/incidente **fechado**
+fica no ArgusOps antes de ser permanentemente excluído pelo job horário `sweepDataRetention` do
+`cmd/worker` (padrão 18 meses, configurável separadamente por tipo de recurso —
+`internal/service/retention_config_service.go`).
+
+- **A exclusão é definitiva, não é arquivamento reversível.** Não existe desfazer, lixeira, nem
+  passo de exportação automática antes de excluir — uma linha que passou do prazo configurado some
+  assim que a varredura roda. Um admin que quiser uma cópia do que será excluído precisa exportar
+  antes (Settings → Dados & Auditoria → Exportar Auditoria), antes de reduzir um prazo de retenção
+  abaixo da idade de um registro já existente.
+- **Só `closed_at` determina elegibilidade** — um alerta/incidente aberto nunca é tocado
+  independente da idade, e um incidente reaberto depois de fechado (que limpa `closed_at`) é
+  excluído da varredura mesmo que estivesse elegível momentos antes: a varredura seleciona e
+  exclui cada tipo de recurso numa única instrução atômica `WITH ... FOR UPDATE ... DELETE`, então
+  o Postgres revalida a elegibilidade contra o estado atual committado de cada linha, não um
+  snapshot tirado antes da exclusão.
+- **Evidências em blob storage nunca são tocadas.** Anexos de comentários de alerta/incidente
+  ficam no backend de storage configurado pelo tenant (S3/GCS/Google Drive/disco local),
+  referenciados por URL/chave — `internal/blobstore.Store` não tem método `Delete` em lugar nenhum
+  deste código, então uma exclusão aqui só pode remover o registro do próprio ArgusOps no banco,
+  nunca o arquivo subjacente. Essa é uma limitação de escopo deliberada e conhecida, não um
+  descuido: limpar blob storage órfão não está implementado.
+- **Quem pode configurar**: o mesmo controle admin-only de qualquer outro painel de Settings
+  (`middleware.RequireRole("admin")`) — reduzir um prazo de retenção é, na prática, uma ação de
+  destruição de dados disponível pra qualquer um com esse papel, por isso o frontend exige
+  confirmação inline explícita ao *reduzir* um valor (aumentar um valor, ou salvar pela primeira
+  vez, não exige confirmação já que nenhum dos dois pode excluir algo que já não seria excluído de
+  qualquer forma).
+- **O raio de impacto por ciclo é limitado** (`retentionSweepBatchLimit`, 5000 linhas por tipo de
+  recurso por ciclo horário) — um backlog grande no primeiro deploy dessa feature é processado aos
+  poucos ao longo dos ciclos em vez de numa única transação sem limite competindo com tráfego real
+  pelas mesmas tabelas.
+
 ## Segredos: como nunca trafegam em claro para o Postgres
 
 `secrets.Store` (`Put`/`Resolve`) é a única forma pela qual código de aplicação lida com uma
@@ -89,6 +155,35 @@ referenciando o ref antigo — um bug de disponibilidade real, descoberto durant
 LDAP/SAML nesta sessão. Trocar para `PersistentEnvStore` troca "nunca toca disco" por "sobrevive a
 um restart", mitigado pela criptografia AES-256-GCM antes da gravação — não é uma correção sem
 custo, é uma escolha de durabilidade vs. superfície, documentada aqui de propósito.
+
+**A chave padrão do `.env.example` é recusada fora do modo dev.** O `.env.example` vem com um
+`SECRETS_ENCRYPTION_KEY` real, funcional, pra que `docker compose up` funcione de primeira em dev
+local — a mesma conveniência faz dela uma chave conhecida e publicamente visível se algum dia for
+copiada e colada direto num deploy real em vez de gerada do zero. `secrets.NewFromConfig` falha
+ao iniciar se a chave configurada ainda for exatamente esse valor e `AUTH_MODE` não for
+`dev`/`dev-headers`.
+
+## Requisições de saída para URLs configuradas por admin: proteção contra SSRF
+
+Três configurações aceitam uma URL que este código então acessa em nome do tenant: o
+`Destination` do webhook de uma política de escalonamento (`internal/notifier/webhook.go`), o
+`endpoint` de um servidor MCP (`internal/mcpclient/jsonrpc.go`), e o `base_url` de um provedor LLM
+pros tipos `openai_compatible`/`azure_openai`/`self_hosted` (`internal/llmclient/llmclient.go`) —
+o `api.anthropic.com` fixo do tipo anthropic não é configurável pelo usuário, então não entra
+nesse escopo. Qualquer um com acesso a essas três áreas de Settings pode, de outra forma, apontar
+pra `http://169.254.169.254/...` (endpoint de metadata de nuvem) ou `http://localhost:5432/...`
+(um serviço interno que confia em requisições vindas deste processo) e fazer o
+argusops-api/argusops-worker mandar essa requisição por ele — um pivô clássico de SSRF, de "pode
+editar config" pra "pode alcançar rede interna".
+
+As três agora acessam via `internal/httpguard.NewClient`, cujo `Transport.DialContext` resolve o
+host alvo e recusa conectar se qualquer IP resolvido for loopback, link-local ou privado
+(RFC1918/RFC4193) — checado contra o IP realmente sendo conectado, não só a string do hostname da
+URL, então não é contornável por DNS rebinding (um nome que resolve pra um IP público quando a
+config é salva mas um privado quando a requisição é de fato feita) nem digitando um IP privado
+direto. Um deploy genuinamente on-prem, onde um receptor de webhook ou servidor MCP ou endpoint
+LLM self-hosted legitimamente mora em espaço de endereço privado, define
+`ALLOW_PRIVATE_NETWORK_TARGETS=true` pra tirar o processo inteiro dessa proteção.
 
 ## Cookie `SameSite` do SAML: por que o `RelayState` é o canal primário
 

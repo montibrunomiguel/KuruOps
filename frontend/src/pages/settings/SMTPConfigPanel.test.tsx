@@ -114,4 +114,14 @@ describe("SMTPConfigPanel", () => {
 
     expect(await screen.findByText("internal error")).toBeInTheDocument();
   });
+
+  it("a fetch error does not show the 'configured' badge, remove button, or test-email section -- those stay gated on a real config existing, not on the request merely having failed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "internal error" }, 500)));
+    renderPanel();
+
+    await screen.findByText("internal error");
+    expect(screen.queryByText("Configured")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove configuration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send test email" })).not.toBeInTheDocument();
+  });
 });

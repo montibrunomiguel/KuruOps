@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { mutationErrorMessage, useList } from "../../api/hooks";
+import { useSavedFlag } from "../../hooks/useSavedFlag";
 import type { IncidentSLAPolicy, IncidentPriority } from "../../types/incidents";
 import type { Severity } from "../../types/alerts";
 import { PRIORITY_ORDER } from "../../lib/chartColors";
@@ -28,7 +29,7 @@ export function IncidentSLAPanel() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const { saved, markSaved, clearSaved } = useSavedFlag();
 
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -54,7 +55,7 @@ export function IncidentSLAPanel() {
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
-    setSaved(false);
+    clearSaved();
     try {
       for (const key of dirtyKeys) {
         const [severity, priority] = key.split("-") as [Severity, IncidentPriority];
@@ -68,7 +69,7 @@ export function IncidentSLAPanel() {
         }
         await api.put("/api/v1/settings/incident-sla", { severity, priority, dueWithinMinutes: Number(value) }, token);
       }
-      setSaved(true);
+      markSaved();
       reload();
     } catch (err) {
       setSaveError(mutationErrorMessage(err));

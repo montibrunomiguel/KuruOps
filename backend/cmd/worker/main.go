@@ -522,6 +522,16 @@ func emailOnCallAnalyst(ctx context.Context, smtp *service.SMTPConfigService, te
 	return nil
 }
 
+// retentionSweepBatchLimit bounds how many alerts (and, separately, how many
+// incidents) a single sweepDataRetention tick will purge. Without this, a
+// tenant with a large backlog of old closed records on first deploy of this
+// feature (exactly the scenario retention exists to clear out) would hold
+// one very long transaction locking however many rows it found, competing
+// with live traffic for the same pages. A backlog bigger than this limit
+// just gets worked off incrementally, one batch per hourly tick, instead of
+// in a single unbounded transaction.
+const retentionSweepBatchLimit = 5000
+
 // sweepDataRetention permanently deletes closed alerts/incidents once their
 // tenant's configured retention period (Settings -> Retention,
 // tenant_retention_config; domain.DefaultRetentionMonths if unconfigured)
@@ -545,20 +555,22 @@ func emailOnCallAnalyst(ctx context.Context, smtp *service.SMTPConfigService, te
 // matters here in a way it doesn't for the other sweeps' single UPDATE
 // statements.
 //
-// Delete order matters: ai_analysis_runs and ai_tool_calls reference their
-// alert/incident via a polymorphic context_type/context_id pair with NO
-// foreign key back to alerts/incidents at all (see
-// db/migrations/0001_initial_schema.up.sql) -- a plain DELETE FROM
-// alerts/incidents would silently leave these permanently orphaned, so they
-// must be cleared explicitly first. ai_analysis_runs before ai_tool_calls
-// specifically: ai_analysis_runs.pending_tool_call_id has a real FK to
-// ai_tool_calls(id) with no ON DELETE clause (default RESTRICT), so
-// deleting ai_tool_calls first would fail with a foreign-key violation on
-// any run still pointing at one. Every other child table (alert_comments,
-// alert_events, incident_comments, incident_events, ...) already has real
-// ON DELETE CASCADE and needs no explicit statement here; alerts.incident_id
-// is ON DELETE SET NULL, so purging an incident correctly just unlinks any
-// still-open alert instead of touching it.
+// Eligibility is re-checked atomically at delete time, not just at select
+// time: deleteEligibleAlerts/deleteEligibleIncidents each run their
+// candidate-selection and their DELETE as ONE SQL statement (a `WITH ...
+// FOR UPDATE` CTE feeding the DELETE's `WHERE id IN (...)`), not two
+// separate statements. This matters because an incident CAN be reopened
+// after closing (IncidentRepository.UpdatePhase clears closed_at the
+// instant phase moves off post_incident) -- a naive "SELECT doomed ids,
+// then DELETE ... WHERE id = ANY(ids)" as two separate statements has a
+// real window between them where a reopen can commit and the second
+// statement, which never re-checks closed_at, purges the now-active
+// incident anyway. Postgres re-validates FOR UPDATE's WHERE clause against
+// each row's current committed values before returning it (EvalPlanQual),
+// so a row that stopped matching mid-statement is correctly excluded --
+// something two separate statements in the same transaction do NOT get for
+// free under READ COMMITTED, which re-reads current state at the start of
+// each new statement, not each new row.
 func sweepDataRetention(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -567,20 +579,36 @@ func sweepDataRetention(ctx context.Context, pool *db.Pool, logger *slog.Logger)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
 
-	alertIDs, err := collectDoomedAlertIDs(ctx, tx)
+	alertIDs, err := deleteEligibleAlerts(ctx, tx)
 	if err != nil {
-		logger.Error("sweep data retention: collect alerts failed", "error", err)
+		logger.Error("sweep data retention: delete alerts failed", "error", err)
 		return
 	}
-	incidentIDs, err := collectDoomedIncidentIDs(ctx, tx)
+	incidentIDs, err := deleteEligibleIncidents(ctx, tx)
 	if err != nil {
-		logger.Error("sweep data retention: collect incidents failed", "error", err)
+		logger.Error("sweep data retention: delete incidents failed", "error", err)
 		return
 	}
 	if len(alertIDs) == 0 && len(incidentIDs) == 0 {
 		return
 	}
 
+	// ai_analysis_runs and ai_tool_calls reference their alert/incident via
+	// a polymorphic context_type/context_id pair with NO foreign key back
+	// to alerts/incidents at all (see db/migrations/0001_initial_schema.up.sql)
+	// -- deleting alerts/incidents above does not (and cannot) cascade into
+	// these, so they must be cleared explicitly here, against the IDs
+	// actually deleted above (not a stale candidate list). ai_analysis_runs
+	// before ai_tool_calls specifically: ai_analysis_runs.pending_tool_call_id
+	// has a real FK to ai_tool_calls(id) with no ON DELETE clause (default
+	// RESTRICT), so deleting ai_tool_calls first would fail with a
+	// foreign-key violation on any run still pointing at one. Every other
+	// child table (alert_comments, alert_events, incident_comments,
+	// incident_events, ...) already has real ON DELETE CASCADE and needed
+	// no explicit statement -- it went with the alerts/incidents delete
+	// above; alerts.incident_id is ON DELETE SET NULL, so purging an
+	// incident correctly just unlinked any still-open alert referencing it,
+	// rather than touching the alert itself.
 	if _, err := tx.Exec(ctx, `
 		delete from ai_analysis_runs
 		where (context_type = 'alert' and context_id = any($1))
@@ -600,36 +628,40 @@ func sweepDataRetention(ctx context.Context, pool *db.Pool, logger *slog.Logger)
 		return
 	}
 
-	alertTag, err := tx.Exec(ctx, `delete from alerts where id = any($1)`, alertIDs)
-	if err != nil {
-		logger.Error("sweep data retention: delete alerts failed", "error", err)
-		return
-	}
-	incidentTag, err := tx.Exec(ctx, `delete from incidents where id = any($1)`, incidentIDs)
-	if err != nil {
-		logger.Error("sweep data retention: delete incidents failed", "error", err)
-		return
-	}
-
 	if err := tx.Commit(ctx); err != nil {
 		logger.Error("sweep data retention: commit failed", "error", err)
 		return
 	}
 	logger.Info("data retention sweep purged records",
-		"alerts_deleted", alertTag.RowsAffected(), "incidents_deleted", incidentTag.RowsAffected())
+		"alerts_deleted", len(alertIDs), "incidents_deleted", len(incidentIDs))
 }
 
-func collectDoomedAlertIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+// deleteEligibleAlerts atomically selects (locking, up to
+// retentionSweepBatchLimit rows, re-validated against the WHERE clause
+// after locking) and deletes closed alerts past their tenant's configured
+// retention -- see sweepDataRetention's doc comment for why this has to be
+// one statement, not select-then-delete. Alerts have no reopen path
+// (AlertService.ChangeStatus refuses to transition a closed alert to
+// anything else), so this atomicity is defense-in-depth here, not closing
+// a reachable gap the way it does for incidents below.
+func deleteEligibleAlerts(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
-		select a.id
-		from alerts a
-		left join tenant_retention_config trc on trc.tenant_id = a.tenant_id
-		where a.status = 'closed' and a.closed_at is not null
-		  and a.closed_at < now() - (coalesce(trc.alert_retention_months, $1) || ' months')::interval`,
-		domain.DefaultRetentionMonths,
+		with doomed as (
+			select a.id
+			from alerts a
+			left join tenant_retention_config trc on trc.tenant_id = a.tenant_id
+			where a.status = 'closed' and a.closed_at is not null
+			  and a.closed_at < now() - (coalesce(trc.alert_retention_months, $1) || ' months')::interval
+			order by a.id
+			limit $2
+			for update of a
+		)
+		delete from alerts where id in (select id from doomed)
+		returning id`,
+		domain.DefaultRetentionMonths, retentionSweepBatchLimit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("query doomed alerts: %w", err)
+		return nil, fmt.Errorf("delete eligible alerts: %w", err)
 	}
 	defer rows.Close()
 
@@ -637,24 +669,39 @@ func collectDoomedAlertIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) 
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan doomed alert id: %w", err)
+			return nil, fmt.Errorf("scan deleted alert id: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
 }
 
-func collectDoomedIncidentIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
+// deleteEligibleIncidents mirrors deleteEligibleAlerts -- see
+// sweepDataRetention's doc comment for why re-validating eligibility at
+// delete time (not just select time) matters here specifically: unlike
+// alerts, an incident CAN be reopened after closing, which clears
+// closed_at. If a reopen commits while this statement is waiting on that
+// row's lock, Postgres re-checks closed_at IS NOT NULL against the
+// now-current row before including it in `doomed`, so a just-reopened
+// incident is correctly excluded rather than purged anyway.
+func deleteEligibleIncidents(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
-		select i.id
-		from incidents i
-		left join tenant_retention_config trc on trc.tenant_id = i.tenant_id
-		where i.closed_at is not null
-		  and i.closed_at < now() - (coalesce(trc.incident_retention_months, $1) || ' months')::interval`,
-		domain.DefaultRetentionMonths,
+		with doomed as (
+			select i.id
+			from incidents i
+			left join tenant_retention_config trc on trc.tenant_id = i.tenant_id
+			where i.closed_at is not null
+			  and i.closed_at < now() - (coalesce(trc.incident_retention_months, $1) || ' months')::interval
+			order by i.id
+			limit $2
+			for update of i
+		)
+		delete from incidents where id in (select id from doomed)
+		returning id`,
+		domain.DefaultRetentionMonths, retentionSweepBatchLimit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("query doomed incidents: %w", err)
+		return nil, fmt.Errorf("delete eligible incidents: %w", err)
 	}
 	defer rows.Close()
 
@@ -662,7 +709,7 @@ func collectDoomedIncidentIDs(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, erro
 	for rows.Next() {
 		var id uuid.UUID
 		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan doomed incident id: %w", err)
+			return nil, fmt.Errorf("scan deleted incident id: %w", err)
 		}
 		ids = append(ids, id)
 	}

@@ -51,13 +51,16 @@ func TestOAuthCallbackHandlers_GDrive(t *testing.T) {
 		assert.Contains(t, loc, "gdrive_error=access_denied")
 	})
 
-	t.Run("invalid state -- redirects back with an error, not a bare HTTP error page", func(t *testing.T) {
+	t.Run("invalid state -- redirects back with a generic error, not the internal error text", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/gdrive/callback?code=some-code&state=not-a-real-state", nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusFound, rec.Code)
 		loc := rec.Header().Get("Location")
 		assert.Contains(t, loc, "/settings/storage")
-		assert.Contains(t, loc, "gdrive_error=")
+		// The internal HandleGDriveOAuthCallback error (a state-lookup
+		// failure message) must never reach the redirect URL -- only this
+		// fixed, generic code.
+		assert.Contains(t, loc, "gdrive_error=connection_failed")
 	})
 }
 
@@ -74,12 +77,12 @@ func TestOAuthCallbackHandlers_Slack(t *testing.T) {
 		assert.Contains(t, loc, "slack_error=access_denied")
 	})
 
-	t.Run("invalid state -- redirects back with an error, not a bare HTTP error page", func(t *testing.T) {
+	t.Run("invalid state -- redirects back with a generic error, not the internal error text", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/slack/callback?code=some-code&state=not-a-real-state", nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusFound, rec.Code)
 		loc := rec.Header().Get("Location")
 		assert.Contains(t, loc, "/settings/integrations/slack")
-		assert.Contains(t, loc, "slack_error=")
+		assert.Contains(t, loc, "slack_error=connection_failed")
 	})
 }

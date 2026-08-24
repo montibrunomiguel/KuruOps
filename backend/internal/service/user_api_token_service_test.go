@@ -94,6 +94,13 @@ func TestUserAPITokenService_Resolve(t *testing.T) {
 	// through it, so this inserts one directly via the repository (with the
 	// same hash algorithm Resolve expects) to exercise that branch.
 	t.Run("an already-expired token does not resolve", func(t *testing.T) {
+		// token_hash has a global unique constraint (not scoped to tenant)
+		// and this test inserts directly via the repository rather than
+		// through Create, bypassing whatever collision-avoidance Create's
+		// random generation gives every other token in this file -- a
+		// fixed literal here collided across repeated runs against a test
+		// DB that isn't reset between them (this row is never cleaned up).
+		// Folding in tenantID (fresh per test run) keeps the hash unique.
 		plaintext := "pat_test-expired-token-" + tenantID.String()
 		sum := sha256.Sum256([]byte(plaintext))
 		expiredAt := time.Now().Add(-time.Hour)

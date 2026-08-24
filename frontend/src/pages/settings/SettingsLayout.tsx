@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { FieldMappingTemplatesPanel } from "./FieldMappingTemplatesPanel";
 import { LLMProvidersPanel } from "./LLMProvidersPanel";
@@ -81,8 +83,40 @@ const NAV_GROUPS = [
   },
 ] as const;
 
+// Scoped fallback for a crash inside one settings panel: the nav one level
+// up in SettingsLayout is still rendered fine (it's outside this boundary),
+// so this only needs to replace the broken panel itself, not the whole app
+// shell the root ErrorBoundary's fallback assumes.
+function SettingsPanelErrorFallback() {
+  const { t } = useTranslation();
+  return (
+    <div className="empty-state">
+      <p>{t("settings.panelError.message")}</p>
+      <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>
+        {t("settings.panelError.reload")}
+      </button>
+    </div>
+  );
+}
+
 export function SettingsLayout() {
   const { t } = useTranslation();
+  const [navSearch, setNavSearch] = useState("");
+
+  // Client-side substring match against each item's own translated label --
+  // past ~18 items across 5 groups, scrolling to find one you already know
+  // the name of costs more than typing a few letters. Filters items, not
+  // whole groups: a group with zero matches just doesn't render (no "no
+  // results" state needed, since the panel on the right keeps showing
+  // whatever's currently open regardless of what the nav filters down to).
+  const query = navSearch.trim().toLowerCase();
+  const filteredGroups = query
+    ? NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => t(item.labelKey).toLowerCase().includes(query)),
+      })).filter((group) => group.items.length > 0)
+    : NAV_GROUPS;
+
   return (
     <>
       <h1 className="page-title">{t("settings.title")}</h1>
@@ -90,7 +124,20 @@ export function SettingsLayout() {
 
       <div className="settings-layout">
         <nav className="settings-nav">
-          {NAV_GROUPS.map((group) => (
+          <input
+            className="input input-search"
+            style={{ marginBottom: 10 }}
+            placeholder={t("settings.navSearchPlaceholder")}
+            value={navSearch}
+            onChange={(e) => setNavSearch(e.target.value)}
+            aria-label={t("settings.navSearchPlaceholder")}
+          />
+          {filteredGroups.length === 0 && (
+            <p className="helper-text" style={{ padding: "0 4px" }}>
+              {t("settings.navSearchNoResults")}
+            </p>
+          )}
+          {filteredGroups.map((group) => (
             <div className="settings-nav-group" key={group.labelKey}>
               <div className="settings-nav-group-label">{t(group.labelKey)}</div>
               {group.items.map((item) => (
@@ -103,27 +150,29 @@ export function SettingsLayout() {
         </nav>
 
         <div className="settings-panel">
-          <Routes>
-            <Route path="webhooks" element={<WebhooksPanel />} />
-            <Route path="field-mapping-templates" element={<FieldMappingTemplatesPanel />} />
-            <Route path="ai-integration" element={<LLMProvidersPanel />} />
-            <Route path="mcp-servers" element={<MCPServersPanel />} />
-            <Route path="tags" element={<TagsPanel />} />
-            <Route path="users" element={<UsersPanel />} />
-            <Route path="roles" element={<RolesPanel />} />
-            <Route path="identity-providers" element={<IdentityProvidersPanel />} />
-            <Route path="storage" element={<StorageIntegrationPanel />} />
-            <Route path="smtp" element={<SMTPConfigPanel />} />
-            <Route path="integrations/slack" element={<SlackIntegrationPanel />} />
-            <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
-            <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
-            <Route path="incident-sla" element={<IncidentSLAPanel />} />
-            <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
-            <Route path="audit-log" element={<AdminAuditLogPanel />} />
-            <Route path="audit-export" element={<AuditExportPanel />} />
-            <Route path="retention" element={<RetentionConfigPanel />} />
-            <Route path="database-migration" element={<DatabaseMigrationPanel />} />
-          </Routes>
+          <ErrorBoundary fallback={<SettingsPanelErrorFallback />}>
+            <Routes>
+              <Route path="webhooks" element={<WebhooksPanel />} />
+              <Route path="field-mapping-templates" element={<FieldMappingTemplatesPanel />} />
+              <Route path="ai-integration" element={<LLMProvidersPanel />} />
+              <Route path="mcp-servers" element={<MCPServersPanel />} />
+              <Route path="tags" element={<TagsPanel />} />
+              <Route path="users" element={<UsersPanel />} />
+              <Route path="roles" element={<RolesPanel />} />
+              <Route path="identity-providers" element={<IdentityProvidersPanel />} />
+              <Route path="storage" element={<StorageIntegrationPanel />} />
+              <Route path="smtp" element={<SMTPConfigPanel />} />
+              <Route path="integrations/slack" element={<SlackIntegrationPanel />} />
+              <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
+              <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
+              <Route path="incident-sla" element={<IncidentSLAPanel />} />
+              <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
+              <Route path="audit-log" element={<AdminAuditLogPanel />} />
+              <Route path="audit-export" element={<AuditExportPanel />} />
+              <Route path="retention" element={<RetentionConfigPanel />} />
+              <Route path="database-migration" element={<DatabaseMigrationPanel />} />
+            </Routes>
+          </ErrorBoundary>
         </div>
       </div>
     </>

@@ -7,6 +7,7 @@ import type { FieldMappingTemplate, WebhookEndpoint } from "../../../types/api";
 import { expiryOptions, expiryToDays } from "../../../lib/format";
 import { GroupByFieldsEditor } from "./GroupByFieldsEditor";
 import { expiryBadge } from "./expiryBadge";
+import { Modal } from "../../../components/Modal";
 
 export function EditWebhookModal({
   endpoint,
@@ -101,102 +102,100 @@ export function EditWebhookModal({
   const options = expiryOptions(t);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-header">
-          <div>
-            <h2 className="modal-title" style={{ marginBottom: 6 }}>
-              {endpoint.name}
-            </h2>
-            <p className="row-sub" style={{ margin: 0 }}>
-              <span className={`badge ${endpoint.status === "active" ? "badge-success" : "badge-muted"}`}>
-                <span className="badge-status-dot" />
-                {endpoint.status}
-              </span>{" "}
-              {expiryBadge(t, endpoint.expiresAt)}
-            </p>
-          </div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}>
-            ×
-          </button>
+    <Modal onClose={onClose}>
+      <div className="panel-header">
+        <div>
+          <h2 className="modal-title" style={{ marginBottom: 6 }}>
+            {endpoint.name}
+          </h2>
+          <p className="row-sub" style={{ margin: 0 }}>
+            <span className={`badge ${endpoint.status === "active" ? "badge-success" : "badge-muted"}`}>
+              <span className="badge-status-dot" />
+              {endpoint.status}
+            </span>{" "}
+            {expiryBadge(t, endpoint.expiresAt)}
+          </p>
         </div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("common.close")}>
+          ×
+        </button>
+      </div>
 
-        <p className="row-sub">
-          {endpoint.source} · token whk_••••••••{endpoint.tokenLast4}
-        </p>
+      <p className="row-sub">
+        {endpoint.source} · token whk_••••••••{endpoint.tokenLast4}
+      </p>
 
-        {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
+      {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
 
-        <div className="field" style={{ marginTop: 14 }}>
-          <label htmlFor="wh-edit-field-mapping-template">{t("settings.webhooks.fieldMappingTemplate")}</label>
-          <div style={{ display: "flex", gap: 6 }}>
-            <select
-              id="wh-edit-field-mapping-template"
-              className="select"
-              style={{ flex: 1 }}
-              value={fieldMappingTemplateId}
-              onChange={(e) => setFieldMappingTemplateId(e.target.value)}
-            >
-              <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
-              {templates.map((tmpl) => (
-                <option key={tmpl.id} value={tmpl.id}>
-                  {tmpl.name}
-                </option>
-              ))}
-            </select>
-            <button
-              className="btn btn-sm"
-              onClick={saveFieldMappingTemplate}
-              disabled={busy || fieldMappingTemplateId === (endpoint.fieldMappingTemplateId ?? "")}
-            >
-              {t("settings.webhooks.changeTemplate")}
-            </button>
-          </div>
-        </div>
-
-        <GroupByFieldsEditor
-          fields={groupByFields}
-          windowMinutes={dedupWindowMinutes}
-          onFieldsChange={setGroupByFields}
-          onWindowChange={setDedupWindowMinutes}
-        />
-        <div className="row-actions" style={{ marginTop: 6 }}>
-          <button className="btn btn-sm" onClick={saveGroupByFields} disabled={busy}>
-            {t("common.save")}
-          </button>
-        </div>
-
-        <div className="field" style={{ marginTop: 14 }}>
-          <label htmlFor="wh-edit-regen-expiry">{t("settings.webhooks.regenExpiryTitle")}</label>
-          <div style={{ display: "flex", gap: 6 }}>
-            <select
-              id="wh-edit-regen-expiry"
-              className="select"
-              style={{ flex: 1 }}
-              value={regenExpiry}
-              onChange={(e) => setRegenExpiry(e.target.value)}
-            >
-              {options.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <button className="btn btn-sm" onClick={regenerate} disabled={busy}>
-              {t("settings.webhooks.regenerate")}
-            </button>
-          </div>
-        </div>
-
-        <div className="row-actions" style={{ marginTop: 16, justifyContent: "space-between" }}>
-          <button className="btn btn-sm" onClick={toggleStatus} disabled={busy}>
-            {endpoint.status === "active" ? t("common.disable") : t("common.enable")}
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>
-            {t("common.close")}
+      <div className="field" style={{ marginTop: 14 }}>
+        <label htmlFor="wh-edit-field-mapping-template">{t("settings.webhooks.fieldMappingTemplate")}</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select
+            id="wh-edit-field-mapping-template"
+            className="select"
+            style={{ flex: 1 }}
+            value={fieldMappingTemplateId}
+            onChange={(e) => setFieldMappingTemplateId(e.target.value)}
+          >
+            <option value="">{t("settings.webhooks.noFieldMappingTemplate")}</option>
+            {templates.map((tmpl) => (
+              <option key={tmpl.id} value={tmpl.id}>
+                {tmpl.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-sm"
+            onClick={saveFieldMappingTemplate}
+            disabled={busy || fieldMappingTemplateId === (endpoint.fieldMappingTemplateId ?? "")}
+          >
+            {t("settings.webhooks.changeTemplate")}
           </button>
         </div>
       </div>
-    </div>
+
+      <GroupByFieldsEditor
+        fields={groupByFields}
+        windowMinutes={dedupWindowMinutes}
+        onFieldsChange={setGroupByFields}
+        onWindowChange={setDedupWindowMinutes}
+      />
+      <div className="row-actions" style={{ marginTop: 6 }}>
+        <button className="btn btn-sm" onClick={saveGroupByFields} disabled={busy}>
+          {t("common.save")}
+        </button>
+      </div>
+
+      <div className="field" style={{ marginTop: 14 }}>
+        <label htmlFor="wh-edit-regen-expiry">{t("settings.webhooks.regenExpiryTitle")}</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          <select
+            id="wh-edit-regen-expiry"
+            className="select"
+            style={{ flex: 1 }}
+            value={regenExpiry}
+            onChange={(e) => setRegenExpiry(e.target.value)}
+          >
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-sm" onClick={regenerate} disabled={busy}>
+            {t("settings.webhooks.regenerate")}
+          </button>
+        </div>
+      </div>
+
+      <div className="row-actions" style={{ marginTop: 16, justifyContent: "space-between" }}>
+        <button className="btn btn-sm" onClick={toggleStatus} disabled={busy}>
+          {endpoint.status === "active" ? t("common.disable") : t("common.enable")}
+        </button>
+        <button className="btn btn-ghost btn-sm" onClick={onClose}>
+          {t("common.close")}
+        </button>
+      </div>
+    </Modal>
   );
 }

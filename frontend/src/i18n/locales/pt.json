@@ -127,7 +127,8 @@
     "submit": "Salvar nova senha",
     "submitting": "Salvando...",
     "mismatch": "As senhas novas não coincidem.",
-    "tooShort": "A nova senha precisa ter pelo menos 8 caracteres."
+    "tooShort": "A nova senha precisa ter pelo menos 8 caracteres.",
+    "needsLetterAndDigit": "A nova senha precisa ter pelo menos uma letra e um número."
   },
   "profile": {
     "title": "Minha Conta",
@@ -343,6 +344,7 @@
       "linkedAlertsTitle": "Alertas Vinculados",
       "linkSearchPlaceholder": "Buscar alertas por ID ou título para vincular...",
       "noLinkedAlerts": "Nenhum alerta vinculado ainda.",
+      "unlinkAlert": "Desvincular alerta {{id}}",
       "metadataTitle": "Metadados do Alerta",
       "ruleId": "ID da Regra",
       "asset": "Ativo",
@@ -450,6 +452,12 @@
   "settings": {
     "title": "Configurações",
     "subtitle": "Integrações, identidade, operação e auditoria do ArgusOps.",
+    "navSearchPlaceholder": "Buscar configurações...",
+    "navSearchNoResults": "Nenhuma configuração encontrada.",
+    "panelError": {
+      "message": "Não foi possível carregar este painel. O restante das Configurações não foi afetado.",
+      "reload": "Recarregar página"
+    },
     "navGroups": {
       "integrations": "Integrações",
       "connectors": "Conectores",
@@ -827,7 +835,8 @@
       "installedBy": "Conectado por",
       "connectButton": "Conectar ao Slack",
       "disconnect": "Desconectar",
-      "disconnectConfirm": "Desconectar este workspace do Slack? Todo recurso que depende do Slack para de funcionar até que seja reconectado."
+      "disconnectConfirm": "Desconectar este workspace do Slack? Todo recurso que depende do Slack para de funcionar até que seja reconectado.",
+      "unknownStatus": "Não foi possível carregar o status de conexão atual. Tente recarregar a página."
     },
     "onCallSchedule": {
       "title": "Escalas de Atendimento",
@@ -856,6 +865,8 @@
         "handoverAt": "Horário de transição",
         "timezone": "Fuso horário",
         "concurrentShifts": "Qtd. de analistas no plantão",
+        "decreaseConcurrent": "Diminuir analistas no plantão",
+        "increaseConcurrent": "Aumentar analistas no plantão",
         "cadence": "Trocar turnos",
         "cadenceOption": {
           "daily": "Diariamente",
@@ -975,7 +986,9 @@
       "usingDefault": "Usando o padrão (18 meses)",
       "alertRetentionMonths": "Retenção de alertas (meses)",
       "incidentRetentionMonths": "Retenção de incidentes (meses)",
-      "saved": "Configurações de retenção salvas."
+      "saved": "Configurações de retenção salvas.",
+      "lowerConfirmBanner": "Isso reduz um prazo de retenção abaixo do valor atual -- qualquer alerta ou incidente fechado já mais antigo que o novo valor será excluído permanentemente na próxima varredura. Isso não pode ser desfeito.",
+      "confirmLower": "Salvar mesmo assim"
     },
     "databaseMigration": {
       "title": "Banco de Dados Externo",

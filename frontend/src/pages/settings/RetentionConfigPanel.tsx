@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { mutationErrorMessage, useObject } from "../../api/hooks";
+import { useAdminSingletonConfig } from "../../hooks/useAdminSingletonConfig";
+import { useConfirm } from "../../hooks/useConfirm";
 import type { RetentionConfig } from "../../types/api";
 
 // Settings -> Data & Audit -> Retention: how long a CLOSED alert/incident
@@ -12,19 +13,25 @@ import type { RetentionConfig } from "../../types/api";
 // null: retention is on by default (18 months each), so this panel always
 // has real numbers to show, pre-filled even before an admin ever saves
 // anything -- `existing.configured` just distinguishes that default from a
-// value someone actually chose.
+// value someone actually chose (a different thing from useAdminSingletonConfig's
+// own `configured`, which just means "loaded without error").
 export function RetentionConfigPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const { data: existing, loading, error, reload } = useObject<RetentionConfig>(["retention-config"], (tok) =>
-    api.get<RetentionConfig>("/api/v1/settings/retention", tok),
+  const { data: existing, loading, error, saveError, submitting, saved, save } = useAdminSingletonConfig<RetentionConfig>(
+    ["retention-config"],
+    (tok) => api.get<RetentionConfig>("/api/v1/settings/retention", tok),
   );
 
   const [alertMonths, setAlertMonths] = useState("18");
   const [incidentMonths, setIncidentMonths] = useState("18");
-  const [submitting, setSubmitting] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  // Lowering either value below what's currently in effect queues an
+  // existing closed alert/incident for permanent deletion on the next
+  // sweep -- gated behind the same inline-confirm pattern every other
+  // irreversible action in this app uses (see useConfirm's doc comment),
+  // unlike raising a value or saving for the first time, which is always
+  // harmless and needs no confirmation.
+  const { confirming: confirmingLower, confirm: confirmLower, cancel: cancelLower } = useConfirm();
 
   useEffect(() => {
     if (existing) {
@@ -33,24 +40,38 @@ export function RetentionConfigPanel() {
     }
   }, [existing]);
 
-  async function handleSubmit(e: FormEvent) {
+  function isLoweringRetention(): boolean {
+    if (!existing) return false;
+    return Number(alertMonths) < existing.alertRetentionMonths || Number(incidentMonths) < existing.incidentRetentionMonths;
+  }
+
+  // Editing either field after a "lower value" confirmation is already
+  // showing invalidates it -- otherwise clicking "Save anyway" after a
+  // last-second edit could save a since-changed value under a warning that
+  // was computed for the old one.
+  function handleMonthsChange(setter: (v: string) => void, value: string) {
+    setter(value);
+    if (confirmingLower) cancelLower();
+  }
+
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setSaveError(null);
-    setSaved(false);
-    try {
+    if (isLoweringRetention() && !confirmingLower) {
+      confirmLower();
+      return;
+    }
+    void doSave();
+  }
+
+  async function doSave() {
+    cancelLower();
+    await save(async () => {
       await api.put(
         "/api/v1/settings/retention",
         { alertRetentionMonths: Number(alertMonths), incidentRetentionMonths: Number(incidentMonths) },
         token,
       );
-      setSaved(true);
-      reload();
-    } catch (err) {
-      setSaveError(mutationErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   if (loading) return <div className="panel"><div className="empty-state">{t("common.loading")}</div></div>;
@@ -73,6 +94,7 @@ export function RetentionConfigPanel() {
       {error && <div className="error-banner">{error}</div>}
       {saveError && <div className="error-banner">{saveError}</div>}
       {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("settings.retention.saved")}</div>}
+      {confirmingLower && <div className="error-banner">{t("settings.retention.lowerConfirmBanner")}</div>}
 
       <div className="form-grid">
         <div className="field">
@@ -84,7 +106,7 @@ export function RetentionConfigPanel() {
             min={0}
             step={1}
             value={alertMonths}
-            onChange={(e) => setAlertMonths(e.target.value)}
+            onChange={(e) => handleMonthsChange(setAlertMonths, e.target.value)}
             required
           />
         </div>
@@ -97,16 +119,27 @@ export function RetentionConfigPanel() {
             min={0}
             step={1}
             value={incidentMonths}
-            onChange={(e) => setIncidentMonths(e.target.value)}
+            onChange={(e) => handleMonthsChange(setIncidentMonths, e.target.value)}
             required
           />
         </div>
       </div>
 
       <div className="row-actions">
-        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-          {submitting ? t("common.saving") : t("common.save")}
-        </button>
+        {!confirmingLower ? (
+          <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
+            {submitting ? t("common.saving") : t("common.save")}
+          </button>
+        ) : (
+          <>
+            <button type="submit" className="btn btn-danger btn-sm" disabled={submitting}>
+              {submitting ? t("common.saving") : t("settings.retention.confirmLower")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => cancelLower()} disabled={submitting}>
+              {t("common.cancel")}
+            </button>
+          </>
+        )}
       </div>
     </form>
   );

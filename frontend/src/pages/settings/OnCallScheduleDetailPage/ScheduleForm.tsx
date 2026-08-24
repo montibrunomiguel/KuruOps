@@ -233,7 +233,7 @@ export function ScheduleForm({
               type="button"
               className="btn btn-ghost btn-sm"
               onClick={() => setConcurrentShifts((n) => Math.max(1, n - 1))}
-              aria-label="-"
+              aria-label={t("settings.onCallSchedule.form.decreaseConcurrent")}
             >
               −
             </button>
@@ -250,7 +250,7 @@ export function ScheduleForm({
               type="button"
               className="btn btn-ghost btn-sm"
               onClick={() => setConcurrentShifts((n) => n + 1)}
-              aria-label="+"
+              aria-label={t("settings.onCallSchedule.form.increaseConcurrent")}
             >
               +
             </button>

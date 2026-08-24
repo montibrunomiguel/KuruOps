@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import { mutationErrorMessage, useObject } from "../../api/hooks";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import type { Playbook } from "../../types/playbooks";
+import { Modal } from "../../components/Modal";
 
 // Read-only popup shown from an alert's "Related Playbook" panel -- same
 // modal-overlay/modal pattern as CloseAlertModal and WebhooksPanel's
@@ -44,91 +45,89 @@ export function PlaybookViewModal({ playbookId, alertId, onClose }: { playbookId
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-header">
-          <h2 className="modal-title" style={{ marginBottom: 0 }}>
-            {playbook?.title ?? "…"}
-          </h2>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("playbooks.view.close")}>
-            ×
-          </button>
-        </div>
-
-        {loading && <div className="empty-state">{t("common.loading")}</div>}
-        {loadError && <div className="error-banner">{loadError}</div>}
-
-        {playbook && (
-          <>
-            <p className="row-sub" style={{ marginTop: 0 }}>
-              {playbook.category}
-            </p>
-            {playbook.description && (
-              <p style={{ fontSize: 13, whiteSpace: "pre-wrap", marginTop: 8 }}>{playbook.description}</p>
-            )}
-
-            {NIST_PHASE_ORDER.map((phase) => {
-              const steps = playbook.steps[phase];
-              if (!steps || steps.length === 0) return null;
-              return (
-                <div key={phase} style={{ marginTop: 14 }}>
-                  <p
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.03em",
-                      color: "var(--text-muted)",
-                      margin: "0 0 6px",
-                    }}
-                  >
-                    {t(`common.phase.${phase}`)}
-                  </p>
-                  <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, display: "flex", flexDirection: "column", gap: 8 }}>
-                    {steps.map((step) => (
-                      <li key={step.id}>
-                        {step.text}
-                        {step.webhookUrl && (
-                          <div style={{ marginTop: 4 }}>
-                            <button
-                              type="button"
-                              className="btn btn-sm"
-                              onClick={() => trigger(step.id)}
-                              disabled={triggeringStepId === step.id}
-                            >
-                              {triggeringStepId === step.id ? t("playbooks.view.triggering") : t("playbooks.view.triggerWebhook")}
-                            </button>
-                            {triggerResults[step.id] && (
-                              <p
-                                style={{
-                                  fontSize: 11.5,
-                                  marginTop: 4,
-                                  color: triggerResults[step.id].success ? "var(--success)" : "var(--critical)",
-                                }}
-                              >
-                                {triggerResults[step.id].message}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              );
-            })}
-
-            <div className="row-actions" style={{ marginTop: 16, justifyContent: "space-between" }}>
-              <Link to={`/playbooks/${playbook.id}`} className="btn btn-ghost btn-sm">
-                {t("playbooks.view.editPlaybook")}
-              </Link>
-              <button type="button" className="btn btn-sm" onClick={onClose}>
-                {t("playbooks.view.close")}
-              </button>
-            </div>
-          </>
-        )}
+    <Modal onClose={onClose}>
+      <div className="panel-header">
+        <h2 className="modal-title" style={{ marginBottom: 0 }}>
+          {playbook?.title ?? "…"}
+        </h2>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label={t("playbooks.view.close")}>
+          ×
+        </button>
       </div>
-    </div>
+
+      {loading && <div className="empty-state">{t("common.loading")}</div>}
+      {loadError && <div className="error-banner">{loadError}</div>}
+
+      {playbook && (
+        <>
+          <p className="row-sub" style={{ marginTop: 0 }}>
+            {playbook.category}
+          </p>
+          {playbook.description && (
+            <p style={{ fontSize: 13, whiteSpace: "pre-wrap", marginTop: 8 }}>{playbook.description}</p>
+          )}
+
+          {NIST_PHASE_ORDER.map((phase) => {
+            const steps = playbook.steps[phase];
+            if (!steps || steps.length === 0) return null;
+            return (
+              <div key={phase} style={{ marginTop: 14 }}>
+                <p
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.03em",
+                    color: "var(--text-muted)",
+                    margin: "0 0 6px",
+                  }}
+                >
+                  {t(`common.phase.${phase}`)}
+                </p>
+                <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {steps.map((step) => (
+                    <li key={step.id}>
+                      {step.text}
+                      {step.webhookUrl && (
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => trigger(step.id)}
+                            disabled={triggeringStepId === step.id}
+                          >
+                            {triggeringStepId === step.id ? t("playbooks.view.triggering") : t("playbooks.view.triggerWebhook")}
+                          </button>
+                          {triggerResults[step.id] && (
+                            <p
+                              style={{
+                                fontSize: 11.5,
+                                marginTop: 4,
+                                color: triggerResults[step.id].success ? "var(--success)" : "var(--critical)",
+                              }}
+                            >
+                              {triggerResults[step.id].message}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            );
+          })}
+
+          <div className="row-actions" style={{ marginTop: 16, justifyContent: "space-between" }}>
+            <Link to={`/playbooks/${playbook.id}`} className="btn btn-ghost btn-sm">
+              {t("playbooks.view.editPlaybook")}
+            </Link>
+            <button type="button" className="btn btn-sm" onClick={onClose}>
+              {t("playbooks.view.close")}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }

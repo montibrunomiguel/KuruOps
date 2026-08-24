@@ -22,6 +22,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+
+	"github.com/argusops/argusops/internal/httpguard"
 )
 
 // tracer's provider is whatever telemetry.Setup registered globally (a
@@ -113,7 +115,10 @@ func New(kind string, baseURL *string, apiKey, model string) (Client, error) {
 			baseURL: *baseURL,
 			apiKey:  apiKey,
 			model:   model,
-			http:    &http.Client{Timeout: defaultTimeout},
+			// baseURL is tenant-configured (unlike anthropicClient's fixed
+			// api.anthropic.com above), so this goes through httpguard to
+			// close the SSRF pivot a plain http.Client would leave open.
+			http: httpguard.NewClient(defaultTimeout),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown llm provider kind %q", kind)
