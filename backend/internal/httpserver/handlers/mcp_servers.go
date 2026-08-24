@@ -63,7 +63,11 @@ func (h *MCPServerHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveMCPServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -92,13 +96,18 @@ func (h *MCPServerHandlers) update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req saveMCPServerRequest
 	id, ok := decodeAndParseID(w, r, "mcp server", &req)
 	if !ok {
 		return
 	}
 
-	srv, err := h.svc.Update(r.Context(), tenantID, id, service.MCPServerSaveInput{
+	srv, err := h.svc.Update(r.Context(), tenantID, userID, id, service.MCPServerSaveInput{
 		Name: req.Name, Transport: req.Transport, EndpointOrCommand: req.EndpointOrCommand,
 		AuthToken: req.AuthToken, AllowedTools: req.AllowedTools, EnabledFor: req.EnabledFor,
 		SideEffectingTools: req.SideEffectingTools,
@@ -123,12 +132,17 @@ func (h *MCPServerHandlers) setEnabled(w http.ResponseWriter, r *http.Request, e
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
 		return
 	}
-	if err := h.svc.SetEnabled(r.Context(), tenantID, id, enabled); err != nil {
+	if err := h.svc.SetEnabled(r.Context(), tenantID, userID, id, enabled); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -140,12 +154,17 @@ func (h *MCPServerHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid mcp server id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, userID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

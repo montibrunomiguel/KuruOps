@@ -20,6 +20,19 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
+// storageConfigRepo is the subset of *repository.StorageConfigRepository
+// this service calls -- an interface (rather than the concrete type
+// directly) purely so tests can substitute a repo double that fails on
+// demand, to exercise the "the DB call right before an audit-diff read
+// errors out" branches that a real Postgres integration test has no way to
+// trigger. *repository.StorageConfigRepository already satisfies this
+// implicitly, so every existing constructor call site is unaffected.
+type storageConfigRepo interface {
+	Get(ctx context.Context, tx pgx.Tx) (*domain.StorageConfig, error)
+	Upsert(ctx context.Context, tx pgx.Tx, c *domain.StorageConfig) error
+	Delete(ctx context.Context, tx pgx.Tx) error
+}
+
 // StorageConfigService is Settings -> Storage Integration: lets an admin
 // point alert/incident evidence uploads at an S3 or GCS bucket instead of
 // the API container's local disk (see handlers.UploadHandlers). Mirrors
@@ -27,9 +40,10 @@ import (
 // means keep the existing secret" convention.
 type StorageConfigService struct {
 	pool      *db.Pool
-	repo      *repository.StorageConfigRepository
+	repo      storageConfigRepo
 	secrets   secrets.Store
 	uploadDir string
+	audit     *repository.AdminAuditEventRepository
 
 	// oauthStates, googleOAuthClientID/Secret, and googleOAuthRedirectURL
 	// back the Google Drive "Connect your Google account" path only --
@@ -44,13 +58,43 @@ type StorageConfigService struct {
 	googleOAuthRedirectURL  string
 }
 
-func NewStorageConfigService(pool *db.Pool, repo *repository.StorageConfigRepository, store secrets.Store, uploadDir string, oauthStates *OAuthStateService, googleOAuthClientID, googleOAuthClientSecret, googleOAuthRedirectURL string) *StorageConfigService {
+func NewStorageConfigService(pool *db.Pool, repo storageConfigRepo, store secrets.Store, uploadDir string, oauthStates *OAuthStateService, googleOAuthClientID, googleOAuthClientSecret, googleOAuthRedirectURL string, audit *repository.AdminAuditEventRepository) *StorageConfigService {
 	return &StorageConfigService{
 		pool: pool, repo: repo, secrets: store, uploadDir: uploadDir,
 		oauthStates:         oauthStates,
 		googleOAuthClientID: googleOAuthClientID, googleOAuthClientSecret: googleOAuthClientSecret,
 		googleOAuthRedirectURL: googleOAuthRedirectURL,
+		audit:                  audit,
 	}
+}
+
+// storageConfigAuditFields is the subset of domain.StorageConfig safe to put
+// in an admin audit event's data column -- every *SecretRef field is opaque
+// (never the plaintext credential) but still left out, same reasoning as
+// llmProviderAuditFields/mcpServerAuditFields: meaningless to a human reader.
+// A "credentialSet" boolean signals whether one is configured instead.
+func storageConfigAuditFields(c *domain.StorageConfig) map[string]any {
+	if c == nil {
+		return nil
+	}
+	fields := map[string]any{"provider": c.Provider}
+	switch c.Provider {
+	case domain.StorageProviderS3:
+		fields["s3Bucket"] = c.S3Bucket
+		fields["s3Region"] = c.S3Region
+		fields["s3AccessKeyId"] = c.S3AccessKeyID
+		fields["s3SecretAccessKeySet"] = c.S3SecretAccessKeySecretRef != ""
+	case domain.StorageProviderGCS:
+		fields["gcsBucket"] = c.GCSBucket
+		fields["gcsProjectId"] = c.GCSProjectID
+		fields["gcsCredentialsSet"] = c.GCSCredentialsJSONSecretRef != ""
+	case domain.StorageProviderGDrive:
+		fields["gdriveFolderId"] = c.GDriveFolderID
+		fields["gdriveAuthMethod"] = c.GDriveAuthMethod
+		fields["gdriveServiceAccountCredentialsSet"] = c.GDriveServiceAccountJSONSecretRef != ""
+		fields["gdriveOAuthConnectedEmail"] = c.GDriveOAuthConnectedEmail
+	}
+	return fields
 }
 
 func (s *StorageConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*domain.StorageConfig, error) {
@@ -63,9 +107,19 @@ func (s *StorageConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*do
 	return cfg, err
 }
 
-func (s *StorageConfigService) Delete(ctx context.Context, tenantID uuid.UUID) error {
+func (s *StorageConfigService) Delete(ctx context.Context, tenantID, actorID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx)
+		existing, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": storageConfigAuditFields(existing), "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "storage-config", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -76,11 +130,15 @@ type SaveS3Input struct {
 	SecretAccessKey string // plaintext; "" on update means keep existing
 }
 
-func (s *StorageConfigService) SaveS3(ctx context.Context, tenantID uuid.UUID, in SaveS3Input) error {
+func (s *StorageConfigService) SaveS3(ctx context.Context, tenantID, actorID uuid.UUID, in SaveS3Input) error {
 	if in.Bucket == "" || in.Region == "" || in.AccessKeyID == "" {
 		return fmt.Errorf("bucket, region, and accessKeyId are required")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing storage config: %w", err)
+		}
 		ref, err := s.resolveSecretRef(ctx, tx, tenantID, in.SecretAccessKey, "storage-s3-secret-access-key", func(existing *domain.StorageConfig) string {
 			if existing != nil && existing.Provider == domain.StorageProviderS3 {
 				return existing.S3SecretAccessKeySecretRef
@@ -90,10 +148,17 @@ func (s *StorageConfigService) SaveS3(ctx context.Context, tenantID uuid.UUID, i
 		if err != nil {
 			return err
 		}
-		return s.repo.Upsert(ctx, tx, &domain.StorageConfig{
+		cfg := &domain.StorageConfig{
 			TenantID: tenantID, Provider: domain.StorageProviderS3,
 			S3Bucket: &in.Bucket, S3Region: &in.Region, S3AccessKeyID: &in.AccessKeyID,
 			S3SecretAccessKeySecretRef: ref,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": storageConfigAuditFields(before), "to": storageConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "storage-config", Action: "save-s3", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
 }
@@ -104,11 +169,15 @@ type SaveGCSInput struct {
 	CredentialsJSON string // plaintext service account key JSON; "" on update means keep existing
 }
 
-func (s *StorageConfigService) SaveGCS(ctx context.Context, tenantID uuid.UUID, in SaveGCSInput) error {
+func (s *StorageConfigService) SaveGCS(ctx context.Context, tenantID, actorID uuid.UUID, in SaveGCSInput) error {
 	if in.Bucket == "" || in.ProjectID == "" {
 		return fmt.Errorf("bucket and projectId are required")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing storage config: %w", err)
+		}
 		ref, err := s.resolveSecretRef(ctx, tx, tenantID, in.CredentialsJSON, "storage-gcs-credentials-json", func(existing *domain.StorageConfig) string {
 			if existing != nil && existing.Provider == domain.StorageProviderGCS {
 				return existing.GCSCredentialsJSONSecretRef
@@ -118,10 +187,17 @@ func (s *StorageConfigService) SaveGCS(ctx context.Context, tenantID uuid.UUID, 
 		if err != nil {
 			return err
 		}
-		return s.repo.Upsert(ctx, tx, &domain.StorageConfig{
+		cfg := &domain.StorageConfig{
 			TenantID: tenantID, Provider: domain.StorageProviderGCS,
 			GCSBucket: &in.Bucket, GCSProjectID: &in.ProjectID,
 			GCSCredentialsJSONSecretRef: ref,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": storageConfigAuditFields(before), "to": storageConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "storage-config", Action: "save-gcs", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
 }
@@ -135,11 +211,15 @@ type SaveGDriveServiceAccountInput struct {
 // account named in ServiceAccountJSON must already be shared (from the
 // Drive side) with access to FolderID; ArgusOps has no way to grant that
 // on the admin's behalf.
-func (s *StorageConfigService) SaveGDriveServiceAccount(ctx context.Context, tenantID uuid.UUID, in SaveGDriveServiceAccountInput) error {
+func (s *StorageConfigService) SaveGDriveServiceAccount(ctx context.Context, tenantID, actorID uuid.UUID, in SaveGDriveServiceAccountInput) error {
 	if in.FolderID == "" {
 		return fmt.Errorf("folderId is required")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing storage config: %w", err)
+		}
 		ref, err := s.resolveSecretRef(ctx, tx, tenantID, in.ServiceAccountJSON, "storage-gdrive-service-account-json", func(existing *domain.StorageConfig) string {
 			if existing != nil && existing.Provider == domain.StorageProviderGDrive &&
 				existing.GDriveAuthMethod != nil && *existing.GDriveAuthMethod == domain.GDriveAuthMethodServiceAccount {
@@ -151,10 +231,17 @@ func (s *StorageConfigService) SaveGDriveServiceAccount(ctx context.Context, ten
 			return err
 		}
 		authMethod := domain.GDriveAuthMethodServiceAccount
-		return s.repo.Upsert(ctx, tx, &domain.StorageConfig{
+		cfg := &domain.StorageConfig{
 			TenantID: tenantID, Provider: domain.StorageProviderGDrive,
 			GDriveFolderID: &in.FolderID, GDriveAuthMethod: &authMethod,
 			GDriveServiceAccountJSONSecretRef: ref,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": storageConfigAuditFields(before), "to": storageConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "storage-config", Action: "save-gdrive-service-account", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
 }
@@ -236,16 +323,27 @@ func (s *StorageConfigService) HandleGDriveOAuthCallback(ctx context.Context, te
 	}
 
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing storage config: %w", err)
+		}
 		ref, err := secrets.PutOrKeepExisting(ctx, s.secrets, tenantID.String(), "storage-gdrive-oauth-refresh-token", token.RefreshToken, "")
 		if err != nil {
 			return err
 		}
 		authMethod := domain.GDriveAuthMethodOAuth
-		return s.repo.Upsert(ctx, tx, &domain.StorageConfig{
+		cfg := &domain.StorageConfig{
 			TenantID: tenantID, Provider: domain.StorageProviderGDrive,
 			GDriveFolderID: &folderID, GDriveAuthMethod: &authMethod,
 			GDriveOAuthRefreshTokenSecretRef: ref,
 			GDriveOAuthConnectedEmail:        &email,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": storageConfigAuditFields(before), "to": storageConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "storage-config", Action: "save-gdrive-oauth", ActorType: domain.ActorUser, ActorID: oauthState.UserID, Data: data,
 		})
 	})
 }

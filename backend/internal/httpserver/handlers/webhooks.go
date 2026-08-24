@@ -65,7 +65,11 @@ func (h *WebhookHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req createWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -99,6 +103,11 @@ func (h *WebhookHandlers) regenerate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid endpoint id")
@@ -110,7 +119,7 @@ func (h *WebhookHandlers) regenerate(w http.ResponseWriter, r *http.Request) {
 	var req regenerateWebhookRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	token, err := h.svc.Regenerate(r.Context(), tenantID, id, req.ExpiresInDays)
+	token, err := h.svc.Regenerate(r.Context(), tenantID, userID, id, req.ExpiresInDays)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -137,13 +146,18 @@ func (h *WebhookHandlers) setFieldMappingTemplate(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req setFieldMappingTemplateRequest
 	id, ok := decodeAndParseID(w, r, "endpoint", &req)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.SetFieldMappingTemplate(r.Context(), tenantID, id, req.TemplateID); err != nil {
+	if err := h.svc.SetFieldMappingTemplate(r.Context(), tenantID, userID, id, req.TemplateID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -163,13 +177,18 @@ func (h *WebhookHandlers) setGroupByFields(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req setGroupByFieldsRequest
 	id, ok := decodeAndParseID(w, r, "endpoint", &req)
 	if !ok {
 		return
 	}
 
-	if err := h.svc.SetGroupByFields(r.Context(), tenantID, id, req.GroupByFields, req.DedupWindowMinutes); err != nil {
+	if err := h.svc.SetGroupByFields(r.Context(), tenantID, userID, id, req.GroupByFields, req.DedupWindowMinutes); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -181,12 +200,17 @@ func (h *WebhookHandlers) setStatus(w http.ResponseWriter, r *http.Request, stat
 	if !ok {
 		return
 	}
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid endpoint id")
 		return
 	}
-	if err := h.svc.SetStatus(r.Context(), tenantID, id, status); err != nil {
+	if err := h.svc.SetStatus(r.Context(), tenantID, userID, id, status); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

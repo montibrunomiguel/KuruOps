@@ -67,6 +67,12 @@ tags:
     description: Admin-only per-severity/priority SLA policy.
   - name: Settings - Escalation Policies
     description: Admin-only unacknowledged-alert escalation rules.
+  - name: Settings - Audit Log
+    description: >
+      Admin-only, read-only log of every change made across Settings (area,
+      action, actor, before/after diff). Distinct from Settings - Audit
+      Export, which covers alert/incident history for SIEM export, not
+      Settings changes.
   - name: Settings - Audit Export
     description: Admin-only CEF/JSON audit log export.
   - name: Settings - Retention
@@ -3058,6 +3064,47 @@ paths:
           $ref: '#/components/responses/Forbidden'
 
   # ------------------------------------------------- Settings: Audit Export
+  # ------------------------------------------------------ Settings: Audit Log
+  /api/v1/settings/audit-log:
+    get:
+      tags: [Settings - Audit Log]
+      summary: List Settings changes, newest first
+      description: >
+        Keyset-paginated: beforeCreatedAt/beforeId (both from a previous
+        page's nextCursor) resume the listing; omit both for the first
+        page. Every one of the ~15 Settings areas (Webhooks, Field Mapping
+        Templates, AI Integration, MCP Servers, Users, Roles, Identity
+        Providers, Tags, Storage Integration, SMTP, Slack, On-Call Schedule,
+        Incident SLAs, Escalation Chain, Retention) writes its own events
+        here.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: beforeCreatedAt
+          in: query
+          description: RFC3339Nano cursor timestamp from a previous page's nextCursor.createdAt. Requires beforeId.
+          schema: { type: string, format: date-time }
+        - name: beforeId
+          in: query
+          description: Cursor event id from a previous page's nextCursor.id. Requires beforeCreatedAt.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: One page of Settings-change events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminAuditLogPage'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/settings/audit-export/cef:
     get:
       tags: [Settings - Audit Export]
@@ -3935,6 +3982,41 @@ components:
         incidentRetentionMonths: { type: integer, minimum: 0 }
         configured: { type: boolean }
         updatedAt: { type: string, format: date-time, nullable: true }
+
+    AdminAuditLogEntry:
+      type: object
+      description: >
+        One Settings change, plus the actor's display name (resolved
+        server-side -- includes deactivated users, so a past entry's actor
+        still shows a name even after they're deactivated). `data`'s shape
+        varies by area/action: always a {"from": ..., "to": ...} diff, but
+        the fields inside are specific to whatever that area/action pair
+        changed.
+      properties:
+        id: { type: integer, format: int64 }
+        tenantId: { type: string, format: uuid }
+        area: { type: string, example: retention }
+        action: { type: string, example: save }
+        actorType: { type: string, enum: [user, system, ai] }
+        actorId: { type: string, format: uuid }
+        actorName: { type: string }
+        data: { type: object }
+        createdAt: { type: string, format: date-time }
+
+    AdminAuditLogPage:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminAuditLogEntry'
+        nextCursor:
+          type: object
+          nullable: true
+          description: Present only if more pages remain -- pass its fields as beforeCreatedAt/beforeId on the next call.
+          properties:
+            createdAt: { type: string, format: date-time }
+            id: { type: integer, format: int64 }
 
     OnCallWorkingHoursMode:
       type: string

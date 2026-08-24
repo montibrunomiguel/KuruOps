@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -13,13 +14,43 @@ import (
 	"github.com/argusops/argusops/internal/repository"
 )
 
-type WebhookService struct {
-	pool *db.Pool
-	repo *repository.WebhookRepository
+// webhookRepo is the subset of *repository.WebhookRepository this service
+// calls -- an interface, not the concrete type, purely so tests can
+// substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.WebhookRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected -- including cmd/ingest's Handler, which also depends
+// on the concrete repository type directly; that's a separate field on a
+// separate struct and is untouched.
+type webhookRepo interface {
+	List(ctx context.Context, tx pgx.Tx) ([]domain.WebhookEndpoint, error)
+	Insert(ctx context.Context, tx pgx.Tx, ep *domain.WebhookEndpoint) error
+	RotateToken(ctx context.Context, tx pgx.Tx, id uuid.UUID, tokenHash, tokenLast4 string, expiresAt *time.Time) error
+	SetStatus(ctx context.Context, tx pgx.Tx, id uuid.UUID, status string) error
+	SetFieldMappingTemplate(ctx context.Context, tx pgx.Tx, id uuid.UUID, templateID *uuid.UUID) error
+	SetGroupByFields(ctx context.Context, tx pgx.Tx, id uuid.UUID, fields []string, windowMinutes int) error
 }
 
-func NewWebhookService(pool *db.Pool, repo *repository.WebhookRepository) *WebhookService {
-	return &WebhookService{pool: pool, repo: repo}
+type WebhookService struct {
+	pool  *db.Pool
+	repo  webhookRepo
+	audit *repository.AdminAuditEventRepository
+}
+
+func NewWebhookService(pool *db.Pool, repo webhookRepo, audit *repository.AdminAuditEventRepository) *WebhookService {
+	return &WebhookService{pool: pool, repo: repo, audit: audit}
+}
+
+// webhookAuditFields is the subset of domain.WebhookEndpoint safe to put in
+// an admin audit event's data column -- TokenHash never appears; TokenLast4
+// is the same masked value already shown in the Settings UI, so it's fine.
+func webhookAuditFields(ep *domain.WebhookEndpoint) map[string]any {
+	return map[string]any{
+		"name": ep.Name, "source": ep.Source, "status": ep.Status, "tokenLast4": ep.TokenLast4,
+		"expiresAt": ep.ExpiresAt, "fieldMappingTemplateId": ep.FieldMappingTemplateID,
+		"groupByFields": ep.GroupByFields, "dedupWindowMinutes": ep.DedupWindowMinutes,
+	}
 }
 
 func (s *WebhookService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.WebhookEndpoint, error) {
@@ -68,7 +99,13 @@ func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Insert(ctx, tx, ep)
+		if err := s.repo.Insert(ctx, tx, ep); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": webhookAuditFields(ep)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "webhooks", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create webhook endpoint: %w", err)
@@ -80,14 +117,20 @@ func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID
 // Regenerate issues a new token for an existing endpoint, invalidating the
 // old one immediately — "Regenerate" in Settings -> Webhook Endpoints.
 // Rotating also resets the expiry clock (see resolveExpiry).
-func (s *WebhookService) Regenerate(ctx context.Context, tenantID, id uuid.UUID, expiresInDays *int) (string, error) {
+func (s *WebhookService) Regenerate(ctx context.Context, tenantID, actorID, id uuid.UUID, expiresInDays *int) (string, error) {
 	token, err := generatePrefixedToken(tokenPrefix, 24)
 	if err != nil {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.RotateToken(ctx, tx, id, hashToken(token), lastN(token, 4), resolveExpiry(expiresInDays))
+		if err := s.repo.RotateToken(ctx, tx, id, hashToken(token), lastN(token, 4), resolveExpiry(expiresInDays)); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"tokenRegenerated": true, "tokenLast4": lastN(token, 4)}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "webhooks", Action: "regenerate-token", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return "", fmt.Errorf("regenerate token: %w", err)
@@ -132,21 +175,33 @@ func resolveDedupWindow(minutes *int) int {
 	return *minutes
 }
 
-func (s *WebhookService) SetStatus(ctx context.Context, tenantID, id uuid.UUID, status string) error {
+func (s *WebhookService) SetStatus(ctx context.Context, tenantID, actorID, id uuid.UUID, status string) error {
 	if status != "active" && status != "disabled" {
 		return fmt.Errorf("invalid status %q", status)
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetStatus(ctx, tx, id, status)
+		if err := s.repo.SetStatus(ctx, tx, id, status); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"status": status}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "webhooks", Action: "set-status", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
 // SetFieldMappingTemplate assigns or clears (templateID == nil) which
 // field mapping template applies to alerts this endpoint ingests from now
 // on -- see Settings -> Webhook Endpoints' "change template" action.
-func (s *WebhookService) SetFieldMappingTemplate(ctx context.Context, tenantID, id uuid.UUID, templateID *uuid.UUID) error {
+func (s *WebhookService) SetFieldMappingTemplate(ctx context.Context, tenantID, actorID, id uuid.UUID, templateID *uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetFieldMappingTemplate(ctx, tx, id, templateID)
+		if err := s.repo.SetFieldMappingTemplate(ctx, tx, id, templateID); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"fieldMappingTemplateId": templateID}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "webhooks", Action: "set-field-mapping-template", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -156,12 +211,19 @@ func (s *WebhookService) SetFieldMappingTemplate(ctx context.Context, tenantID, 
 // as SetFieldMappingTemplate. Passing an empty fields slice turns dedup
 // back off. dedupWindowMinutes follows resolveDedupWindow's convention
 // (nil/<=0 -> default 30).
-func (s *WebhookService) SetGroupByFields(ctx context.Context, tenantID, id uuid.UUID, fields []string, dedupWindowMinutes *int) error {
+func (s *WebhookService) SetGroupByFields(ctx context.Context, tenantID, actorID, id uuid.UUID, fields []string, dedupWindowMinutes *int) error {
 	if fields == nil {
 		fields = []string{}
 	}
+	window := resolveDedupWindow(dedupWindowMinutes)
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetGroupByFields(ctx, tx, id, fields, resolveDedupWindow(dedupWindowMinutes))
+		if err := s.repo.SetGroupByFields(ctx, tx, id, fields, window); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"groupByFields": fields, "dedupWindowMinutes": window}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "webhooks", Action: "set-group-by-fields", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 

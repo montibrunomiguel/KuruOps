@@ -3,6 +3,7 @@ package repository_test
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,12 +32,20 @@ func TestTagRepository_CreateListDelete(t *testing.T) {
 		assert.Equal(t, "phishing", list[1].Name)
 	})
 
-	t.Run("delete removes it", func(t *testing.T) {
-		require.NoError(t, repo.Delete(t.Context(), tx, tag.ID))
+	t.Run("delete removes it and returns the deleted tag's name", func(t *testing.T) {
+		name, err := repo.Delete(t.Context(), tx, tag.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "phishing", name)
 		list, err := repo.List(t.Context(), tx)
 		require.NoError(t, err)
 		require.Len(t, list, 1)
 		assert.Equal(t, "abuse", list[0].Name)
+	})
+
+	t.Run("delete of an unknown id returns an empty name, not an error", func(t *testing.T) {
+		name, err := repo.Delete(t.Context(), tx, uuid.New())
+		require.NoError(t, err)
+		assert.Empty(t, name)
 	})
 }
 

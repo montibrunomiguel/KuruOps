@@ -94,7 +94,7 @@ func TestUserAPITokenService_Resolve(t *testing.T) {
 	// through it, so this inserts one directly via the repository (with the
 	// same hash algorithm Resolve expects) to exercise that branch.
 	t.Run("an already-expired token does not resolve", func(t *testing.T) {
-		plaintext := "pat_test-expired-token"
+		plaintext := "pat_test-expired-token-" + tenantID.String()
 		sum := sha256.Sum256([]byte(plaintext))
 		expiredAt := time.Now().Add(-time.Hour)
 

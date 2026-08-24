@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -61,6 +62,11 @@ func (h *RoleHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -68,7 +74,7 @@ func (h *RoleHandlers) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, err := h.svc.Create(r.Context(), tenantID, req.toInput())
+	role, err := h.svc.Create(r.Context(), tenantID, actorID, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -81,13 +87,18 @@ func (h *RoleHandlers) update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req saveRoleRequest
 	id, ok := decodeAndParseID(w, r, "role", &req)
 	if !ok {
 		return
 	}
 
-	role, err := h.svc.Update(r.Context(), tenantID, id, req.toInput())
+	role, err := h.svc.Update(r.Context(), tenantID, actorID, id, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -100,12 +111,17 @@ func (h *RoleHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid role id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

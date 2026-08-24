@@ -94,10 +94,15 @@ func main() {
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
 
+	// Shared across every Settings-mutating service below -- one stateless
+	// instance, same pattern as pool itself. See domain.AdminAuditEvent's
+	// doc comment for what it records and why.
+	adminAuditRepo := repository.NewAdminAuditEventRepository()
+
 	// TagService is a dependency of AlertService/IncidentService (tag
 	// catalog validation for UpdateTags), so it's constructed first.
 	tagRepo := repository.NewTagRepository()
-	tagService := service.NewTagService(pool, tagRepo)
+	tagService := service.NewTagService(pool, tagRepo, adminAuditRepo)
 	tagHandlers := handlers.NewTagHandlers(tagService)
 
 	// eventBroadcaster fans out live alert/incident updates over SSE (see
@@ -121,14 +126,14 @@ func main() {
 	// as its own Settings -> Users & Roles handlers below, so it's
 	// constructed here.
 	userRepo := repository.NewUserRepository()
-	userService := service.NewUserService(pool, userRepo)
+	userService := service.NewUserService(pool, userRepo, adminAuditRepo)
 
 	roleRepo := repository.NewRoleRepository()
-	roleService := service.NewRoleService(pool, roleRepo)
+	roleService := service.NewRoleService(pool, roleRepo, adminAuditRepo)
 	roleHandlers := handlers.NewRoleHandlers(roleService)
 
 	incidentSLARepo := repository.NewIncidentSLARepository()
-	incidentSLAService := service.NewIncidentSLAService(pool, incidentSLARepo)
+	incidentSLAService := service.NewIncidentSLAService(pool, incidentSLARepo, adminAuditRepo)
 	incidentSLAHandlers := handlers.NewIncidentSLAHandlers(incidentSLAService)
 
 	incidentRepo := repository.NewIncidentRepository()
@@ -151,13 +156,16 @@ func main() {
 	// agentic tool-use loop (ProposeToolCall), so they're constructed here
 	// rather than down with the rest of MCP Servers settings wiring below.
 	mcpServerRepo := repository.NewMCPServerRepository()
-	mcpServerService := service.NewMCPServerService(pool, mcpServerRepo, secretStore)
+	mcpServerService := service.NewMCPServerService(pool, mcpServerRepo, secretStore, adminAuditRepo)
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
 	mcpServerHandlers := handlers.NewMCPServerHandlers(mcpServerService, mcpToolService)
 
 	auditExportService := service.NewAuditExportService(pool, repository.NewAuditRepository())
 	auditExportHandlers := handlers.NewAuditExportHandlers(auditExportService)
+
+	adminAuditLogService := service.NewAdminAuditLogService(pool, adminAuditRepo, userService)
+	adminAuditLogHandlers := handlers.NewAdminAuditLogHandlers(adminAuditLogService)
 
 	dbMigrationService := dbmigrate.NewService(cfg.MigrationsPath)
 	dbMigrationHandlers := handlers.NewDatabaseMigrationHandlers(dbMigrationService, pool)
@@ -190,13 +198,13 @@ func main() {
 	dashboardHandlers := handlers.NewDashboardHandlers(dashboardService)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookService := service.NewWebhookService(pool, webhookRepo)
+	webhookService := service.NewWebhookService(pool, webhookRepo, adminAuditRepo)
 	webhookHandlers := handlers.NewWebhookHandlers(webhookService)
 
-	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 	fieldMappingTemplateHandlers := handlers.NewFieldMappingTemplateHandlers(fieldMappingTemplateService)
 
-	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore)
+	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore, adminAuditRepo)
 	llmProviderHandlers := handlers.NewLLMProviderHandlers(llmProviderService)
 
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
@@ -207,29 +215,29 @@ func main() {
 
 	storageConfigRepo := repository.NewStorageConfigRepository()
 	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir,
-		oauthStateService, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.AppBaseURL+"/auth/oauth/gdrive/callback")
+		oauthStateService, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.AppBaseURL+"/auth/oauth/gdrive/callback", adminAuditRepo)
 	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
 	uploadKeyRepo := repository.NewUploadKeyRepository()
 	uploadKeyService := service.NewUploadKeyService(pool, uploadKeyRepo)
 	uploadHandlers := handlers.NewUploadHandlers(storageConfigService, alertService, incidentService, uploadKeyService)
 
 	smtpConfigRepo := repository.NewSMTPConfigRepository()
-	smtpConfigService := service.NewSMTPConfigService(pool, smtpConfigRepo, secretStore, mailer.SMTPSender{})
+	smtpConfigService := service.NewSMTPConfigService(pool, smtpConfigRepo, secretStore, mailer.SMTPSender{}, adminAuditRepo)
 	smtpConfigHandlers := handlers.NewSMTPConfigHandlers(smtpConfigService)
 
 	slackConfigService := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secretStore,
-		oauthStateService, cfg.SlackClientID, cfg.SlackClientSecret, cfg.AppBaseURL+"/auth/oauth/slack/callback")
+		oauthStateService, cfg.SlackClientID, cfg.SlackClientSecret, cfg.AppBaseURL+"/auth/oauth/slack/callback", adminAuditRepo)
 	slackConfigHandlers := handlers.NewSlackConfigHandlers(slackConfigService)
 
-	retentionConfigService := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository())
+	retentionConfigService := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository(), adminAuditRepo)
 	retentionConfigHandlers := handlers.NewRetentionConfigHandlers(retentionConfigService)
 
 	tenantRepo := repository.NewTenantRepository()
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallShiftService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, tenantRepo)
+	onCallShiftService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, tenantRepo, adminAuditRepo)
 	onCallShiftHandlers := handlers.NewOnCallScheduleHandlers(onCallShiftService)
 
-	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallShiftService, userService, secretStore)
+	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallShiftService, userService, secretStore, adminAuditRepo)
 	escalationPolicyHandlers := handlers.NewEscalationPolicyHandlers(escalationPolicyService)
 
 	// Escalate (POST /alerts/{id}/escalate) needs IncidentService to
@@ -246,7 +254,7 @@ func main() {
 	userHandlers := handlers.NewUserHandlers(userService, authService)
 
 	identityCfgRepo := repository.NewIdentityConfigRepository()
-	identityCfgService := service.NewIdentityConfigService(pool, identityCfgRepo, secretStore)
+	identityCfgService := service.NewIdentityConfigService(pool, identityCfgRepo, secretStore, adminAuditRepo)
 	identityCfgHandlers := handlers.NewIdentityConfigHandlers(identityCfgService)
 
 	ldapAuthService := service.NewLDAPAuthService(pool, identityCfgRepo, secretStore, authService)
@@ -300,6 +308,7 @@ func main() {
 		IncidentSLAHandlers:          incidentSLAHandlers,
 		EscalationPolicyHandlers:     escalationPolicyHandlers,
 		AuditExportHandlers:          auditExportHandlers,
+		AdminAuditLogHandlers:        adminAuditLogHandlers,
 		RetentionConfigHandlers:      retentionConfigHandlers,
 		DatabaseMigrationHandlers:    dbMigrationHandlers,
 		EventsHandlers:               eventsHandlers,

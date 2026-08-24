@@ -97,8 +97,10 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   (Slack workspace connect/disconnect via bot-token OAuth — foundation for a fuller Slack integration;
   see [docs/SLACK_APP_SETUP.md](docs/SLACK_APP_SETUP.md)), Users & Roles, Identity Providers (LDAP/SAML
   — configure, update, and remove), Tags (also auto-created from webhook-ingested alerts), On-Call
-  Schedules, Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Export (CEF or
-  JSON), Retention (configurable how long closed alerts/incidents stay in the tool — 18 months by
+  Schedules, Incident SLAs, Escalation Policies (PagerDuty/Slack/generic webhook), Audit Log (every
+  Settings change any admin has made, across all areas above — area, action, actor, before/after
+  diff), Audit Export (CEF or JSON), Retention (configurable how long closed alerts/incidents stay
+  in the tool — 18 months by
   default, separately per resource type — before being permanently deleted; never touches evidence
   in blob storage), and External Database (assisted migration from the bundled Postgres to a
   customer-managed Postgres).

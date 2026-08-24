@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -49,13 +50,19 @@ func (h *RetentionConfigHandlers) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	var req saveRetentionConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	err := h.svc.Save(r.Context(), tenantID, service.SaveRetentionInput{
+	err := h.svc.Save(r.Context(), tenantID, actorID, service.SaveRetentionInput{
 		AlertRetentionMonths: req.AlertRetentionMonths, IncidentRetentionMonths: req.IncidentRetentionMonths,
 	})
 	if err != nil {

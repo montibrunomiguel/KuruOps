@@ -16,6 +16,7 @@ import { OnCallScheduleDetailPage } from "./OnCallScheduleDetailPage";
 import { IncidentSLAPanel } from "./IncidentSLAPanel";
 import { EscalationPoliciesPanel } from "./EscalationPoliciesPanel";
 import { AuditExportPanel } from "./AuditExportPanel";
+import { AdminAuditLogPanel } from "./AdminAuditLogPanel";
 import { RetentionConfigPanel } from "./RetentionConfigPanel";
 import { DatabaseMigrationPanel } from "./DatabaseMigrationPanel";
 
@@ -72,6 +73,7 @@ const NAV_GROUPS = [
   {
     labelKey: "settings.navGroups.dataAudit",
     items: [
+      { to: "/settings/audit-log", labelKey: "settings.nav.auditLog" },
       { to: "/settings/audit-export", labelKey: "settings.nav.auditExport" },
       { to: "/settings/retention", labelKey: "settings.nav.retention" },
       { to: "/settings/database-migration", labelKey: "settings.nav.databaseMigration" },
@@ -117,6 +119,7 @@ export function SettingsLayout() {
             <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
             <Route path="incident-sla" element={<IncidentSLAPanel />} />
             <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
+            <Route path="audit-log" element={<AdminAuditLogPanel />} />
             <Route path="audit-export" element={<AuditExportPanel />} />
             <Route path="retention" element={<RetentionConfigPanel />} />
             <Route path="database-migration" element={<DatabaseMigrationPanel />} />

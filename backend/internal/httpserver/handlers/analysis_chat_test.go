@@ -44,11 +44,11 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	secretStore := secrets.NewEnvStore()
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	incidentRepo := repository.NewIncidentRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
-	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
@@ -58,11 +58,11 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	)
 	analyzed := make(chan string, 8)
 	aiSvc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) { analyzed <- eventType })
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	postmortemSvc := service.NewPostmortemService(incidentSvc, aiSvc)
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository())
-	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore)
+	onCallSvc := service.NewOnCallScheduleService(pool, onCallScheduleRepo, repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallSvc, userSvc, secretStore, repository.NewAdminAuditEventRepository())
 	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "http://localhost:3000")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,12 +70,12 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"` + reply + `"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore)
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secretStore, repository.NewAdminAuditEventRepository())
 	provider, err := llmSvc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious login", Source: "wazuh", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
@@ -175,7 +175,7 @@ func TestAlertHandlers_AnalysisChat_ApproveToolCall_ScopedToOwningAlert(t *testi
 
 	mcpSrv := fakeMCPToolServer(t, "quarantine_host", `{"quarantined":true}`)
 	defer mcpSrv.Close()
-	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
 		Name: "EDR", Transport: "http", EndpointOrCommand: mcpSrv.URL,
 		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
@@ -211,7 +211,7 @@ func TestAlertHandlers_AnalysisChat_RejectToolCall(t *testing.T) {
 	r := newRouter(fx.alertHandlers.Routes)
 	pool := testutil.RequireTestDB(t)
 
-	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
 		Name: "EDR", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
 		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
@@ -240,7 +240,7 @@ func TestIncidentHandlers_AnalysisChat_ApproveToolCall_ScopedToOwningIncident(t 
 
 	mcpSrv := fakeMCPToolServer(t, "quarantine_host", `{"quarantined":true}`)
 	defer mcpSrv.Close()
-	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
 		Name: "EDR", Transport: "http", EndpointOrCommand: mcpSrv.URL,
 		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},

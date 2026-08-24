@@ -63,8 +63,11 @@ func main() {
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
 
+	// ingest only ever calls TagService.EnsureExist/FilterKnown (webhook tag
+	// catalog matching), never Create/Delete -- this dependency is never
+	// actually exercised here, just required to satisfy the constructor.
 	tagRepo := repository.NewTagRepository()
-	tagService := service.NewTagService(pool, tagRepo)
+	tagService := service.NewTagService(pool, tagRepo, repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	alertService := service.NewAlertService(pool, alertRepo, tagService, repository.NewPlaybookRepository())
 
@@ -80,7 +83,7 @@ func main() {
 	// On-call auto-assign is enabled only here, not in cmd/api -- it's a
 	// property of the ingest path (see AlertService.Ingest), not something
 	// the analyst-facing API needs to know about.
-	onCallShiftService := service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository())
+	onCallShiftService := service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
 	alertService.EnableOnCallAutoAssign(onCallShiftService)
 
 	// Auto-analysis is enabled only here too, for the same reason -- see
@@ -134,7 +137,7 @@ func main() {
 	})
 
 	webhookRepo := repository.NewWebhookRepository()
-	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 	handler := ingest.NewHandler(pool, webhookRepo, alertService, tagService, fieldMappingTemplateService, logger)
 
 	hookLimiter := middleware.NewRateLimiter(ctx, pool.Pool, "webhook_ip", cfg.WebhookRateLimitPerMinute, time.Minute)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,12 +17,13 @@ import (
 )
 
 type TagService struct {
-	pool *db.Pool
-	repo *repository.TagRepository
+	pool  *db.Pool
+	repo  *repository.TagRepository
+	audit *repository.AdminAuditEventRepository
 }
 
-func NewTagService(pool *db.Pool, repo *repository.TagRepository) *TagService {
-	return &TagService{pool: pool, repo: repo}
+func NewTagService(pool *db.Pool, repo *repository.TagRepository, audit *repository.AdminAuditEventRepository) *TagService {
+	return &TagService{pool: pool, repo: repo, audit: audit}
 }
 
 func (s *TagService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.Tag, error) {
@@ -41,7 +43,13 @@ func (s *TagService) Create(ctx context.Context, tenantID, actorID uuid.UUID, na
 	}
 	t := &domain.Tag{TenantID: tenantID, Name: name, Color: color, CreatedBy: &actorID}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Create(ctx, tx, t)
+		if err := s.repo.Create(ctx, tx, t); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": map[string]any{"name": t.Name, "color": t.Color}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "tags", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -61,9 +69,16 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-func (s *TagService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *TagService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx, id)
+		name, err := s.repo.Delete(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": map[string]any{"id": id, "name": name}, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "tags", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 

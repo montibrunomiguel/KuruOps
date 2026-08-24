@@ -22,7 +22,7 @@ func newRoleHandlerFixture(t *testing.T) (h *handlers.RoleHandlers, tenantID uui
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
-	svc := service.NewRoleService(pool, repository.NewRoleRepository())
+	svc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	return handlers.NewRoleHandlers(svc), tenantID
 }
 

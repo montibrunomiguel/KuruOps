@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/domain"
+	"github.com/argusops/argusops/internal/httpserver/middleware"
 	"github.com/argusops/argusops/internal/service"
 )
 
@@ -51,13 +52,19 @@ func (h *IncidentSLAHandlers) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+
 	var req saveIncidentSLARequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	policy, err := h.svc.Save(r.Context(), tenantID, req.Severity, req.Priority, req.DueWithinMinutes)
+	policy, err := h.svc.Save(r.Context(), tenantID, actorID, req.Severity, req.Priority, req.DueWithinMinutes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -70,12 +77,17 @@ func (h *IncidentSLAHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid policy id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

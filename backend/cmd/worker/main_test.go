@@ -32,10 +32,10 @@ import (
 // side to Resolve correctly on the sweep side.
 func newEscalationPolicyServiceForPool(pool *db.Pool, store secrets.Store) (*service.EscalationPolicyService, *service.OnCallScheduleService) {
 	users := repository.NewUserRepository()
-	userSvc := service.NewUserService(pool, users)
+	userSvc := service.NewUserService(pool, users, repository.NewAdminAuditEventRepository())
 	scheduleRepo := repository.NewOnCallScheduleRepository()
-	onCall := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository())
-	escalationPolicies := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCall, userSvc, store)
+	onCall := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicies := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCall, userSvc, store, repository.NewAdminAuditEventRepository())
 	return escalationPolicies, onCall
 }
 
@@ -59,7 +59,8 @@ func newSweepTestChain(t *testing.T, appPool *db.Pool, store secrets.Store, tena
 	ctx := context.Background()
 
 	escalationPolicies, onCall := newEscalationPolicyServiceForPool(appPool, store)
-	sched, err := onCall.Create(ctx, tenantID, domain.SaveOnCallScheduleInput{
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	sched, err := onCall.Create(ctx, tenantID, actorID, domain.SaveOnCallScheduleInput{
 		Name: "Primary", ParticipantIDs: participantIDs, HandoverAt: time.Now().Add(-24 * time.Hour),
 		PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
 	})
@@ -77,7 +78,7 @@ func newSweepTestChain(t *testing.T, appPool *db.Pool, store secrets.Store, tena
 		steps[i] = &sweepTestStep{server: srv, hits: hits}
 		saveSteps[i] = domain.SaveEscalationStepInput{ScheduleID: sched.ID, DelayMinutes: delay, ChannelType: domain.EscalationChannelWebhook, Destination: srv.URL}
 	}
-	_, err = escalationPolicies.Save(ctx, tenantID, domain.SaveEscalationPolicyInput{Severity: severity, Steps: saveSteps})
+	_, err = escalationPolicies.Save(ctx, tenantID, actorID, domain.SaveEscalationPolicyInput{Severity: severity, Steps: saveSteps})
 	require.NoError(t, err)
 	return steps
 }
@@ -385,7 +386,7 @@ func TestSweepEscalations(t *testing.T) {
 // asserted on), same as it does in production for a tenant that hasn't set
 // SMTP up.
 func noOnCallSMTP(pool *db.Pool, store secrets.Store) *service.SMTPConfigService {
-	return service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, mailer.SMTPSender{})
+	return service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, mailer.SMTPSender{}, repository.NewAdminAuditEventRepository())
 }
 
 // TestSweepEscalations_NotifiesOnCallAnalyst confirms the additive on-call
@@ -411,13 +412,13 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
 
 	fake := &fakeMailSender{}
-	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
-	require.NoError(t, setupSMTP.Save(ctx, tenantID, service.SaveSMTPInput{
+	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
+	require.NoError(t, setupSMTP.Save(ctx, tenantID, analystID, service.SaveSMTPInput{
 		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
 	}))
 
 	escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
+	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 
 	sweepEscalations(ctx, workerPool, escalationPolicies, smtp, "https://argusops.example", logger)
 
@@ -450,7 +451,7 @@ func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 
 	// A chain whose sole step points at a destination that always 500s.
 	escalationPolicies, onCall := newEscalationPolicyServiceForPool(appPool, store)
-	sched, err := onCall.Create(ctx, tenantID, domain.SaveOnCallScheduleInput{
+	sched, err := onCall.Create(ctx, tenantID, analystID, domain.SaveOnCallScheduleInput{
 		Name: "Primary", ParticipantIDs: []uuid.UUID{analystID}, HandoverAt: time.Now().Add(-24 * time.Hour),
 		PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
 	})
@@ -459,7 +460,7 @@ func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	_, err = escalationPolicies.Save(ctx, tenantID, domain.SaveEscalationPolicyInput{
+	_, err = escalationPolicies.Save(ctx, tenantID, analystID, domain.SaveEscalationPolicyInput{
 		Severity: domain.SeverityCritical,
 		Steps:    []domain.SaveEscalationStepInput{{ScheduleID: sched.ID, DelayMinutes: 15, ChannelType: domain.EscalationChannelWebhook, Destination: srv.URL}},
 	})
@@ -467,13 +468,13 @@ func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 	alertID := insertSweepTestAlert(t, adminPool, tenantID, "critical", "open", time.Now().Add(-time.Hour))
 
 	fake := &fakeMailSender{}
-	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake)
-	require.NoError(t, setupSMTP.Save(ctx, tenantID, service.SaveSMTPInput{
+	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
+	require.NoError(t, setupSMTP.Save(ctx, tenantID, analystID, service.SaveSMTPInput{
 		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
 	}))
 
 	workerEscalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake)
+	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 
 	sweepEscalations(ctx, workerPool, workerEscalationPolicies, smtp, "https://argusops.example", logger)
 

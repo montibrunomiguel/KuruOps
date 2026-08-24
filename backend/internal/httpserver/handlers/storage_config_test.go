@@ -20,7 +20,7 @@ import (
 func TestStorageConfigHandlers_S3(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -69,7 +69,7 @@ func TestStorageConfigHandlers_S3(t *testing.T) {
 func TestStorageConfigHandlers_GCS(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -105,7 +105,7 @@ func TestStorageConfigHandlers_GCS(t *testing.T) {
 func TestStorageConfigHandlers_GDriveServiceAccount(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+	svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 	h := handlers.NewStorageConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -143,7 +143,7 @@ func TestStorageConfigHandlers_GDriveAuthorizeURL(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	t.Run("no Google OAuth client configured -- 400", func(t *testing.T) {
-		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "")
+		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 		h := handlers.NewStorageConfigHandlers(svc)
 		r := newRouter(h.Routes)
 
@@ -154,7 +154,7 @@ func TestStorageConfigHandlers_GDriveAuthorizeURL(t *testing.T) {
 	t.Run("configured client returns a redirect url", func(t *testing.T) {
 		oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
-			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback")
+			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 		h := handlers.NewStorageConfigHandlers(svc)
 		r := newRouter(h.Routes)
 

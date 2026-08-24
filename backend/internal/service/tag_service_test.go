@@ -15,7 +15,8 @@ func TestTagService_CreateListDelete(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewTagService(pool, repository.NewTagRepository())
+	auditRepo := repository.NewAdminAuditEventRepository()
+	svc := service.NewTagService(pool, repository.NewTagRepository(), auditRepo)
 
 	t.Run("empty name is rejected", func(t *testing.T) {
 		_, err := svc.Create(t.Context(), tenantID, actorID, "   ", nil)
@@ -44,17 +45,31 @@ func TestTagService_CreateListDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 
-	require.NoError(t, svc.Delete(t.Context(), tenantID, list[0].ID))
+	require.NoError(t, svc.Delete(t.Context(), tenantID, actorID, list[0].ID))
 	list, err = svc.List(t.Context(), tenantID)
 	require.NoError(t, err)
 	assert.Empty(t, list)
+
+	t.Run("create and delete each record an admin audit event", func(t *testing.T) {
+		tx := testutil.BeginTx(t, pool, tenantID)
+		events, err := auditRepo.List(t.Context(), tx, nil, 10)
+		require.NoError(t, err)
+		var actions []string
+		for _, e := range events {
+			assert.Equal(t, "tags", e.Area)
+			assert.Equal(t, actorID, e.ActorID)
+			actions = append(actions, e.Action)
+		}
+		assert.Contains(t, actions, "create")
+		assert.Contains(t, actions, "delete")
+	})
 }
 
 func TestTagService_FilterKnown(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewTagService(pool, repository.NewTagRepository())
+	svc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 
 	_, err := svc.Create(t.Context(), tenantID, actorID, "vpn", nil)
 	require.NoError(t, err)
@@ -75,7 +90,7 @@ func TestTagService_EnsureExist(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewTagService(pool, repository.NewTagRepository())
+	svc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 
 	_, err := svc.Create(t.Context(), tenantID, actorID, "phishing", nil)
 	require.NoError(t, err)

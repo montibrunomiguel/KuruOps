@@ -24,7 +24,7 @@ func newOnCallScheduleHandlerFixture(t *testing.T) (h *handlers.OnCallScheduleHa
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewOnCallScheduleHandlers(service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository()))
+	h = handlers.NewOnCallScheduleHandlers(service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository()))
 	return h, tenantID, actorID
 }
 

@@ -18,7 +18,7 @@ import (
 func TestSlackConfigHandlers_GetDisconnect(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(), nil, "", "", "")
+	svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 	h := handlers.NewSlackConfigHandlers(svc)
 	r := newRouter(h.Routes)
 
@@ -44,7 +44,7 @@ func TestSlackConfigHandlers_AuthorizeURL(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	t.Run("no Slack client configured -- 400", func(t *testing.T) {
-		svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(), nil, "", "", "")
+		svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(), nil, "", "", "", repository.NewAdminAuditEventRepository())
 		h := handlers.NewSlackConfigHandlers(svc)
 		r := newRouter(h.Routes)
 
@@ -55,7 +55,7 @@ func TestSlackConfigHandlers_AuthorizeURL(t *testing.T) {
 	t.Run("configured client returns a redirect url", func(t *testing.T) {
 		oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 		svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
-			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/slack/callback")
+			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
 		h := handlers.NewSlackConfigHandlers(svc)
 		r := newRouter(h.Routes)
 

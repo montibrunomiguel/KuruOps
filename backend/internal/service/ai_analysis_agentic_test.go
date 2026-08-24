@@ -52,7 +52,7 @@ func newAgenticFixture(t *testing.T) agenticFixture {
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolSvc := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, store)
-	mcpSvc := service.NewMCPServerService(pool, mcpServerRepo, store)
+	mcpSvc := service.NewMCPServerService(pool, mcpServerRepo, store, repository.NewAdminAuditEventRepository())
 	runsRepo := repository.NewAIAnalysisRunRepository()
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
@@ -67,7 +67,7 @@ func newAgenticFixture(t *testing.T) agenticFixture {
 
 	return agenticFixture{
 		pool: pool, ai: aiSvc, mcpTool: mcpToolSvc, mcp: mcpSvc,
-		llm: service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store), runs: runsRepo,
+		llm: service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository()), runs: runsRepo,
 		analyzed: analyzed,
 	}
 }
@@ -193,9 +193,9 @@ func TestAIAnalysisService_AgenticLoop_NonSideEffectingTool(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &llmSrv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Port scan detected", Source: "wazuh", Severity: domain.SeverityMedium, Payload: json.RawMessage(`{}`),
 	}, nil, 0)
@@ -234,9 +234,9 @@ func TestAIAnalysisService_AgenticLoop_SideEffectingTool_PausesAndResumesOnAppro
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &llmSrv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Ransomware behavior detected", Source: "edr", Severity: domain.SeverityCritical, Payload: json.RawMessage(`{}`),
 	}, nil, 0)
@@ -297,9 +297,9 @@ func TestAIAnalysisService_AgenticLoop_RejectedToolCall(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &llmSrv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, fx.llm.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
-	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	alertSvc := service.NewAlertService(fx.pool, repository.NewAlertRepository(), service.NewTagService(fx.pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious activity", Source: "edr", Severity: domain.SeverityHigh, Payload: json.RawMessage(`{}`),
 	}, nil, 0)

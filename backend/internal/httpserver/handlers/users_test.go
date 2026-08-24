@@ -32,11 +32,11 @@ func newUserHandlerFixtureWithAuth(t *testing.T) (h *handlers.UserHandlers, tena
 	tenantID = testutil.NewTenant(t)
 	targetUserID = testutil.NewUser(t, tenantID, "viewer", nil)
 	userRepo := repository.NewUserRepository()
-	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), roleSvc, authn.NewIssuer(priv))
-	h = handlers.NewUserHandlers(service.NewUserService(pool, userRepo), authSvc)
+	h = handlers.NewUserHandlers(service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository()), authSvc)
 	return h, tenantID, targetUserID, authSvc
 }
 

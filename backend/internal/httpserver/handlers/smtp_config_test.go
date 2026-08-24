@@ -29,7 +29,7 @@ func (noopSender) Send(context.Context, mailer.Config, mailer.Message) error { r
 func TestSMTPConfigHandlers(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), noopSender{})
+	svc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), noopSender{}, repository.NewAdminAuditEventRepository())
 	h := handlers.NewSMTPConfigHandlers(svc)
 	r := newRouter(h.Routes)
 

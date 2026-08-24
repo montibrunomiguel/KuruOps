@@ -100,17 +100,17 @@ func main() {
 	// worker's own BYPASSRLS pool (each call is still scoped to one tenant
 	// via pool.WithTenant, same as cmd/api's per-request scoping).
 	userRepo := repository.NewUserRepository()
-	userService := service.NewUserService(pool, userRepo)
+	userService := service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository())
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, repository.NewTenantRepository())
+	onCallService := service.NewOnCallScheduleService(pool, onCallScheduleRepo, userRepo, repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
 	// escalationPolicyService.ResolveStepNotification is sweepEscalations'
 	// bridge from "which step, on which schedule" to a ready-to-send
 	// notifier.Notification -- resolves the on-call analyst for that
 	// specific step's schedule (not necessarily the tenant's default) and
 	// their contact info, same helper AlertHandlers.escalate uses for a
 	// manual escalation.
-	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallService, userService, secretStore)
-	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{})
+	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallService, userService, secretStore, repository.NewAdminAuditEventRepository())
+	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{}, repository.NewAdminAuditEventRepository())
 
 	logger.Info("worker started")
 

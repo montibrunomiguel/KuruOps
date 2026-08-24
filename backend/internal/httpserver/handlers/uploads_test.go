@@ -76,10 +76,10 @@ func setupUploadHandlersWithPool(t *testing.T) (h *handlers.UploadHandlers, aler
 	pool = testutil.RequireTestDB(t)
 	dir := t.TempDir()
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc = service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "")
+	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
+	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", repository.NewAdminAuditEventRepository())
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
 
 	h = handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
@@ -101,10 +101,10 @@ func TestUploadHandlers_UploadFailure_LocalStoreError(t *testing.T) {
 	blockedDir := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(blockedDir, []byte("i'm a file, not a directory"), 0o644))
 
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
-	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
-	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir, nil, "", "", "")
+	incidentSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
+	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), blockedDir, nil, "", "", "", repository.NewAdminAuditEventRepository())
 	uploadKeySvc := service.NewUploadKeyService(pool, repository.NewUploadKeyRepository())
 	h := handlers.NewUploadHandlers(storageSvc, alertSvc, incidentSvc, uploadKeySvc)
 	tenantID := testutil.NewTenant(t)

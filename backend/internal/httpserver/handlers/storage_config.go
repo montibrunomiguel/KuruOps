@@ -54,6 +54,11 @@ func (h *StorageConfigHandlers) saveS3(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveS3ConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -61,7 +66,7 @@ func (h *StorageConfigHandlers) saveS3(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.svc.SaveS3(r.Context(), tenantID, service.SaveS3Input{
+	err := h.svc.SaveS3(r.Context(), tenantID, actorID, service.SaveS3Input{
 		Bucket: req.Bucket, Region: req.Region, AccessKeyID: req.AccessKeyID, SecretAccessKey: req.SecretAccessKey,
 	})
 	if err != nil {
@@ -82,6 +87,11 @@ func (h *StorageConfigHandlers) saveGCS(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveGCSConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -89,7 +99,7 @@ func (h *StorageConfigHandlers) saveGCS(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := h.svc.SaveGCS(r.Context(), tenantID, service.SaveGCSInput{
+	err := h.svc.SaveGCS(r.Context(), tenantID, actorID, service.SaveGCSInput{
 		Bucket: req.Bucket, ProjectID: req.ProjectID, CredentialsJSON: req.CredentialsJSON,
 	})
 	if err != nil {
@@ -109,6 +119,11 @@ func (h *StorageConfigHandlers) saveGDriveServiceAccount(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveGDriveServiceAccountRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -116,7 +131,7 @@ func (h *StorageConfigHandlers) saveGDriveServiceAccount(w http.ResponseWriter, 
 		return
 	}
 
-	err := h.svc.SaveGDriveServiceAccount(r.Context(), tenantID, service.SaveGDriveServiceAccountInput{
+	err := h.svc.SaveGDriveServiceAccount(r.Context(), tenantID, actorID, service.SaveGDriveServiceAccountInput{
 		FolderID: req.FolderID, ServiceAccountJSON: req.ServiceAccountJSON,
 	})
 	if err != nil {
@@ -156,7 +171,12 @@ func (h *StorageConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID); err != nil {
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
+	if err := h.svc.Delete(r.Context(), tenantID, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

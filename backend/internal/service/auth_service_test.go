@@ -21,7 +21,7 @@ func newAuthService(t *testing.T) (*db.Pool, *service.AuthService) {
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	issuer := authn.NewIssuer(priv)
-	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository())
+	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	svc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), roleSvc, issuer)
 	return pool, svc
 }
@@ -65,8 +65,9 @@ func TestAuthService_LoginLocal(t *testing.T) {
 
 	t.Run("an inactive user cannot log in", func(t *testing.T) {
 		inactiveID := testutil.NewUser(t, tenantID, "analyst", nil)
-		userSvc := service.NewUserService(testutil.RequireTestDB(t), repository.NewUserRepository())
-		require.NoError(t, userSvc.SetActive(t.Context(), tenantID, inactiveID, false))
+		actorID := testutil.NewUser(t, tenantID, "admin", nil)
+		userSvc := service.NewUserService(testutil.RequireTestDB(t), repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
+		require.NoError(t, userSvc.SetActive(t.Context(), tenantID, actorID, inactiveID, false))
 
 		user, _, _, err := svc.LoginLocal(t.Context(), tenantID, emailFor(t, tenantID, inactiveID), testutil.TestPassword)
 		require.NoError(t, err)
@@ -218,7 +219,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	t.Run("rejects a federated user", func(t *testing.T) {
 		priv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
-		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository()), authn.NewIssuer(priv))
+		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
 		fedUser, _, _, err := fedSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed2,dc=example,dc=com", "fed2@example.com", "Fed User", nil)
 		require.NoError(t, err)
 
@@ -230,7 +231,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 func TestAuthService_ProvisionFederated(t *testing.T) {
 	pool, svc := newAuthService(t)
 	tenantID := testutil.NewTenant(t)
-	userSvc := service.NewUserService(pool, repository.NewUserRepository())
+	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 
 	t.Run("unmapped groups fall back to the least-privilege default", func(t *testing.T) {
 		user, token, refreshToken, err := svc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=jdoe,dc=example,dc=com", "jdoe@example.com", "Jane Doe", []string{"no-such-group"})
@@ -245,7 +246,8 @@ func TestAuthService_ProvisionFederated(t *testing.T) {
 
 	t.Run("a matching group mapping wins over the default", func(t *testing.T) {
 		roleID := testutil.NewRole(t, tenantID, false, []string{"alerts", "followup"})
-		_, err := userSvc.SaveGroupMapping(t.Context(), tenantID, domain.AuthProviderLDAP, "soc-analysts", roleID)
+		actorID := testutil.NewUser(t, tenantID, "admin", nil)
+		_, err := userSvc.SaveGroupMapping(t.Context(), tenantID, actorID, domain.AuthProviderLDAP, "soc-analysts", roleID)
 		require.NoError(t, err)
 
 		user, _, _, err := svc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=asmith,dc=example,dc=com", "asmith@example.com", "Alex Smith", []string{"soc-analysts"})

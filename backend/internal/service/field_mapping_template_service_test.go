@@ -17,7 +17,8 @@ func TestFieldMappingTemplateService_CreateListGetUpdateDelete(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	auditRepo := repository.NewAdminAuditEventRepository()
+	svc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), auditRepo)
 
 	t.Run("rejects a blank name", func(t *testing.T) {
 		_, err := svc.Create(t.Context(), tenantID, actorID, "  ", nil)
@@ -50,7 +51,7 @@ func TestFieldMappingTemplateService_CreateListGetUpdateDelete(t *testing.T) {
 		})
 
 		t.Run("update replaces name and rules, dropping blanks the same way", func(t *testing.T) {
-			updated, err := svc.Update(t.Context(), tenantID, template.ID, "Wazuh fields v2", []domain.FieldMappingRule{
+			updated, err := svc.Update(t.Context(), tenantID, actorID, template.ID, "Wazuh fields v2", []domain.FieldMappingRule{
 				{JSONPath: "rule.groups", Label: "Categories"},
 				{JSONPath: "", Label: "dropped"},
 			})
@@ -61,15 +62,29 @@ func TestFieldMappingTemplateService_CreateListGetUpdateDelete(t *testing.T) {
 		})
 
 		t.Run("update rejects a blank name", func(t *testing.T) {
-			_, err := svc.Update(t.Context(), tenantID, template.ID, "", nil)
+			_, err := svc.Update(t.Context(), tenantID, actorID, template.ID, "", nil)
 			assert.ErrorContains(t, err, "template name is required")
 		})
 
 		t.Run("delete removes it", func(t *testing.T) {
-			require.NoError(t, svc.Delete(t.Context(), tenantID, template.ID))
+			require.NoError(t, svc.Delete(t.Context(), tenantID, actorID, template.ID))
 			got, err := svc.Get(t.Context(), tenantID, template.ID)
 			require.NoError(t, err)
 			assert.Nil(t, got)
+		})
+
+		t.Run("create/update/delete each record an admin audit event", func(t *testing.T) {
+			tx := testutil.BeginTx(t, pool, tenantID)
+			events, err := auditRepo.List(t.Context(), tx, nil, 10)
+			require.NoError(t, err)
+			var actions []string
+			for _, e := range events {
+				assert.Equal(t, "field-mapping-templates", e.Area)
+				actions = append(actions, e.Action)
+			}
+			assert.Contains(t, actions, "create")
+			assert.Contains(t, actions, "update")
+			assert.Contains(t, actions, "delete")
 		})
 	})
 }
@@ -77,7 +92,7 @@ func TestFieldMappingTemplateService_CreateListGetUpdateDelete(t *testing.T) {
 func TestFieldMappingTemplateService_Get_UnknownID(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	svc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 
 	got, err := svc.Get(t.Context(), tenantID, uuid.New())
 	require.NoError(t, err)

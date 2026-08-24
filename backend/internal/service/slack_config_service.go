@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -33,6 +34,19 @@ var slackBotScopes = []string{
 	"groups:read", "groups:write", "groups:history", "files:read", "im:write", "commands",
 }
 
+// slackConfigRepo is the subset of *repository.SlackConfigRepository this
+// service calls -- an interface, not the concrete type, purely so tests can
+// substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.SlackConfigRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected.
+type slackConfigRepo interface {
+	Get(ctx context.Context, tx pgx.Tx) (*domain.SlackConfig, error)
+	Upsert(ctx context.Context, tx pgx.Tx, c *domain.SlackConfig) error
+	Delete(ctx context.Context, tx pgx.Tx) error
+}
+
 // SlackConfigService is Settings -> Conectores -> Slack: connect/disconnect
 // a Slack workspace via bot-token OAuth. This is the foundation phase only
 // -- Get(tenantID) returning non-nil is the gate every future Slack feature
@@ -42,7 +56,7 @@ var slackBotScopes = []string{
 // not built yet).
 type SlackConfigService struct {
 	pool    *db.Pool
-	repo    *repository.SlackConfigRepository
+	repo    slackConfigRepo
 	secrets secrets.Store
 
 	// oauthStates, clientID/clientSecret, and redirectURL back the
@@ -53,12 +67,26 @@ type SlackConfigService struct {
 	clientID     string
 	clientSecret string
 	redirectURL  string
+
+	audit *repository.AdminAuditEventRepository
 }
 
-func NewSlackConfigService(pool *db.Pool, repo *repository.SlackConfigRepository, store secrets.Store, oauthStates *OAuthStateService, clientID, clientSecret, redirectURL string) *SlackConfigService {
+func NewSlackConfigService(pool *db.Pool, repo slackConfigRepo, store secrets.Store, oauthStates *OAuthStateService, clientID, clientSecret, redirectURL string, audit *repository.AdminAuditEventRepository) *SlackConfigService {
 	return &SlackConfigService{
 		pool: pool, repo: repo, secrets: store,
 		oauthStates: oauthStates, clientID: clientID, clientSecret: clientSecret, redirectURL: redirectURL,
+		audit: audit,
+	}
+}
+
+func slackConfigAuditFields(c *domain.SlackConfig) map[string]any {
+	if c == nil {
+		return nil
+	}
+	return map[string]any{
+		"teamId": c.TeamID, "teamName": c.TeamName, "botUserId": c.BotUserID,
+		"installedByUserId": c.InstalledByUserID, "grantedScopes": c.GrantedScopes,
+		"botTokenSet": c.BotTokenSecretRef != "",
 	}
 }
 
@@ -75,9 +103,19 @@ func (s *SlackConfigService) Get(ctx context.Context, tenantID uuid.UUID) (*doma
 	return cfg, err
 }
 
-func (s *SlackConfigService) Disconnect(ctx context.Context, tenantID uuid.UUID) error {
+func (s *SlackConfigService) Disconnect(ctx context.Context, tenantID, actorID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx)
+		existing, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": slackConfigAuditFields(existing), "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "slack-config", Action: "disconnect", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -125,6 +163,10 @@ func (s *SlackConfigService) HandleOAuthCallback(ctx context.Context, tenantID u
 	}
 
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		before, err := s.repo.Get(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("load existing slack config: %w", err)
+		}
 		// Unlike GCS/S3's "blank means keep existing" secrets, Slack's
 		// token exchange always returns a fresh bot token on every
 		// successful callback -- nothing to fall back to, and nothing that
@@ -133,10 +175,17 @@ func (s *SlackConfigService) HandleOAuthCallback(ctx context.Context, tenantID u
 		if err != nil {
 			return fmt.Errorf("store slack bot token: %w", err)
 		}
-		return s.repo.Upsert(ctx, tx, &domain.SlackConfig{
+		cfg := &domain.SlackConfig{
 			TenantID: tenantID, BotTokenSecretRef: ref,
 			TeamID: result.TeamID, TeamName: result.TeamName, BotUserID: result.BotUserID,
 			InstalledByUserID: oauthState.UserID, GrantedScopes: result.Scope,
+		}
+		if err := s.repo.Upsert(ctx, tx, cfg); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": slackConfigAuditFields(before), "to": slackConfigAuditFields(cfg)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "slack-config", Action: "connect", ActorType: domain.ActorUser, ActorID: oauthState.UserID, Data: data,
 		})
 	})
 }

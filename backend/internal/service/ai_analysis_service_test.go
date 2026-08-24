@@ -86,8 +86,8 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	store := secrets.NewEnvStore()
 
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	t.Run("no provider configured", func(t *testing.T) {
@@ -112,7 +112,7 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	t.Run("analyzes the alert in the background and logs an ai_analysis_run event", func(t *testing.T) {
 		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
@@ -154,9 +154,9 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 			Name: "Slow Provider", Kind: "openai_compatible", BaseURL: &slow.URL, Model: "gpt-4o", APIKey: "sk-test",
 		})
 		require.NoError(t, err)
-		require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, slowProvider.ID))
+		require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, slowProvider.ID))
 		defer func() {
-			require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+			require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 		}()
 
 		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
@@ -184,8 +184,8 @@ func TestAIAnalysisService_AutoTriggerGating(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	store := secrets.NewEnvStore()
 
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository())
+	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +198,7 @@ func TestAIAnalysisService_AutoTriggerGating(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	t.Run("auto-trigger (actorID nil) is rejected when the default provider hasn't opted in", func(t *testing.T) {
 		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
@@ -221,7 +221,7 @@ func TestAIAnalysisService_AutoTriggerGating(t *testing.T) {
 	})
 
 	t.Run("auto-trigger proceeds once the default provider opts in", func(t *testing.T) {
-		_, err := llmSvc.Update(t.Context(), tenantID, provider.ID, service.LLMProviderSaveInput{
+		_, err := llmSvc.Update(t.Context(), tenantID, actorID, provider.ID, service.LLMProviderSaveInput{
 			Name: provider.Name, Kind: provider.Kind, BaseURL: provider.BaseURL, Model: provider.Model,
 			AutoAnalyzeAllAlerts: true,
 		})
@@ -247,8 +247,8 @@ func TestAIAnalysisService_StartIncidentAnalysis(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
 	store := secrets.NewEnvStore()
 
-	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store)
-	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	llmSvc := service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), store, repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, repository.NewIncidentRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	aiSvc, analyzed := newAIAnalysisService(pool, store)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +261,7 @@ func TestAIAnalysisService_StartIncidentAnalysis(t *testing.T) {
 		Name: "Test Provider", Kind: "openai_compatible", BaseURL: &srv.URL, Model: "gpt-4o", APIKey: "sk-test",
 	})
 	require.NoError(t, err)
-	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, provider.ID))
+	require.NoError(t, llmSvc.SetDefault(t.Context(), tenantID, actorID, provider.ID))
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,

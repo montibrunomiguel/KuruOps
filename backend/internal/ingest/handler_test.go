@@ -31,8 +31,8 @@ func newIngestHandlerFixture(t *testing.T) (h *ingest.Handler, token string) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Wazuh Prod", "wazuh", nil, nil, nil, nil)
@@ -41,7 +41,7 @@ func newIngestHandlerFixture(t *testing.T) (h *ingest.Handler, token string) {
 	_, err = tagSvc.Create(t.Context(), tenantID, actorID, "phishing", nil)
 	require.NoError(t, err)
 
-	fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h = ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, fieldMappingSvc, logger)
 	return h, result.Token
@@ -106,9 +106,9 @@ func TestIngestHandler_AutoCreatesUnknownTags(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
 	tagRepo := repository.NewTagRepository()
-	tagSvc := service.NewTagService(pool, tagRepo)
+	tagSvc := service.NewTagService(pool, tagRepo, repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 
@@ -116,7 +116,7 @@ func TestIngestHandler_AutoCreatesUnknownTags(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{
 		"title": "Suspicious login", "severity": "high", "tags": []string{"brand-new-tag", "  another-new-one  "},
@@ -160,15 +160,15 @@ func TestIngestHandler_UnknownSourceFallsBackToGeneric(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Custom SIEM", "some_custom_siem", nil, nil, nil, nil)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "Suspicious login", "severity": "high"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
@@ -189,12 +189,12 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	t.Run("a metadata object is stored verbatim", func(t *testing.T) {
 		result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "SIEM A", "siem-a", nil, nil, nil, nil)
@@ -265,7 +265,7 @@ func TestIngestHandler_Metadata(t *testing.T) {
 	})
 
 	t.Run("field mapping template adds extra fields, auto metadata wins on label conflict", func(t *testing.T) {
-		fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+		fieldMappingSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 		template, err := fieldMappingSvc.Create(t.Context(), tenantID, actorID, "SIEM D fields", []domain.FieldMappingRule{
 			{JSONPath: "rule.level", Label: "Rule Level"},
 			{JSONPath: "environment", Label: "environment"}, // collides with the sender's own metadata.environment below
@@ -330,16 +330,16 @@ func TestIngestHandler_DisabledEndpoint(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Disabled Endpoint", "wazuh", nil, nil, nil, nil)
 	require.NoError(t, err)
-	require.NoError(t, webhookSvc.SetStatus(t.Context(), tenantID, result.Endpoint.ID, "disabled"))
+	require.NoError(t, webhookSvc.SetStatus(t.Context(), tenantID, actorID, result.Endpoint.ID, "disabled"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "t", "severity": "low"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
@@ -355,8 +355,8 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Expiring Endpoint", "wazuh", nil, nil, nil, nil)
@@ -373,7 +373,7 @@ func TestIngestHandler_ExpiredToken(t *testing.T) {
 	}))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	body, _ := json.Marshal(map[string]any{"title": "t", "severity": "low"})
 	req := httptest.NewRequest(http.MethodPost, "/hooks", bytes.NewReader(body))
@@ -400,12 +400,12 @@ func TestIngestHandler_Dedup(t *testing.T) {
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 
 	webhookRepo := repository.NewWebhookRepository()
-	webhookSvc := service.NewWebhookService(pool, webhookRepo)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	webhookSvc := service.NewWebhookService(pool, webhookRepo, repository.NewAdminAuditEventRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertRepo := repository.NewAlertRepository()
 	alertSvc := service.NewAlertService(pool, alertRepo, tagSvc, repository.NewPlaybookRepository())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()), logger)
+	h := ingest.NewHandler(pool, webhookRepo, alertSvc, tagSvc, service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()), logger)
 
 	result, err := webhookSvc.Create(t.Context(), tenantID, actorID, "Dedup Endpoint", "some_custom_siem", nil, nil, []string{"host.name"}, nil)
 	require.NoError(t, err)

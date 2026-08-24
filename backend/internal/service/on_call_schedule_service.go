@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -25,6 +26,26 @@ const (
 	defaultPeriodDays   = 7
 )
 
+// onCallScheduleRepo is the subset of *repository.OnCallScheduleRepository
+// this service calls -- an interface, not the concrete type, purely so
+// tests can substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger. *repository.OnCallScheduleRepository
+// already satisfies this implicitly, so every existing constructor call
+// site is unaffected.
+type onCallScheduleRepo interface {
+	List(ctx context.Context, tx pgx.Tx) ([]domain.OnCallSchedule, error)
+	Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*domain.OnCallSchedule, error)
+	Insert(ctx context.Context, tx pgx.Tx, sched *domain.OnCallSchedule) error
+	Update(ctx context.Context, tx pgx.Tx, sched *domain.OnCallSchedule) error
+	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
+	SetDefault(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error
+	CreateOverride(ctx context.Context, tx pgx.Tx, tenantID, scheduleID, userID uuid.UUID, date string, createdBy uuid.UUID) (uuid.UUID, error)
+	DeleteOverride(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
+	GetDefaultForResolution(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, localDate string) ([]domain.OnCallParticipant, time.Time, int, int, domain.OnCallWorkingHoursMode, []domain.OnCallWorkingHoursInterval, *domain.OnCallParticipant, bool, error)
+	GetByIDForResolution(ctx context.Context, tx pgx.Tx, tenantID, scheduleID uuid.UUID, localDate string) ([]domain.OnCallParticipant, time.Time, int, int, domain.OnCallWorkingHoursMode, []domain.OnCallWorkingHoursInterval, *domain.OnCallParticipant, bool, error)
+}
+
 // OnCallScheduleService owns Settings -> On-Call Schedule: any number of
 // named rotations per tenant (ordered participants + cadence + concurrency +
 // optional working hours + per-day overrides), exactly one of them marked
@@ -34,13 +55,26 @@ const (
 // escalation sweep.
 type OnCallScheduleService struct {
 	pool    *db.Pool
-	repo    *repository.OnCallScheduleRepository
+	repo    onCallScheduleRepo
 	users   *repository.UserRepository
 	tenants *repository.TenantRepository
+	audit   *repository.AdminAuditEventRepository
 }
 
-func NewOnCallScheduleService(pool *db.Pool, repo *repository.OnCallScheduleRepository, users *repository.UserRepository, tenants *repository.TenantRepository) *OnCallScheduleService {
-	return &OnCallScheduleService{pool: pool, repo: repo, users: users, tenants: tenants}
+func NewOnCallScheduleService(pool *db.Pool, repo onCallScheduleRepo, users *repository.UserRepository, tenants *repository.TenantRepository, audit *repository.AdminAuditEventRepository) *OnCallScheduleService {
+	return &OnCallScheduleService{pool: pool, repo: repo, users: users, tenants: tenants, audit: audit}
+}
+
+func onCallScheduleAuditFields(s *domain.OnCallSchedule) map[string]any {
+	participantIDs := make([]uuid.UUID, len(s.Participants))
+	for i, p := range s.Participants {
+		participantIDs[i] = p.UserID
+	}
+	return map[string]any{
+		"name": s.Name, "handoverAt": s.HandoverAt, "periodDays": s.PeriodDays,
+		"concurrentShifts": s.ConcurrentShifts, "workingHoursMode": s.WorkingHoursMode,
+		"participantIds": participantIDs, "isDefault": s.IsDefault,
+	}
 }
 
 // List returns every schedule for the tenant, auto-creating one empty
@@ -188,7 +222,7 @@ func (s *OnCallScheduleService) resolveParticipants(ctx context.Context, tx pgx.
 // schedule is automatically marked default (so there's always exactly one
 // once any schedule exists); later ones start out non-default -- promote
 // via SetDefault.
-func (s *OnCallScheduleService) Create(ctx context.Context, tenantID uuid.UUID, in domain.SaveOnCallScheduleInput) (*domain.OnCallSchedule, error) {
+func (s *OnCallScheduleService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in domain.SaveOnCallScheduleInput) (*domain.OnCallSchedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err
 	}
@@ -203,7 +237,13 @@ func (s *OnCallScheduleService) Create(ctx context.Context, tenantID uuid.UUID, 
 			return fmt.Errorf("check existing schedules: %w", err)
 		}
 		sched.IsDefault = len(existing) == 0
-		return s.repo.Insert(ctx, tx, sched)
+		if err := s.repo.Insert(ctx, tx, sched); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": onCallScheduleAuditFields(sched)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -219,7 +259,7 @@ func (s *OnCallScheduleService) Create(ctx context.Context, tenantID uuid.UUID, 
 
 // Update validates and saves an existing schedule's fields -- IsDefault is
 // left untouched (see SetDefault).
-func (s *OnCallScheduleService) Update(ctx context.Context, tenantID, id uuid.UUID, in domain.SaveOnCallScheduleInput) (*domain.OnCallSchedule, error) {
+func (s *OnCallScheduleService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in domain.SaveOnCallScheduleInput) (*domain.OnCallSchedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err
 	}
@@ -239,7 +279,13 @@ func (s *OnCallScheduleService) Update(ctx context.Context, tenantID, id uuid.UU
 		if err := s.resolveParticipants(ctx, tx, tenantID, sched, in.ParticipantIDs); err != nil {
 			return err
 		}
-		return s.repo.Update(ctx, tx, sched)
+		if err := s.repo.Update(ctx, tx, sched); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": onCallScheduleAuditFields(existing), "to": onCallScheduleAuditFields(sched)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "update", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -259,7 +305,7 @@ func (s *OnCallScheduleService) Update(ctx context.Context, tenantID, id uuid.UU
 // as any schedule remains. Deleting the tenant's only schedule (default or
 // not) is allowed; the tenant just goes back to "no schedule configured",
 // already a legitimate gap, not an error, elsewhere in this service.
-func (s *OnCallScheduleService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *OnCallScheduleService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		sched, err := s.repo.Get(ctx, tx, id)
 		if err != nil {
@@ -277,16 +323,28 @@ func (s *OnCallScheduleService) Delete(ctx context.Context, tenantID, id uuid.UU
 				return fmt.Errorf("cannot delete the default schedule while other schedules exist -- set another as default first")
 			}
 		}
-		return s.repo.Delete(ctx, tx, id)
+		if err := s.repo.Delete(ctx, tx, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": onCallScheduleAuditFields(sched), "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
 // SetDefault promotes id to be tenantID's default schedule (and, via
 // OnCallScheduleRepository.SetDefault's clear-then-set, demotes whichever
 // schedule held that role before).
-func (s *OnCallScheduleService) SetDefault(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *OnCallScheduleService) SetDefault(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.SetDefault(ctx, tx, tenantID, id)
+		if err := s.repo.SetDefault(ctx, tx, tenantID, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{"defaultScheduleId": id}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "set-default", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -324,7 +382,12 @@ func (s *OnCallScheduleService) CreateOverride(ctx context.Context, tenantID, sc
 			return err
 		}
 		result = domain.OnCallOverride{ID: id, Date: date, UserID: u.ID, UserName: u.Name}
-		return nil
+		data, _ := json.Marshal(map[string]any{"to": map[string]any{
+			"scheduleId": sched.ID, "date": date, "userId": u.ID, "userName": u.Name,
+		}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "create-override", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -332,9 +395,15 @@ func (s *OnCallScheduleService) CreateOverride(ctx context.Context, tenantID, sc
 	return &result, nil
 }
 
-func (s *OnCallScheduleService) DeleteOverride(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *OnCallScheduleService) DeleteOverride(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.DeleteOverride(ctx, tx, id)
+		if err := s.repo.DeleteOverride(ctx, tx, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": map[string]any{"id": id}, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "delete-override", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 
@@ -342,11 +411,29 @@ func (s *OnCallScheduleService) GetTimezone(ctx context.Context, tenantID uuid.U
 	return s.tenants.GetTimezone(ctx, s.pool, tenantID)
 }
 
-func (s *OnCallScheduleService) SetTimezone(ctx context.Context, tenantID uuid.UUID, timezone string) error {
+func (s *OnCallScheduleService) SetTimezone(ctx context.Context, tenantID, actorID uuid.UUID, timezone string) error {
 	if _, err := time.LoadLocation(timezone); err != nil {
 		return fmt.Errorf("unknown timezone %q: %w", timezone, err)
 	}
-	return s.tenants.SetTimezone(ctx, s.pool, tenantID, timezone)
+	before, err := s.tenants.GetTimezone(ctx, s.pool, tenantID)
+	if err != nil {
+		return err
+	}
+	if err := s.tenants.SetTimezone(ctx, s.pool, tenantID, timezone); err != nil {
+		return err
+	}
+	// tenants isn't RLS-scoped (it's the tenant row itself), so SetTimezone
+	// above goes straight through s.pool rather than s.pool.WithTenant --
+	// this separate WithTenant call exists purely to get a tx for the audit
+	// insert, same convention as every other admin_audit_events write.
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		data, _ := json.Marshal(map[string]any{
+			"from": map[string]any{"timezone": before}, "to": map[string]any{"timezone": timezone},
+		})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "on-call-schedule", Action: "set-timezone", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
+	})
 }
 
 // ResolveCurrentAnalyst converts now into the tenant's configured timezone

@@ -13,6 +13,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Settings → Data & Audit → Audit Log: an append-only record of every Settings change any admin
+  has made — area, action, actor, and a before/after diff (`admin_audit_events` table,
+  `AdminAuditEventRepository.InsertEvent`). Covers all ~15 Settings areas (Webhooks, Field Mapping
+  Templates, AI Integration, MCP Servers, Users, Roles, Identity Providers, Tags, Storage
+  Integration, SMTP, Slack, On-Call Schedule, Incident SLAs, Escalation Chain, Retention) — every
+  mutating method in each of those services now writes one event in the same transaction as the
+  state change it records, so a failed audit write rolls back the change too. Distinct from the
+  existing Audit Export (`AuditExportService`), which covers alert/incident history for SIEM
+  export, not Settings changes. Read via `GET /api/v1/settings/audit-log`, keyset-paginated newest
+  first.
 - Settings → Data & Audit → Retention: configurable data retention for closed alerts/incidents
   (default 18 months, separately configurable per resource type). A closed alert/incident is
   permanently deleted by `backend/cmd/worker`'s hourly `sweepDataRetention` job once its retention

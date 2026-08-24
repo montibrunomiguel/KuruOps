@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +16,8 @@ import (
 func TestRetentionConfigService_Get(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository())
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository(), repository.NewAdminAuditEventRepository())
 
 	t.Run("unconfigured tenant gets the synthesized default, not nil", func(t *testing.T) {
 		cfg, err := svc.Get(t.Context(), tenantID)
@@ -26,7 +28,7 @@ func TestRetentionConfigService_Get(t *testing.T) {
 		assert.False(t, cfg.Configured)
 	})
 
-	require.NoError(t, svc.Save(t.Context(), tenantID, service.SaveRetentionInput{
+	require.NoError(t, svc.Save(t.Context(), tenantID, actorID, service.SaveRetentionInput{
 		AlertRetentionMonths: 6, IncidentRetentionMonths: 36,
 	}))
 
@@ -42,10 +44,12 @@ func TestRetentionConfigService_Get(t *testing.T) {
 func TestRetentionConfigService_Save(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
-	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository())
+	actorID := testutil.NewUser(t, tenantID, "admin", nil)
+	auditRepo := repository.NewAdminAuditEventRepository()
+	svc := service.NewRetentionConfigService(pool, repository.NewRetentionConfigRepository(), auditRepo)
 
 	t.Run("zero months is allowed", func(t *testing.T) {
-		require.NoError(t, svc.Save(t.Context(), tenantID, service.SaveRetentionInput{
+		require.NoError(t, svc.Save(t.Context(), tenantID, actorID, service.SaveRetentionInput{
 			AlertRetentionMonths: 0, IncidentRetentionMonths: 0,
 		}))
 		cfg, err := svc.Get(t.Context(), tenantID)
@@ -55,12 +59,38 @@ func TestRetentionConfigService_Save(t *testing.T) {
 	})
 
 	t.Run("negative alert months is rejected", func(t *testing.T) {
-		err := svc.Save(t.Context(), tenantID, service.SaveRetentionInput{AlertRetentionMonths: -1, IncidentRetentionMonths: 18})
+		err := svc.Save(t.Context(), tenantID, actorID, service.SaveRetentionInput{AlertRetentionMonths: -1, IncidentRetentionMonths: 18})
 		assert.ErrorContains(t, err, "zero or positive")
 	})
 
 	t.Run("negative incident months is rejected", func(t *testing.T) {
-		err := svc.Save(t.Context(), tenantID, service.SaveRetentionInput{AlertRetentionMonths: 18, IncidentRetentionMonths: -1})
+		err := svc.Save(t.Context(), tenantID, actorID, service.SaveRetentionInput{AlertRetentionMonths: 18, IncidentRetentionMonths: -1})
 		assert.ErrorContains(t, err, "zero or positive")
+	})
+
+	t.Run("a successful save records an admin audit event with the before/after values", func(t *testing.T) {
+		require.NoError(t, svc.Save(t.Context(), tenantID, actorID, service.SaveRetentionInput{
+			AlertRetentionMonths: 3, IncidentRetentionMonths: 9,
+		}))
+		tx := testutil.BeginTx(t, pool, tenantID)
+		events, err := auditRepo.List(t.Context(), tx, nil, 1)
+		require.NoError(t, err)
+		require.Len(t, events, 1)
+		assert.Equal(t, "retention", events[0].Area)
+		assert.Equal(t, "save", events[0].Action)
+		assert.Equal(t, actorID, events[0].ActorID)
+		// jsonb round-trips through Postgres reformatted (spaces after
+		// ':'/',' -- not the compact form json.Marshal produced when this
+		// was written), so parse it back rather than substring-matching
+		// the raw bytes.
+		var diff struct {
+			To struct {
+				AlertRetentionMonths    int `json:"alertRetentionMonths"`
+				IncidentRetentionMonths int `json:"incidentRetentionMonths"`
+			} `json:"to"`
+		}
+		require.NoError(t, json.Unmarshal(events[0].Data, &diff))
+		assert.Equal(t, 3, diff.To.AlertRetentionMonths)
+		assert.Equal(t, 9, diff.To.IncidentRetentionMonths)
 	})
 }

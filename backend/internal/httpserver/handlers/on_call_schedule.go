@@ -109,6 +109,11 @@ func (h *OnCallScheduleHandlers) create(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req saveOnCallScheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -116,7 +121,7 @@ func (h *OnCallScheduleHandlers) create(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sched, err := h.svc.Create(r.Context(), tenantID, req.toInput())
+	sched, err := h.svc.Create(r.Context(), tenantID, actorID, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -129,13 +134,18 @@ func (h *OnCallScheduleHandlers) update(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	var req saveOnCallScheduleRequest
 	id, ok := decodeAndParseID(w, r, "schedule", &req)
 	if !ok {
 		return
 	}
 
-	sched, err := h.svc.Update(r.Context(), tenantID, id, req.toInput())
+	sched, err := h.svc.Update(r.Context(), tenantID, actorID, id, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -148,12 +158,17 @@ func (h *OnCallScheduleHandlers) delete(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule id")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -165,12 +180,17 @@ func (h *OnCallScheduleHandlers) setDefault(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule id")
 		return
 	}
-	if err := h.svc.SetDefault(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.SetDefault(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -186,6 +206,11 @@ func (h *OnCallScheduleHandlers) setTimezone(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 
 	var req setTimezoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -193,7 +218,7 @@ func (h *OnCallScheduleHandlers) setTimezone(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.svc.SetTimezone(r.Context(), tenantID, req.Timezone); err != nil {
+	if err := h.svc.SetTimezone(r.Context(), tenantID, actorID, req.Timezone); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -210,7 +235,11 @@ func (h *OnCallScheduleHandlers) createOverride(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	userID, _ := middleware.UserID(r.Context())
+	userID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	scheduleID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid schedule id")
@@ -236,12 +265,17 @@ func (h *OnCallScheduleHandlers) deleteOverride(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	actorID, ok := middleware.UserID(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing user context")
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "overrideId"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid override id")
 		return
 	}
-	if err := h.svc.DeleteOverride(r.Context(), tenantID, id); err != nil {
+	if err := h.svc.DeleteOverride(r.Context(), tenantID, actorID, id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -31,7 +31,7 @@ var testPayload = json.RawMessage(`{}`)
 func newAlertServices(t *testing.T) (*db.Pool, *service.AlertService, *service.TagService) {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
-	tagSvc := service.NewTagService(pool, repository.NewTagRepository())
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
 	alertSvc := service.NewAlertService(pool, repository.NewAlertRepository(), tagSvc, repository.NewPlaybookRepository())
 	return pool, alertSvc, tagSvc
 }
@@ -144,7 +144,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 
 	t.Run("resolver enabled with a match -- alert is auto-assigned", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -156,7 +156,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 
 	t.Run("resolver enabled with no match -- alert stays unassigned, not an error", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: nil})
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -174,7 +174,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	// dedup-enabled endpoint. See AlertService.Ingest's comment on why the
 	// resolution is no longer gated on groupKey.
 	t.Run("dedup configured but this alert is a fresh, non-duplicate occurrence -- still auto-assigned", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
 
 		alert, deduped, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -187,7 +187,7 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 
 	t.Run("dedup configured and this alert IS a duplicate -- suppressed, no new alert to assign", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		svc.EnableOnCallAutoAssign(&fakeOnCallResolver{analystID: &analystID})
 		payload := hostPayload("dedup-assign-repeat")
 
@@ -217,7 +217,7 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 
 	t.Run("no hook enabled -- Ingest completes fine without one", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		_, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
 		}, nil, 0)
@@ -225,7 +225,7 @@ func TestAlertService_EnableAutoAnalysis(t *testing.T) {
 	})
 
 	t.Run("hook enabled -- fired exactly once with the new alert's tenant/id", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		fired := make(chan [2]uuid.UUID, 2)
 		svc.EnableAutoAnalysis(func(gotTenantID, gotAlertID uuid.UUID) {
 			fired <- [2]uuid.UUID{gotTenantID, gotAlertID}
@@ -263,7 +263,7 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 	runsRepo := repository.NewAIAnalysisRunRepository()
 
 	t.Run("no lookup wired -- nil, not an error", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
 		}, nil, 0)
@@ -275,7 +275,7 @@ func TestAlertService_Get_LatestAnalysis(t *testing.T) {
 	})
 
 	t.Run("lookup wired -- surfaces the latest completed analysis", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository()), repository.NewPlaybookRepository())
+		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
 		svc.EnableAnalysisLookup(runsRepo)
 
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
@@ -745,13 +745,13 @@ func TestAlertService_Escalate(t *testing.T) {
 	})
 
 	incidentRepo := repository.NewIncidentRepository()
-	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository()))
+	incidentSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
 	store := secrets.NewEnvStore()
 	users := repository.NewUserRepository()
-	userSvc := service.NewUserService(pool, users)
+	userSvc := service.NewUserService(pool, users, repository.NewAdminAuditEventRepository())
 	scheduleRepo := repository.NewOnCallScheduleRepository()
-	onCallSvc := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository())
-	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCallSvc, userSvc, store)
+	onCallSvc := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
+	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCallSvc, userSvc, store, repository.NewAdminAuditEventRepository())
 	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "https://argusops.example")
 
 	t.Run("unknown alert id -- nil, nil", func(t *testing.T) {
@@ -768,7 +768,7 @@ func TestAlertService_Escalate(t *testing.T) {
 		}))
 		t.Cleanup(step.Close)
 
-		_, err := onCallSvc.Create(t.Context(), tenantID, domain.SaveOnCallScheduleInput{
+		_, err := onCallSvc.Create(t.Context(), tenantID, actorID, domain.SaveOnCallScheduleInput{
 			Name: "Primary", HandoverAt: time.Now().Add(-24 * time.Hour),
 			PeriodDays: 7, ConcurrentShifts: 1, WorkingHoursMode: domain.OnCallWorkingHoursAllDay,
 		})
@@ -776,7 +776,7 @@ func TestAlertService_Escalate(t *testing.T) {
 		schedules, err := onCallSvc.List(t.Context(), tenantID)
 		require.NoError(t, err)
 		require.Len(t, schedules, 1)
-		_, err = escalationPolicySvc.Save(t.Context(), tenantID, domain.SaveEscalationPolicyInput{
+		_, err = escalationPolicySvc.Save(t.Context(), tenantID, actorID, domain.SaveEscalationPolicyInput{
 			Severity: domain.SeverityHigh,
 			Steps: []domain.SaveEscalationStepInput{
 				{ScheduleID: schedules[0].ID, DelayMinutes: 15, ChannelType: domain.EscalationChannelWebhook, Destination: step.URL},

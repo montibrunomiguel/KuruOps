@@ -22,7 +22,7 @@ func newWebhookHandlerFixture(t *testing.T) (h *handlers.WebhookHandlers, tenant
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewWebhookHandlers(service.NewWebhookService(pool, repository.NewWebhookRepository()))
+	h = handlers.NewWebhookHandlers(service.NewWebhookService(pool, repository.NewWebhookRepository(), repository.NewAdminAuditEventRepository()))
 	return h, tenantID, actorID
 }
 
@@ -111,7 +111,7 @@ func TestWebhookHandlers_SetFieldMappingTemplate(t *testing.T) {
 	id := created["endpoint"].(map[string]any)["id"].(string)
 
 	pool := testutil.RequireTestDB(t)
-	templateSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository())
+	templateSvc := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
 	template, err := templateSvc.Create(t.Context(), tenantID, actorID, "Wazuh fields", nil)
 	require.NoError(t, err)
 

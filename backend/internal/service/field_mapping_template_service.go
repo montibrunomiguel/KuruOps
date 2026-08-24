@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -14,12 +15,13 @@ import (
 )
 
 type FieldMappingTemplateService struct {
-	pool *db.Pool
-	repo *repository.FieldMappingTemplateRepository
+	pool  *db.Pool
+	repo  *repository.FieldMappingTemplateRepository
+	audit *repository.AdminAuditEventRepository
 }
 
-func NewFieldMappingTemplateService(pool *db.Pool, repo *repository.FieldMappingTemplateRepository) *FieldMappingTemplateService {
-	return &FieldMappingTemplateService{pool: pool, repo: repo}
+func NewFieldMappingTemplateService(pool *db.Pool, repo *repository.FieldMappingTemplateRepository, audit *repository.AdminAuditEventRepository) *FieldMappingTemplateService {
+	return &FieldMappingTemplateService{pool: pool, repo: repo, audit: audit}
 }
 
 func (s *FieldMappingTemplateService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.FieldMappingTemplate, error) {
@@ -49,7 +51,13 @@ func (s *FieldMappingTemplateService) Create(ctx context.Context, tenantID, acto
 	}
 	t := &domain.FieldMappingTemplate{TenantID: tenantID, Name: name, Rules: rules, CreatedBy: &actorID}
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Insert(ctx, tx, t)
+		if err := s.repo.Insert(ctx, tx, t); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": nil, "to": map[string]any{"name": t.Name, "rules": t.Rules}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "field-mapping-templates", Action: "create", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create field mapping template: %w", err)
@@ -57,14 +65,28 @@ func (s *FieldMappingTemplateService) Create(ctx context.Context, tenantID, acto
 	return t, nil
 }
 
-func (s *FieldMappingTemplateService) Update(ctx context.Context, tenantID, id uuid.UUID, name string, rules []domain.FieldMappingRule) (*domain.FieldMappingTemplate, error) {
+func (s *FieldMappingTemplateService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, name string, rules []domain.FieldMappingRule) (*domain.FieldMappingTemplate, error) {
 	name, rules, err := validateFieldMappingTemplate(name, rules)
 	if err != nil {
 		return nil, err
 	}
 	t := &domain.FieldMappingTemplate{ID: id, TenantID: tenantID, Name: name, Rules: rules}
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Update(ctx, tx, t)
+		before, err := s.repo.Get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Update(ctx, tx, t); err != nil {
+			return err
+		}
+		var from any
+		if before != nil {
+			from = map[string]any{"name": before.Name, "rules": before.Rules}
+		}
+		data, _ := json.Marshal(map[string]any{"from": from, "to": map[string]any{"name": t.Name, "rules": t.Rules}})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "field-mapping-templates", Action: "update", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("update field mapping template: %w", err)
@@ -72,9 +94,23 @@ func (s *FieldMappingTemplateService) Update(ctx context.Context, tenantID, id u
 	return t, nil
 }
 
-func (s *FieldMappingTemplateService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *FieldMappingTemplateService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx, id)
+		before, err := s.repo.Get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.Delete(ctx, tx, id); err != nil {
+			return err
+		}
+		var from any
+		if before != nil {
+			from = map[string]any{"id": id, "name": before.Name}
+		}
+		data, _ := json.Marshal(map[string]any{"from": from, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "field-mapping-templates", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }
 

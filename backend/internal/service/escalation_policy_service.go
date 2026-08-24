@@ -16,6 +16,20 @@ import (
 	"github.com/argusops/argusops/internal/secrets"
 )
 
+// escalationPolicyRepo is the subset of *repository.EscalationPolicyRepository
+// this service calls -- an interface, not the concrete type, purely so
+// tests can substitute a repo double that fails on demand to exercise the
+// error-wrapping branches (a DB call failing mid-transaction) a real
+// Postgres integration test can't trigger.
+// *repository.EscalationPolicyRepository already satisfies this implicitly,
+// so every existing constructor call site is unaffected.
+type escalationPolicyRepo interface {
+	List(ctx context.Context, tx pgx.Tx) ([]domain.EscalationPolicy, error)
+	GetBySeverity(ctx context.Context, tx pgx.Tx, severity domain.Severity) (*domain.EscalationPolicy, error)
+	Save(ctx context.Context, tx pgx.Tx, p *domain.EscalationPolicy) error
+	Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) error
+}
+
 // EscalationPolicyService is Settings -> Escala de Acionamento: lets an
 // admin configure, per severity, an ordered chain of steps for notifying
 // whoever's on shift about an alert. cmd/worker's escalation sweep reads
@@ -26,15 +40,30 @@ import (
 // already tenant-scoped.
 type EscalationPolicyService struct {
 	pool      *db.Pool
-	repo      *repository.EscalationPolicyRepository
+	repo      escalationPolicyRepo
 	schedules *repository.OnCallScheduleRepository
 	onCall    *OnCallScheduleService
 	users     *UserService
 	secrets   secrets.Store
+	audit     *repository.AdminAuditEventRepository
 }
 
-func NewEscalationPolicyService(pool *db.Pool, repo *repository.EscalationPolicyRepository, schedules *repository.OnCallScheduleRepository, onCall *OnCallScheduleService, users *UserService, store secrets.Store) *EscalationPolicyService {
-	return &EscalationPolicyService{pool: pool, repo: repo, schedules: schedules, onCall: onCall, users: users, secrets: store}
+func NewEscalationPolicyService(pool *db.Pool, repo escalationPolicyRepo, schedules *repository.OnCallScheduleRepository, onCall *OnCallScheduleService, users *UserService, store secrets.Store, audit *repository.AdminAuditEventRepository) *EscalationPolicyService {
+	return &EscalationPolicyService{pool: pool, repo: repo, schedules: schedules, onCall: onCall, users: users, secrets: store, audit: audit}
+}
+
+func escalationPolicyAuditFields(p *domain.EscalationPolicy) map[string]any {
+	if p == nil {
+		return nil
+	}
+	steps := make([]map[string]any, len(p.Steps))
+	for i, st := range p.Steps {
+		steps[i] = map[string]any{
+			"scheduleId": st.ScheduleID, "delayMinutes": st.DelayMinutes, "channelType": st.ChannelType,
+			"destinationSet": st.DestinationSecretRef != "", "webhookPayloadTemplateSet": st.WebhookPayloadTemplate != nil,
+		}
+	}
+	return map[string]any{"severity": p.Severity, "steps": steps}
 }
 
 func (s *EscalationPolicyService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.EscalationPolicy, error) {
@@ -74,7 +103,7 @@ func validEscalationChannel(channelType domain.EscalationChannelType) bool {
 // severity, same "" -> keep-existing convention every other stored
 // credential in this app uses) -- a brand-new position (the chain grew)
 // requires a non-empty destination.
-func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, in domain.SaveEscalationPolicyInput) (*domain.EscalationPolicy, error) {
+func (s *EscalationPolicyService) Save(ctx context.Context, tenantID, actorID uuid.UUID, in domain.SaveEscalationPolicyInput) (*domain.EscalationPolicy, error) {
 	if len(in.Steps) == 0 {
 		return nil, fmt.Errorf("an escalation chain needs at least one step")
 	}
@@ -141,7 +170,13 @@ func (s *EscalationPolicyService) Save(ctx context.Context, tenantID uuid.UUID, 
 		}
 		p.Steps = steps
 
-		return s.repo.Save(ctx, tx, p)
+		if err := s.repo.Save(ctx, tx, p); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": escalationPolicyAuditFields(existing), "to": escalationPolicyAuditFields(p)})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "escalation-policy", Action: "save", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 	if err != nil {
 		return nil, fmt.Errorf("save escalation chain: %w", err)
@@ -215,8 +250,14 @@ func (s *EscalationPolicyService) ResolveStepNotification(ctx context.Context, t
 	return n, destination, nil
 }
 
-func (s *EscalationPolicyService) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+func (s *EscalationPolicyService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.repo.Delete(ctx, tx, id)
+		if err := s.repo.Delete(ctx, tx, id); err != nil {
+			return err
+		}
+		data, _ := json.Marshal(map[string]any{"from": map[string]any{"id": id}, "to": nil})
+		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
+			TenantID: tenantID, Area: "escalation-policy", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
+		})
 	})
 }

@@ -23,7 +23,7 @@ func newFieldMappingTemplateHandlerFixture(t *testing.T) (h *handlers.FieldMappi
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewFieldMappingTemplateHandlers(service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository()))
+	h = handlers.NewFieldMappingTemplateHandlers(service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository()))
 	return h, tenantID, actorID
 }
 
