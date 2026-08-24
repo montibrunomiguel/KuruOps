@@ -33,7 +33,7 @@ func TestAlertHandlers_AnalysisChat_ApproveToolCall_AlreadyResolved(t *testing.T
 
 	mcpSrv := fakeMCPToolServer(t, "quarantine_host", `{"quarantined":true}`)
 	defer mcpSrv.Close()
-	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
 		Name: "EDR", Transport: "http", EndpointOrCommand: mcpSrv.URL,
 		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
@@ -66,7 +66,7 @@ func TestAlertHandlers_AnalysisChat_RejectToolCall_AlreadyResolved(t *testing.T)
 	r := newRouter(fx.alertHandlers.Routes)
 	pool := testutil.RequireTestDB(t)
 
-	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore())
+	mcpSvc := service.NewMCPServerService(pool, repository.NewMCPServerRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
 	server, err := mcpSvc.Create(t.Context(), fx.tenantID, fx.actorID, service.MCPServerSaveInput{
 		Name: "EDR", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
 		AllowedTools: []string{"quarantine_host"}, SideEffectingTools: []string{"quarantine_host"},
