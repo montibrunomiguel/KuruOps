@@ -74,7 +74,9 @@ mesmo tempo.
   críticos) e a lista/atividade recente atualizam via SSE, sem precisar recarregar a página. O
   filtro de período aceita tanto um preset (24h/7d/30d/90d) quanto um intervalo customizado com
   data e hora exatas.
-- **Alertas / Incidentes** — listagem com filtros e paginação (`Carregar mais`), detalhe com
+- **Alertas / Incidentes** — listagem com filtros, busca por texto completo (título/origem/regra/
+  ativo para alertas, título/descrição para incidentes, baseada em uma coluna `tsvector` do
+  Postgres + índice GIN, não um scan `ILIKE` lento) e paginação (`Carregar mais`), detalhe com
   timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (manual via botão,
   ou automática na ingestão se houver um provedor LLM configurado). Um alerta recebido via webhook
   pode carregar metadados customizados (canal do Slack, link de playbook externo, ambiente, ou

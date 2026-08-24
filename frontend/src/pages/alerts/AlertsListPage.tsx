@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { usePagedList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
@@ -19,6 +20,8 @@ export function AlertsListPage() {
   const [source, setSource] = useState("");
   const [correlated, setCorrelated] = useState<"" | "true" | "false">("");
   const [tag, setTag] = useState("");
+  const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
   // isn't recomputed on every render -- only when the picker's own value
@@ -37,7 +40,7 @@ export function AlertsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Alert>(
-    ["alerts", severity, status, source, correlated, tag, range.since, range.until],
+    ["alerts", severity, status, source, correlated, tag, debouncedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
@@ -45,6 +48,7 @@ export function AlertsListPage() {
       if (source) params.set("source", source);
       if (correlated) params.set("correlated", correlated);
       if (tag) params.set("tag", tag);
+      if (debouncedQ) params.set("q", debouncedQ);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
@@ -75,6 +79,12 @@ export function AlertsListPage() {
 
       <div className="filter-bar" style={{ justifyContent: "space-between" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <input
+            className="input input-search"
+            placeholder={t("alerts.searchPlaceholder")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
           <SeverityFilter value={severity} onChange={setSeverity} />
           <select
             className="select"

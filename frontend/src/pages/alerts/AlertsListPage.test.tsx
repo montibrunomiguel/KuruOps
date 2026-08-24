@@ -237,6 +237,22 @@ describe("AlertsListPage", () => {
     });
   });
 
+  it("typing in the search box re-fetches with a q query param, after debouncing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AlertsListPage />, { wrapper });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const searchInput = screen.getByPlaceholderText("Search title, source, rule or asset...");
+    await userEvent.type(searchInput, "ransomware");
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls;
+      const lastCall = calls[calls.length - 1]?.[0] as string;
+      expect(lastCall).toContain("q=ransomware");
+    });
+  });
+
   it("choosing a time-range preset re-fetches with a since query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
     vi.stubGlobal("fetch", fetchMock);

@@ -298,6 +298,7 @@
   "alerts": {
     "title": "Alertas",
     "subtitle": "Todos os alertas de segurança recebidos via webhook",
+    "searchPlaceholder": "Buscar por título, origem, regra ou ativo...",
     "count_one": "{{count}} alerta",
     "count_other": "{{count}} alertas",
     "duplicateBadgeTitle_one": "{{count}} alerta duplicado suprimido",
@@ -365,6 +366,7 @@
   "incidents": {
     "title": "Incidentes",
     "subtitle": "Rastreamento de incidentes alinhado ao NIST",
+    "searchPlaceholder": "Buscar por título ou descrição...",
     "count_one": "{{count}} incidente",
     "count_other": "{{count}} incidentes",
     "newIncident": "Novo Incidente",

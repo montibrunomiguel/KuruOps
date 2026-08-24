@@ -14,6 +14,12 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Busca por texto completo em Alertas e Incidentes: um filtro `q` em ambas as listagens compara
+  contra título, origem, ID de regra e ativo para alertas, e título/descrição para incidentes --
+  baseado em uma coluna `tsvector` gerada pelo Postgres e um índice GIN por tabela
+  (`db/migrations/0008_fulltext_search`), não em um scan `ILIKE` mais lento. A caixa de busca é
+  debounced (300ms) antes de refazer a consulta, igual a todo outro filtro dessas listagens que
+  reseta para a página 1 ao mudar.
 - Configurações → Dados & Auditoria → Log de Auditoria: um registro somente-inserção de toda
   mudança de Configurações que qualquer admin fez -- área, ação, autor, e um diff antes/depois
   (tabela `admin_audit_events`, `AdminAuditEventRepository.InsertEvent`). Cobre todas as ~15 áreas

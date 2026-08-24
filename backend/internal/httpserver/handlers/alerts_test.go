@@ -628,6 +628,24 @@ func TestAlertHandlers_List_Filters(t *testing.T) {
 		assert.Len(t, alerts, 1)
 	})
 
+	t.Run("q filter matches a word in the title", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?q=login", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 1)
+	})
+
+	t.Run("q filter excludes a non-matching term", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?q=ransomware", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Empty(t, alerts)
+	})
+
 	_ = alertID
 }
 

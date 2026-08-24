@@ -480,6 +480,24 @@ func TestIncidentHandlers_List_Filters(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
 		assert.Len(t, incidents, 1)
 	})
+
+	t.Run("q filter matches a word in the title", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?q=ransomware", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+
+	t.Run("q filter excludes a non-matching term", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?q=phishing", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Empty(t, incidents)
+	})
 }
 
 func TestIncidentHandlers_MalformedID_Returns400(t *testing.T) {

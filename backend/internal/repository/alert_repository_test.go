@@ -205,6 +205,46 @@ func TestAlertRepository_List_Filters(t *testing.T) {
 	})
 }
 
+func TestAlertRepository_List_FilterByQ(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewAlertRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	ransomware := newTestAlert(tenantID, domain.SeverityCritical, domain.AlertStatusOpen, nil)
+	ransomware.Title = "Ransomware encryption detected on file server"
+	require.NoError(t, repo.Insert(t.Context(), tx, ransomware))
+
+	bastionAsset := "bastion-01"
+	bruteforce := newTestAlert(tenantID, domain.SeverityLow, domain.AlertStatusOpen, nil)
+	bruteforce.Title = "Repeated failed SSH logins"
+	bruteforce.Asset = &bastionAsset
+	require.NoError(t, repo.Insert(t.Context(), tx, bruteforce))
+
+	t.Run("matches a word in the title", func(t *testing.T) {
+		q := "ransomware"
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Q: &q})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, ransomware.ID, list[0].ID)
+	})
+
+	t.Run("matches a word in the asset field, not just title", func(t *testing.T) {
+		q := "bastion"
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Q: &q})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, bruteforce.ID, list[0].ID)
+	})
+
+	t.Run("no matches returns empty, not an error", func(t *testing.T) {
+		q := "nonexistentkeyword"
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Q: &q})
+		require.NoError(t, err)
+		assert.Empty(t, list)
+	})
+}
+
 // TestAlertRepository_Count is the regression test for real page-number
 // pagination: Count must apply the same filters as List but ignore
 // Limit/Offset entirely, so a caller can compute total pages independent of
