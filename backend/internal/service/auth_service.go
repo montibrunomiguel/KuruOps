@@ -182,8 +182,8 @@ func (s *AuthService) RevokeSessions(ctx context.Context, tenantID, userID uuid.
 // re-issues a token with MustChangePassword cleared so the frontend can
 // swap it in immediately instead of forcing a fresh login.
 func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID, currentPassword, newPassword string) (string, error) {
-	if len(newPassword) < 8 {
-		return "", fmt.Errorf("new password must be at least 8 characters")
+	if err := validatePasswordPolicy(newPassword); err != nil {
+		return "", err
 	}
 
 	var user *domain.User

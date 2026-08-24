@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { FieldMappingTemplatesPanel } from "./FieldMappingTemplatesPanel";
 import { LLMProvidersPanel } from "./LLMProvidersPanel";
@@ -80,6 +81,22 @@ const NAV_GROUPS = [
   },
 ] as const;
 
+// Scoped fallback for a crash inside one settings panel: the nav one level
+// up in SettingsLayout is still rendered fine (it's outside this boundary),
+// so this only needs to replace the broken panel itself, not the whole app
+// shell the root ErrorBoundary's fallback assumes.
+function SettingsPanelErrorFallback() {
+  const { t } = useTranslation();
+  return (
+    <div className="empty-state">
+      <p>{t("settings.panelError.message")}</p>
+      <button className="btn btn-secondary btn-sm" onClick={() => window.location.reload()}>
+        {t("settings.panelError.reload")}
+      </button>
+    </div>
+  );
+}
+
 export function SettingsLayout() {
   const { t } = useTranslation();
   const [navSearch, setNavSearch] = useState("");
@@ -131,26 +148,28 @@ export function SettingsLayout() {
         </nav>
 
         <div className="settings-panel">
-          <Routes>
-            <Route path="webhooks" element={<WebhooksPanel />} />
-            <Route path="field-mapping-templates" element={<FieldMappingTemplatesPanel />} />
-            <Route path="ai-integration" element={<LLMProvidersPanel />} />
-            <Route path="mcp-servers" element={<MCPServersPanel />} />
-            <Route path="tags" element={<TagsPanel />} />
-            <Route path="users" element={<UsersPanel />} />
-            <Route path="roles" element={<RolesPanel />} />
-            <Route path="identity-providers" element={<IdentityProvidersPanel />} />
-            <Route path="storage" element={<StorageIntegrationPanel />} />
-            <Route path="smtp" element={<SMTPConfigPanel />} />
-            <Route path="integrations/slack" element={<SlackIntegrationPanel />} />
-            <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
-            <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
-            <Route path="incident-sla" element={<IncidentSLAPanel />} />
-            <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
-            <Route path="audit-export" element={<AuditExportPanel />} />
-            <Route path="retention" element={<RetentionConfigPanel />} />
-            <Route path="database-migration" element={<DatabaseMigrationPanel />} />
-          </Routes>
+          <ErrorBoundary fallback={<SettingsPanelErrorFallback />}>
+            <Routes>
+              <Route path="webhooks" element={<WebhooksPanel />} />
+              <Route path="field-mapping-templates" element={<FieldMappingTemplatesPanel />} />
+              <Route path="ai-integration" element={<LLMProvidersPanel />} />
+              <Route path="mcp-servers" element={<MCPServersPanel />} />
+              <Route path="tags" element={<TagsPanel />} />
+              <Route path="users" element={<UsersPanel />} />
+              <Route path="roles" element={<RolesPanel />} />
+              <Route path="identity-providers" element={<IdentityProvidersPanel />} />
+              <Route path="storage" element={<StorageIntegrationPanel />} />
+              <Route path="smtp" element={<SMTPConfigPanel />} />
+              <Route path="integrations/slack" element={<SlackIntegrationPanel />} />
+              <Route path="on-call-schedules" element={<OnCallSchedulesListPage />} />
+              <Route path="on-call-schedules/:id" element={<OnCallScheduleDetailPage />} />
+              <Route path="incident-sla" element={<IncidentSLAPanel />} />
+              <Route path="escalation-policies" element={<EscalationPoliciesPanel />} />
+              <Route path="audit-export" element={<AuditExportPanel />} />
+              <Route path="retention" element={<RetentionConfigPanel />} />
+              <Route path="database-migration" element={<DatabaseMigrationPanel />} />
+            </Routes>
+          </ErrorBoundary>
         </div>
       </div>
     </>

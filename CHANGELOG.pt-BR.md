@@ -65,6 +65,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   pro Google Drive), e um teste no nível de handler pra guarda de status-já-resolvido dos endpoints
   de aprovar/rejeitar de `analysis_tool_calls.go` (antes coberta só na camada de serviço, não
   através do handler HTTP).
+- Um componente `Modal` compartilhado (`frontend/src/components/Modal.tsx`) substituindo 7 cópias
+  independentes do mesmo markup `modal-overlay`/`modal` (`CloseAlertModal`, `AnalysisChat`, o
+  formulário de criação de incidente do `IncidentsListPage`, `PlaybookViewModal`, o popover de
+  override do `OnCallTimeline`, os dois modais do `WebhooksPanel`) — nenhum deles tinha
+  `role="dialog"`/`aria-modal`, fechar com Escape, ou qualquer gerenciamento de foco. O novo
+  componente adiciona tudo isso mais um focus trap de verdade, modelado no dialog que
+  `CommandPalette.tsx` já tinha.
+- Um segundo `ErrorBoundary` em volta das rotas de painel de Settings (`SettingsLayout.tsx`) — um
+  painel de configurações quebrado agora mostra uma mensagem escopada de "este painel falhou ao
+  carregar" em vez de derrubar o app inteiro (o resto da navegação de Settings continua funcional,
+  já que fica fora desse novo boundary).
 
 ### Fixed
 
@@ -105,6 +116,31 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   mensagem de "não foi possível carregar o status" numa falha de carregamento, já que clicar nele
   nesse estado poderia iniciar um fluxo OAuth novo em cima de um estado existente desconhecido.
 - Removido `frontend/src/components/PersonFilter.tsx` (zero imports, confirmado morto).
+- **Segurança**: o `Destination` de webhook de uma política de escalonamento, o `endpoint` de um
+  servidor MCP e o `base_url` de um provedor LLM self-hosted/compatível com OpenAI eram todos
+  acessados com um `http.Client` simples — qualquer um com acesso de Settings a essas três áreas
+  podia apontar um deles pra `http://169.254.169.254/...` (endpoint de metadata de nuvem) ou um
+  serviço interno e fazer o ArgusOps mandar essa requisição por ele (SSRF). As três agora acessam
+  via um novo `internal/httpguard.NewClient`, que recusa conectar num endereço
+  loopback/link-local/privado (checado contra o IP resolvido, não só a string do hostname, então
+  não é contornável por DNS rebinding); um deploy genuinamente on-prem pode sair dessa proteção com
+  `ALLOW_PRIVATE_NETWORK_TARGETS=true`.
+- **Segurança**: `secrets.NewFromConfig` agora recusa iniciar com o valor exato de
+  `SECRETS_ENCRYPTION_KEY` commitado no `.env.example`, a menos que `AUTH_MODE` seja
+  `dev`/`dev-headers` — essa chave é real e funcional (por conveniência de dev local), o que a
+  tornava uma chave conhecida e compartilhada se algum dia fosse copiada e colada direto num
+  deploy real em vez de gerada do zero.
+- **Segurança**: os handlers de callback OAuth do Google Drive e do Slack colocavam o texto bruto
+  do erro Go (que pode carregar detalhe interno — um erro de banco, uma falha ao buscar o state)
+  direto na query string da URL de redirect em caso de falha. O erro real agora é logado só no
+  servidor; o redirect recebe um código genérico fixo (`?gdrive_error=connection_failed`) no lugar.
+- A política de senha (`AuthService.ChangePassword`, `PasswordResetService.ConfirmReset`) era só
+  de tamanho, aceitando `"11111111"`/`"aaaaaaaa"` — agora também exige pelo menos uma letra e um
+  número (deliberadamente sem exigir símbolo/regra de complexidade, que na maioria das vezes só
+  empurra as pessoas pra substituições previsíveis).
+- O botão de desvincular do `LinkedAlertsPanel` e os steppers +/- de analistas concorrentes do
+  `ScheduleForm` tinham `aria-label`s fixos e não traduzidos (`"unlink"`, `"-"`, `"+"`) em vez de
+  passar por i18n como todo outro label deste app.
 
 ## [2026-08-07] — `78f41f5`
 

@@ -24,6 +24,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+
+	"github.com/argusops/argusops/internal/httpguard"
 )
 
 // tracer's provider is whatever telemetry.Setup registered globally (a
@@ -72,11 +74,15 @@ type Client struct {
 	nextID     int64
 }
 
+// endpoint is whatever a tenant admin typed into Settings -> MCP Servers,
+// not a URL this codebase controls -- httpguard.NewClient refuses to dial
+// a loopback/link-local/private address, closing the SSRF pivot that a
+// plain http.Client would leave open here.
 func New(endpoint, authToken string) *Client {
 	return &Client{
 		endpoint:   endpoint,
 		authToken:  authToken,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httpguard.NewClient(30 * time.Second),
 	}
 }
 

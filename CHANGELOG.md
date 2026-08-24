@@ -61,6 +61,15 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   SDK's own client the way `gdrive_test.go` already does for Google Drive), and a handler-level
   test for `analysis_tool_calls.go`'s approve/reject endpoints' already-resolved-status guard
   (previously only covered at the service layer, not through the HTTP handler).
+- A shared `Modal` component (`frontend/src/components/Modal.tsx`) replacing 7 independent copies
+  of the same `modal-overlay`/`modal` markup (`CloseAlertModal`, `AnalysisChat`,
+  `IncidentsListPage`'s create-incident form, `PlaybookViewModal`, `OnCallTimeline`'s override
+  popover, both `WebhooksPanel` modals) — none of which had `role="dialog"`/`aria-modal`,
+  Escape-to-close, or any focus management. The new component adds all of that plus a real focus
+  trap, modeled on `CommandPalette.tsx`'s existing dialog handling.
+- A second `ErrorBoundary` around Settings' panel routes (`SettingsLayout.tsx`) — one broken
+  settings panel now shows a scoped "this panel failed to load" message instead of taking down the
+  whole app (the rest of Settings' nav stays usable, since it's outside the new boundary).
 
 ### Fixed
 
@@ -98,6 +107,30 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   Connect button is now replaced entirely by a "couldn't load status" message on a load failure,
   since clicking it in that state could start a fresh OAuth flow on top of unknown existing state.
 - Deleted `frontend/src/components/PersonFilter.tsx` (zero imports, confirmed dead).
+- **Security**: an escalation policy's webhook `Destination`, an MCP server's `endpoint`, and a
+  self-hosted/OpenAI-compatible LLM provider's `base_url` were all dialed with a plain
+  `http.Client` — anyone with Settings access to those three areas could point one at
+  `http://169.254.169.254/...` (a cloud metadata endpoint) or an internal-only service and get
+  ArgusOps to make that request for them (SSRF). All three now dial through a new
+  `internal/httpguard.NewClient`, which refuses to connect to a loopback/link-local/private
+  address (checked against the resolved IP, not just the hostname string, so it isn't bypassable
+  by DNS rebinding); a genuinely on-prem deployment can opt out with
+  `ALLOW_PRIVATE_NETWORK_TARGETS=true`.
+- **Security**: `secrets.NewFromConfig` now refuses to start with the exact `SECRETS_ENCRYPTION_KEY`
+  value committed in `.env.example` unless `AUTH_MODE` is `dev`/`dev-headers` — that key is real
+  and working (for local-dev convenience), which made it a known shared key if ever copy-pasted
+  into a real deployment instead of generated fresh.
+- **Security**: the Google Drive and Slack OAuth callback handlers put the raw Go error text
+  (which can carry internal detail — a DB error, a state-lookup failure) directly into the
+  redirect URL's query string on failure. The real error is now logged server-side only; the
+  redirect gets a fixed generic code (`?gdrive_error=connection_failed`) instead.
+- Password policy (`AuthService.ChangePassword`, `PasswordResetService.ConfirmReset`) was
+  length-only, accepting `"11111111"`/`"aaaaaaaa"` — now also requires at least one letter and one
+  digit (deliberately not a symbol/complexity rule, which mostly just pushes people toward
+  predictable substitutions).
+- `LinkedAlertsPanel`'s unlink button and `ScheduleForm`'s concurrent-analysts +/- steppers had
+  hardcoded, untranslated `aria-label`s (`"unlink"`, `"-"`, `"+"`) instead of going through i18n
+  like every other label in this app.
 
 ## [2026-08-07] — `78f41f5`
 

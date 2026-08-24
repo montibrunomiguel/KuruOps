@@ -76,6 +76,10 @@ export function initials(name?: string): string {
 export function validateNewPassword(newPassword: string, confirmPassword: string, t: TFunction): string | null {
   if (newPassword !== confirmPassword) return t("changePassword.mismatch");
   if (newPassword.length < 8) return t("changePassword.tooShort");
+  // Mirrors the backend's validatePasswordPolicy (internal/service/password_policy.go)
+  // so an all-letters or all-digits password is caught here instead of round-tripping
+  // to the server first.
+  if (!/[\p{L}]/u.test(newPassword) || !/[0-9]/.test(newPassword)) return t("changePassword.needsLetterAndDigit");
   return null;
 }
 
