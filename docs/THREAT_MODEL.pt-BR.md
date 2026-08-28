@@ -83,9 +83,10 @@ isolamento que separa usuários entre si no dia a dia. Ela existe pronta para Sa
 real no futuro sem reescrever schema.
 
 **RLS não garante**:
-- **Autorização fina dentro do tenant** — isso é `role`/`resourceAccess`/`allowedTags`, aplicado na
-  camada de serviço/handler (`middleware.RequireRole`, `middleware.RequireResourceAccess`,
-  filtro `tags && $allowedTags` na query), não na política de RLS em si. Um bug nessa camada não é
+- **Autorização fina dentro do tenant** — isso é o `isAdmin`/`resourceAccess`/`allowedTags` do Role
+  atribuído, aplicado na camada de serviço/handler (`middleware.RequireAdmin`,
+  `middleware.RequireResourceAccess`, filtro `tags && $allowedTags` na query), não na política de
+  RLS em si. Um bug nessa camada não é
   coberto por RLS.
 - **Isolamento contra o role `postgres`** — intencional; esse role só é usado para setup
   administrativo, nunca por uma requisição HTTP.
@@ -123,8 +124,8 @@ fica no ArgusOps antes de ser permanentemente excluído pelo job horário `sweep
   nunca o arquivo subjacente. Essa é uma limitação de escopo deliberada e conhecida, não um
   descuido: limpar blob storage órfão não está implementado.
 - **Quem pode configurar**: o mesmo controle admin-only de qualquer outro painel de Settings
-  (`middleware.RequireRole("admin")`) — reduzir um prazo de retenção é, na prática, uma ação de
-  destruição de dados disponível pra qualquer um com esse papel, por isso o frontend exige
+  (`middleware.RequireAdmin()`) — reduzir um prazo de retenção é, na prática, uma ação de
+  destruição de dados disponível pra qualquer um com um Role admin, por isso o frontend exige
   confirmação inline explícita ao *reduzir* um valor (aumentar um valor, ou salvar pela primeira
   vez, não exige confirmação já que nenhum dos dois pode excluir algo que já não seria excluído de
   qualquer forma).

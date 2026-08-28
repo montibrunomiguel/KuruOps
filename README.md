@@ -100,7 +100,11 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
 - **Playbooks** — a library of procedures by category/phase, with automatic suggestions on the alert
   detail view.
 - **Settings** (admin) — Webhook Endpoints (token with an expiration/rotation policy — 90 days by
-  default, configurable at creation/regeneration), AI Integration (LLM providers, with an option to
+  default, configurable at creation/regeneration; optional per-endpoint dedup, suppressing a repeat
+  alert into an existing one's `duplicateCount` instead of creating a new one, keyed on admin-chosen
+  JSON-path fields within a configurable time window; optional Field Mapping Template assignment, a
+  reusable catalog of extra JSON-path → label rules pulled into an alert's metadata on top of the
+  automatic extraction), AI Integration (LLM providers, with an option to
   analyze every alert automatically on ingest or only on demand), MCP Servers (with a pending-approvals
   panel for side-effecting tools the AI proposes using), Storage Integration (S3, GCS, or Google Drive
   — service-account key or OAuth — for attached evidence), SMTP (password-reset emails), **Conectores**

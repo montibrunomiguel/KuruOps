@@ -101,7 +101,11 @@ mesmo tempo.
 - **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no
   detalhe do alerta.
 - **Settings** (admin) — Webhook Endpoints (token com política de expiração/rotação — 90 dias por
-  padrão, configurável na criação/regeneração), AI Integration (LLM providers, com opção de
+  padrão, configurável na criação/regeneração; dedup opcional por endpoint, suprimindo um alerta
+  repetido dentro do `duplicateCount` de um já existente em vez de criar um novo, com base em campos
+  JSON-path escolhidos pelo admin dentro de uma janela de tempo configurável; atribuição opcional de
+  Field Mapping Template, um catálogo reutilizável de regras JSON-path → label puxadas pro metadata
+  do alerta além da extração automática), AI Integration (LLM providers, com opção de
   analisar todo alerta automaticamente na ingestão ou só sob demanda), MCP Servers
   (com painel de aprovações pendentes para tools de efeito colateral que a IA propõe usar),
   Integração de Armazenamento (S3, GCS ou Google Drive — chave de service account ou OAuth — para
