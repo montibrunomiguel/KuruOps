@@ -1699,6 +1699,67 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/incidents/{id}/iocs:
+    get:
+      tags: [Incidents]
+      summary: List Indicators of Compromise recorded against an incident
+      description: >-
+        Newest-identified-first. These are the same IOCs pulled into both
+        GET .../postmortem and GET .../report.pdf automatically -- nothing
+        further is needed to have one recorded here show up in either
+        document.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: IOCs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IOC' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Incidents]
+      summary: Record a new Indicator of Compromise against an incident
+      description: Append-only -- there is no update or delete route for an individual IOC.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type: { $ref: '#/components/schemas/IOCType' }
+                value: { type: string }
+                description: { type: string }
+                identifiedAt: { type: string, format: date-time }
+              required: [type, value, identifiedAt]
+      responses:
+        "201":
+          description: IOC recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IOC' }
+        "400":
+          description: Malformed request, an unrecognized type, an empty value, or a missing identifiedAt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/incidents/{id}/alerts:
     get:
       tags: [Incidents]
@@ -4785,6 +4846,51 @@ components:
         body: { type: string }
         imageUrl: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
+
+    IOCType:
+      type: string
+      description: >-
+        See backend domain.IOCType's doc comment for the NIST SP 800-61r3 /
+        SP 800-150 / STIX 2.1 sourcing of this list.
+      enum:
+        - ip_address
+        - domain_name
+        - url
+        - file_hash
+        - email_address
+        - email_subject
+        - file_name
+        - file_path
+        - registry_key
+        - mutex
+        - process_name
+        - user_agent
+        - cve
+        - certificate_fingerprint
+        - other
+
+    IOC:
+      type: object
+      description: >-
+        An Indicator of Compromise recorded against an incident --
+        scoped to exactly one incident, append-only (no update/delete
+        route). Pulled automatically into both the Markdown postmortem and
+        the PDF report.
+      properties:
+        id: { type: string, format: uuid }
+        incidentId: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/IOCType' }
+        value: { type: string }
+        description: { type: string }
+        identifiedAt:
+          type: string
+          format: date-time
+          description: When the analyst determined this indicator was associated with the incident -- distinct from createdAt.
+        createdBy: { type: string, format: uuid }
+        createdByName: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, incidentId, tenantId, type, value, description, identifiedAt, createdBy, createdByName, createdAt]
 
     Playbook:
       type: object

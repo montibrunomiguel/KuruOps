@@ -467,6 +467,38 @@ func scanIncidentComment(row pgx.Row) (*domain.IncidentComment, error) {
 	return &c, nil
 }
 
+func (r *IncidentRepository) InsertIOC(ctx context.Context, tx pgx.Tx, ioc *domain.IOC) error {
+	row := tx.QueryRow(ctx, `
+		insert into incident_iocs (incident_id, tenant_id, type, value, description, identified_at, created_by, created_by_name)
+		values ($1,$2,$3,$4,$5,$6,$7,$8)
+		returning id, created_at`,
+		ioc.IncidentID, ioc.TenantID, ioc.Type, ioc.Value, ioc.Description, ioc.IdentifiedAt, ioc.CreatedBy, ioc.CreatedByName,
+	)
+	return row.Scan(&ioc.ID, &ioc.CreatedAt)
+}
+
+// ListIOCs orders newest-identified-first -- the incident detail page's
+// IOCs modal (and the postmortem/PDF report sections built from this same
+// list) want the most recently identified indicator at the top, not the
+// oldest, since that's usually the one still under active investigation.
+func (r *IncidentRepository) ListIOCs(ctx context.Context, tx pgx.Tx, incidentID uuid.UUID) ([]domain.IOC, error) {
+	return queryList(ctx, tx, `
+		select id, incident_id, tenant_id, type, value, description, identified_at, created_by, created_by_name, created_at
+		from incident_iocs
+		where incident_id = $1
+		order by identified_at desc`,
+		scanIOC, incidentID,
+	)
+}
+
+func scanIOC(row pgx.Row) (*domain.IOC, error) {
+	var i domain.IOC
+	if err := row.Scan(&i.ID, &i.IncidentID, &i.TenantID, &i.Type, &i.Value, &i.Description, &i.IdentifiedAt, &i.CreatedBy, &i.CreatedByName, &i.CreatedAt); err != nil {
+		return nil, fmt.Errorf("scan ioc: %w", err)
+	}
+	return &i, nil
+}
+
 func (r *IncidentRepository) LinkAlert(ctx context.Context, tx pgx.Tx, incidentID, alertID, tenantID uuid.UUID) error {
 	_, err := tx.Exec(ctx, `
 		insert into incident_alert_links (incident_id, alert_id, tenant_id)

@@ -486,6 +486,38 @@ func TestIncidentHandlers_TimelineCommentsAndAlertLinks(t *testing.T) {
 	})
 }
 
+func TestIncidentHandlers_IOCs(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	t.Run("unknown type is rejected", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"type": "not_a_real_type", "value": "x", "identifiedAt": time.Now()})
+		req := withClaims(httptest.NewRequest("POST", "/"+incidentID.String()+"/iocs", bytes.NewReader(body)), tenantID, actorID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("create and list", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"type": "domain_name", "value": "evil.example.com", "description": "C2 domain", "identifiedAt": time.Now(),
+		})
+		req := withClaims(httptest.NewRequest("POST", "/"+incidentID.String()+"/iocs", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+		var created domain.IOC
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		assert.Equal(t, domain.IOCTypeDomainName, created.Type)
+		assert.Equal(t, "evil.example.com", created.Value)
+
+		req = withClaims(httptest.NewRequest("GET", "/"+incidentID.String()+"/iocs", nil), tenantID, actorID, nil)
+		rec = doRequest(r, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		var iocs []domain.IOC
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &iocs))
+		require.Len(t, iocs, 1)
+		assert.Equal(t, "C2 domain", iocs[0].Description)
+	})
+}
+
 func TestIncidentHandlers_List_Filters(t *testing.T) {
 	h, tenantID, actorID, _ := newIncidentHandlerFixture(t)
 	r := newRouter(h.Routes)

@@ -32,6 +32,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Indicadores de Comprometimento (IOCs) em incidentes: um botão "IOCs" na página de detalhe do
+  incidente abre um popup listando todo IOC já cadastrado, com um formulário inline pra adicionar
+  um novo -- tipo (uma lista cobrindo os próprios exemplos de IOC da NIST SP 800-61r3 -- endereço
+  IP, nome de domínio, URL, hash de arquivo, endereço/assunto de email -- mais os tipos de
+  observável STIX 2.1 que a NIST SP 800-150 aponta pra troca estruturada: chave de registro, mutex,
+  nome de processo, user-agent, CVE, fingerprint de certificado, e um "outro" genérico), o valor do
+  indicador, uma descrição opcional, e a data em que foi identificado. Somente-inserção (sem
+  editar/excluir, igual às notas da equipe) -- `GET`/`POST /api/v1/incidents/{id}/iocs`.
+  Automaticamente puxado tanto pro postmortem em Markdown quanto pro relatório em PDF, numa nova
+  seção "Indicadores de Comprometimento (IOCs)" -- nada mais é necessário pra um IOC recém-cadastrado
+  aparecer em qualquer um dos dois documentos.
 - Relatório de incidente exportável em PDF: um botão "Baixar Relatório (PDF)" na página de detalhe
   do incidente (`GET /api/v1/incidents/{id}/report.pdf`) -- título, severidade/prioridade, fase
   atual, a timeline completa de histórico de fases com durações, papéis da equipe, descrição, tags,

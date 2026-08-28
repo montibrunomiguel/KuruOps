@@ -477,6 +477,38 @@
       "notFound": "Incident not found.",
       "warningBadge": "attention"
     },
+    "iocs": {
+      "button": "IOCs",
+      "title": "Indicators of Compromise",
+      "empty": "No IOCs recorded yet.",
+      "addButton": "Add IOC",
+      "identifiedBy": "Identified {{date}} by {{name}}",
+      "form": {
+        "type": "Type",
+        "identifiedAt": "Date identified",
+        "value": "Value",
+        "valuePlaceholder": "e.g. 203.0.113.42, evil.example.com, a1b2c3...",
+        "description": "Description",
+        "submit": "Add IOC"
+      },
+      "type": {
+        "ip_address": "IP Address",
+        "domain_name": "Domain Name",
+        "url": "URL",
+        "file_hash": "File Hash",
+        "email_address": "Email Address",
+        "email_subject": "Email Subject",
+        "file_name": "File Name",
+        "file_path": "File Path",
+        "registry_key": "Registry Key",
+        "mutex": "Mutex",
+        "process_name": "Process Name",
+        "user_agent": "User-Agent",
+        "cve": "CVE",
+        "certificate_fingerprint": "Certificate Fingerprint",
+        "other": "Other"
+      }
+    },
     "roles": {
       "title": "Team Roles",
       "unassigned": "— Unassigned —",

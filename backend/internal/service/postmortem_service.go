@@ -35,6 +35,34 @@ var roleLabels = map[domain.IncidentRole]string{
 	domain.RolePrivacyOfficer:     "Privacy Officer",
 }
 
+// iocTypeLabels renders domain.IOCType's snake_case wire values as the
+// same human-readable labels the frontend's i18n strings show -- see
+// domain.IOCType's doc comment for where this list comes from.
+var iocTypeLabels = map[domain.IOCType]string{
+	domain.IOCTypeIPAddress:              "IP Address",
+	domain.IOCTypeDomainName:             "Domain Name",
+	domain.IOCTypeURL:                    "URL",
+	domain.IOCTypeFileHash:               "File Hash",
+	domain.IOCTypeEmailAddress:           "Email Address",
+	domain.IOCTypeEmailSubject:           "Email Subject",
+	domain.IOCTypeFileName:               "File Name",
+	domain.IOCTypeFilePath:               "File Path",
+	domain.IOCTypeRegistryKey:            "Registry Key",
+	domain.IOCTypeMutex:                  "Mutex",
+	domain.IOCTypeProcessName:            "Process Name",
+	domain.IOCTypeUserAgent:              "User-Agent",
+	domain.IOCTypeCVE:                    "CVE",
+	domain.IOCTypeCertificateFingerprint: "Certificate Fingerprint",
+	domain.IOCTypeOther:                  "Other",
+}
+
+func iocTypeLabel(t domain.IOCType) string {
+	if label := iocTypeLabels[t]; label != "" {
+		return label
+	}
+	return string(t)
+}
+
 // PostmortemService builds the Markdown document GET
 // /api/v1/incidents/{id}/postmortem serves: a structured template that
 // always compiles every piece of information already on the incident
@@ -78,6 +106,10 @@ func (s *PostmortemService) Generate(ctx context.Context, tenantID, incidentID u
 	if err != nil {
 		return "", false, fmt.Errorf("load linked alerts: %w", err)
 	}
+	iocs, err := s.incidents.IOCs(ctx, tenantID, incidentID)
+	if err != nil {
+		return "", false, fmt.Errorf("load iocs: %w", err)
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Postmortem: %s\n\n", inc.Title)
@@ -90,6 +122,7 @@ func (s *PostmortemService) Generate(ctx context.Context, tenantID, incidentID u
 	renderTimeline(&b, inc, history)
 	renderRoles(&b, inc)
 	renderLinkedAlerts(&b, linkedAlerts)
+	renderIOCs(&b, iocs)
 	renderTeamNotes(&b, comments)
 	if inc.LatestAnalysis != nil && *inc.LatestAnalysis != "" {
 		fmt.Fprintf(&b, "## Latest AI Analysis\n\n%s\n\n", *inc.LatestAnalysis)
@@ -271,6 +304,26 @@ func renderLinkedAlerts(b *strings.Builder, alerts []domain.Alert) {
 	}
 	for _, a := range alerts {
 		fmt.Fprintf(b, "- **%s** (%s, %s) -- %s\n", a.Title, a.Severity, a.Status, a.Source)
+	}
+	b.WriteString("\n")
+}
+
+// renderIOCs, like renderLinkedAlerts, always gets a header (even with
+// zero IOCs recorded) -- a report/postmortem meant to be read standalone
+// should say "none identified" explicitly rather than silently omit the
+// section.
+func renderIOCs(b *strings.Builder, iocs []domain.IOC) {
+	b.WriteString("## Indicators of Compromise (IOCs)\n\n")
+	if len(iocs) == 0 {
+		b.WriteString("None identified.\n\n")
+		return
+	}
+	for _, i := range iocs {
+		fmt.Fprintf(b, "- **[%s]** `%s` -- identified %s", iocTypeLabel(i.Type), i.Value, i.IdentifiedAt.Format("2006-01-02"))
+		if i.Description != "" {
+			fmt.Fprintf(b, ": %s", i.Description)
+		}
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { formatDateTime, formatRelative, formatDuration, shortId } from "./format";
+import { formatDateTime, formatDate, formatRelative, formatDuration, shortId } from "./format";
 
 describe("formatDateTime", () => {
   it("returns an em dash for undefined", () => {
@@ -10,6 +10,22 @@ describe("formatDateTime", () => {
     const result = formatDateTime("2026-03-15T10:30:00Z");
     expect(result).not.toBe("—");
     expect(result).toMatch(/2026/);
+  });
+});
+
+describe("formatDate", () => {
+  it("returns an em dash for undefined", () => {
+    expect(formatDate(undefined)).toBe("—");
+  });
+
+  // The whole point of formatDate (see its doc comment): a UTC-midnight
+  // instant must always display as that same calendar date, regardless of
+  // the machine's local timezone -- formatDateTime, which reads the
+  // viewer's local time instead, would show "27" here for any timezone
+  // west of UTC. This is what IOCsModal relies on for identifiedAt.
+  it("keeps the UTC calendar date, not the viewer's local one", () => {
+    expect(formatDate("2026-08-28T00:00:00Z")).toMatch(/28/);
+    expect(formatDate("2026-08-28T00:00:00Z")).not.toMatch(/27/);
   });
 });
 

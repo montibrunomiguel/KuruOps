@@ -28,6 +28,7 @@ function routeFetch(
     // own already-linked list (GET /api/v1/incidents/i1/alerts).
     alertCandidates?: unknown[];
     comments?: unknown[];
+    iocs?: unknown[];
   } = {},
 ) {
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -62,6 +63,10 @@ function routeFetch(
     if (url.includes("/comments")) {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ id: "c1" }, 201));
       return Promise.resolve(jsonResponse(opts.comments ?? []));
+    }
+    if (url.includes("/iocs")) {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse({ id: "ioc-1" }, 201));
+      return Promise.resolve(jsonResponse(opts.iocs ?? []));
     }
     if (url.match(/\/incidents\/i1\/alerts\/[^/]+$/)) return Promise.resolve(new Response(null, { status: 204 }));
     if (url.includes("/incidents/i1/alerts")) return Promise.resolve(jsonResponse(opts.linkedAlerts ?? []));
@@ -172,6 +177,35 @@ describe("IncidentDetailPage", () => {
 
     clickSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("clicking IOCs opens the IOCs modal, which lists what's already recorded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routeFetch(incidentFixture(), {
+        iocs: [
+          {
+            id: "ioc-1",
+            incidentId: "i1",
+            tenantId: "t1",
+            type: "ip_address",
+            value: "203.0.113.42",
+            description: "C2 beacon",
+            identifiedAt: "2026-08-20T10:00:00Z",
+            createdBy: "u1",
+            createdByName: "Analyst One",
+            createdAt: "2026-08-20T10:05:00Z",
+          },
+        ],
+      }),
+    );
+    renderDetail();
+
+    await userEvent.click(await screen.findByRole("button", { name: "IOCs" }));
+
+    expect(await screen.findByRole("heading", { name: "Indicators of Compromise" })).toBeInTheDocument();
+    expect(screen.getByText("203.0.113.42")).toBeInTheDocument();
+    expect(screen.getByText("C2 beacon")).toBeInTheDocument();
   });
 
   it("a closed incident shows no close button", async () => {

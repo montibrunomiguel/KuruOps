@@ -15,6 +15,19 @@ export function formatDateTime(iso?: string): string {
   return d.toLocaleString(currentLocale(), { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// formatDate is for a value that's conceptually a calendar date, not a
+// moment in time (e.g. IOC.identifiedAt) -- backend/frontend agree to
+// represent it as that date's UTC midnight instant (see IOCsModal's
+// identifiedAt submit comment), so formatting must read it back in UTC too
+// (timeZone: "UTC"), not the viewer's local zone like formatDateTime does.
+// Reading it back in local time would shift the displayed calendar date by
+// a day for any timezone west of UTC -- the exact bug this avoids.
+export function formatDate(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString(currentLocale(), { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
 const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 60 * 60 * 24 * 365],
   ["month", 60 * 60 * 24 * 30],
