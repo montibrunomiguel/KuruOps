@@ -30,7 +30,7 @@ func TestJWTAuth(t *testing.T) {
 	tenantID, userID := uuid.New(), uuid.New()
 
 	t.Run("valid bearer token propagates every claim into the request context", func(t *testing.T) {
-		token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "followup"}, []string{"CompanyA"}, true)
+		token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "followup"}, []string{"CompanyA"}, true, false)
 		require.NoError(t, err)
 
 		var gotTenant uuid.UUID
@@ -73,7 +73,7 @@ func TestJWTAuth(t *testing.T) {
 	})
 
 	t.Run("header without the Bearer prefix is rejected", func(t *testing.T) {
-		token, err := issuer.Issue(tenantID, userID, true, nil, nil, false)
+		token, err := issuer.Issue(tenantID, userID, true, nil, nil, false, false)
 		require.NoError(t, err)
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)
 		req.Header.Set("Authorization", token) // no "Bearer " prefix
@@ -102,7 +102,7 @@ func TestJWTAuth(t *testing.T) {
 		otherPriv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
 		otherIssuer := authn.NewIssuer(otherPriv)
-		token, err := otherIssuer.Issue(tenantID, userID, true, nil, nil, false)
+		token, err := otherIssuer.Issue(tenantID, userID, true, nil, nil, false, false)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("GET", "/api/v1/alerts", nil)

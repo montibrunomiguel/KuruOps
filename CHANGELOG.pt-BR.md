@@ -14,6 +14,15 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Autenticação em dois fatores (TOTP): autoatendimento, opcional por usuário, ativada em
+  Configurações → Perfil → Autenticação em Dois Fatores (escaneie um QR code ou digite o segredo
+  manualmente em um aplicativo autenticador, depois confirme com um código de 6 dígitos). Um login
+  local para uma conta com 2FA ativado para antes de gerar uma sessão, logo após a verificação de
+  senha, e retorna um token pendente de curta duração em vez disso; a segunda etapa do formulário de
+  login troca esse token mais um código atual pela sessão real (`POST /auth/mfa/verify`). Desativar
+  exige reinserir a senha atual. Usa `github.com/pquerna/otp` (backend) e `qrcode.react` (frontend)
+  -- nenhum segredo ou imagem de QR code sai do navegador, exceto através da própria requisição de
+  ativação do usuário.
 - Mudança de status em massa nas listagens de Alertas/Incidentes: uma coluna de checkbox +
   "selecionar todos desta página" em ambas as listagens, com uma barra de ações que aparece assim
   que ≥1 linha é selecionada para mudar o status de todo alerta selecionado

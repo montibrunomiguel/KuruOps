@@ -250,7 +250,7 @@ func main() {
 
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)
-	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), roleService, issuer)
+	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleService, issuer)
 	userHandlers := handlers.NewUserHandlers(userService, authService)
 
 	identityCfgRepo := repository.NewIdentityConfigRepository()

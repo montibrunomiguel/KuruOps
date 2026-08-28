@@ -102,7 +102,15 @@
     "submit": "Sign in",
     "submitting": "Signing in...",
     "forgotPassword": "Forgot password?",
-    "ssoHint": "Logging in with LDAP or SAML? Ask your administrator for the SSO link."
+    "ssoHint": "Logging in with LDAP or SAML? Ask your administrator for the SSO link.",
+    "mfa": {
+      "title": "Two-Factor Authentication",
+      "helper": "Enter the 6-digit code from your authenticator app.",
+      "codeLabel": "Code",
+      "verify": "Verify",
+      "verifying": "Verifying...",
+      "back": "Back"
+    }
   },
   "forgotPassword": {
     "title": "Forgot Password",
@@ -143,6 +151,21 @@
     "currentPasswordHint": "(required to change your email)",
     "passwordTitle": "Change Password",
     "saved": "Saved.",
+    "mfa": {
+      "title": "Two-Factor Authentication",
+      "hint": "Add a second step to your login using an authenticator app (Google Authenticator, 1Password, Authy...).",
+      "enabled": "Enabled",
+      "enable": "Enable",
+      "enrolling": "Generating...",
+      "scanHint": "Scan this QR code with your authenticator app, or enter the secret manually, then confirm with the 6-digit code it produces.",
+      "secretLabel": "Or enter this secret manually",
+      "codeLabel": "Code",
+      "activate": "Activate",
+      "activating": "Activating...",
+      "disable": "Disable",
+      "disableHint": "(required to turn off two-factor authentication)",
+      "confirmDisable": "Confirm & Disable"
+    },
     "apiTokens": {
       "title": "API Tokens",
       "hint": "Personal tokens for authenticating your own API requests, as an alternative to logging in -- they carry your current permissions and stop working the moment they're revoked.",

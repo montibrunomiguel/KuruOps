@@ -1,7 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError, setRefreshHandler } from "../api/client";
-import type { LoginResponse } from "../types/api";
+import type { LoginResponse, MfaRequiredResponse } from "../types/api";
+
+// loginLocal's result: either the login completed outright, or the account
+// has TOTP enrolled and the caller must collect a 6-digit code and call
+// verifyMfa(pendingToken, code) before a session exists.
+export type LoginResult = { mfaRequired: false } | { mfaRequired: true; pendingToken: string };
 
 interface SessionUser {
   id: string;
@@ -12,12 +17,17 @@ interface SessionUser {
   // Never used for an authorization decision -- see isAdmin/resourceAccess.
   role: string;
   mustChangePassword: boolean;
-  // isAdmin and resourceAccess are decoded from the JWT (not the login
-  // response body) so they work uniformly across local/LDAP/SAML -- SAML's
-  // redirect flow has no JSON body for the frontend to read them out of,
-  // only the token itself. See decodeTokenClaims.
+  // isAdmin, resourceAccess, and mfaEnabled are decoded from the JWT (not
+  // the login response body) so they work uniformly across local/LDAP/SAML
+  // -- SAML's redirect flow has no JSON body for the frontend to read them
+  // out of, only the token itself. See decodeTokenClaims. mfaEnabled has
+  // the same staleness caveat as the others (only current as of the token's
+  // own issuance) -- see AuthContext.applyNewToken and authn.Claims.MFAEnabled's
+  // doc comment for how the two MFA management mutations keep it fresh
+  // without forcing a re-login.
   isAdmin: boolean;
   resourceAccess: string[];
+  mfaEnabled: boolean;
 }
 
 interface AuthState {
@@ -33,7 +43,11 @@ interface AuthContextValue extends AuthState {
   // Convenience helpers over user.resourceAccess -- see domain.ResourceCapability*
   // on the backend. hasResourceAccess("followup") etc.
   hasResourceAccess: (capability: string) => boolean;
-  loginLocal: (email: string, password: string) => Promise<void>;
+  loginLocal: (email: string, password: string) => Promise<LoginResult>;
+  // The second step of a login for a TOTP-enrolled account -- see
+  // LoginResult. Throws (same as loginLocal) on a wrong code, same opaque
+  // failure as a wrong password.
+  verifyMfa: (pendingToken: string, code: string) => Promise<void>;
   // Called after POST /account/change-password succeeds -- swaps in the
   // freshly re-issued token (mustChangePassword cleared) without forcing a
   // new login.
@@ -62,7 +76,7 @@ function loadStoredSession(): AuthState {
 // the backend re-verifies on every request) so callers don't need the login
 // response shape, just the token string -- the one thing every login path
 // (local, LDAP, SAML) actually produces.
-function decodeTokenClaims(token: string): { mustChangePassword: boolean; isAdmin: boolean; resourceAccess: string[] } {
+function decodeTokenClaims(token: string): { mustChangePassword: boolean; isAdmin: boolean; resourceAccess: string[]; mfaEnabled: boolean } {
   try {
     const payload = token.split(".")[1];
     const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
@@ -71,9 +85,10 @@ function decodeTokenClaims(token: string): { mustChangePassword: boolean; isAdmi
       mustChangePassword: Boolean(claims.must_change_password),
       isAdmin: Boolean(claims.is_admin),
       resourceAccess: Array.isArray(claims.resource_access) ? claims.resource_access : [],
+      mfaEnabled: Boolean(claims.mfa_enabled),
     };
   } catch {
-    return { mustChangePassword: false, isAdmin: false, resourceAccess: [] };
+    return { mustChangePassword: false, isAdmin: false, resourceAccess: [], mfaEnabled: false };
   }
 }
 
@@ -99,13 +114,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   }, []);
 
-  const loginLocal = useCallback(
-    async (email: string, password: string) => {
-      const res = await api.post<LoginResponse>("/auth/login", { email, password }, null);
-      const { isAdmin, resourceAccess } = decodeTokenClaims(res.token);
-      persist({ token: res.token, refreshToken: res.refreshToken, user: { ...res.user, isAdmin, resourceAccess } });
+  // applySession is the shared tail of a completed login -- both loginLocal
+  // (no MFA enrolled) and verifyMfa (MFA's second step) end here, so a
+  // session is stored identically either way.
+  const applySession = useCallback(
+    (res: LoginResponse) => {
+      const { isAdmin, resourceAccess, mfaEnabled } = decodeTokenClaims(res.token);
+      persist({ token: res.token, refreshToken: res.refreshToken, user: { ...res.user, isAdmin, resourceAccess, mfaEnabled } });
     },
     [persist],
+  );
+
+  const loginLocal = useCallback(
+    async (email: string, password: string): Promise<LoginResult> => {
+      const res = await api.post<LoginResponse | MfaRequiredResponse>("/auth/login", { email, password }, null);
+      if ("mfaRequired" in res && res.mfaRequired) {
+        return { mfaRequired: true, pendingToken: res.pendingToken };
+      }
+      applySession(res as LoginResponse);
+      return { mfaRequired: false };
+    },
+    [applySession],
+  );
+
+  const verifyMfa = useCallback(
+    async (pendingToken: string, code: string) => {
+      const res = await api.post<LoginResponse>("/auth/mfa/verify", { pendingToken, code }, null);
+      applySession(res);
+    },
+    [applySession],
   );
 
   const applyNewToken = useCallback(
@@ -116,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const next: AuthState = {
           ...prev,
           token,
-          user: { ...prev.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess },
+          user: { ...prev.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess, mfaEnabled: claims.mfaEnabled },
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         return next;
@@ -161,7 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       persist({
         token: res.token,
         refreshToken: res.refreshToken,
-        user: { ...current.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess },
+        user: { ...current.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess, mfaEnabled: claims.mfaEnabled },
       });
       return res.token;
     } catch {
@@ -183,11 +220,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mustChangePassword: state.user?.mustChangePassword ?? false,
       hasResourceAccess: (capability) => state.user?.resourceAccess.includes(capability) ?? false,
       loginLocal,
+      verifyMfa,
       applyNewToken,
       updateProfile,
       logout,
     }),
-    [state, loginLocal, applyNewToken, updateProfile, logout],
+    [state, loginLocal, verifyMfa, applyNewToken, updateProfile, logout],
   );
 
   return (

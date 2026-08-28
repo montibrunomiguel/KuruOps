@@ -31,6 +31,9 @@ const ChangePasswordPath = "/api/v1/account/change-password"
 func (h *AccountHandlers) Routes(r chi.Router) {
 	r.Post("/change-password", h.changePassword)
 	r.Put("/profile", h.updateProfile)
+	r.Post("/mfa/enroll", h.enrollMFA)
+	r.Put("/mfa", h.confirmMFA)
+	r.Delete("/mfa", h.disableMFA)
 	r.Get("/api-tokens", h.listAPITokens)
 	r.Post("/api-tokens", h.createAPIToken)
 	r.Delete("/api-tokens/{id}", h.revokeAPIToken)
@@ -101,6 +104,84 @@ func (h *AccountHandlers) updateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, user)
+}
+
+// enrollMFA starts (or restarts) TOTP enrollment: generates a fresh secret
+// + otpauth:// URI for the frontend to render as a QR code, but doesn't
+// persist anything -- see AuthService.GenerateMFAEnrollment's doc comment
+// for why. The secret round-trips back through confirmMFA below, proven by
+// producing a real code from it.
+func (h *AccountHandlers) enrollMFA(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	secret, otpauthURL, err := h.auth.GenerateMFAEnrollment(r.Context(), tenantID, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"secret": secret, "otpauthUrl": otpauthURL})
+}
+
+type confirmMFARequest struct {
+	Secret string `json:"secret"`
+	Code   string `json:"code"`
+}
+
+// confirmMFA activates 2FA: the frontend sends back the secret enrollMFA
+// handed it, plus the code the user's authenticator app produced from it --
+// see AuthService.ConfirmMFA. Returns a fresh token (mfa_enabled now true)
+// the same way changePassword does, for the same reason.
+func (h *AccountHandlers) confirmMFA(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	var req confirmMFARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	token, err := h.auth.ConfirmMFA(r.Context(), tenantID, userID, req.Secret, req.Code)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+type disableMFARequest struct {
+	CurrentPassword string `json:"currentPassword"`
+}
+
+// disableMFA turns 2FA back off -- see AuthService.DisableMFA for why it
+// requires the current password. Returns a fresh token (mfa_enabled now
+// false), same reasoning as confirmMFA's.
+func (h *AccountHandlers) disableMFA(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	var req disableMFARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	token, err := h.auth.DisableMFA(r.Context(), tenantID, userID, req.CurrentPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (h *AccountHandlers) listAPITokens(w http.ResponseWriter, r *http.Request) {

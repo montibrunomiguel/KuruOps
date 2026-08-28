@@ -200,6 +200,17 @@ func (r *UserRepository) SetActive(ctx context.Context, tx pgx.Tx, id uuid.UUID,
 	return err
 }
 
+// SetMFASecret sets (a confirmed TOTP enrollment) or clears (a disable) a
+// user's mfa_totp_secret -- the only place this column is ever written.
+// Passing nil is how AuthService.DisableMFA turns 2FA back off.
+func (r *UserRepository) SetMFASecret(ctx context.Context, tx pgx.Tx, id uuid.UUID, secret *string) error {
+	_, err := tx.Exec(ctx, `update users set mfa_totp_secret = $2, updated_at = now() where id = $1`, id, secret)
+	if err != nil {
+		return fmt.Errorf("set mfa secret: %w", err)
+	}
+	return nil
+}
+
 // --- LDAP/SAML group -> Role mapping (just-in-time provisioning) ---
 
 const authGroupMappingColumns = `

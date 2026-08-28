@@ -68,6 +68,53 @@ describe("AuthContext", () => {
     expect(result.current.hasResourceAccess("incidents")).toBe(false);
   });
 
+  it("loginLocal decodes mfaEnabled from the JWT payload too", async () => {
+    const token = fakeToken({ mfa_enabled: true });
+    vi.mocked(api.post).mockResolvedValue({
+      token,
+      refreshToken: "rt_1",
+      user: { id: "1", email: "a@b.com", name: "A", role: "Admin", mustChangePassword: false },
+    });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await act(async () => {
+      await result.current.loginLocal("a@b.com", "pw");
+    });
+    expect(result.current.user?.mfaEnabled).toBe(true);
+  });
+
+  it("loginLocal returns mfaRequired + the pending token for a TOTP-enrolled account, without starting a session", async () => {
+    vi.mocked(api.post).mockResolvedValue({ mfaRequired: true, pendingToken: "mfap_abc123" });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    let loginResult: Awaited<ReturnType<typeof result.current.loginLocal>> | undefined;
+    await act(async () => {
+      loginResult = await result.current.loginLocal("a@b.com", "pw");
+    });
+
+    expect(loginResult).toEqual({ mfaRequired: true, pendingToken: "mfap_abc123" });
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(api.post).toHaveBeenCalledWith("/auth/login", { email: "a@b.com", password: "pw" }, null);
+  });
+
+  it("verifyMfa completes the login and starts a session, decoded from the returned token same as loginLocal", async () => {
+    const token = fakeToken({ is_admin: true, resource_access: ["alerts"] });
+    vi.mocked(api.post).mockResolvedValue({
+      token,
+      refreshToken: "rt_2",
+      user: { id: "1", email: "a@b.com", name: "A", role: "Admin", mustChangePassword: false },
+    });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    await act(async () => {
+      await result.current.verifyMfa("mfap_abc123", "123456");
+    });
+
+    expect(api.post).toHaveBeenCalledWith("/auth/mfa/verify", { pendingToken: "mfap_abc123", code: "123456" }, null);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.isAdmin).toBe(true);
+    expect(result.current.user?.resourceAccess).toEqual(["alerts"]);
+  });
+
   it("a malformed token decodes to safe defaults instead of throwing", async () => {
     vi.mocked(api.post).mockResolvedValue({
       token: "not-a-real-jwt",

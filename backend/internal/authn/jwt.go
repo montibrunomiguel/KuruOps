@@ -40,6 +40,13 @@ type Claims struct {
 	// only (see middleware.RequirePasswordChanged) -- true for a fresh
 	// default-admin login until they rotate it.
 	MustChangePassword bool `json:"must_change_password"`
+	// MFAEnabled mirrors users.mfa_totp_secret != nil at the moment of
+	// issuance -- the frontend's Profile page reads this (not a dedicated
+	// GET endpoint, there isn't one) to show 2FA as on/off, same staleness
+	// tradeoff as IsAdmin/ResourceAccess: it only actually updates on next
+	// login/token refresh, which is why ConfirmMFA/DisableMFA both re-issue
+	// a fresh token the frontend swaps in immediately (see AuthContext.applyNewToken).
+	MFAEnabled bool `json:"mfa_enabled"`
 }
 
 // Issuer signs session tokens. Only cmd/api's login handlers hold the
@@ -53,7 +60,7 @@ func NewIssuer(privateKey *rsa.PrivateKey) *Issuer {
 	return &Issuer{privateKey: privateKey}
 }
 
-func (i *Issuer) Issue(tenantID, userID uuid.UUID, isAdmin bool, resourceAccess []string, allowedTags []string, mustChangePassword bool) (string, error) {
+func (i *Issuer) Issue(tenantID, userID uuid.UUID, isAdmin bool, resourceAccess []string, allowedTags []string, mustChangePassword, mfaEnabled bool) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -67,6 +74,7 @@ func (i *Issuer) Issue(tenantID, userID uuid.UUID, isAdmin bool, resourceAccess 
 		ResourceAccess:     resourceAccess,
 		AllowedTags:        allowedTags,
 		MustChangePassword: mustChangePassword,
+		MFAEnabled:         mfaEnabled,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	signed, err := token.SignedString(i.privateKey)

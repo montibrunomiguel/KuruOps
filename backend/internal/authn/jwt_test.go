@@ -19,7 +19,7 @@ func TestIssueVerify_RoundTrip(t *testing.T) {
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
 	tenantID, userID := uuid.New(), uuid.New()
-	token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "incidents", "followup"}, []string{"CompanyA"}, true)
+	token, err := issuer.Issue(tenantID, userID, true, []string{"alerts", "incidents", "followup"}, []string{"CompanyA"}, true, true)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
 
@@ -31,6 +31,7 @@ func TestIssueVerify_RoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"alerts", "incidents", "followup"}, claims.ResourceAccess)
 	assert.Equal(t, []string{"CompanyA"}, claims.AllowedTags)
 	assert.True(t, claims.MustChangePassword)
+	assert.True(t, claims.MFAEnabled)
 }
 
 func TestIssue_EmptyResourceAccessAndTags(t *testing.T) {
@@ -39,7 +40,7 @@ func TestIssue_EmptyResourceAccessAndTags(t *testing.T) {
 	issuer := authn.NewIssuer(priv)
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false, false)
 	require.NoError(t, err)
 
 	claims, err := verifier.Verify(token)
@@ -58,7 +59,7 @@ func TestVerify_RejectsTokenSignedByADifferentKey(t *testing.T) {
 	issuer := authn.NewIssuer(priv1)
 	wrongVerifier := authn.NewVerifier(&priv2.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), true, []string{"alerts"}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), true, []string{"alerts"}, nil, false, false)
 	require.NoError(t, err)
 
 	_, err = wrongVerifier.Verify(token)
@@ -128,7 +129,7 @@ func TestVerify_RejectsTamperedPayload(t *testing.T) {
 	issuer := authn.NewIssuer(priv)
 	verifier := authn.NewVerifier(&priv.PublicKey)
 
-	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false)
+	token, err := issuer.Issue(uuid.New(), uuid.New(), false, []string{}, nil, false, false)
 	require.NoError(t, err)
 
 	// Flip one character in the middle of the token (payload segment) --

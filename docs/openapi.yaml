@@ -126,6 +126,9 @@ paths:
       description: >
         Unauthenticated. Rate limited per-IP (router-level) and per-email
         (handler-level). Resolves the deployment's single tenant automatically.
+        If the account has TOTP enrolled, a correct password returns
+        MfaRequiredResponse instead of LoginResponse -- see /auth/mfa/verify
+        for the second step.
       security: []
       requestBody:
         required: true
@@ -135,11 +138,13 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         "200":
-          description: Login succeeded
+          description: Login succeeded, or the account requires a second factor
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/LoginResponse'
+                  - $ref: '#/components/schemas/MfaRequiredResponse'
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -150,6 +155,52 @@ paths:
                 type: string
         "429":
           description: Too many login attempts for this account or IP
+          content:
+            text/plain:
+              schema:
+                type: string
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Second step of a login for a TOTP-enrolled account
+      description: >
+        Unauthenticated. Consumes pendingToken (single-use) from a prior
+        /auth/login response and checks code against the account's enrolled
+        TOTP secret -- same opaque-failure discipline as /auth/login itself:
+        an unknown/expired/already-used pendingToken and a wrong code are
+        both a plain 401, never distinguished. Rate limited per pendingToken,
+        same as /auth/password-reset/confirm is per reset token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pendingToken: { type: string }
+                code: { type: string, description: The 6-digit TOTP code. }
+              required: [pendingToken, code]
+      responses:
+        "200":
+          description: Login completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          description: Invalid or expired pending token, or wrong code
+          content:
+            text/plain:
+              schema:
+                type: string
+        "429":
+          description: Too many attempts for this pending token
           content:
             text/plain:
               schema:
@@ -411,6 +462,95 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/account/mfa/enroll:
+    post:
+      tags: [Account]
+      summary: Start (or restart) TOTP enrollment
+      description: >-
+        Generates a fresh random secret and its otpauth:// URI for the
+        caller to render as a QR code -- deliberately NOT persisted here.
+        The secret only reaches users.mfa_totp_secret via
+        PUT /api/v1/account/mfa, once the caller has proven they actually
+        captured it by producing a real code from it.
+      responses:
+        "200":
+          description: A fresh, unsaved TOTP secret + its otpauth:// URI
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauthUrl: { type: string }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/account/mfa:
+    put:
+      tags: [Account]
+      summary: Activate 2FA
+      description: >-
+        Re-validates code against the caller-supplied secret (the one
+        POST /api/v1/account/mfa/enroll just handed out) before persisting
+        it. Re-issues the session token with mfa_enabled now true, the same
+        way change-password re-issues with mustChangePassword cleared.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                secret: { type: string }
+                code: { type: string, description: The 6-digit TOTP code. }
+              required: [secret, code]
+      responses:
+        "200":
+          description: 2FA activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [Account]
+      summary: Disable 2FA
+      description: >-
+        Requires re-entering the current password -- a valid session alone
+        isn't proof of intent to weaken the account's own login
+        requirements, same reasoning as the email-change guard on
+        PUT /api/v1/account/profile. Re-issues the session token with
+        mfa_enabled now false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                currentPassword: { type: string }
+              required: [currentPassword]
+      responses:
+        "200":
+          description: 2FA disabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -3685,6 +3825,19 @@ components:
             name: { type: string }
             role: { type: string }
             mustChangePassword: { type: boolean }
+
+    MfaRequiredResponse:
+      type: object
+      description: >-
+        What POST /auth/login returns instead of LoginResponse when the
+        account has TOTP enrolled -- the password was correct, but no
+        session exists yet. Present pendingToken alongside a 6-digit code to
+        POST /auth/mfa/verify (which returns a normal LoginResponse) to
+        complete the login.
+      properties:
+        mfaRequired: { type: boolean, enum: [true] }
+        pendingToken: { type: string }
+      required: [mfaRequired, pendingToken]
 
     Alert:
       type: object
