@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func newAuthService(t *testing.T) (*db.Pool, *service.AuthService) {
@@ -299,7 +299,7 @@ func TestAuthService_MFA(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, secret)
 	assert.Contains(t, otpauthURL, "otpauth://totp/")
-	assert.Contains(t, otpauthURL, "ArgusOps")
+	assert.Contains(t, otpauthURL, "KuruOps")
 
 	t.Run("confirming with a wrong code does not activate it", func(t *testing.T) {
 		_, err := svc.ConfirmMFA(t.Context(), tenantID, userID, secret, "000000")

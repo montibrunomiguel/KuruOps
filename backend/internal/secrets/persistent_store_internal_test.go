@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // testEncryptionKey mirrors persistent_store_test.go's const of the same

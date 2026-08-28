@@ -3,7 +3,7 @@ import { initReactI18next } from "react-i18next";
 import en from "./locales/en.json";
 import pt from "./locales/pt.json";
 
-const STORAGE_KEY = "argusops.language";
+const STORAGE_KEY = "kuruops.language";
 
 // The app's de facto language up to this point was hardcoded Portuguese
 // strings everywhere, so an unrecognized/undetected browser language falls

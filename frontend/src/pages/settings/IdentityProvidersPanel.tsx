@@ -119,7 +119,7 @@ function LDAPPanel() {
         </div>
         <div className="field">
           <label htmlFor="ldap-binddn">{t("settings.identityProviders.ldap.bindDn")}</label>
-          <input id="ldap-binddn" className="input" value={bindDn} onChange={(e) => setBindDn(e.target.value)} placeholder="cn=argusops-svc,dc=acme,dc=local" required />
+          <input id="ldap-binddn" className="input" value={bindDn} onChange={(e) => setBindDn(e.target.value)} placeholder="cn=kuruops-svc,dc=acme,dc=local" required />
         </div>
         <div className="field">
           <label htmlFor="ldap-bindpw">

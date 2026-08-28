@@ -6,9 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestSMTPConfigRepository(t *testing.T) {
@@ -23,7 +23,7 @@ func TestSMTPConfigRepository(t *testing.T) {
 		assert.Nil(t, got)
 	})
 
-	fromName := "ArgusOps"
+	fromName := "KuruOps"
 	cfg := &domain.SMTPConfig{
 		TenantID: tenantID, Host: "smtp.example.com", Port: 587, UseTLS: true,
 		Username: "smtp-user", PasswordSecretRef: "secret://smtp-password",

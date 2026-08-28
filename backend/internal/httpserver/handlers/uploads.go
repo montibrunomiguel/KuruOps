@@ -13,13 +13,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 // UploadHandlers backs the one piece of file-storage infrastructure in
-// ArgusOps: evidence files attached to alert close-comments and
+// KuruOps: evidence files attached to alert close-comments and
 // alert/incident Team Notes -- screenshots, PDFs, packet captures, office
 // documents, anything an analyst wants to attach as evidence. Where the
 // bytes actually land is decided by service.StorageConfigService.BuildStore

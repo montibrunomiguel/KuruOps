@@ -27,17 +27,17 @@ func TestPagerDutySender_Send(t *testing.T) {
 
 	err := PagerDutySender{}.Send(t.Context(), "R0UT1NG-KEY", Notification{
 		Title: "Ransomware behavior detected", Description: "host-01 exhibiting mass file encryption",
-		Severity: "critical", AlertID: "a1", URL: "https://argusops.example/alerts/a1",
+		Severity: "critical", AlertID: "a1", URL: "https://kuruops.example/alerts/a1",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, "R0UT1NG-KEY", gotBody.RoutingKey)
 	assert.Equal(t, "trigger", gotBody.EventAction)
-	assert.Equal(t, "argusops-alert-a1", gotBody.DedupKey)
+	assert.Equal(t, "kuruops-alert-a1", gotBody.DedupKey)
 	assert.Equal(t, "Ransomware behavior detected", gotBody.Payload.Summary)
 	assert.Equal(t, "critical", gotBody.Payload.Severity)
 	require.Len(t, gotBody.Links, 1)
-	assert.Equal(t, "https://argusops.example/alerts/a1", gotBody.Links[0].Href)
+	assert.Equal(t, "https://kuruops.example/alerts/a1", gotBody.Links[0].Href)
 }
 
 func TestPagerDutySender_Send_ErrorResponse(t *testing.T) {

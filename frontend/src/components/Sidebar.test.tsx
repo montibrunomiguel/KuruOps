@@ -17,7 +17,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function sessionWith(resourceAccess: string[], role = "Analyst", isAdmin = false) {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       user: { id: "1", email: "analyst@test.local", name: "Ana Lyst", role, isAdmin, mustChangePassword: false, resourceAccess },
@@ -68,9 +68,9 @@ describe("Sidebar", () => {
   describe("theme and language toggles", () => {
     afterEach(() => {
       document.documentElement.removeAttribute("data-theme");
-      localStorage.removeItem("argusops.theme");
+      localStorage.removeItem("kuruops.theme");
       void i18n.changeLanguage("en");
-      localStorage.removeItem("argusops.language");
+      localStorage.removeItem("kuruops.language");
     });
 
     it("toggling the theme button flips data-theme and persists it", async () => {
@@ -81,7 +81,7 @@ describe("Sidebar", () => {
       await userEvent.click(toggle);
 
       expect(document.documentElement.dataset.theme).toBe("light");
-      expect(localStorage.getItem("argusops.theme")).toBe("light");
+      expect(localStorage.getItem("kuruops.theme")).toBe("light");
 
       await userEvent.click(screen.getByRole("button", { name: /modo escuro|dark mode/i }));
       expect(document.documentElement.dataset.theme).toBe("dark");

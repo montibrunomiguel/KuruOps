@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // TestPlumbing exercises testutil itself against a real database: a fresh

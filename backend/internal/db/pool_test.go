@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/db"
+	"github.com/kuruops/kuruops/internal/db"
 )
 
 func requireTestDatabaseURL(t *testing.T) string {

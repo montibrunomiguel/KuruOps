@@ -2,7 +2,7 @@
 
 # Operação
 
-Runbook para quem está de olho no ArgusOps rodando (produção assistida): o que os healthchecks
+Runbook para quem está de olho no KuruOps rodando (produção assistida): o que os healthchecks
 significam, como ler os logs, como reverter um deploy ruim, como restaurar de um backup. Não
 confundir com `TROUBLESHOOTING.md` (gotchas de desenvolvimento/CI) nem com `THREAT_MODEL.md`
 (rotação de segredos e modelo de ameaças) — este aqui é o "o que fazer quando algo pisca no
@@ -45,9 +45,9 @@ correlaciona todas as linhas de uma mesma requisição, incluindo através de ha
 Não há blue-green nem canary aqui — é `kubectl rollout undo` de verdade:
 
 ```bash
-kubectl rollout history deployment/argusops-api -n argusops
-kubectl rollout undo deployment/argusops-api -n argusops
-# repita pra argusops-ingest / argusops-worker / argusops-frontend se o deploy ruim tocou nelas também
+kubectl rollout history deployment/kuruops-api -n kuruops
+kubectl rollout undo deployment/kuruops-api -n kuruops
+# repita pra kuruops-ingest / kuruops-worker / kuruops-frontend se o deploy ruim tocou nelas também
 ```
 
 Uma migration nova (`deploy/k8s/03-migration-job.yaml`) **não** é revertida automaticamente por
@@ -63,10 +63,10 @@ remoção) antes de confiar só no rollback do Deployment.
 (ver o próprio comentário do manifest). Pra restaurar:
 
 1. Baixe o dump mais recente do bucket S3 configurado (`aws s3 cp
-   s3://$BACKUP_S3_BUCKET/argusops/<arquivo>.dump .`).
+   s3://$BACKUP_S3_BUCKET/kuruops/<arquivo>.dump .`).
 2. **Nunca restaure direto por cima do banco de produção sem antes validar o dump** — rode
    `task db:backup:restore-test` localmente primeiro (aponta pro dump mais recente em `backups/`,
-   restaura num banco descartável `argusops_backup_verify`, roda uma contagem de sanidade em
+   restaura num banco descartável `kuruops_backup_verify`, roda uma contagem de sanidade em
    `tenants`/`alerts`/`incidents`, depois derruba o banco descartável). Isso não toca no banco
    real — é seguro rodar a qualquer momento pra confirmar que um dump é restaurável de verdade.
 3. Só depois de validado, restaure no banco real:
@@ -85,12 +85,12 @@ armazenamento persistente — ver o próprio manifest) já com as regras de
 alerta que disparam sozinhas. As queries abaixo são pra investigação manual
 durante a janela assistida — cole em `http://<prometheus>:9090/graph`:
 
-- **Taxa de erro por serviço**: `sum by (job) (rate(argusops_http_requests_5xx_total[5m])) / sum by (job) (rate(argusops_http_requests_total[5m]))`
-- **Latência p99 por serviço**: `histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m])))`
-- **Saturação do pool de conexões**: `argusops_db_pool_acquired_conns / argusops_db_pool_max_conns`
-- **Conexões SSE ativas** (deve variar com analistas logados, não crescer sem limite): `argusops_sse_active_connections`
-- **Há quanto tempo cada sweep do worker rodou com sucesso pela última vez** (em minutos): `(time() - argusops_worker_last_sweep_success_timestamp) / 60`
-- **Scrape targets fora do ar**: `up{job=~"argusops-.*"} == 0`
+- **Taxa de erro por serviço**: `sum by (job) (rate(kuruops_http_requests_5xx_total[5m])) / sum by (job) (rate(kuruops_http_requests_total[5m]))`
+- **Latência p99 por serviço**: `histogram_quantile(0.99, sum by (le, job) (rate(kuruops_http_request_duration_seconds_bucket[5m])))`
+- **Saturação do pool de conexões**: `kuruops_db_pool_acquired_conns / kuruops_db_pool_max_conns`
+- **Conexões SSE ativas** (deve variar com analistas logados, não crescer sem limite): `kuruops_sse_active_connections`
+- **Há quanto tempo cada sweep do worker rodou com sucesso pela última vez** (em minutos): `(time() - kuruops_worker_last_sweep_success_timestamp) / 60`
+- **Scrape targets fora do ar**: `up{job=~"kuruops-.*"} == 0`
 
 ## Baseline de capacidade
 
@@ -118,5 +118,5 @@ o ambiente real antes do lançamento assistido e comparar os números acima.
 
 _Preencher com os contatos reais do time antes de liberar produção assistida — quem é acionado
 quando um alerta do Alertmanager dispara, e por qual canal (o mesmo PagerDuty/Slack/webhook que o
-próprio ArgusOps usa pra escalar incidentes de segurança dos tenants, ou um canal separado pra
+próprio KuruOps usa pra escalar incidentes de segurança dos tenants, ou um canal separado pra
 incidentes da própria plataforma)._

@@ -19,16 +19,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/config"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/notifier"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/telemetry"
+	"github.com/kuruops/kuruops/internal/config"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/telemetry"
 )
 
 func main() {
@@ -43,7 +43,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	otelShutdown, tracer, err := telemetry.Setup(ctx, "argusops-worker", cfg.OTelExporterOTLPEndpoint)
+	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-worker", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
@@ -146,11 +146,11 @@ func main() {
 	// `AlertService.Ingest` again.
 	//
 	// IMPORTANT if this ever gets built: cfg.DatabaseURL here connects as
-	// argusops_worker, which has BYPASSRLS (needed only for the materialized
+	// kuruops_worker, which has BYPASSRLS (needed only for the materialized
 	// view refresh and the sweeps below -- see
-	// db/init/argusops_worker_role.sql). Processing AI jobs per-tenant using
+	// db/init/kuruops_worker_role.sql). Processing AI jobs per-tenant using
 	// this SAME pool would be a silent RLS bypass; open a separate pool
-	// connected as argusops_app + Pool.WithTenant for that consumption, the
+	// connected as kuruops_app + Pool.WithTenant for that consumption, the
 	// way api/ingest already do.
 
 	for {
@@ -237,15 +237,15 @@ func runLocked(ctx context.Context, pool *db.Pool, key int64, job string, logger
 // CONCURRENTLY requires the unique indexes created alongside the views in
 // db/migrations/0001_initial_schema.up.sql.
 //
-// cfg.DatabaseURL must point at argusops_worker (BYPASSRLS), not
-// argusops_app: Postgres runs a materialized view's defining query with the
+// cfg.DatabaseURL must point at kuruops_worker (BYPASSRLS), not
+// kuruops_app: Postgres runs a materialized view's defining query with the
 // VIEW OWNER's privileges, not the caller's, so whichever role owns these
 // two views also determines the RLS context REFRESH runs under. With no
 // tenant context set here (by design, see above), owning them with a
 // non-bypass role means their `tenant_id = current_tenant_id()` policy
 // matches nothing and every refresh silently produces zero rows -- no
 // error, MTTA/MTTR just stay empty forever. See
-// db/init/argusops_worker_role.sql.
+// db/init/kuruops_worker_role.sql.
 func refreshMaterializedViews(ctx context.Context, pool *db.Pool, logger *slog.Logger) {
 	views := []string{"mv_alert_daily_stats", "mv_incident_kpis", "mv_incident_daily_stats"}
 	for _, v := range views {
@@ -257,7 +257,7 @@ func refreshMaterializedViews(ctx context.Context, pool *db.Pool, logger *slog.L
 
 // sweepSLABreaches flips incidents.sla_breached to true once sla_due_at has
 // passed. Runs cross-tenant (no Pool.WithTenant, same reasoning as
-// refreshMaterializedViews -- see db/init/argusops_worker_role.sql for why
+// refreshMaterializedViews -- see db/init/kuruops_worker_role.sql for why
 // this connection is BYPASSRLS) rather than computed at read time: every
 // existing read path (Follow-up, dashboard stats, the detail-page badge)
 // already treats sla_breached as a plain stored boolean, so a worker sweep
@@ -300,7 +300,7 @@ const staleAIRunTimeout = 15 * time.Minute
 // checkNotAlreadyRunning then permanently blocks any future "Analyze with
 // AI" click for that alert/incident. Runs cross-tenant (no Pool.WithTenant),
 // same BYPASSRLS reasoning as sweepSLABreaches/sweepEscalations -- see
-// db/init/argusops_worker_role.sql. updated_at is already bumped by every
+// db/init/kuruops_worker_role.sql. updated_at is already bumped by every
 // real status transition (SetRunning/SetPaused/SetCompleted/SetFailed, see
 // AIAnalysisRunRepository), so no schema change is needed to detect
 // staleness from it.
@@ -360,7 +360,7 @@ type escalationStepRow struct {
 // at the query level -- escalationPolicyService's own calls scope
 // themselves per alert), same BYPASSRLS reasoning as
 // refreshMaterializedViews/sweepSLABreaches -- see
-// db/init/argusops_worker_role.sql.
+// db/init/kuruops_worker_role.sql.
 //
 // A single failed Send (already retried with backoff inside
 // notifier.RetryingSender -- see internal/notifier/retry.go) is logged and
@@ -510,7 +510,7 @@ func loadEscalationSteps(ctx context.Context, pool *db.Pool, tenantID uuid.UUID,
 func emailOnCallAnalyst(ctx context.Context, smtp *service.SMTPConfigService, tenantID uuid.UUID, analystEmail, title, severity string, alertID uuid.UUID, appBaseURL string) error {
 	msg := mailer.Message{
 		To:      analystEmail,
-		Subject: fmt.Sprintf("[ArgusOps] Alerta escalado: %s", title),
+		Subject: fmt.Sprintf("[KuruOps] Alerta escalado: %s", title),
 		Body: fmt.Sprintf(
 			"O alerta \"%s\" (severidade %s) ficou sem reconhecimento além do tempo configurado para escalonamento e você está de plantão agora.\n\n%s/alerts/%s",
 			title, severity, appBaseURL, alertID,
@@ -548,8 +548,8 @@ const retentionSweepBatchLimit = 5000
 // of an alert/incident, never anything in whichever storage backend the
 // tenant has configured.
 //
-// Runs cross-tenant (BYPASSRLS argusops_worker, no Pool.WithTenant, same
-// reasoning as the other sweeps -- see db/init/argusops_worker_role.sql),
+// Runs cross-tenant (BYPASSRLS kuruops_worker, no Pool.WithTenant, same
+// reasoning as the other sweeps -- see db/init/kuruops_worker_role.sql),
 // but unlike them, wrapped in its own explicit transaction: this sweep is
 // multi-statement and order-dependent (see below), so atomicity actually
 // matters here in a way it doesn't for the other sweeps' single UPDATE

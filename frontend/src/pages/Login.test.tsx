@@ -33,12 +33,12 @@ describe("LoginPage", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        jsonResponse(200, { token, user: { id: "1", email: "admin@argusops.local", name: "Admin", role: "admin", mustChangePassword: false } }),
+        jsonResponse(200, { token, user: { id: "1", email: "admin@kuruops.local", name: "Admin", role: "admin", mustChangePassword: false } }),
       ),
     );
 
     renderLogin();
-    await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+    await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
     await userEvent.type(screen.getByLabelText("Password"), "ChangeMe123!");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -49,7 +49,7 @@ describe("LoginPage", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: "invalid credentials" })));
 
     renderLogin();
-    await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+    await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
     await userEvent.type(screen.getByLabelText("Password"), "wrong");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -86,7 +86,7 @@ describe("LoginPage", () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { mfaRequired: true, pendingToken: "mfap_abc123" })));
 
       renderLogin();
-      await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+      await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
       await userEvent.type(screen.getByLabelText("Password"), "ChangeMe123!");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
@@ -100,7 +100,7 @@ describe("LoginPage", () => {
         const body = init?.body ? JSON.parse(init.body as string) : {};
         if ("pendingToken" in body) {
           return Promise.resolve(
-            jsonResponse(200, { token, refreshToken: "rt_1", user: { id: "1", email: "admin@argusops.local", name: "Admin", role: "admin", mustChangePassword: false } }),
+            jsonResponse(200, { token, refreshToken: "rt_1", user: { id: "1", email: "admin@kuruops.local", name: "Admin", role: "admin", mustChangePassword: false } }),
           );
         }
         return Promise.resolve(jsonResponse(200, { mfaRequired: true, pendingToken: "mfap_abc123" }));
@@ -108,7 +108,7 @@ describe("LoginPage", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       renderLogin();
-      await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+      await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
       await userEvent.type(screen.getByLabelText("Password"), "ChangeMe123!");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
       await screen.findByText("Two-Factor Authentication");
@@ -131,7 +131,7 @@ describe("LoginPage", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       renderLogin();
-      await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+      await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
       await userEvent.type(screen.getByLabelText("Password"), "ChangeMe123!");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
       await screen.findByText("Two-Factor Authentication");
@@ -147,7 +147,7 @@ describe("LoginPage", () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { mfaRequired: true, pendingToken: "mfap_abc123" })));
 
       renderLogin();
-      await userEvent.type(screen.getByLabelText("E-mail"), "admin@argusops.local");
+      await userEvent.type(screen.getByLabelText("E-mail"), "admin@kuruops.local");
       await userEvent.type(screen.getByLabelText("Password"), "ChangeMe123!");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
       await screen.findByText("Two-Factor Authentication");

@@ -39,9 +39,9 @@ type pagerDutyLink struct {
 	Text string `json:"text"`
 }
 
-// pagerDutySeverity maps ArgusOps' 5-tier severity to PagerDuty Events v2's
+// pagerDutySeverity maps KuruOps' 5-tier severity to PagerDuty Events v2's
 // 4-value enum ("critical", "error", "warning", "info") -- PagerDuty has no
-// direct equivalent of ArgusOps' "high"/"low" split, so "high" maps to its
+// direct equivalent of KuruOps' "high"/"low" split, so "high" maps to its
 // "error" (the next tier down from critical) and "low" to "warning" (still
 // actionable, just not urgent) rather than either collapsing into
 // "critical" or being silently dropped to "info".
@@ -62,16 +62,16 @@ func (PagerDutySender) Send(ctx context.Context, destination string, n Notificat
 	event := pagerDutyEvent{
 		RoutingKey:  destination,
 		EventAction: "trigger",
-		DedupKey:    "argusops-alert-" + n.AlertID,
+		DedupKey:    "kuruops-alert-" + n.AlertID,
 		Payload: pagerDutyPayload{
 			Summary:       n.Title,
-			Source:        "ArgusOps",
+			Source:        "KuruOps",
 			Severity:      pagerDutySeverity(n.Severity),
 			CustomDetails: map[string]string{"description": n.Description, "alertId": n.AlertID},
 		},
 	}
 	if n.URL != "" {
-		event.Links = []pagerDutyLink{{Href: n.URL, Text: "View in ArgusOps"}}
+		event.Links = []pagerDutyLink{{Href: n.URL, Text: "View in KuruOps"}}
 	}
 
 	body, err := json.Marshal(event)

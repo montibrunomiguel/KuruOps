@@ -33,7 +33,7 @@ describe("AuthContext", () => {
 
   it("restores a previously stored session from localStorage", () => {
     localStorage.setItem(
-      "argusops.session",
+      "kuruops.session",
       JSON.stringify({ token: "tok", user: { id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] } }),
     );
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -42,7 +42,7 @@ describe("AuthContext", () => {
   });
 
   it("ignores corrupt stored session data instead of throwing", () => {
-    localStorage.setItem("argusops.session", "not json");
+    localStorage.setItem("kuruops.session", "not json");
     const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(false);
   });
@@ -174,7 +174,7 @@ describe("AuthContext", () => {
       result.current.logout();
     });
     expect(result.current.isAuthenticated).toBe(false);
-    expect(localStorage.getItem("argusops.session")).toContain('"token":null');
+    expect(localStorage.getItem("kuruops.session")).toContain('"token":null');
   });
 
   it("useAuth throws outside of AuthProvider", () => {

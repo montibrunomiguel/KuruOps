@@ -1,6 +1,6 @@
 <p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# ArgusOps on Kubernetes
+# KuruOps on Kubernetes
 
 Basic manifests to run the real stack (api, ingest, worker, frontend) on a
 cluster. Deliberately minimal: no Helm chart, no HorizontalPodAutoscaler, no
@@ -15,7 +15,7 @@ project picking one for you.
   16 instance (a managed RDS/Cloud SQL instance, a StatefulSet you manage
   separately, etc.) — the same "customer-supplied database" assumption the
   app's own external-DB-migration Settings feature already makes. The
-  `argusops_app`/`argusops_worker` roles and RLS policies must already exist
+  `kuruops_app`/`kuruops_worker` roles and RLS policies must already exist
   there (see `db/init/*.sql` and `db/README.md`) before pointing
   `01-secret.example.yaml` at it.
 - **Ingress/TLS.** `frontend`'s Service is `ClusterIP` — reaching it from
@@ -48,7 +48,7 @@ kubectl apply -f deploy/k8s/02-configmap.yaml
 # Waits for the Job to actually finish before continuing -- api/ingest/worker
 # all assume the schema already exists on first boot.
 kubectl apply -f deploy/k8s/03-migration-job.yaml
-kubectl wait --for=condition=complete --timeout=120s -n argusops job/argusops-migrate
+kubectl wait --for=condition=complete --timeout=120s -n kuruops job/kuruops-migrate
 
 kubectl apply -f deploy/k8s/04-api.yaml
 kubectl apply -f deploy/k8s/05-ingest.yaml
@@ -82,7 +82,7 @@ Built the same way `docker-compose.yml` builds them locally
 `frontend/Dockerfile`) — push them to whatever registry your cluster can
 pull from and update the `image:` fields accordingly; these manifests
 reference the same untagged local names `docker compose build` produces
-(`argusops-api:latest`, etc.) as a placeholder.
+(`kuruops-api:latest`, etc.) as a placeholder.
 
 ## Health checks and resource limits
 
@@ -98,8 +98,8 @@ restart storm instead of just letting readiness route around it.
 `resources.requests`/`limits` mirror
 `docker-compose.yml`'s `mem_limit`/`cpus` for the same services — same
 caveat applies: sized for trying this out, not a production sizing
-recommendation. Watch the real `argusops_db_pool_*` /
-`argusops_http_request_duration_seconds` series on `/metrics` once deployed
+recommendation. Watch the real `kuruops_db_pool_*` /
+`kuruops_http_request_duration_seconds` series on `/metrics` once deployed
 and adjust from there.
 
 ## Monitoring

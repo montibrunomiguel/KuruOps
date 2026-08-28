@@ -11,6 +11,23 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Changed
+
+- **Project renamed from ArgusOps to KuruOps** — inspired by the Curupira, a figure from Brazilian
+  folklore who protects the forest and warns its animals with a distinctive cry. The rename covers
+  the entire codebase: the Go module path (`github.com/argusops/argusops` →
+  `github.com/kuruops/kuruops`), every Docker image/container/volume/network name, the Postgres
+  database and role names (`argusops`/`argusops_app`/`argusops_worker` →
+  `kuruops`/`kuruops_app`/`kuruops_worker`), the `ARGUSOPS_APP_PASSWORD`/`ARGUSOPS_WORKER_PASSWORD`
+  env vars (now `KURUOPS_*`), the default admin's seeded email
+  (`admin@argusops.local` → `admin@kuruops.local`), Prometheus metric name prefixes, Kubernetes/
+  Terraform resource names, frontend branding (page title, sidebar, login page, logo), and every
+  doc. No functional change — purely a rename, verified with the full backend/frontend test suites,
+  a fresh `docker compose up`, and a live login → webhook-create → alert-ingest → dashboard
+  round-trip. Existing local deployments get fresh Docker volumes/database under the new project
+  name (the old `argusops_*` ones aren't migrated automatically) — see the deploy docs if you need
+  to carry data over instead of starting fresh.
+
 ### Added
 
 - Exportable incident PDF report: a "Download Report (PDF)" button on the incident detail page
@@ -60,7 +77,7 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   permanently deleted by `backend/cmd/worker`'s hourly `sweepDataRetention` job once its retention
   period elapses since it closed — an open one is never touched, no matter its age. Evidence
   attached to a deleted alert/incident (images in S3/GCS/Google Drive/local disk) is never
-  removed — only ArgusOps's own record of the alert/incident, since nothing in this codebase has
+  removed — only KuruOps's own record of the alert/incident, since nothing in this codebase has
   ever implemented deleting from blob storage in the first place.
 - Settings → Conectores → Slack: connect/disconnect a Slack workspace via bot-token OAuth
   (`internal/slackclient`, `SlackConfigService`). Foundation only — no message/thread/channel sync
@@ -153,7 +170,7 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   self-hosted/OpenAI-compatible LLM provider's `base_url` were all dialed with a plain
   `http.Client` — anyone with Settings access to those three areas could point one at
   `http://169.254.169.254/...` (a cloud metadata endpoint) or an internal-only service and get
-  ArgusOps to make that request for them (SSRF). All three now dial through a new
+  KuruOps to make that request for them (SSRF). All three now dial through a new
   `internal/httpguard.NewClient`, which refuses to connect to a loopback/link-local/private
   address (checked against the resolved IP, not just the hostname string, so it isn't bypassable
   by DNS rebinding); a genuinely on-prem deployment can opt out with

@@ -1,8 +1,8 @@
 <p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# ArgusOps backend
+# KuruOps backend
 
-Go implementation of the backend described in the design handoff (`design_handoff_argusops/`) and
+Go implementation of the backend described in the design handoff (`design_handoff_kuruops/`) and
 the architecture review. Three binaries, one module:
 
 | Command | What it does | Why it's separate |
@@ -14,13 +14,13 @@ the architecture review. Three binaries, one module:
 ## Running locally
 
 The fastest path is `task deploy:up` from the repo root (see the root `README.md`) — it brings up
-Postgres via Docker, applies migrations, creates the `argusops_app` role, and builds/runs the three
+Postgres via Docker, applies migrations, creates the `kuruops_app` role, and builds/runs the three
 binaries in containers.
 
 To run the binaries directly on the machine (no Docker for Go, only for Postgres):
 
 ```bash
-cp .env.example .env   # adjust DATABASE_URL after creating the argusops_app role (see db/README.md)
+cp .env.example .env   # adjust DATABASE_URL after creating the kuruops_app role (see db/README.md)
 export $(cat .env | xargs)
 make run-api      # :8080
 make run-ingest   # reuses HTTP_ADDR -- run in separate processes/terminals with different ports
@@ -28,13 +28,13 @@ make run-worker
 ```
 
 Every first deploy already ships with a default admin (`db/migrations/0002_seed_default_admin.up.sql`) —
-`admin@argusops.local` / `ChangeMe123!`, with `must_change_password=true`. Testing the local login
+`admin@kuruops.local` / `ChangeMe123!`, with `must_change_password=true`. Testing the local login
 (`AUTH_MODE=dev` is enough — no need to generate JWT keys or switch to `dev-headers`; login is real
 authentication even in dev mode, only key generation becomes ephemeral):
 
 ```bash
 curl -X POST http://localhost:8080/auth/login \
-  -d '{"email":"admin@argusops.local","password":"ChangeMe123!"}'
+  -d '{"email":"admin@kuruops.local","password":"ChangeMe123!"}'
 # -> {"token":"...", "user": {"mustChangePassword": true, ...}}
 
 # with mustChangePassword=true, EVERY other endpoint under /api/v1 responds 403
@@ -52,7 +52,7 @@ To create other local users (there's no signup endpoint — see
 `go run ./cmd/hashpw '<password>'`, never write the hash by hand, and insert it via SQL against the
 single tenant (`select id from tenants` — always one row, see `TenantRepository.GetDefault`).
 
-ArgusOps is single-instance software (see the architecture review): there's no concept of a
+KuruOps is single-instance software (see the architecture review): there's no concept of a
 "company"/tenant at login — `tenant_id` still runs through everything under the hood (to allow real
 multi-tenant SaaS in the future without rewriting the schema), but the API always resolves the
 single tenant automatically. "Company" only exists as a tag on alerts/incidents (the user's
@@ -216,8 +216,8 @@ curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/ldap \
 # GET /auth/saml/metadata and register it with the IdP
 curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/saml \
   -H "Authorization: Bearer <admin-token>" \
-  -d '{"idpMetadataUrl":"https://idp.acme.com/metadata","acsUrl":"https://argusops.acme.com/auth/saml/acs",
-       "spEntityId":"https://argusops.acme.com/auth/saml","groupAttribute":"groups"}'
+  -d '{"idpMetadataUrl":"https://idp.acme.com/metadata","acsUrl":"https://kuruops.acme.com/auth/saml/acs",
+       "spEntityId":"https://kuruops.acme.com/auth/saml","groupAttribute":"groups"}'
 ```
 
 ## Code pattern

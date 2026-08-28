@@ -17,7 +17,7 @@ export function BrandMark() {
 
   return (
     <div className="sidebar-brand-mark">
-      <img src={src} alt="ArgusOps" />
+      <img src={src} alt="KuruOps" />
     </div>
   );
 }

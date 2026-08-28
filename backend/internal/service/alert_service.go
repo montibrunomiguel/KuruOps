@@ -14,11 +14,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/jsonpath"
-	"github.com/argusops/argusops/internal/notifier"
-	"github.com/argusops/argusops/internal/repository"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/jsonpath"
+	"github.com/kuruops/kuruops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/repository"
 )
 
 // OnCallResolver resolves who's on shift right now -- satisfied by

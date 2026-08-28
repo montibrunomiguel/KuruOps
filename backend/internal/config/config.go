@@ -13,7 +13,7 @@ import (
 
 type Config struct {
 	// DatabaseURL must point to a role WITHOUT bypassrls / table ownership
-	// (e.g. argusops_app), otherwise row-level security has no effect.
+	// (e.g. kuruops_app), otherwise row-level security has no effect.
 	DatabaseURL string
 
 	HTTPAddr string
@@ -46,7 +46,7 @@ type Config struct {
 	UploadDir string
 
 	// AppBaseURL is the externally-reachable origin of the frontend (e.g.
-	// https://argusops.example.com), used to build links embedded in
+	// https://kuruops.example.com), used to build links embedded in
 	// outbound email (password reset). Only cmd/api needs this.
 	AppBaseURL string
 
@@ -71,7 +71,7 @@ type Config struct {
 
 	// KMS* configure secrets.AWSKMSStore, only read when SecretsBackend="kms".
 	// Static credentials, not an ambient IAM role -- same reasoning as
-	// blobstore.NewS3Store: ArgusOps is self-hosted and may not be running
+	// blobstore.NewS3Store: KuruOps is self-hosted and may not be running
 	// inside AWS at all.
 	KMSRegion          string
 	KMSAccessKeyID     string
@@ -105,7 +105,7 @@ type Config struct {
 	// blocked on pool.Acquire indefinitely instead of failing cleanly --
 	// pgx's Acquire/Query/Exec all respect the request context's deadline,
 	// so this is what actually turns "hangs forever" into "fails after N
-	// seconds so the client (and whatever's watching argusops_http_requests_
+	// seconds so the client (and whatever's watching kuruops_http_requests_
 	// 5xx_total on /metrics) finds out something is wrong."
 	HTTPRequestTimeout time.Duration
 

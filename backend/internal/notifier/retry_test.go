@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/notifier"
 )
 
 // flakySender fails the first failCount calls, then succeeds -- lets tests

@@ -9,11 +9,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/repository"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/repository"
 )
 
 // passwordResetTokenTTL is deliberately much shorter than refreshTokenTTL --
@@ -71,9 +71,9 @@ func (s *PasswordResetService) RequestReset(ctx context.Context, tenantID uuid.U
 		link := fmt.Sprintf("%s/reset-password?token=%s", s.appBaseURL, plaintext)
 		msg := mailer.Message{
 			To:      u.Email,
-			Subject: "Reset your ArgusOps password",
+			Subject: "Reset your KuruOps password",
 			Body: fmt.Sprintf(
-				"Use the link below to reset your ArgusOps password. It expires in 1 hour.\n\n%s\n\nIf you didn't request this, you can ignore this email.",
+				"Use the link below to reset your KuruOps password. It expires in 1 hour.\n\n%s\n\nIf you didn't request this, you can ignore this email.",
 				link,
 			),
 		}

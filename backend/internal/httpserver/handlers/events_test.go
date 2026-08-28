@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/events"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/events"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // newTestBroadcaster mirrors internal/events' own test helper of the same

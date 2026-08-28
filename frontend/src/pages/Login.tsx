@@ -78,7 +78,7 @@ export function LoginPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
             <BrandMark />
             <div>
-              <div className="sidebar-brand-title">ArgusOps</div>
+              <div className="sidebar-brand-title">KuruOps</div>
               <div className="sidebar-brand-sub">{t("sidebar.brandSub")}</div>
             </div>
           </div>
@@ -127,7 +127,7 @@ export function LoginPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
             <BrandMark />
             <div>
-              <div className="sidebar-brand-title">ArgusOps</div>
+              <div className="sidebar-brand-title">KuruOps</div>
               <div className="sidebar-brand-sub">{t("sidebar.brandSub")}</div>
             </div>
           </div>

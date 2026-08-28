@@ -17,7 +17,7 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 
-	"github.com/argusops/argusops/internal/httpguard"
+	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
 // samlMetadataHTTPClient fetches IDPMetadataURL, which an admin types into
@@ -173,7 +173,7 @@ func BuildServiceProvider(ctx context.Context, p SAMLParams) (*saml.ServiceProvi
 // echoes it back verbatim in the POST body, immune to cookie SameSite
 // rules, so RedirectToIDP carries the request ID there instead of (or in
 // addition to) the cookie.
-const samlRequestIDCookie = "argusops_saml_req"
+const samlRequestIDCookie = "kuruops_saml_req"
 
 // RedirectToIDP starts the SP-initiated login flow: builds an
 // AuthnRequest, remembers its ID for the later ACS check (via RelayState,

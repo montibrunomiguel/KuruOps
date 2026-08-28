@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // Path resolution itself (TestResolveJSONPath) now lives in

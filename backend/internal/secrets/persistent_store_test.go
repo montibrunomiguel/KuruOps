@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // testEncryptionKey is the base64 of 32 arbitrary bytes -- any valid

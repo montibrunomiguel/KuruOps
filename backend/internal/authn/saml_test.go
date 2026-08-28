@@ -10,19 +10,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestGenerateSPKeyPair(t *testing.T) {
-	certPEM, keyPEM, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
+	certPEM, keyPEM, err := authn.GenerateSPKeyPair("https://kuruops.example/saml/metadata")
 	require.NoError(t, err)
 	assert.Contains(t, certPEM, "BEGIN CERTIFICATE")
 	assert.Contains(t, keyPEM, "BEGIN RSA PRIVATE KEY")
 }
 
 func TestBuildServiceProvider(t *testing.T) {
-	spCert, spKey, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
+	spCert, spKey, err := authn.GenerateSPKeyPair("https://kuruops.example/saml/metadata")
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
@@ -30,20 +30,20 @@ func TestBuildServiceProvider(t *testing.T) {
 
 	t.Run("valid config with inline IdP metadata XML", func(t *testing.T) {
 		sp, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
-			EntityID:       "https://argusops.example/saml/metadata",
-			ACSURL:         "https://argusops.example/auth/saml/acs",
+			EntityID:       "https://kuruops.example/saml/metadata",
+			ACSURL:         "https://kuruops.example/auth/saml/acs",
 			IDPMetadataXML: &metadataXML,
 			CertPEM:        spCert,
 			KeyPEM:         spKey,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "https://argusops.example/saml/metadata", sp.EntityID)
-		assert.Equal(t, "https://argusops.example/auth/saml/acs", sp.AcsURL.String())
+		assert.Equal(t, "https://kuruops.example/saml/metadata", sp.EntityID)
+		assert.Equal(t, "https://kuruops.example/auth/saml/acs", sp.AcsURL.String())
 	})
 
 	t.Run("invalid SP certificate PEM", func(t *testing.T) {
 		_, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
-			EntityID: "e", ACSURL: "https://argusops.example/acs",
+			EntityID: "e", ACSURL: "https://kuruops.example/acs",
 			IDPMetadataXML: &metadataXML,
 			CertPEM:        "not a pem block",
 			KeyPEM:         spKey,
@@ -53,7 +53,7 @@ func TestBuildServiceProvider(t *testing.T) {
 
 	t.Run("invalid SP key PEM", func(t *testing.T) {
 		_, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
-			EntityID: "e", ACSURL: "https://argusops.example/acs",
+			EntityID: "e", ACSURL: "https://kuruops.example/acs",
 			IDPMetadataXML: &metadataXML,
 			CertPEM:        spCert,
 			KeyPEM:         "not a pem block",
@@ -64,7 +64,7 @@ func TestBuildServiceProvider(t *testing.T) {
 	t.Run("malformed IdP metadata XML", func(t *testing.T) {
 		bogus := "<not><valid saml metadata"
 		_, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
-			EntityID: "e", ACSURL: "https://argusops.example/acs",
+			EntityID: "e", ACSURL: "https://kuruops.example/acs",
 			IDPMetadataXML: &bogus,
 			CertPEM:        spCert,
 			KeyPEM:         spKey,
@@ -74,7 +74,7 @@ func TestBuildServiceProvider(t *testing.T) {
 
 	t.Run("no IdP metadata source configured at all", func(t *testing.T) {
 		_, err := authn.BuildServiceProvider(context.Background(), authn.SAMLParams{
-			EntityID: "e", ACSURL: "https://argusops.example/acs",
+			EntityID: "e", ACSURL: "https://kuruops.example/acs",
 			CertPEM: spCert,
 			KeyPEM:  spKey,
 		})
@@ -118,7 +118,7 @@ func TestResolveIDPMetadata_BuildServiceProviderFromMetadata_MatchBuildServicePr
 
 	t.Run("invalid SP certificate PEM still errors on the metadata-provided path", func(t *testing.T) {
 		_, err := authn.BuildServiceProviderFromMetadata(authn.SAMLParams{
-			EntityID: "e", ACSURL: "https://argusops.example/acs",
+			EntityID: "e", ACSURL: "https://kuruops.example/acs",
 			CertPEM: "not a pem block", KeyPEM: params.KeyPEM,
 		}, metadata)
 		assert.Error(t, err)
@@ -138,14 +138,14 @@ func TestResolveIDPMetadata_MalformedXML(t *testing.T) {
 
 func buildTestSP(t *testing.T) *authn.SAMLParams {
 	t.Helper()
-	spCert, spKey, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
+	spCert, spKey, err := authn.GenerateSPKeyPair("https://kuruops.example/saml/metadata")
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
 	metadataXML := testutil.IDPMetadataXML(t, "https://idp.example/metadata", idpCert)
 	return &authn.SAMLParams{
-		EntityID:       "https://argusops.example/saml/metadata",
-		ACSURL:         "https://argusops.example/auth/saml/acs",
+		EntityID:       "https://kuruops.example/saml/metadata",
+		ACSURL:         "https://kuruops.example/auth/saml/acs",
 		IDPMetadataXML: &metadataXML,
 		CertPEM:        spCert,
 		KeyPEM:         spKey,
@@ -156,7 +156,7 @@ func TestRedirectToIDP(t *testing.T) {
 	sp, err := authn.BuildServiceProvider(context.Background(), *buildTestSP(t))
 	require.NoError(t, err)
 
-	req := httptest.NewRequest("GET", "https://argusops.example/auth/saml/login", nil)
+	req := httptest.NewRequest("GET", "https://kuruops.example/auth/saml/login", nil)
 	rec := httptest.NewRecorder()
 
 	err = authn.RedirectToIDP(sp, rec, req)
@@ -188,7 +188,7 @@ func TestServeMetadata(t *testing.T) {
 
 	assert.Equal(t, "application/samlmetadata+xml", rec.Header().Get("Content-Type"))
 	assert.Contains(t, rec.Body.String(), "EntityDescriptor")
-	assert.Contains(t, rec.Body.String(), "https://argusops.example/saml/metadata")
+	assert.Contains(t, rec.Body.String(), "https://kuruops.example/saml/metadata")
 }
 
 func TestParseAssertion_RejectsMissingOrInvalidResponse(t *testing.T) {
@@ -196,7 +196,7 @@ func TestParseAssertion_RejectsMissingOrInvalidResponse(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("no SAMLResponse in the POST body", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "https://argusops.example/auth/saml/acs", strings.NewReader(""))
+		req := httptest.NewRequest("POST", "https://kuruops.example/auth/saml/acs", strings.NewReader(""))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 
@@ -205,7 +205,7 @@ func TestParseAssertion_RejectsMissingOrInvalidResponse(t *testing.T) {
 	})
 
 	t.Run("garbage SAMLResponse value", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "https://argusops.example/auth/saml/acs", strings.NewReader("SAMLResponse=not-valid-base64%3D%3D"))
+		req := httptest.NewRequest("POST", "https://kuruops.example/auth/saml/acs", strings.NewReader("SAMLResponse=not-valid-base64%3D%3D"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 

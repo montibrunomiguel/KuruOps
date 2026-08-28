@@ -35,12 +35,12 @@ esse problema porque `net.Listen(":PORT")` do Go já faz bind dual-stack por pad
 
 Acontece com qualquer volume novo montado num diretório que a imagem não tinha antes — Docker cria
 o ponto de montagem como `root:root` na primeira vez, mesmo que o container rode como `USER
-argusops` (ver `backend/Dockerfile`). Sintoma: erro `permission denied` tentando escrever ali logo
+kuruops` (ver `backend/Dockerfile`). Sintoma: erro `permission denied` tentando escrever ali logo
 na subida do container (foi assim que o volume `dev-jwt-keys:/app/.dev-keys` quebrou na primeira
 tentativa).
 
 Fix: criar o diretório de destino *dentro do Dockerfile*, como o usuário não-root, antes do
-`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` depois do `USER argusops` herdado) — Docker copia a
+`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` depois do `USER kuruops` herdado) — Docker copia a
 ownership desse diretório pro volume na primeira montagem, já que ele existe e tem dono certo no
 layer da imagem. Se o volume já foi criado uma vez com dono errado (por já ter subido antes do
 fix), rebuildar a imagem sozinho não resolve — é preciso `docker volume rm` no volume específico

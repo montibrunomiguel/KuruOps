@@ -52,7 +52,7 @@ export function ChangePasswordPage() {
           <div className="sidebar-brand-mark">A</div>
           <div>
             <div className="sidebar-brand-title">{t("changePassword.title")}</div>
-            <div className="sidebar-brand-sub">ArgusOps</div>
+            <div className="sidebar-brand-sub">KuruOps</div>
           </div>
         </div>
 

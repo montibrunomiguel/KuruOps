@@ -6,13 +6,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/dbmigrate"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/dbmigrate"
 )
 
 // DatabaseMigrationHandlers is Settings -> External Database: admin-only,
 // same gate as every other /settings/... route. Unlike the rest of
-// Settings, this doesn't read/write any of ArgusOps' own tables -- it
+// Settings, this doesn't read/write any of KuruOps' own tables -- it
 // drives dbmigrate.Service directly against a customer-supplied target,
 // using sourcePool (this deployment's own bundled database) as the copy
 // source. See dbmigrate.Service.Migrate for the full sequence and why this

@@ -11,10 +11,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 // maxBulkIDs caps a single bulk request -- generous enough to cover a full

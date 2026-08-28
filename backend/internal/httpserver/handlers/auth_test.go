@@ -16,16 +16,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // newAuthHandlers wires AuthHandlers against the real seeded default tenant
-// (admin@argusops.local / ChangeMe123!, see db/migrations/0002_seed_default_admin.up.sql)
+// (admin@kuruops.local / ChangeMe123!, see db/migrations/0002_seed_default_admin.up.sql)
 // -- resolveTenant always resolves that single tenant, so login-success
 // tests have no other way to reach it than through the actual seed data.
 func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
@@ -46,7 +46,7 @@ func newAuthHandlersAndService(t *testing.T) (*handlers.AuthHandlers, *service.A
 	// loginAttempts (scope "login_email") is backed by a shared Postgres
 	// table now, not a fresh in-memory map per test process (see
 	// KeyedLimiter) -- several tests in this file legitimately submit the
-	// real seeded admin@argusops.local address to exercise a successful
+	// real seeded admin@kuruops.local address to exercise a successful
 	// login, and without this they'd accumulate against the same 10-per-
 	// 15-minute budget across every test (and every previous run within
 	// that window) instead of each test getting the clean slate the old
@@ -80,7 +80,7 @@ func TestAuthHandlers_LoginLocal(t *testing.T) {
 	r := newRouter(h.Routes)
 
 	t.Run("correct seeded credentials -- 200, mustChangePassword true", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"email": "admin@argusops.local", "password": "ChangeMe123!"})
+		body, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "ChangeMe123!"})
 		req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
 		rec := doRequest(r, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -89,11 +89,11 @@ func TestAuthHandlers_LoginLocal(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp["token"])
 		user := resp["user"].(map[string]any)
-		assert.Equal(t, "admin@argusops.local", user["email"])
+		assert.Equal(t, "admin@kuruops.local", user["email"])
 	})
 
 	t.Run("wrong password -- 401", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"email": "admin@argusops.local", "password": "wrong"})
+		body, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "wrong"})
 		req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -191,7 +191,7 @@ func TestAuthHandlers_Refresh(t *testing.T) {
 	h := newAuthHandlers(t)
 	r := newRouter(h.Routes)
 
-	loginBody, _ := json.Marshal(map[string]string{"email": "admin@argusops.local", "password": "ChangeMe123!"})
+	loginBody, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "ChangeMe123!"})
 	loginReq := httptest.NewRequest("POST", "/login", bytes.NewReader(loginBody))
 	loginRec := doRequest(r, loginReq)
 	require.Equal(t, http.StatusOK, loginRec.Code)

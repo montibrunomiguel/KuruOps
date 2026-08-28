@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 // SMTPConfigHandlers is Settings -> SMTP: admin-only, same shape as

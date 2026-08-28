@@ -65,7 +65,7 @@ export function Sidebar() {
         <div className="sidebar-brand">
           <BrandMark />
           <div>
-            <div className="sidebar-brand-title">ArgusOps</div>
+            <div className="sidebar-brand-title">KuruOps</div>
             <div className="sidebar-brand-sub">{t("sidebar.brandSub")}</div>
           </div>
           <button

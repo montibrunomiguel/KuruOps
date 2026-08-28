@@ -6,7 +6,7 @@ variable "project_id" {
 variable "name" {
   description = "Short name prefixed onto every resource (cluster, DB instance, Artifact Registry repo...)."
   type        = string
-  default     = "argusops"
+  default     = "kuruops"
 }
 
 variable "environment" {
@@ -78,7 +78,7 @@ variable "db_master_password" {
 # Settings -> Storage Integration feature (internal/blobstore's GCS
 # backend). Same reasoning as the AWS stack's create_uploads_bucket: that
 # Settings panel takes a static credential pasted into the UI, not an
-# ambient identity, because ArgusOps is self-hosted and may not be running
+# ambient identity, because KuruOps is self-hosted and may not be running
 # inside GCP at all. Set to false to stick with the default local-disk
 # uploads PVC (fine at replicas: 1).
 variable "create_uploads_bucket" {

@@ -1,7 +1,7 @@
 variable "project" {
   description = "Short name prefixed onto every resource (VPC, cluster, DB, ECR repos...)."
   type        = string
-  default     = "argusops"
+  default     = "kuruops"
 }
 
 variable "environment" {
@@ -73,12 +73,12 @@ variable "db_engine_version" {
 }
 
 # The RDS master user -- used ONLY to run db/migrations and to create the
-# argusops_app/argusops_worker roles (see db/init/*.sql). Never handed to
+# kuruops_app/kuruops_worker roles (see db/init/*.sql). Never handed to
 # a running api/ingest/worker container; those get their own least-privilege
 # roles' connection strings instead (see the top-level deploy/README.md).
 variable "db_master_username" {
   type    = string
-  default = "argusops_admin"
+  default = "kuruops_admin"
 }
 
 variable "db_master_password" {
@@ -91,7 +91,7 @@ variable "db_master_password" {
 # Whether to create an IAM user + access key + S3 bucket for the app's
 # Settings -> Storage Integration feature (internal/blobstore's S3 backend).
 # That feature takes a static access key/secret pasted into the UI, not an
-# ambient IAM role -- see internal/blobstore's own doc comment: ArgusOps is
+# ambient IAM role -- see internal/blobstore's own doc comment: KuruOps is
 # self-hosted and may not be running inside AWS at all, so it never assumes
 # IRSA. Set to false if you'd rather stick with the default local-disk
 # uploads PVC (fine at replicas: 1, see deploy/k8s/README.md).

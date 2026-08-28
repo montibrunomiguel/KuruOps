@@ -48,7 +48,7 @@ export function ResetPasswordPage() {
           <BrandMark />
           <div>
             <div className="sidebar-brand-title">{t("resetPasswordPage.title")}</div>
-            <div className="sidebar-brand-sub">ArgusOps</div>
+            <div className="sidebar-brand-sub">KuruOps</div>
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 <p align="right"><a href="PLANO_DE_MELHORIAS.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# Plano de Análise e Proposta de Melhorias — ArgusOps
+# Plano de Análise e Proposta de Melhorias — KuruOps
 
 > **Status: todas as 3 fases abaixo foram implementadas.** Este documento é mantido como registro
 > histórico do diagnóstico e do raciocínio por trás de cada item — para o estado atual e mais
@@ -23,7 +23,7 @@
 
 ## Visão Geral da Aplicação
 
-O **ArgusOps** é uma plataforma moderna e open-source de gerenciamento de alertas de segurança (SOC) e resposta a incidentes (IRP/SIEM Incident Response). Ela foi projetada com arquitetura Go + PostgreSQL no backend e React + Vite + TypeScript no frontend.
+O **KuruOps** é uma plataforma moderna e open-source de gerenciamento de alertas de segurança (SOC) e resposta a incidentes (IRP/SIEM Incident Response). Ela foi projetada com arquitetura Go + PostgreSQL no backend e React + Vite + TypeScript no frontend.
 
 ### Componentes Principais
 
@@ -42,7 +42,7 @@ graph TD
 2. **`cmd/ingest`**: Serviço isolado para ingestão de alertas via webhooks de alta volumetria, utilizando tokens rotacionáveis e hash SHA-256.
 3. **`cmd/worker`**: Processador de fundo responsável pelo recálculo periódico (1 min) de Views Materializadas (`mv_alert_daily_stats`, `mv_incident_kpis`) para KPIs operacionais (MTTA/MTTR, SLAs).
 4. **`frontend/`**: Interface de usuário rica construída em React, TypeScript e Vite com internacionalização (i18n), estatísticas em tempo real, suporte a tema escuro/claro e controle por papel (RBAC/RLS).
-5. **`db/`**: Banco PostgreSQL com **Row-Level Security (RLS)** estrito e princípio do menor privilégio através da role `argusops_app`.
+5. **`db/`**: Banco PostgreSQL com **Row-Level Security (RLS)** estrito e princípio do menor privilégio através da role `kuruops_app`.
 
 ---
 
@@ -101,7 +101,7 @@ Recomendamos a implementação das melhorias organizadas em 3 fases prioritária
 ### Fase 2: Automação Agêntica de SOC & Ingestão Enriquecida (Médio Prazo)
 
 > [!TIP]
-> Eleva o valor operacional do ArgusOps no dia a dia do SOC, automatizando triagem e resposta rápida através do ecossistema MCP e IA.
+> Eleva o valor operacional do KuruOps no dia a dia do SOC, automatizando triagem e resposta rápida através do ecossistema MCP e IA.
 
 1. **Loop Agêntico de Triagem com MCP (AI Agent Loop)**
    - Evoluir o `AIAnalysisService` para suportar *Tool Use* iterativo.
@@ -120,7 +120,7 @@ Recomendamos a implementação das melhorias organizadas em 3 fases prioritária
 2. **Engine de On-Call / Escalonamento**
    - Conectar o `on_call_shift_service.go` a notificações externas via Webhook/PagerDuty/Slack para alertas de severidade alta/crítica sem atendimento dentro do SLA.
 3. **Exportação de Logs de Auditoria SIEM / CEF / Syslog**
-   - Endpoint e worker para streaming de eventos de auditoria do ArgusOps para SIEM externo.
+   - Endpoint e worker para streaming de eventos de auditoria do KuruOps para SIEM externo.
 
 ---
 

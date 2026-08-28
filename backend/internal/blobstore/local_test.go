@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/blobstore"
+	"github.com/kuruops/kuruops/internal/blobstore"
 )
 
 func TestLocalStore_PutAndGet(t *testing.T) {

@@ -1,6 +1,6 @@
 <p align="right"><a href="PLANO_DE_MELHORIAS.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# Analysis and Improvement Proposal Plan — ArgusOps
+# Analysis and Improvement Proposal Plan — KuruOps
 
 > **Status: all 3 phases below have been implemented.** This document is kept as a historical
 > record of the diagnosis and the reasoning behind each item — for the current, more precise state
@@ -23,7 +23,7 @@
 
 ## Application Overview
 
-**ArgusOps** is a modern, open-source security alert management (SOC) and incident response
+**KuruOps** is a modern, open-source security alert management (SOC) and incident response
 (IRP/SIEM Incident Response) platform. It was designed with a Go + PostgreSQL backend architecture
 and a React + Vite + TypeScript frontend.
 
@@ -44,7 +44,7 @@ graph TD
 2. **`cmd/ingest`**: Isolated service for ingesting alerts via high-volume webhooks, using rotatable tokens and SHA-256 hashing.
 3. **`cmd/worker`**: Background processor responsible for periodic (1 min) recalculation of Materialized Views (`mv_alert_daily_stats`, `mv_incident_kpis`) for operational KPIs (MTTA/MTTR, SLAs).
 4. **`frontend/`**: Rich user interface built with React, TypeScript, and Vite, with internationalization (i18n), real-time statistics, dark/light theme support, and role-based control (RBAC/RLS).
-5. **`db/`**: PostgreSQL database with strict **Row-Level Security (RLS)** and the principle of least privilege via the `argusops_app` role.
+5. **`db/`**: PostgreSQL database with strict **Row-Level Security (RLS)** and the principle of least privilege via the `kuruops_app` role.
 
 ---
 
@@ -103,7 +103,7 @@ We recommend implementing the improvements organized into 3 priority phases:
 ### Phase 2: SOC Agentic Automation & Enriched Ingestion (Medium Term)
 
 > [!TIP]
-> Raises ArgusOps's day-to-day operational value for the SOC, automating triage and rapid response through the MCP and AI ecosystem.
+> Raises KuruOps's day-to-day operational value for the SOC, automating triage and rapid response through the MCP and AI ecosystem.
 
 1. **MCP Agentic Triage Loop (AI Agent Loop)**
    - Evolve `AIAnalysisService` to support iterative Tool Use.
@@ -122,7 +122,7 @@ We recommend implementing the improvements organized into 3 priority phases:
 2. **On-Call / Escalation Engine**
    - Connect `on_call_shift_service.go` to external notifications via Webhook/PagerDuty/Slack for high/critical severity alerts not handled within the SLA.
 3. **SIEM Audit Log Export / CEF / Syslog**
-   - Endpoint and worker to stream ArgusOps audit events to an external SIEM.
+   - Endpoint and worker to stream KuruOps audit events to an external SIEM.
 
 ---
 

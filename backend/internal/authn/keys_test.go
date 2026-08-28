@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
+	"github.com/kuruops/kuruops/internal/authn"
 )
 
 // generateEd25519 produces a non-RSA keypair so tests can exercise

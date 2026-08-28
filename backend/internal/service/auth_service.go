@@ -10,17 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
 )
 
 // totpIssuer is the "issuer" label an authenticator app (Google
 // Authenticator, 1Password, ...) shows next to the account name once a
 // QR code from GenerateMFAEnrollment is scanned -- cosmetic only, does not
 // affect verification.
-const totpIssuer = "ArgusOps"
+const totpIssuer = "KuruOps"
 
 // AuthService is where local, LDAP, and SAML login all converge on the same
 // two outputs: a domain.User (created/updated as needed) and a signed

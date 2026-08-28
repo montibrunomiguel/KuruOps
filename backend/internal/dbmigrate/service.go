@@ -19,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/repository"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/repository"
 )
 
 // Service drives the whole external-database-migration sequence:
@@ -94,7 +94,7 @@ func (s *Service) RunSchemaMigrations(ctx context.Context, target TargetConfig) 
 
 // clearSeedData undoes db/migrations/0002_seed_default_admin.up.sql's
 // effect on target: that migration always seeds one 'default' tenant plus
-// an admin@argusops.local user the first time it runs against an empty
+// an admin@kuruops.local user the first time it runs against an empty
 // `tenants` table, which target's schema replay just triggered -- and
 // CopyData is about to copy the *real* source tenant over, which would
 // otherwise collide with that seeded row's unique slug. Deleting every row
@@ -115,8 +115,8 @@ func (s *Service) clearSeedData(ctx context.Context, target TargetConfig) error 
 	return nil
 }
 
-// SetupRoles hand-ports db/init/argusops_app_role.sql and
-// argusops_worker_role.sql into Go: same statements, same idempotent
+// SetupRoles hand-ports db/init/kuruops_app_role.sql and
+// kuruops_worker_role.sql into Go: same statements, same idempotent
 // "CREATE ROLE may already exist, ignore that specific error" pattern
 // those files document, since ALTER ROLE ... PASSWORD (unlike ordinary
 // DML) doesn't accept a bind parameter in Postgres' grammar -- the
@@ -132,42 +132,42 @@ func (s *Service) SetupRoles(ctx context.Context, target TargetConfig, appPasswo
 	}
 	defer conn.Close(ctx)
 
-	if err := createRoleIfNotExists(ctx, conn, "argusops_app",
+	if err := createRoleIfNotExists(ctx, conn, "kuruops_app",
 		"with login nosuperuser nocreatedb nocreaterole nobypassrls"); err != nil {
 		return err
 	}
 	appStatements := []string{
-		fmt.Sprintf(`alter role argusops_app with password '%s'`, appPassword),
-		`grant usage on schema public to argusops_app`,
-		`grant select, insert, update, delete on all tables in schema public to argusops_app`,
-		`grant usage, select on all sequences in schema public to argusops_app`,
-		`alter default privileges in schema public grant select, insert, update, delete on tables to argusops_app`,
-		`alter default privileges in schema public grant usage, select on sequences to argusops_app`,
+		fmt.Sprintf(`alter role kuruops_app with password '%s'`, appPassword),
+		`grant usage on schema public to kuruops_app`,
+		`grant select, insert, update, delete on all tables in schema public to kuruops_app`,
+		`grant usage, select on all sequences in schema public to kuruops_app`,
+		`alter default privileges in schema public grant select, insert, update, delete on tables to kuruops_app`,
+		`alter default privileges in schema public grant usage, select on sequences to kuruops_app`,
 	}
 	for _, stmt := range appStatements {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("configure argusops_app: %w", err)
+			return fmt.Errorf("configure kuruops_app: %w", err)
 		}
 	}
 
-	if err := createRoleIfNotExists(ctx, conn, "argusops_worker",
+	if err := createRoleIfNotExists(ctx, conn, "kuruops_worker",
 		"with login nosuperuser nocreatedb nocreaterole bypassrls"); err != nil {
 		return err
 	}
 	workerStatements := []string{
-		fmt.Sprintf(`alter role argusops_worker with password '%s'`, workerPassword),
-		`grant usage on schema public to argusops_worker`,
-		`grant select on all tables in schema public to argusops_worker`,
-		`alter default privileges in schema public grant select on tables to argusops_worker`,
-		`grant update (sla_breached, updated_at) on incidents to argusops_worker`,
-		`grant update (escalated_at) on alerts to argusops_worker`,
-		`alter materialized view mv_alert_daily_stats owner to argusops_worker`,
-		`alter materialized view mv_incident_kpis owner to argusops_worker`,
-		`grant select on mv_alert_daily_stats, mv_incident_kpis to argusops_app`,
+		fmt.Sprintf(`alter role kuruops_worker with password '%s'`, workerPassword),
+		`grant usage on schema public to kuruops_worker`,
+		`grant select on all tables in schema public to kuruops_worker`,
+		`alter default privileges in schema public grant select on tables to kuruops_worker`,
+		`grant update (sla_breached, updated_at) on incidents to kuruops_worker`,
+		`grant update (escalated_at) on alerts to kuruops_worker`,
+		`alter materialized view mv_alert_daily_stats owner to kuruops_worker`,
+		`alter materialized view mv_incident_kpis owner to kuruops_worker`,
+		`grant select on mv_alert_daily_stats, mv_incident_kpis to kuruops_app`,
 	}
 	for _, stmt := range workerStatements {
 		if _, err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("configure argusops_worker: %w", err)
+			return fmt.Errorf("configure kuruops_worker: %w", err)
 		}
 	}
 
@@ -438,7 +438,7 @@ func quoteIdent(name string) string {
 }
 
 // generatePassword mints a random credential for the target's
-// argusops_app/argusops_worker roles -- same crypto/rand +
+// kuruops_app/kuruops_worker roles -- same crypto/rand +
 // base64.RawURLEncoding pattern as webhook token generation
 // (service.generateToken), chosen here specifically because that alphabet
 // has no quote or backslash characters, which is what makes splicing it
@@ -512,9 +512,9 @@ func (s *Service) Migrate(ctx context.Context, sourcePool *db.Pool, target Targe
 	}
 
 	appTarget := target
-	appTarget.User, appTarget.Password = "argusops_app", appPassword
+	appTarget.User, appTarget.Password = "kuruops_app", appPassword
 	workerTarget := target
-	workerTarget.User, workerTarget.Password = "argusops_worker", workerPassword
+	workerTarget.User, workerTarget.Password = "kuruops_worker", workerPassword
 
 	return &MigrationResult{
 		SchemaVersion: version,

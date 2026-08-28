@@ -2,8 +2,8 @@
 // dark/light custom property overrides off of. Dark is the app's default
 // (":root" alone already matches dark, see tokens.css), so an unset/missing
 // stored preference should read as dark, not light.
-const STORAGE_KEY = "argusops.theme";
-const THEME_CHANGE_EVENT = "argusops:theme-change";
+const STORAGE_KEY = "kuruops.theme";
+const THEME_CHANGE_EVENT = "kuruops:theme-change";
 
 export type Theme = "dark" | "light";
 

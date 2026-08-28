@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func newTestAlert(tenantID uuid.UUID, severity domain.Severity, status domain.AlertStatus, tags []string) *domain.Alert {

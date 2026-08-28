@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // SlackConfigRepository is the single-row-per-tenant "which Slack workspace

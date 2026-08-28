@@ -7,10 +7,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // dial/execute (the actual JSON-RPC call to a live MCP server) are not

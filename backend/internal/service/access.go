@@ -1,6 +1,6 @@
 package service
 
-import "github.com/argusops/argusops/internal/domain"
+import "github.com/kuruops/kuruops/internal/domain"
 
 // latestAnalysisFields derives the LatestAnalysis/LatestAnalysisStatus/
 // LatestAnalysisError trio domain.Alert and domain.Incident both expose

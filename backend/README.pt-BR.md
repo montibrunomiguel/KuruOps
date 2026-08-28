@@ -1,8 +1,8 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# ArgusOps backend
+# KuruOps backend
 
-Implementação Go do backend descrito no handoff de design (`design_handoff_argusops/`) e no
+Implementação Go do backend descrito no handoff de design (`design_handoff_kuruops/`) e no
 review de arquitetura. Três binários, um módulo:
 
 | Comando | Faz o quê | Por quê é separado |
@@ -14,12 +14,12 @@ review de arquitetura. Três binários, um módulo:
 ## Rodando local
 
 O caminho mais rápido é `task deploy:up` na raiz do repo (ver `README.md` raiz) — sobe Postgres via
-Docker, aplica migrations, cria o role `argusops_app` e builda/roda os três binários em container.
+Docker, aplica migrations, cria o role `kuruops_app` e builda/roda os três binários em container.
 
 Pra rodar os binários direto na máquina (sem Docker para o Go, só para o Postgres):
 
 ```bash
-cp .env.example .env   # ajuste DATABASE_URL depois de criar o role argusops_app (ver db/README.md)
+cp .env.example .env   # ajuste DATABASE_URL depois de criar o role kuruops_app (ver db/README.md)
 export $(cat .env | xargs)
 make run-api      # :8080
 make run-ingest   # reusa HTTP_ADDR -- rode em processos/terminais separados com portas diferentes
@@ -27,13 +27,13 @@ make run-worker
 ```
 
 Todo primeiro deploy já vem com um admin padrão (`db/migrations/0002_seed_default_admin.up.sql`) —
-`admin@argusops.local` / `ChangeMe123!`, com `must_change_password=true`. Teste do login local
+`admin@kuruops.local` / `ChangeMe123!`, com `must_change_password=true`. Teste do login local
 (`AUTH_MODE=dev` já basta — não precisa gerar chaves JWT nem trocar pra `dev-headers`; login é
 autenticação real mesmo em modo dev, só a geração de chave é que vira efêmera):
 
 ```bash
 curl -X POST http://localhost:8080/auth/login \
-  -d '{"email":"admin@argusops.local","password":"ChangeMe123!"}'
+  -d '{"email":"admin@kuruops.local","password":"ChangeMe123!"}'
 # -> {"token":"...", "user": {"mustChangePassword": true, ...}}
 
 # com mustChangePassword=true, TODO outro endpoint em /api/v1 responde 403
@@ -51,7 +51,7 @@ gere o `password_hash` com `go run ./cmd/hashpw '<senha>'`, nunca escreva o hash
 SQL contra o tenant único (`select id from tenants` — sempre uma linha, ver
 `TenantRepository.GetDefault`).
 
-ArgusOps é software single-instance (ver review de arquitetura): não existe conceito de
+KuruOps é software single-instance (ver review de arquitetura): não existe conceito de
 "empresa"/tenant no login — `tenant_id` continua em todo lugar por baixo dos panos (pra permitir
 SaaS multi-tenant real no futuro sem reescrever schema), mas a API sempre resolve o único tenant
 automaticamente. "Empresa" só existe como tag em alertas/incidentes (`allowedTags` do usuário), não
@@ -214,8 +214,8 @@ curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/ldap \
 # GET /auth/saml/metadata e registre no IdP
 curl -X PUT http://localhost:8080/api/v1/settings/identity-providers/saml \
   -H "Authorization: Bearer <admin-token>" \
-  -d '{"idpMetadataUrl":"https://idp.acme.com/metadata","acsUrl":"https://argusops.acme.com/auth/saml/acs",
-       "spEntityId":"https://argusops.acme.com/auth/saml","groupAttribute":"groups"}'
+  -d '{"idpMetadataUrl":"https://idp.acme.com/metadata","acsUrl":"https://kuruops.acme.com/auth/saml/acs",
+       "spEntityId":"https://kuruops.acme.com/auth/saml","groupAttribute":"groups"}'
 ```
 
 ## Padrão de código

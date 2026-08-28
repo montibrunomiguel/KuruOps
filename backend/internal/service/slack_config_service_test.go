@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // fakeSlackConfigRepo lets a test fail a specific repo call on demand --
@@ -46,7 +46,7 @@ func newSlackConfigServiceWithOAuth(t *testing.T) *service.SlackConfigService {
 	pool := testutil.RequireTestDB(t)
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	return service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
-		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
+		oauthStates, "test-client-id", "test-client-secret", "https://kuruops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
 }
 
 func TestSlackConfigService_GetDisconnect(t *testing.T) {

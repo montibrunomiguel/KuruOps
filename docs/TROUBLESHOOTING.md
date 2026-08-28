@@ -34,12 +34,12 @@ have this problem because Go's `net.Listen(":PORT")` already binds dual-stack by
 
 Happens with any new volume mounted at a directory the image didn't previously have — Docker
 creates the mount point as `root:root` the first time, even though the container runs as `USER
-argusops` (see `backend/Dockerfile`). Symptom: `permission denied` error trying to write there
+kuruops` (see `backend/Dockerfile`). Symptom: `permission denied` error trying to write there
 right at container startup (this is how the `dev-jwt-keys:/app/.dev-keys` volume broke on the
 first attempt).
 
 Fix: create the destination directory *inside the Dockerfile*, as the non-root user, before
-`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` after the inherited `USER argusops`) — Docker copies
+`ENTRYPOINT` (`RUN mkdir -p /app/.dev-keys` after the inherited `USER kuruops`) — Docker copies
 that directory's ownership to the volume on first mount, since it already exists with the correct
 owner in the image layer. If the volume was already created once with the wrong owner (because it
 came up before the fix), rebuilding the image alone doesn't fix it — you need `docker volume rm`

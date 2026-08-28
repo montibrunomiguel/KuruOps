@@ -9,12 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/blobstore"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/blobstore"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // fakeStorageConfigRepo lets a test fail a specific repo call on demand --
@@ -51,7 +51,7 @@ func newStorageConfigServiceWithOAuth(t *testing.T, dir string) *service.Storage
 	pool := testutil.RequireTestDB(t)
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	return service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir,
-		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
+		oauthStates, "test-client-id", "test-client-secret", "https://kuruops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 }
 
 func TestStorageConfigService_S3(t *testing.T) {
@@ -111,18 +111,18 @@ func TestStorageConfigService_GCS(t *testing.T) {
 	})
 
 	require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
-		Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
+		Bucket: "evidence", ProjectID: "kuruops-prod", CredentialsJSON: `{"type":"service_account"}`,
 	}))
 
 	cfg, err := svc.Get(t.Context(), tenantID)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.Equal(t, "argusops-prod", *cfg.GCSProjectID)
+	assert.Equal(t, "kuruops-prod", *cfg.GCSProjectID)
 	assert.NotContains(t, cfg.GCSCredentialsJSONSecretRef, "service_account", "the plaintext credentials JSON never lands in the stored ref")
 
 	t.Run("re-saving without new credentials keeps the existing ones", func(t *testing.T) {
 		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
-			Bucket: "evidence-renamed", ProjectID: "argusops-prod",
+			Bucket: "evidence-renamed", ProjectID: "kuruops-prod",
 		}))
 		got, err := svc.Get(t.Context(), tenantID)
 		require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 		// valid credential and is exercised against real GCS in Fase 3, not
 		// here.
 		require.NoError(t, svc.SaveGCS(t.Context(), tenantID, actorID, service.SaveGCSInput{
-			Bucket: "evidence", ProjectID: "argusops-prod", CredentialsJSON: `{"type":"service_account"}`,
+			Bucket: "evidence", ProjectID: "kuruops-prod", CredentialsJSON: `{"type":"service_account"}`,
 		}))
 		_, err := svc.BuildStore(t.Context(), tenantID)
 		assert.ErrorContains(t, err, "build gcs client")
@@ -271,10 +271,10 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 // need if it had one.
 const driveTestServiceAccountJSON = `{
 	"type": "service_account",
-	"project_id": "argusops-test",
+	"project_id": "kuruops-test",
 	"private_key_id": "test-key-id",
 	"private_key": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n-----END PRIVATE KEY-----\n",
-	"client_email": "test@argusops-test.iam.gserviceaccount.com",
+	"client_email": "test@kuruops-test.iam.gserviceaccount.com",
 	"client_id": "123456789",
 	"token_uri": "https://oauth2.googleapis.com/token"
 }`

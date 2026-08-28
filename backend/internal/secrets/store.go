@@ -1,4 +1,4 @@
-// Package secrets defines the boundary between ArgusOps and wherever LLM
+// Package secrets defines the boundary between KuruOps and wherever LLM
 // API keys / MCP auth material actually live. Postgres only ever stores a
 // reference string (llm_providers.api_key_secret_ref,
 // mcp_servers.auth_secret_ref) — never the secret itself — so a database

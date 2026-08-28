@@ -1,8 +1,8 @@
 <p align="right"><a href="CONTRIBUTING.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# Contributing to ArgusOps
+# Contributing to KuruOps
 
-First off, thank you for considering contributing to ArgusOps! It's contributions like yours that make ArgusOps a great open-source cybersecurity incident management tool.
+First off, thank you for considering contributing to KuruOps! It's contributions like yours that make KuruOps a great open-source cybersecurity incident management tool.
 
 ## Code of Conduct
 
@@ -21,8 +21,8 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 1. Fork and clone the repository:
    ```bash
-   git clone https://github.com/your-username/ArgusOps.git
-   cd ArgusOps
+   git clone https://github.com/your-username/KuruOps.git
+   cd KuruOps
    ```
 
 2. Start the full development stack with a single command:
@@ -30,7 +30,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
    task deploy:up
    ```
 
-3. Access the web interface at `http://localhost:3000` with default credentials: `admin@argusops.local` / `ChangeMe123!`.
+3. Access the web interface at `http://localhost:3000` with default credentials: `admin@kuruops.local` / `ChangeMe123!`.
 
 ## Development Workflow
 

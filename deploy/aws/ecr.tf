@@ -1,6 +1,6 @@
 # One repo per image, matching backend/Dockerfile's three build targets plus
 # the frontend image -- same four images docker-compose.yml builds locally
-# (argusops-api, argusops-ingest, argusops-worker, argusops-frontend).
+# (kuruops-api, kuruops-ingest, kuruops-worker, kuruops-frontend).
 
 resource "aws_ecr_repository" "images" {
   for_each             = toset(["api", "ingest", "worker", "frontend"])

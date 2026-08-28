@@ -29,7 +29,7 @@ describe("AuditExportPanel", () => {
         status: 200,
         headers: {
           "content-type": "text/plain; charset=utf-8",
-          "content-disposition": 'attachment; filename="argusops-audit-20260806T000000Z.cef.log"',
+          "content-disposition": 'attachment; filename="kuruops-audit-20260806T000000Z.cef.log"',
         },
       }),
     );
@@ -56,7 +56,7 @@ describe("AuditExportPanel", () => {
         status: 200,
         headers: {
           "content-type": "application/x-ndjson; charset=utf-8",
-          "content-disposition": 'attachment; filename="argusops-audit-20260806T000000Z.ndjson"',
+          "content-disposition": 'attachment; filename="kuruops-audit-20260806T000000Z.ndjson"',
         },
       }),
     );

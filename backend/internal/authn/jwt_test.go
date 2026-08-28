@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
+	"github.com/kuruops/kuruops/internal/authn"
 )
 
 func TestIssueVerify_RoundTrip(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/notifier"
 )
 
 func TestSlackSender_Send(t *testing.T) {
@@ -29,13 +29,13 @@ func TestSlackSender_Send(t *testing.T) {
 
 	err := notifier.SlackSender{}.Send(t.Context(), srv.URL, notifier.Notification{
 		Title: "Suspicious login", Description: "5 failed attempts from 10.0.0.5",
-		Severity: "high", AlertID: "a1", URL: "https://argusops.example/alerts/a1",
+		Severity: "high", AlertID: "a1", URL: "https://kuruops.example/alerts/a1",
 	})
 	require.NoError(t, err)
 
 	assert.Contains(t, gotBody["text"], "Suspicious login")
 	assert.Contains(t, gotBody["text"], "5 failed attempts from 10.0.0.5")
-	assert.Contains(t, gotBody["text"], "https://argusops.example/alerts/a1")
+	assert.Contains(t, gotBody["text"], "https://kuruops.example/alerts/a1")
 }
 
 func TestSlackSender_Send_ErrorResponse(t *testing.T) {

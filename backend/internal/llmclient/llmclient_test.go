@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/llmclient"
+	"github.com/kuruops/kuruops/internal/llmclient"
 )
 
 func TestNew_UnknownKind(t *testing.T) {

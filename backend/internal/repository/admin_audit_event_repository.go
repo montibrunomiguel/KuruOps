@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // AdminAuditEventRepository is admin_audit_events' data access -- see

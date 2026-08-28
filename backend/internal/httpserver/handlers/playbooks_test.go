@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func newPlaybookHandlerFixture(t *testing.T) (h *handlers.PlaybookHandlers, tenantID, actorID uuid.UUID) {
@@ -25,7 +25,7 @@ func newPlaybookHandlerFixture(t *testing.T) (h *handlers.PlaybookHandlers, tena
 	pool := testutil.RequireTestDB(t)
 	tenantID = testutil.NewTenant(t)
 	actorID = testutil.NewUser(t, tenantID, "admin", nil)
-	h = handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://argusops.example"))
+	h = handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://kuruops.example"))
 	return h, tenantID, actorID
 }
 
@@ -159,7 +159,7 @@ func TestPlaybookHandlers_TriggerStepWebhook(t *testing.T) {
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
 	alertRepo := repository.NewAlertRepository()
-	h := handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), alertRepo, "https://argusops.example"))
+	h := handlers.NewPlaybookHandlers(service.NewPlaybookService(pool, repository.NewPlaybookRepository(), alertRepo, "https://kuruops.example"))
 	r := newRouter(h.Routes)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

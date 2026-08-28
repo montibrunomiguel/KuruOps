@@ -10,9 +10,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 type Options struct {
@@ -99,7 +99,7 @@ func NewRouter(opts Options) http.Handler {
 		opts.DatabaseMigrationTimeout = defaultDatabaseMigrationTimeout
 	}
 	if opts.Tracer == nil {
-		opts.Tracer = noop.NewTracerProvider().Tracer("argusops")
+		opts.Tracer = noop.NewTracerProvider().Tracer("kuruops")
 	}
 
 	r := chi.NewRouter()

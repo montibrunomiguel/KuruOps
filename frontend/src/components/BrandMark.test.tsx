@@ -11,21 +11,21 @@ describe("BrandMark", () => {
 
   it("renders the dark-theme mark by default (unset theme reads as dark)", () => {
     render(<BrandMark />);
-    const img = screen.getByAltText("ArgusOps");
+    const img = screen.getByAltText("KuruOps");
     expect(img).toHaveAttribute("src", "/logo-mark-dark.png");
   });
 
   it("renders the light-theme mark when the stored theme is light", () => {
-    localStorage.setItem("argusops.theme", "light");
+    localStorage.setItem("kuruops.theme", "light");
     render(<BrandMark />);
-    expect(screen.getByAltText("ArgusOps")).toHaveAttribute("src", "/logo-mark-light.png");
+    expect(screen.getByAltText("KuruOps")).toHaveAttribute("src", "/logo-mark-light.png");
   });
 
   it("swaps live when the theme changes after mount", () => {
     render(<BrandMark />);
-    expect(screen.getByAltText("ArgusOps")).toHaveAttribute("src", "/logo-mark-dark.png");
+    expect(screen.getByAltText("KuruOps")).toHaveAttribute("src", "/logo-mark-dark.png");
 
     act(() => applyTheme("light"));
-    expect(screen.getByAltText("ArgusOps")).toHaveAttribute("src", "/logo-mark-light.png");
+    expect(screen.getByAltText("KuruOps")).toHaveAttribute("src", "/logo-mark-light.png");
   });
 });

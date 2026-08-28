@@ -10,7 +10,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function sessionWith() {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       refreshToken: "rt",

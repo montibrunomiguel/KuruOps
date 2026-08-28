@@ -1,10 +1,10 @@
-name: argusops
+name: kuruops
 
 # mem_limit/cpus below are conservative defaults sized for running the whole
 # stack on a single laptop, not a production sizing recommendation -- raise
 # them (or drop them entirely) for a real deployment based on actual
-# observed usage (see the new argusops_db_pool_* /
-# argusops_http_request_duration_seconds metrics on /metrics). Without any
+# observed usage (see the new kuruops_db_pool_* /
+# kuruops_http_request_duration_seconds metrics on /metrics). Without any
 # limit, a single runaway container (e.g. a stuck query, a memory leak) can
 # starve every other service on the same host.
 services:
@@ -19,7 +19,7 @@ services:
     # file's own migrate service already reads the same vars, Taskfile.yml's
     # dev-tooling commands do not.
     environment:
-      POSTGRES_DB: argusops
+      POSTGRES_DB: kuruops
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
@@ -27,7 +27,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d argusops"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kuruops"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -66,13 +66,13 @@ services:
     image: postgres:16-alpine
     profiles: ["tools"]
     environment:
-      POSTGRES_DB: argusops_target
+      POSTGRES_DB: kuruops_target
       POSTGRES_USER: ${POSTGRES_TARGET_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_TARGET_PASSWORD:-postgres}
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d argusops_target"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kuruops_target"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -91,7 +91,7 @@ services:
       [
         "migrate",
         "-path=/migrations",
-        "-database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/argusops?sslmode=disable",
+        "-database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/kuruops?sslmode=disable",
       ]
 
   api:
@@ -105,10 +105,10 @@ services:
     mem_limit: 256m
     cpus: 1.0
     environment:
-      # argusops_app has no table ownership / BYPASSRLS -- see
-      # db/init/argusops_app_role.sql and db/README.md for why that's the
+      # kuruops_app has no table ownership / BYPASSRLS -- see
+      # db/init/kuruops_app_role.sql and db/README.md for why that's the
       # whole point of row-level security actually applying.
-      DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
+      DATABASE_URL: postgres://kuruops_app:${KURUOPS_APP_PASSWORD:-kuruops_app}@postgres:5432/kuruops?sslmode=disable
       HTTP_ADDR: :8080
       # AUTH_MODE=dev generates a JWT keypair (persisted under DEV_KEYS_DIR,
       # see the dev-jwt-keys volume below) instead of requiring
@@ -180,7 +180,7 @@ services:
     mem_limit: 256m
     cpus: 1.0
     environment:
-      DATABASE_URL: postgres://argusops_app:${ARGUSOPS_APP_PASSWORD:-argusops_app}@postgres:5432/argusops?sslmode=disable
+      DATABASE_URL: postgres://kuruops_app:${KURUOPS_APP_PASSWORD:-kuruops_app}@postgres:5432/kuruops?sslmode=disable
       HTTP_ADDR: :8081
       # ingest has no JWT auth surface of its own (webhook ingest is
       # authenticated by a per-endpoint token, not a login session) -- this
@@ -214,10 +214,10 @@ services:
     mem_limit: 256m
     cpus: 0.5
     environment:
-      # argusops_worker (not argusops_app) -- it owns and refreshes
+      # kuruops_worker (not kuruops_app) -- it owns and refreshes
       # mv_alert_daily_stats/mv_incident_kpis, which needs BYPASSRLS to see
-      # across all tenants. See db/init/argusops_worker_role.sql.
-      DATABASE_URL: postgres://argusops_worker:${ARGUSOPS_WORKER_PASSWORD:-argusops_worker}@postgres:5432/argusops?sslmode=disable
+      # across all tenants. See db/init/kuruops_worker_role.sql.
+      DATABASE_URL: postgres://kuruops_worker:${KURUOPS_WORKER_PASSWORD:-kuruops_worker}@postgres:5432/kuruops?sslmode=disable
       HTTP_ADDR: :8082
       # worker has no HTTP auth surface at all -- this only matters here as
       # the same dev/production signal secrets.NewFromConfig checks before

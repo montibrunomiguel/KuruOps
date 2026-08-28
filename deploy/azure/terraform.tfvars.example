@@ -1,7 +1,7 @@
 # Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored on
 # purpose -- never commit real values, especially db_master_password.
 
-name        = "argusops"
+name        = "kuruops"
 environment = "sample"
 location    = "eastus"
 

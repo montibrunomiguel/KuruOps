@@ -2,7 +2,7 @@
 # purpose -- never commit real values, especially db_master_password.
 
 project_id  = "my-gcp-project-id"
-name        = "argusops"
+name        = "kuruops"
 environment = "sample"
 region      = "us-central1"
 zone        = "us-central1-a"

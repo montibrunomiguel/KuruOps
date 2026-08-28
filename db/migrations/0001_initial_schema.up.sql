@@ -1,4 +1,4 @@
--- ArgusOps consolidated baseline schema.
+-- KuruOps consolidated baseline schema.
 --
 -- This replaces the 50 incremental migrations that built this schema over
 -- the course of development (0001 through 0050) -- squashed into one file
@@ -104,7 +104,7 @@ CREATE TYPE public.tool_call_status_enum AS ENUM (
 -- current_tenant_id(): every row-level-security policy below keys off
 -- this. RLS is bypassed by table owners and superusers by default -- the
 -- application must connect as a non-owner, non-superuser role
--- (argusops_app) for these policies to have any effect at all. See
+-- (kuruops_app) for these policies to have any effect at all. See
 -- db/init/*.sql for that role's setup (applied once, after migrations
 -- run -- see Taskfile.yml's db:migrate / db:roles).
 -- ============================================================

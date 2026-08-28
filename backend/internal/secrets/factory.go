@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/argusops/argusops/internal/config"
-	"github.com/argusops/argusops/internal/db"
+	"github.com/kuruops/kuruops/internal/config"
+	"github.com/kuruops/kuruops/internal/db"
 )
 
 // NewFromConfig builds the Store for cfg.SecretsBackend -- shared by every

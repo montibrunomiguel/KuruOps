@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea or enhancement for ArgusOps
+about: Suggest an idea or enhancement for KuruOps
 title: '[FEAT] '
 labels: 'enhancement'
 assignees: ''

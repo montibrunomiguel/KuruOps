@@ -25,7 +25,7 @@ type AWSKMSStore struct {
 
 // NewAWSKMSStore builds a client from explicit credentials/region -- no
 // ambient AWS config file, environment variables, or IAM instance role are
-// consulted, matching blobstore.NewS3Store's reasoning: ArgusOps is
+// consulted, matching blobstore.NewS3Store's reasoning: KuruOps is
 // self-hosted and may not be running inside AWS at all.
 func NewAWSKMSStore(region, accessKeyID, secretAccessKey, keyID string) *AWSKMSStore {
 	cfg := aws.Config{

@@ -18,7 +18,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: prometheus-config
-  namespace: argusops
+  namespace: kuruops
 data:
   prometheus.yml: |
     global:
@@ -31,29 +31,29 @@ data:
             - targets: ["alertmanager:9093"]
 
     rule_files:
-      - /etc/prometheus/rules/argusops.rules.yml
+      - /etc/prometheus/rules/kuruops.rules.yml
 
     scrape_configs:
-      - job_name: argusops-api
+      - job_name: kuruops-api
         static_configs:
           - targets: ["api:8080"]
-      - job_name: argusops-ingest
+      - job_name: kuruops-ingest
         static_configs:
           - targets: ["ingest:8080"]
-      - job_name: argusops-worker
+      - job_name: kuruops-worker
         static_configs:
           - targets: ["worker:8080"]
 
   # Alert thresholds below are starting points, not tuned against real
   # traffic -- revisit once you have a few days of real
-  # argusops_http_request_duration_seconds/argusops_db_pool_* history to
+  # kuruops_http_request_duration_seconds/kuruops_db_pool_* history to
   # compare against (see docs/OPERATIONS.md's PromQL reference queries).
-  argusops.rules.yml: |
+  kuruops.rules.yml: |
     groups:
-      - name: argusops.rules
+      - name: kuruops.rules
         rules:
-          - alert: ArgusOpsScrapeTargetDown
-            expr: up{job=~"argusops-.*"} == 0
+          - alert: KuruOpsScrapeTargetDown
+            expr: up{job=~"kuruops-.*"} == 0
             for: 2m
             labels:
               severity: critical
@@ -61,11 +61,11 @@ data:
               summary: "Prometheus can't reach {{ $labels.job }}"
               description: "Scrape target {{ $labels.instance }} (job {{ $labels.job }}) has been unreachable for over 2 minutes."
 
-          - alert: ArgusOpsHighErrorRate
+          - alert: KuruOpsHighErrorRate
             expr: |
-              (sum by (job) (rate(argusops_http_requests_5xx_total[5m]))
+              (sum by (job) (rate(kuruops_http_requests_5xx_total[5m]))
                 /
-               sum by (job) (rate(argusops_http_requests_total[5m]))) > 0.05
+               sum by (job) (rate(kuruops_http_requests_total[5m]))) > 0.05
             for: 5m
             labels:
               severity: critical
@@ -73,18 +73,18 @@ data:
               summary: "{{ $labels.job }} 5xx rate above 5%"
               description: "More than 5% of {{ $labels.job }}'s requests have returned 5xx over the last 5 minutes."
 
-          - alert: ArgusOpsHighLatencyP99
+          - alert: KuruOpsHighLatencyP99
             expr: |
-              histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m]))) > 2
+              histogram_quantile(0.99, sum by (le, job) (rate(kuruops_http_request_duration_seconds_bucket[5m]))) > 2
             for: 10m
             labels:
               severity: warning
             annotations:
               summary: "{{ $labels.job }} p99 latency above 2s"
-              description: "99th percentile request latency for {{ $labels.job }} has been above 2s for 10 minutes -- see argusops_db_pool_* below for a likely cause."
+              description: "99th percentile request latency for {{ $labels.job }} has been above 2s for 10 minutes -- see kuruops_db_pool_* below for a likely cause."
 
-          - alert: ArgusOpsDBPoolSaturated
-            expr: (argusops_db_pool_acquired_conns / argusops_db_pool_max_conns) > 0.9
+          - alert: KuruOpsDBPoolSaturated
+            expr: (kuruops_db_pool_acquired_conns / kuruops_db_pool_max_conns) > 0.9
             for: 5m
             labels:
               severity: warning
@@ -92,8 +92,8 @@ data:
               summary: "{{ $labels.job }} connection pool nearly saturated"
               description: "{{ $labels.job }}'s acquired connections have been above 90% of DB_POOL_MAX_CONNS for 5 minutes -- requests may start queuing or hitting HTTP_REQUEST_TIMEOUT."
 
-          - alert: ArgusOpsWorkerSweepStale
-            expr: (time() - argusops_worker_last_sweep_success_timestamp) > 900
+          - alert: KuruOpsWorkerSweepStale
+            expr: (time() - kuruops_worker_last_sweep_success_timestamp) > 900
             for: 5m
             labels:
               severity: critical
@@ -105,7 +105,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus
-  namespace: argusops
+  namespace: kuruops
 spec:
   replicas: 1
   selector:
@@ -132,8 +132,8 @@ spec:
               mountPath: /etc/prometheus/prometheus.yml
               subPath: prometheus.yml
             - name: config
-              mountPath: /etc/prometheus/rules/argusops.rules.yml
-              subPath: argusops.rules.yml
+              mountPath: /etc/prometheus/rules/kuruops.rules.yml
+              subPath: kuruops.rules.yml
             - name: storage
               mountPath: /prometheus
           readinessProbe:
@@ -158,7 +158,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: prometheus
-  namespace: argusops
+  namespace: kuruops
 spec:
   selector:
     app: prometheus
@@ -170,7 +170,7 @@ spec:
 # 01-secret.example.yaml -- a null route means alerts fire in Prometheus/
 # Alertmanager's own UI but notify no one until this is replaced with a
 # real receiver (Slack webhook, PagerDuty, email, etc. -- see Alertmanager's
-# own receiver docs). ArgusOps' own notifier package (internal/notifier) is
+# own receiver docs). KuruOps' own notifier package (internal/notifier) is
 # for tenant-facing on-call escalation, not platform alerting -- deliberately
 # not reused here, since who gets paged for "the platform itself is
 # unhealthy" is a different audience than a tenant's own on-call rotation.
@@ -178,7 +178,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: alertmanager-config
-  namespace: argusops
+  namespace: kuruops
 data:
   alertmanager.yml: |
     route:
@@ -190,7 +190,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: alertmanager
-  namespace: argusops
+  namespace: kuruops
 spec:
   replicas: 1
   selector:
@@ -235,7 +235,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: alertmanager
-  namespace: argusops
+  namespace: kuruops
 spec:
   selector:
     app: alertmanager

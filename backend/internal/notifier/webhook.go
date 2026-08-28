@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/argusops/argusops/internal/httpguard"
+	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
 // guardedHTTPClient is deliberately separate from notifier.go's shared

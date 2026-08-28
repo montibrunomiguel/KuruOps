@@ -20,8 +20,8 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-// Setup configures the global OTel tracer provider for serviceName ("argusops-api",
-// "argusops-worker", or "argusops-ingest" -- see each cmd/*/main.go). When
+// Setup configures the global OTel tracer provider for serviceName ("kuruops-api",
+// "kuruops-worker", or "kuruops-ingest" -- see each cmd/*/main.go). When
 // otlpEndpoint is empty, it registers the SDK's no-op provider (zero
 // goroutines, zero allocation overhead beyond an interface call) and returns
 // a shutdown that's safe to call but does nothing. When otlpEndpoint is set,

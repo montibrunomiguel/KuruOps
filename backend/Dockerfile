@@ -24,17 +24,17 @@ FROM alpine:3.20 AS base
 # needed by all three binaries wherever a tenant's configured timezone
 # (Settings -> On-Call Schedule, or any other non-UTC tenant timezone) gets
 # resolved (OnCallScheduleService.ResolveCurrentAnalyst and friends).
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -H argusops
-USER argusops
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -H kuruops
+USER kuruops
 
 FROM base AS api
 COPY --from=build /out/api /usr/local/bin/api
-COPY --from=build --chown=argusops /src/db/migrations /app/db/migrations
+COPY --from=build --chown=kuruops /src/db/migrations /app/db/migrations
 # DEV_KEYS_DIR's mount point (see docker-compose.yml's dev-jwt-keys volume)
-# -- created here, owned by argusops (the non-root USER above), so Docker
+# -- created here, owned by kuruops (the non-root USER above), so Docker
 # copies that ownership into the named volume the first time it's mounted
 # empty. Without this the volume mounts root-owned and the api process
-# (running as argusops, never root) can't write its dev JWT keypair to it.
+# (running as kuruops, never root) can't write its dev JWT keypair to it.
 RUN mkdir -p /app/.dev-keys
 ENTRYPOINT ["/usr/local/bin/api"]
 

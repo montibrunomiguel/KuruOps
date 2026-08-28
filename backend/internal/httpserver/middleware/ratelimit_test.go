@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // uniqueScope returns a scope string that's unique to this call -- Allow is

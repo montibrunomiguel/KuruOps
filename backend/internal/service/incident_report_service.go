@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jung-kurt/gofpdf"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // pdfLineHeight is the default row height (mm) for a single line of body
@@ -71,7 +71,7 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	// text tr() below fixes, just in a PDF viewer's title bar/properties
 	// dialog instead of the visible page.
 	pdf.SetTitle("Incident Report: "+inc.Title, true)
-	pdf.SetAuthor("ArgusOps", false)
+	pdf.SetAuthor("KuruOps", false)
 	// Uncompressed: these reports are short (a handful of KB at most), so
 	// the size cost is negligible, and it keeps the generated PDF's content
 	// stream text-searchable with a plain byte-string tool (grep/strings,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // postmortemSystemPrompt asks for a short executive summary only -- root

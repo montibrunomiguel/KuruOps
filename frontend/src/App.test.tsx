@@ -6,7 +6,7 @@ import { AuthProvider } from "./auth/AuthContext";
 
 function sessionWith(opts: { resourceAccess?: string[]; role?: string; isAdmin?: boolean; mustChangePassword?: boolean } = {}) {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       user: {

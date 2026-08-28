@@ -6,9 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestIdentityConfigRepository_LDAP(t *testing.T) {
@@ -87,8 +87,8 @@ func TestIdentityConfigRepository_SAML(t *testing.T) {
 	cfg := &domain.SAMLConfig{
 		TenantID:        tenantID,
 		IDPMetadataURL:  &metadataURL,
-		SPEntityID:      "https://argusops.example/saml/metadata",
-		ACSURL:          "https://argusops.example/auth/saml/acs",
+		SPEntityID:      "https://kuruops.example/saml/metadata",
+		ACSURL:          "https://kuruops.example/auth/saml/acs",
 		SPCertSecretRef: "secret://saml-cert",
 		SPKeySecretRef:  "secret://saml-key",
 		GroupAttribute:  &groupAttr,
@@ -98,7 +98,7 @@ func TestIdentityConfigRepository_SAML(t *testing.T) {
 	got, err := repo.GetSAMLConfig(t.Context(), tx)
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, "https://argusops.example/saml/metadata", got.SPEntityID)
+	assert.Equal(t, "https://kuruops.example/saml/metadata", got.SPEntityID)
 	require.NotNil(t, got.IDPMetadataURL)
 	assert.Equal(t, metadataURL, *got.IDPMetadataURL)
 

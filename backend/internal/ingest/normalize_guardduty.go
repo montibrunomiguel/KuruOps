@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // guardDutyNormalizer maps an AWS GuardDuty finding (the JSON shape AWS
@@ -78,7 +78,7 @@ func (guardDutyNormalizer) Normalize(raw []byte) (NormalizedAlert, error) {
 	return na, nil
 }
 
-// guardDutySeverity maps GuardDuty's 0.1-8.9 float score to ArgusOps'
+// guardDutySeverity maps GuardDuty's 0.1-8.9 float score to KuruOps'
 // 5-tier severity, using AWS's own documented 3-tier bands (High 7.0-8.9,
 // Medium 4.0-6.9, Low 0.1-3.9) -- GuardDuty has no native "critical" tier,
 // so that severity is simply never produced by this normalizer.

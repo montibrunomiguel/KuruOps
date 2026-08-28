@@ -2,7 +2,7 @@
 
 # Threat Model
 
-Este documento descreve os limites de confiança do ArgusOps, o que cada camada de defesa garante
+Este documento descreve os limites de confiança do KuruOps, o que cada camada de defesa garante
 (e o que explicitamente não garante), e como girar um segredo sem downtime. É um complemento ao
 código, não um substituto — onde os dois divergirem, o código está certo e este documento está
 desatualizado; atualize-o no mesmo PR que mudar o comportamento descrito aqui (ver checklist do
@@ -18,7 +18,7 @@ nginx (frontend) -- serve a SPA, faz proxy de /api e /auth
    │ rede interna do Docker Compose
    ▼
 api / ingest (Go, confiável) -- autenticação e autorização são checadas aqui
-   │ role argusops_app, sem BYPASSRLS
+   │ role kuruops_app, sem BYPASSRLS
    ▼
 Postgres -- RLS por tenant_id
 ```
@@ -38,7 +38,7 @@ Postgres -- RLS por tenant_id
 - **`worker` não tem superfície HTTP nenhuma** — só roda cron interno (refresh de materialized
   view, sweep de SLA/escalonamento), então não é um alvo de rede.
 - **api/ingest/worker → Postgres**: os três conectam como o mesmo role least-privilege
-  (`argusops_app`, ver `db/init/argusops_app_role.sql`) — sem `BYPASSRLS`, sem ownership de tabela.
+  (`kuruops_app`, ver `db/init/kuruops_app_role.sql`) — sem `BYPASSRLS`, sem ownership de tabela.
   O role `postgres` (superuser, usado só por migrations/`task db:*`) contorna RLS por completo,
   de propósito — nunca é o role que uma requisição de usuário usa.
 
@@ -76,7 +76,7 @@ já que o redirect de um provedor é um GET simples do navegador, sem JWT pra an
 ## O que a Row-Level Security garante — e o que não garante
 
 RLS filtra toda query pelo `tenant_id` da sessão (`set_config('app.tenant_id', ...)`, ver
-`db.Pool.WithTenant`). Hoje o ArgusOps roda como instância única — não existe conceito de
+`db.Pool.WithTenant`). Hoje o KuruOps roda como instância única — não existe conceito de
 "empresa"/tenant no login (`README.md` raiz) — então na prática atual, RLS por `tenant_id` é
 defesa em profundidade contra um bug de query que "esqueceu" o filtro certo, não o mecanismo de
 isolamento que separa usuários entre si no dia a dia. Ela existe pronta para SaaS multi-tenant
@@ -102,7 +102,7 @@ real no futuro sem reescrever schema.
 ## O que a varredura de retenção de dados garante — e o que não garante
 
 Settings → Dados & Auditoria → Retenção configura por quanto tempo um alerta/incidente **fechado**
-fica no ArgusOps antes de ser permanentemente excluído pelo job horário `sweepDataRetention` do
+fica no KuruOps antes de ser permanentemente excluído pelo job horário `sweepDataRetention` do
 `cmd/worker` (padrão 18 meses, configurável separadamente por tipo de recurso —
 `internal/service/retention_config_service.go`).
 
@@ -120,7 +120,7 @@ fica no ArgusOps antes de ser permanentemente excluído pelo job horário `sweep
 - **Evidências em blob storage nunca são tocadas.** Anexos de comentários de alerta/incidente
   ficam no backend de storage configurado pelo tenant (S3/GCS/Google Drive/disco local),
   referenciados por URL/chave — `internal/blobstore.Store` não tem método `Delete` em lugar nenhum
-  deste código, então uma exclusão aqui só pode remover o registro do próprio ArgusOps no banco,
+  deste código, então uma exclusão aqui só pode remover o registro do próprio KuruOps no banco,
   nunca o arquivo subjacente. Essa é uma limitação de escopo deliberada e conhecida, não um
   descuido: limpar blob storage órfão não está implementado.
 - **Quem pode configurar**: o mesmo controle admin-only de qualquer outro painel de Settings
@@ -174,7 +174,7 @@ o `api.anthropic.com` fixo do tipo anthropic não é configurável pelo usuário
 nesse escopo. Qualquer um com acesso a essas três áreas de Settings pode, de outra forma, apontar
 pra `http://169.254.169.254/...` (endpoint de metadata de nuvem) ou `http://localhost:5432/...`
 (um serviço interno que confia em requisições vindas deste processo) e fazer o
-argusops-api/argusops-worker mandar essa requisição por ele — um pivô clássico de SSRF, de "pode
+kuruops-api/kuruops-worker mandar essa requisição por ele — um pivô clássico de SSRF, de "pode
 editar config" pra "pode alcançar rede interna".
 
 As três agora acessam via `internal/httpguard.NewClient`, cujo `Transport.DialContext` resolve o
@@ -251,7 +251,7 @@ naquele certificado).
 As seções acima cobrem segredos de nível de aplicação (LDAP, SAML, LLM/MCP) — resolvidos via
 `secrets.Store` e rotacionáveis pela UI de Settings sem reiniciar nada. `docker-compose.yml` tem
 uma categoria diferente e mais básica de segredo: as credenciais que colocam a própria stack de pé
-(senha do Postgres, das roles `argusops_app`/`argusops_worker`, a chave de criptografia do
+(senha do Postgres, das roles `kuruops_app`/`kuruops_worker`, a chave de criptografia do
 `secrets.Store`). Essas **não** passam pela UI — são lidas direto de variáveis de ambiente no
 momento em que cada container sobe.
 
@@ -272,8 +272,8 @@ qualquer coisa exposta a um IP que não seja `localhost`.
      também atualizar as chamadas `docker compose exec postgres psql -U postgres ...` hardcoded no
      `Taskfile.yml` (`db:up`, `db:test:up`, `db:backup`, etc. — elas não leem a variável, assumem
      literalmente `postgres`).
-   - `ARGUSOPS_APP_PASSWORD` / `ARGUSOPS_WORKER_PASSWORD`: qualquer senha forte — só precisam bater
-     com o que `db/init/argusops_app_role.sql` / `argusops_worker_role.sql` configuram na criação
+   - `KURUOPS_APP_PASSWORD` / `KURUOPS_WORKER_PASSWORD`: qualquer senha forte — só precisam bater
+     com o que `db/init/kuruops_app_role.sql` / `kuruops_worker_role.sql` configuram na criação
      das roles (rodar `task db:reset` depois de trocar, para recriar as roles com a senha nova).
    - `SECRETS_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Atenção**: trocar essa chave depois que
      já existem segredos gravados no Postgres (`secret_store`) os torna ilegíveis — gere a chave

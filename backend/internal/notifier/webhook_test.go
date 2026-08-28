@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/notifier"
 )
 
 func TestWebhookSender_Send(t *testing.T) {
@@ -27,14 +27,14 @@ func TestWebhookSender_Send(t *testing.T) {
 	defer srv.Close()
 
 	err := notifier.WebhookSender{}.Send(t.Context(), srv.URL, notifier.Notification{
-		Title: "Malware detected", Description: "d", Severity: "critical", AlertID: "a1", URL: "https://argusops.example/alerts/a1",
+		Title: "Malware detected", Description: "d", Severity: "critical", AlertID: "a1", URL: "https://kuruops.example/alerts/a1",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, "Malware detected", gotBody["title"])
 	assert.Equal(t, "critical", gotBody["severity"])
 	assert.Equal(t, "a1", gotBody["alertId"])
-	assert.Equal(t, "https://argusops.example/alerts/a1", gotBody["url"])
+	assert.Equal(t, "https://kuruops.example/alerts/a1", gotBody["url"])
 }
 
 func TestWebhookSender_Send_ErrorResponse(t *testing.T) {

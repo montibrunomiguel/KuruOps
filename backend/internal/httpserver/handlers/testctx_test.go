@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 var routeParamPattern = regexp.MustCompile(`\{[^}]+\}`)

@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // newEscalationPolicyServiceForPool builds an EscalationPolicyService bound
@@ -124,15 +124,15 @@ func sweepAdminPool(t *testing.T) *db.Pool {
 	return pool
 }
 
-// sweepWorkerPool connects as the real argusops_worker role cmd/worker uses
+// sweepWorkerPool connects as the real kuruops_worker role cmd/worker uses
 // in production -- deliberately NOT the superuser admin pool above.
 // sweepSLABreaches runs outside Pool.WithTenant by design (see its doc
 // comment) and needs its own real grants (SELECT everywhere, a narrow
-// UPDATE on incidents -- see db/init/argusops_worker_role.sql) to work at
+// UPDATE on incidents -- see db/init/kuruops_worker_role.sql) to work at
 // all; a superuser connection bypasses every grant, not just RLS, so it
 // would silently mask a missing grant exactly like the one this test caught
 // during live verification (worker logs: "permission denied for table
-// incidents" until argusops_worker_role.sql was given UPDATE on incidents).
+// incidents" until kuruops_worker_role.sql was given UPDATE on incidents).
 func sweepWorkerPool(t *testing.T) *db.Pool {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_WORKER_URL")
@@ -201,7 +201,7 @@ func TestSweepSLABreaches(t *testing.T) {
 // tenant-scoped transaction here to commit, admin pool writes are
 // auto-committed already) and confirms the refresh actually picks it up,
 // proving both that the three views refresh without error under the real
-// argusops_worker role/grants and that mv_alert_daily_stats reflects new
+// kuruops_worker role/grants and that mv_alert_daily_stats reflects new
 // data afterward.
 func TestRefreshMaterializedViews(t *testing.T) {
 	adminPool := sweepAdminPool(t)
@@ -296,7 +296,7 @@ func TestSweepEscalations(t *testing.T) {
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
 		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(1), steps[0].Hits(), "step 0's destination must have been called exactly once")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
@@ -311,7 +311,7 @@ func TestSweepEscalations(t *testing.T) {
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-5*time.Minute))
 
 		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(0), steps[0].Hits())
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
@@ -326,7 +326,7 @@ func TestSweepEscalations(t *testing.T) {
 		insertSweepTestAlert(t, adminPool, tenantID, "critical", "investigating", time.Now().Add(-time.Hour))
 
 		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(1), steps[0].Hits(), "an alert stuck in investigating must keep escalating, per \"roda as escalas até ser atendido\"")
 	})
@@ -338,7 +338,7 @@ func TestSweepEscalations(t *testing.T) {
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "low", "open", time.Now().Add(-24*time.Hour))
 
 		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Nil(t, escalatedAtFor(t, adminPool, alertID))
 	})
@@ -351,8 +351,8 @@ func TestSweepEscalations(t *testing.T) {
 		alertID := insertSweepTestAlert(t, adminPool, tenantID, "high", "open", time.Now().Add(-time.Hour))
 
 		escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(1), steps[0].Hits(), "a second sweep tick must not re-fire a step whose own delay hasn't elapsed since the last fire")
 		assert.NotNil(t, escalatedAtFor(t, adminPool, alertID))
@@ -370,7 +370,7 @@ func TestSweepEscalations(t *testing.T) {
 		// 30-minute delay (since the last fire) has now elapsed, so this tick
 		// must fire step 1, not step 0 again.
 		setEscalationProgress(t, adminPool, alertID, 1, time.Now().Add(-40*time.Minute))
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(0), steps[0].Hits(), "step 0 must not re-fire")
 		assert.Equal(t, int32(1), steps[1].Hits(), "step 1 must fire")
@@ -379,7 +379,7 @@ func TestSweepEscalations(t *testing.T) {
 		// Simulate step 1 having fired 40 minutes ago too -- the chain has
 		// only 2 steps, so `2 % 2 == 0` must wrap back around to step 0.
 		setEscalationProgress(t, adminPool, alertID, 2, time.Now().Add(-40*time.Minute))
-		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://argusops.example", logger)
+		sweepEscalations(ctx, workerPool, escalationPolicies, noOnCallSMTP(workerPool, store), "https://kuruops.example", logger)
 
 		assert.Equal(t, int32(1), steps[0].Hits(), "step 0 must fire again -- this is the wraparound, \"roda as escalas até ser atendido\"")
 		assert.Equal(t, 3, slaEscalationStepFor(t, adminPool, alertID))
@@ -422,13 +422,13 @@ func TestSweepEscalations_NotifiesOnCallAnalyst(t *testing.T) {
 	fake := &fakeMailSender{}
 	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 	require.NoError(t, setupSMTP.Save(ctx, tenantID, analystID, service.SaveSMTPInput{
-		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
+		Host: "smtp.example.invalid", Port: 587, FromAddress: "kuruops@example.invalid",
 	}))
 
 	escalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
 	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 
-	sweepEscalations(ctx, workerPool, escalationPolicies, smtp, "https://argusops.example", logger)
+	sweepEscalations(ctx, workerPool, escalationPolicies, smtp, "https://kuruops.example", logger)
 
 	assert.Equal(t, int32(1), steps[0].Hits(), "the configured webhook channel must still fire")
 	require.Len(t, fake.sent, 1, "the on-call analyst must also be emailed")
@@ -484,13 +484,13 @@ func TestSweepEscalations_FailedSendDoesNotStampOrEmailOnCall(t *testing.T) {
 	fake := &fakeMailSender{}
 	setupSMTP := service.NewSMTPConfigService(appPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 	require.NoError(t, setupSMTP.Save(ctx, tenantID, analystID, service.SaveSMTPInput{
-		Host: "smtp.example.invalid", Port: 587, FromAddress: "argusops@example.invalid",
+		Host: "smtp.example.invalid", Port: 587, FromAddress: "kuruops@example.invalid",
 	}))
 
 	workerEscalationPolicies, _ := newEscalationPolicyServiceForPool(workerPool, store)
 	smtp := service.NewSMTPConfigService(workerPool, repository.NewSMTPConfigRepository(), store, fake, repository.NewAdminAuditEventRepository())
 
-	sweepEscalations(ctx, workerPool, workerEscalationPolicies, smtp, "https://argusops.example", logger)
+	sweepEscalations(ctx, workerPool, workerEscalationPolicies, smtp, "https://kuruops.example", logger)
 
 	assert.Nil(t, escalatedAtFor(t, adminPool, alertID), "a failed Send must leave the alert un-escalated so the next tick retries it")
 	assert.Equal(t, 0, slaEscalationStepFor(t, adminPool, alertID))
@@ -538,7 +538,7 @@ func TestRunLocked_OnlyOneReplicaExecutesConcurrently(t *testing.T) {
 }
 
 // TestRunLocked_RecordsSweepSuccessMetric is the regression test for the
-// argusops_worker_last_sweep_success_timestamp gauge (see
+// kuruops_worker_last_sweep_success_timestamp gauge (see
 // MetricsCollector.RecordSweepSuccess): it must be stamped when a tick
 // actually acquires the lock and runs fn, and must NOT be stamped for a
 // tick that loses the lock and skips -- an Alertmanager rule watching this
@@ -559,7 +559,7 @@ func TestRunLocked_RecordsSweepSuccessMetric(t *testing.T) {
 	rec := httptest.NewRecorder()
 	httpserver.MetricsHandler(rec, req)
 
-	assert.Contains(t, rec.Body.String(), `argusops_worker_last_sweep_success_timestamp{sweep_job="test-metric-job"}`)
+	assert.Contains(t, rec.Body.String(), `kuruops_worker_last_sweep_success_timestamp{sweep_job="test-metric-job"}`)
 }
 
 // insertAIRunFixture inserts an ai_analysis_runs row with an explicit

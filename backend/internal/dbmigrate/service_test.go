@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/dbmigrate"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/dbmigrate"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // skipUnlessMigrationTargetEnabled gates this test behind an explicit opt-in
@@ -33,7 +33,7 @@ func skipUnlessMigrationTargetEnabled(t *testing.T) dbmigrate.TargetConfig {
 	return dbmigrate.TargetConfig{
 		Host:     getenvDefault("TEST_MIGRATION_TARGET_HOST", "localhost"),
 		Port:     port,
-		Database: getenvDefault("TEST_MIGRATION_TARGET_DB", "argusops_target"),
+		Database: getenvDefault("TEST_MIGRATION_TARGET_DB", "kuruops_target"),
 		User:     getenvDefault("TEST_MIGRATION_TARGET_USER", "postgres"),
 		Password: getenvDefault("TEST_MIGRATION_TARGET_PASSWORD", "postgres"),
 	}
@@ -59,8 +59,8 @@ func resetTarget(t *testing.T, target dbmigrate.TargetConfig) {
 		drop schema public cascade;
 		create schema public;
 		grant all on schema public to public;
-		drop role if exists argusops_app;
-		drop role if exists argusops_worker;`)
+		drop role if exists kuruops_app;
+		drop role if exists kuruops_worker;`)
 	require.NoError(t, err)
 }
 
@@ -86,7 +86,7 @@ func TestService_Migrate_EndToEnd(t *testing.T) {
 	// Migrate() resolves "the" tenant the same way production login does --
 	// TenantRepository.GetDefault, the oldest row in `tenants` -- rather
 	// than taking a tenant ID as an argument (this is single-instance
-	// software; see that method's doc comment). A fresh argusops_test
+	// software; see that method's doc comment). A fresh kuruops_test
 	// already has exactly one tenant at this point: the one
 	// db/migrations/0002_seed_default_admin.up.sql seeds automatically the
 	// first time migrations run against an empty database. Seed fixtures
@@ -95,7 +95,7 @@ func TestService_Migrate_EndToEnd(t *testing.T) {
 	tenantRepo := repository.NewTenantRepository()
 	defaultTenant, err := tenantRepo.GetDefault(t.Context(), pool)
 	require.NoError(t, err)
-	require.NotNil(t, defaultTenant, "argusops_test must have the seeded default tenant -- run via `task backend:test:migration`, which depends on db:test:reset")
+	require.NotNil(t, defaultTenant, "kuruops_test must have the seeded default tenant -- run via `task backend:test:migration`, which depends on db:test:reset")
 	tenantID := defaultTenant.ID
 
 	alertRepo := repository.NewAlertRepository()
@@ -168,7 +168,7 @@ func TestService_Migrate_EndToEnd(t *testing.T) {
 	var mvOwner string
 	require.NoError(t, appConn.QueryRow(t.Context(),
 		`select matviewowner from pg_matviews where matviewname = 'mv_alert_daily_stats'`).Scan(&mvOwner))
-	assert.Equal(t, "argusops_worker", mvOwner)
+	assert.Equal(t, "kuruops_worker", mvOwner)
 }
 
 func TestService_TestConnection(t *testing.T) {

@@ -1,6 +1,6 @@
 # One registry holding all four images (ACR's own convention, same as
 # Artifact Registry's: one registry, multiple repositories inside it --
-# .../argusops/api, .../argusops/ingest, etc.).
+# .../kuruops/api, .../kuruops/ingest, etc.).
 #
 # ACR pull access is granted directly to AKS's auto-created kubelet
 # identity -- the standard "az aks create --attach-acr" pattern -- not a

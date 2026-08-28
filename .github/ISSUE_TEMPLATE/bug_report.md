@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve ArgusOps
+about: Create a report to help us improve KuruOps
 title: '[BUG] '
 labels: 'bug'
 assignees: ''

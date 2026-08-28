@@ -11,7 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 // HealthCheck returns a handler for GET /healthz that pings pool with a
@@ -68,7 +68,7 @@ func Livez(w http.ResponseWriter, r *http.Request) {
 // identical fallback).
 func WrapWithObservability(base http.Handler, logger *slog.Logger, tracer trace.Tracer) http.Handler {
 	if tracer == nil {
-		tracer = noop.NewTracerProvider().Tracer("argusops")
+		tracer = noop.NewTracerProvider().Tracer("kuruops")
 	}
 	h := MetricsMiddleware(base)
 	h = chimw.Recoverer(h)

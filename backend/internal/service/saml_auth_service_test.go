@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // This test only covers the deterministic "not configured for this tenant"
@@ -61,7 +61,7 @@ func TestSAMLAuthService_Configured(t *testing.T) {
 	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
 
-	spCert, spKey, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
+	spCert, spKey, err := authn.GenerateSPKeyPair("https://kuruops.example/saml/metadata")
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestSAMLAuthService_Configured(t *testing.T) {
 	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
 		return identityCfg.UpsertSAMLConfig(t.Context(), tx, &domain.SAMLConfig{
 			TenantID: tenantID, IDPMetadataXML: &metadataXML,
-			SPEntityID: "https://argusops.example/saml/metadata", ACSURL: "https://argusops.example/auth/saml/acs",
+			SPEntityID: "https://kuruops.example/saml/metadata", ACSURL: "https://kuruops.example/auth/saml/acs",
 			SPCertSecretRef: certRef, SPKeySecretRef: keyRef,
 		})
 	}))
@@ -87,7 +87,7 @@ func TestSAMLAuthService_Configured(t *testing.T) {
 		rec := httptest.NewRecorder()
 		samlSvc.ServeMetadata(t.Context(), tenantID, rec, req)
 		require.Equal(t, 200, rec.Code)
-		assert.Contains(t, rec.Body.String(), "https://argusops.example/saml/metadata")
+		assert.Contains(t, rec.Body.String(), "https://kuruops.example/saml/metadata")
 	})
 
 	t.Run("a second call within the TTL reuses the cached IdP metadata", func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestSAMLAuthService_Configured_UnresolvableSPCert(t *testing.T) {
 	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
 
-	_, spKey, err := authn.GenerateSPKeyPair("https://argusops.example/saml/metadata")
+	_, spKey, err := authn.GenerateSPKeyPair("https://kuruops.example/saml/metadata")
 	require.NoError(t, err)
 	idpCert, _, err := authn.GenerateSPKeyPair("https://idp.example/metadata")
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestSAMLAuthService_Configured_UnresolvableSPCert(t *testing.T) {
 	require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
 		return identityCfg.UpsertSAMLConfig(t.Context(), tx, &domain.SAMLConfig{
 			TenantID: tenantID, IDPMetadataXML: &metadataXML,
-			SPEntityID: "https://argusops.example/saml/metadata", ACSURL: "https://argusops.example/auth/saml/acs",
+			SPEntityID: "https://kuruops.example/saml/metadata", ACSURL: "https://kuruops.example/auth/saml/acs",
 			// secrets.EnvStore.Resolve on an unknown ref returns "", nil
 			// (it never errors), so this doesn't reach buildServiceProvider's
 			// "resolve sp cert" wrapped-error branch -- it instead surfaces one

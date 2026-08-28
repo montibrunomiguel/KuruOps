@@ -1,5 +1,5 @@
 // Package slackclient is a thin wrapper around the Slack Web API calls
-// ArgusOps's Slack integration needs -- mirrors internal/mcpclient's role
+// KuruOps's Slack integration needs -- mirrors internal/mcpclient's role
 // as a small, dependency-free HTTP client for one external API, rather than
 // pulling in a full third-party Slack SDK for what's currently a single
 // endpoint.
@@ -9,7 +9,7 @@
 // workspace, nothing else). Future phases add the bot-token-authenticated
 // calls here as they're built: conversations.create/conversations.replies
 // (pull a channel's/thread's messages), chat.postMessage (post from
-// ArgusOps into Slack), files.info (fetch an attachment a thread
+// KuruOps into Slack), files.info (fetch an attachment a thread
 // referenced). None of those exist yet -- there is no bot-token-authenticated
 // client type in this package until a feature actually needs one.
 package slackclient
@@ -29,7 +29,7 @@ import (
 // server, same convention as llmclient's anthropicAPIURL.
 var oauthAccessURL = "https://slack.com/api/oauth.v2.access"
 
-// OAuthResult is the subset of Slack's oauth.v2.access response ArgusOps
+// OAuthResult is the subset of Slack's oauth.v2.access response KuruOps
 // actually stores -- see SlackConfigService.HandleOAuthCallback.
 type OAuthResult struct {
 	AccessToken string // the bot token (xoxb-...), stored via secrets.Store

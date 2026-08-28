@@ -1,6 +1,6 @@
 <p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# ArgusOps frontend
+# KuruOps frontend
 
 React + Vite + TypeScript. Covers **Dashboard, Alerts, Incidents, Playbooks and Settings**
 (complete alert management and SOC/SIEM incident response), with internationalization (pt/en),
@@ -13,9 +13,9 @@ npm install
 npm run dev   # :5173, proxies /api and /auth to http://localhost:8080 (cmd/api)
 ```
 
-Needs the backend's `cmd/api` running (see `backend/README.md`). Login: `admin@argusops.local` /
+Needs the backend's `cmd/api` running (see `backend/README.md`). Login: `admin@kuruops.local` /
 `ChangeMe123!` — every new deploy already ships with this admin, seeded by the migration
-`db/migrations/0002_seed_default_admin.up.sql`. There's no "company" field at login (ArgusOps is single-instance,
+`db/migrations/0002_seed_default_admin.up.sql`. There's no "company" field at login (KuruOps is single-instance,
 "company" only exists as a tag on alerts/incidents) and there's no signup screen — other local
 users are created via direct SQL or through the Settings API after the first admin has logged in.
 

@@ -39,7 +39,7 @@ export function ForgotPasswordPage() {
           <BrandMark />
           <div>
             <div className="sidebar-brand-title">{t("forgotPassword.title")}</div>
-            <div className="sidebar-brand-sub">ArgusOps</div>
+            <div className="sidebar-brand-sub">KuruOps</div>
           </div>
         </div>
 

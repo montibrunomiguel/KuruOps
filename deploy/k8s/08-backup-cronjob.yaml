@@ -29,8 +29,8 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: argusops-backup
-  namespace: argusops
+  name: kuruops-backup
+  namespace: kuruops
 spec:
   schedule: "0 3 * * *" # 03:00 UTC daily -- adjust to your own low-traffic window
   concurrencyPolicy: Forbid
@@ -50,34 +50,34 @@ spec:
                 - |
                   set -eu
                   apk add --no-cache aws-cli
-                  file="argusops-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  file="kuruops-$(date -u +%Y%m%dT%H%M%SZ).dump"
                   pg_dump "$DATABASE_URL" -Fc -f "/tmp/$file"
-                  aws s3 cp "/tmp/$file" "s3://$BACKUP_S3_BUCKET/argusops/$file"
+                  aws s3 cp "/tmp/$file" "s3://$BACKUP_S3_BUCKET/kuruops/$file"
               env:
                 - name: DATABASE_URL
                   valueFrom:
                     secretKeyRef:
-                      name: argusops-secrets
+                      name: kuruops-secrets
                       key: DATABASE_URL_MIGRATE
                 - name: BACKUP_S3_BUCKET
                   valueFrom:
                     configMapKeyRef:
-                      name: argusops-config
+                      name: kuruops-config
                       key: BACKUP_S3_BUCKET
                 - name: AWS_DEFAULT_REGION
                   valueFrom:
                     configMapKeyRef:
-                      name: argusops-config
+                      name: kuruops-config
                       key: BACKUP_AWS_REGION
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:
                     secretKeyRef:
-                      name: argusops-secrets
+                      name: kuruops-secrets
                       key: BACKUP_AWS_ACCESS_KEY_ID
                 - name: AWS_SECRET_ACCESS_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: argusops-secrets
+                      name: kuruops-secrets
                       key: BACKUP_AWS_SECRET_ACCESS_KEY
               resources:
                 requests:

@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestSlackConfigHandlers_GetDisconnect(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSlackConfigHandlers_AuthorizeURL(t *testing.T) {
 	t.Run("configured client returns a redirect url", func(t *testing.T) {
 		oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 		svc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
-			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
+			oauthStates, "test-client-id", "test-client-secret", "https://kuruops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
 		h := handlers.NewSlackConfigHandlers(svc)
 		r := newRouter(h.Routes)
 

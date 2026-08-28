@@ -52,7 +52,7 @@ describe("IdentityProvidersPanel", () => {
         }
         return Promise.resolve(
           jsonResponse({
-            spEntityId: "https://argusops.example/saml", acsUrl: "https://argusops.example/acs",
+            spEntityId: "https://kuruops.example/saml", acsUrl: "https://kuruops.example/acs",
             idpMetadataUrl: "https://idp.example.com/metadata",
           }),
         );
@@ -121,7 +121,7 @@ describe("IdentityProvidersPanel", () => {
       }
       return Promise.resolve(
         jsonResponse({
-          spEntityId: "https://argusops.example/saml", acsUrl: "https://argusops.example/acs",
+          spEntityId: "https://kuruops.example/saml", acsUrl: "https://kuruops.example/acs",
           idpMetadataUrl: "https://idp.example.com/metadata",
         }),
       );
@@ -157,7 +157,7 @@ describe("IdentityProvidersPanel", () => {
       }
       return Promise.resolve(
         jsonResponse({
-          spEntityId: "https://argusops.example/saml", acsUrl: "https://argusops.example/acs",
+          spEntityId: "https://kuruops.example/saml", acsUrl: "https://kuruops.example/acs",
           idpMetadataUrl: "https://idp.example.com/metadata",
         }),
       );

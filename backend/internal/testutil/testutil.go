@@ -5,9 +5,9 @@
 // mocked away -- see the RLS section of db/migrations/0001_initial_schema.up.sql.
 //
 // Two pools are used deliberately:
-//   - the "app" pool authenticates as argusops_app, the same least-privilege,
+//   - the "app" pool authenticates as kuruops_app, the same least-privilege,
 //     RLS-subject role the running services connect as (see
-//     db/init/argusops_app_role.sql) -- this is what code under test uses.
+//     db/init/kuruops_app_role.sql) -- this is what code under test uses.
 //   - the "admin" pool authenticates as the postgres superuser, which owns
 //     every table and therefore bypasses RLS unconditionally -- this is
 //     used ONLY to set up fixtures (a tenant, a user) before a test starts,
@@ -23,8 +23,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/db"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/db"
 )
 
 // testPassword is the fixed plaintext behind every fixture user's stored

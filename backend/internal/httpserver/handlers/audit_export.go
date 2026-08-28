@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 const (
@@ -86,7 +86,7 @@ func (h *AuditExportHandlers) exportCEF(w http.ResponseWriter, r *http.Request) 
 	}
 
 	setNextCursorHeaders(w, next)
-	filename := fmt.Sprintf("argusops-audit-%s.cef.log", time.Now().UTC().Format("20060102T150405Z"))
+	filename := fmt.Sprintf("kuruops-audit-%s.cef.log", time.Now().UTC().Format("20060102T150405Z"))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.WriteHeader(http.StatusOK)
@@ -118,7 +118,7 @@ func (h *AuditExportHandlers) exportJSON(w http.ResponseWriter, r *http.Request)
 	}
 
 	setNextCursorHeaders(w, next)
-	filename := fmt.Sprintf("argusops-audit-%s.ndjson", time.Now().UTC().Format("20060102T150405Z"))
+	filename := fmt.Sprintf("kuruops-audit-%s.ndjson", time.Now().UTC().Format("20060102T150405Z"))
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.WriteHeader(http.StatusOK)
