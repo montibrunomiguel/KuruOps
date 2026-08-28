@@ -13,12 +13,14 @@ import (
 	"github.com/argusops/argusops/internal/httpguard"
 )
 
-// webhookHTTPClient is deliberately separate from notifier.go's shared
-// httpClient: destination here is an arbitrary URL a tenant/admin typed
-// into an EscalationPolicy step, unlike PagerDutySender/SlackSender, whose
-// destinations are always this codebase's own fixed vendor API hosts. Only
-// this one needs the SSRF guard.
-var webhookHTTPClient = httpguard.NewClient(10 * time.Second)
+// guardedHTTPClient is deliberately separate from notifier.go's shared
+// httpClient: WebhookSender's destination is an arbitrary URL a tenant/admin
+// typed into an EscalationPolicy step, and SlackSender's is the same --
+// an admin-pasted Slack "Incoming Webhook" URL, not a fixed vendor API host
+// the way PagerDutySender's is. Both need the SSRF guard; only
+// PagerDutySender (whose destination is the hardcoded pagerDutyEventsURL)
+// is safe to leave on the plain shared client.
+var guardedHTTPClient = httpguard.NewClient(10 * time.Second)
 
 // WebhookSender POSTs the notification as JSON to an arbitrary destination
 // URL -- the escape hatch for any receiver that isn't PagerDuty or Slack (a
@@ -91,7 +93,7 @@ func (s WebhookSender) Send(ctx context.Context, destination string, n Notificat
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := webhookHTTPClient.Do(req)
+	resp, err := guardedHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook request failed: %w", err)
 	}

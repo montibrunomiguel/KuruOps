@@ -16,7 +16,16 @@ import (
 
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
+
+	"github.com/argusops/argusops/internal/httpguard"
 )
+
+// samlMetadataHTTPClient fetches IDPMetadataURL, which an admin types into
+// Settings -> Identity Providers -- the same "URL from someone with
+// Settings access, not this codebase's own trusted config" category
+// httpguard exists for (see its doc comment), so it goes through the same
+// SSRF guard as webhook/MCP/LLM destinations rather than http.DefaultClient.
+var samlMetadataHTTPClient = httpguard.NewClient(15 * time.Second)
 
 // SAMLParams is authn's view of one tenant's SAML SP configuration —
 // deliberately a plain struct, mirroring the LDAPParams pattern, so this
@@ -84,7 +93,7 @@ func ResolveIDPMetadata(ctx context.Context, p SAMLParams) (*saml.EntityDescript
 		if err != nil {
 			return nil, fmt.Errorf("load idp metadata: %w", err)
 		}
-		metadata, err := samlsp.FetchMetadata(ctx, http.DefaultClient, *metadataURL)
+		metadata, err := samlsp.FetchMetadata(ctx, samlMetadataHTTPClient, *metadataURL)
 		if err != nil {
 			return nil, fmt.Errorf("load idp metadata: %w", err)
 		}

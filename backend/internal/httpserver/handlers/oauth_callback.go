@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/url"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/argusops/argusops/internal/service"
 )
@@ -38,59 +40,51 @@ func (h *OAuthCallbackHandlers) Routes(r chi.Router) {
 	r.Get("/slack/callback", h.slackCallback)
 }
 
-func (h *OAuthCallbackHandlers) gdriveCallback(w http.ResponseWriter, r *http.Request) {
-	settingsURL := h.appBaseURL + "/settings/storage"
+// oauthCallback is the provider-agnostic shell every /auth/oauth/*/callback
+// route runs: resolve the tenant, pass through the provider's own "?error="
+// (consent declined, or the provider itself rejected the request -- not a
+// bug on this end), delegate to handle for the actual code+state exchange,
+// then redirect back to Settings either way. Extracted after gdriveCallback
+// and slackCallback were confirmed byte-for-byte identical except for which
+// service method they call and which query-param names/settings path they
+// use -- a second provider showing up with the exact same shape as the
+// first is a real abstraction, not a premature one.
+func (h *OAuthCallbackHandlers) oauthCallback(
+	w http.ResponseWriter, r *http.Request,
+	settingsPath, providerLabel, errorParam, connectedParam string,
+	handle func(ctx context.Context, tenantID uuid.UUID, code, state string) error,
+) {
+	settingsURL := h.appBaseURL + settingsPath
 
 	tenant, err := h.auth.ResolveDefaultTenant(r.Context())
 	if err != nil || tenant == nil {
-		http.Redirect(w, r, settingsURL+"?gdrive_error="+url.QueryEscape("internal error resolving tenant"), http.StatusFound)
+		http.Redirect(w, r, settingsURL+"?"+errorParam+"="+url.QueryEscape("internal error resolving tenant"), http.StatusFound)
 		return
 	}
 
 	q := r.URL.Query()
 	if errParam := q.Get("error"); errParam != "" {
-		// The admin declined consent on Google's screen, or Google itself
-		// rejected the request -- not a bug on this end.
-		http.Redirect(w, r, settingsURL+"?gdrive_error="+url.QueryEscape(errParam), http.StatusFound)
+		http.Redirect(w, r, settingsURL+"?"+errorParam+"="+url.QueryEscape(errParam), http.StatusFound)
 		return
 	}
 
-	err = h.storageConfig.HandleGDriveOAuthCallback(r.Context(), tenant.ID, q.Get("code"), q.Get("state"))
-	if err != nil {
+	if err := handle(r.Context(), tenant.ID, q.Get("code"), q.Get("state")); err != nil {
 		// The real err (which can carry internal detail -- a DB error, a
 		// state-mismatch reason, etc) is logged server-side only; the
 		// redirect gets a generic code so nothing internal leaks into a
 		// URL that ends up in browser history, referrer headers, and any
 		// proxy/access log along the way.
-		slog.Error("gdrive oauth callback failed", "tenant_id", tenant.ID, "error", err)
-		http.Redirect(w, r, settingsURL+"?gdrive_error=connection_failed", http.StatusFound)
+		slog.Error(providerLabel+" oauth callback failed", "tenant_id", tenant.ID, "error", err)
+		http.Redirect(w, r, settingsURL+"?"+errorParam+"=connection_failed", http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, settingsURL+"?gdrive_connected=1", http.StatusFound)
+	http.Redirect(w, r, settingsURL+"?"+connectedParam+"=1", http.StatusFound)
+}
+
+func (h *OAuthCallbackHandlers) gdriveCallback(w http.ResponseWriter, r *http.Request) {
+	h.oauthCallback(w, r, "/settings/storage", "gdrive", "gdrive_error", "gdrive_connected", h.storageConfig.HandleGDriveOAuthCallback)
 }
 
 func (h *OAuthCallbackHandlers) slackCallback(w http.ResponseWriter, r *http.Request) {
-	settingsURL := h.appBaseURL + "/settings/integrations/slack"
-
-	tenant, err := h.auth.ResolveDefaultTenant(r.Context())
-	if err != nil || tenant == nil {
-		http.Redirect(w, r, settingsURL+"?slack_error="+url.QueryEscape("internal error resolving tenant"), http.StatusFound)
-		return
-	}
-
-	q := r.URL.Query()
-	if errParam := q.Get("error"); errParam != "" {
-		// The admin declined consent on Slack's screen, or Slack itself
-		// rejected the request -- not a bug on this end.
-		http.Redirect(w, r, settingsURL+"?slack_error="+url.QueryEscape(errParam), http.StatusFound)
-		return
-	}
-
-	err = h.slackConfig.HandleOAuthCallback(r.Context(), tenant.ID, q.Get("code"), q.Get("state"))
-	if err != nil {
-		slog.Error("slack oauth callback failed", "tenant_id", tenant.ID, "error", err)
-		http.Redirect(w, r, settingsURL+"?slack_error=connection_failed", http.StatusFound)
-		return
-	}
-	http.Redirect(w, r, settingsURL+"?slack_connected=1", http.StatusFound)
+	h.oauthCallback(w, r, "/settings/integrations/slack", "slack", "slack_error", "slack_connected", h.slackConfig.HandleOAuthCallback)
 }

@@ -69,17 +69,6 @@ export type AlertEventType =
   | "duplicate_suppressed"
   | "playbook_webhook_triggered";
 
-export interface AlertEvent {
-  id: number;
-  alertId: string;
-  tenantId: string;
-  eventType: AlertEventType;
-  actorType: "user" | "system" | "ai";
-  actorId?: string;
-  data: unknown;
-  createdAt: string;
-}
-
 export interface AlertComment {
   id: string;
   alertId: string;

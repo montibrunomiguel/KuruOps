@@ -13,6 +13,12 @@ import (
 )
 
 func TestSlackSender_Send(t *testing.T) {
+	// SlackSender now dials through httpguard too (see slack.go), which
+	// refuses loopback destinations by default -- httptest.NewServer always
+	// binds to 127.0.0.1, so this test needs the same escape hatch a
+	// genuine on-prem deployment would set.
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	var gotBody map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotBody))
@@ -33,6 +39,8 @@ func TestSlackSender_Send(t *testing.T) {
 }
 
 func TestSlackSender_Send_ErrorResponse(t *testing.T) {
+	t.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("no_service"))

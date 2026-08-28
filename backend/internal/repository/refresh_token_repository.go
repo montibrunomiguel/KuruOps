@@ -11,6 +11,10 @@ import (
 	"github.com/argusops/argusops/internal/domain"
 )
 
+// RefreshTokenRepository is structurally near-identical to
+// PasswordResetRepository -- see that type's doc comment for why this
+// duplication (flagged by dupl during the post-hardening-plan audit
+// sweep) is deliberately left as-is rather than merged.
 type RefreshTokenRepository struct{}
 
 func NewRefreshTokenRepository() *RefreshTokenRepository {

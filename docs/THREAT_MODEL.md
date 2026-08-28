@@ -157,17 +157,22 @@ configured key still equals that exact value and `AUTH_MODE` isn't `dev`/`dev-he
 
 ## Outbound requests to admin-configured URLs: SSRF protection
 
-Three settings accept a URL that this codebase then dials on the tenant's behalf: an escalation
-policy's webhook `Destination` (`internal/notifier/webhook.go`), an MCP server's `endpoint`
-(`internal/mcpclient/jsonrpc.go`), and an LLM provider's `base_url` for the
+Five settings accept a URL that this codebase then dials on the tenant's behalf: an escalation
+policy's webhook `Destination` (`internal/notifier/webhook.go`), an escalation policy's Slack
+channel `Destination` — an admin-pasted Slack "Incoming Webhook" URL, never actually validated to
+be a real `hooks.slack.com` address (`internal/notifier/slack.go`), an MCP server's `endpoint`
+(`internal/mcpclient/jsonrpc.go`), an LLM provider's `base_url` for the
 `openai_compatible`/`azure_openai`/`self_hosted` kinds (`internal/llmclient/llmclient.go`) —
-anthropic's fixed `api.anthropic.com` isn't user-configurable, so it isn't in scope here. Anyone
-with Settings access to those three areas can otherwise point them at `http://169.254.169.254/...`
+anthropic's fixed `api.anthropic.com` isn't user-configurable, so it isn't in scope here — and a
+SAML identity provider's metadata URL (`internal/authn/saml.go`'s `ResolveIDPMetadata`). Anyone
+with Settings access to those areas can otherwise point them at `http://169.254.169.254/...`
 (a cloud metadata endpoint) or `http://localhost:5432/...` (an internal service that trusts
 requests originating from this process) and get argusops-api/argusops-worker to make that request
-for them — a classic SSRF pivot from "can edit config" to "can reach internal-only network".
+for them — a classic SSRF pivot from "can edit config" to "can reach internal-only network". The
+Slack and SAML cases were found and closed in a post-hardening-plan audit sweep, after the
+original SSRF fix (below) shipped covering only the first three.
 
-All three now dial through `internal/httpguard.NewClient`, whose `Transport.DialContext` resolves
+All five now dial through `internal/httpguard.NewClient`, whose `Transport.DialContext` resolves
 the target host and refuses to connect if any resolved IP is loopback, link-local, or private
 (RFC1918/RFC4193) — checked against the IP actually being connected to, not just the URL's
 hostname string, so it isn't bypassed by DNS rebinding (a name that resolves to a public IP when

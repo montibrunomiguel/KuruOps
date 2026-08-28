@@ -90,7 +90,8 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 		b := v == "breached"
 		f.SLABreached = &b
 	}
-	if v := r.URL.Query().Get("q"); v != "" {
+	// Trimmed, not just non-empty -- see alerts.go's identical guard for why.
+	if v := strings.TrimSpace(r.URL.Query().Get("q")); v != "" {
 		f.Q = &v
 	}
 	f.OpenedSince = parseSince(r)

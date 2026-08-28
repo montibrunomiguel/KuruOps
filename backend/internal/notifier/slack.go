@@ -13,7 +13,11 @@ import (
 // SlackSender posts to a Slack "Incoming Webhook" -- destination is the
 // full webhook URL (https://hooks.slack.com/services/...) an admin creates
 // in Slack's own app settings and pastes into Settings -> On-Call
-// Escalation.
+// Escalation. Nothing here validates that the pasted URL is actually a
+// hooks.slack.com address, so this is exactly as free-text as
+// WebhookSender's destination -- it goes through the same SSRF-guarded
+// client (guardedHTTPClient, defined in webhook.go) rather than the plain
+// shared httpClient PagerDutySender uses for its fixed vendor host.
 type SlackSender struct{}
 
 type slackMessage struct {
@@ -45,7 +49,7 @@ func (SlackSender) Send(ctx context.Context, destination string, n Notification)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req)
+	resp, err := guardedHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("slack request failed: %w", err)
 	}

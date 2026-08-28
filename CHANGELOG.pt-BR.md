@@ -189,6 +189,19 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 - O botão de desvincular do `LinkedAlertsPanel` e os steppers +/- de analistas concorrentes do
   `ScheduleForm` tinham `aria-label`s fixos e não traduzidos (`"unlink"`, `"-"`, `"+"`) em vez de
   passar por i18n como todo outro label deste app.
+- **Segurança**: o `Destination` do canal Slack de uma política de escalonamento on-call (uma URL
+  de "Incoming Webhook" do Slack colada pelo admin) era discado com o `http.Client` puro, não com o
+  cliente protegido contra SSRF (`internal/httpguard`) que o canal de webhook genérico já usava
+  para esse mesmo tipo de destino informado pelo admin — o destino do Slack nunca era de fato
+  validado como uma URL real do `hooks.slack.com`, então era tão falsificável quanto para um alvo
+  interno/loopback/link-local. Agora usa o mesmo cliente protegido.
+- **Segurança**: a URL de metadados de um provedor de identidade SAML (Configurações → Provedores
+  de Identidade) era buscada com `http.DefaultClient` em vez do cliente protegido contra SSRF —
+  mesma categoria de "URL configurada pelo admin" que a proteção de webhook/MCP/LLM já cobre, só
+  que ficou de fora quando essa proteção foi adicionada.
+- **Segurança**: o STARTTLS de saída do SMTP (`mailer.SMTPSender`) montava seu `tls.Config` sem
+  `MinVersion`, permitindo negociar até TLS 1.0 contra um relay de e-mail permissivo ou mal
+  configurado. Fixado em TLS 1.2.
 
 ## [2026-08-07] — `78f41f5`
 

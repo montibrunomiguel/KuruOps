@@ -41,6 +41,8 @@ export function IncidentsListPage() {
   const [sla, setSla] = useState<SlaFilter>("");
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q);
+  // Trimmed -- see AlertsListPage's identical trimmedQ for why.
+  const trimmedQ = debouncedQ.trim();
   const [showCreate, setShowCreate] = useState(false);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
@@ -60,14 +62,14 @@ export function IncidentsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Incident>(
-    ["incidents", severity, priority, phase, sla, debouncedQ, range.since, range.until],
+    ["incidents", severity, priority, phase, sla, trimmedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
       if (priority) params.set("priority", priority);
       if (phase) params.set("phase", phase);
       if (sla) params.set("sla", sla);
-      if (debouncedQ) params.set("q", debouncedQ);
+      if (trimmedQ) params.set("q", trimmedQ);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
@@ -81,7 +83,7 @@ export function IncidentsListPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   useEffect(() => {
     setSelected(new Set());
-  }, [severity, priority, phase, sla, debouncedQ, range.since, range.until, page, pageSize]);
+  }, [severity, priority, phase, sla, trimmedQ, range.since, range.until, page, pageSize]);
 
   function toggleRow(id: string) {
     setSelected((prev) => {

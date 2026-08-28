@@ -173,6 +173,18 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 - `LinkedAlertsPanel`'s unlink button and `ScheduleForm`'s concurrent-analysts +/- steppers had
   hardcoded, untranslated `aria-label`s (`"unlink"`, `"-"`, `"+"`) instead of going through i18n
   like every other label in this app.
+- **Security**: an on-call escalation policy's Slack channel `Destination` (an admin-pasted
+  Slack "Incoming Webhook" URL) was dialed with the plain `http.Client`, not the SSRF-guarded
+  `internal/httpguard` client the equivalent generic-webhook channel already used for the same
+  kind of admin-supplied destination — Slack's destination was never actually validated to be a
+  real `hooks.slack.com` URL, so it was just as spoofable to an internal/loopback/link-local
+  target. Now dials through the same guarded client.
+- **Security**: a SAML identity provider's metadata URL (Settings → Identity Providers) was
+  fetched with `http.DefaultClient` instead of the SSRF-guarded client — same admin-configured-URL
+  category the webhook/MCP/LLM guard already covers, just missed when that guard was added.
+- **Security**: outbound SMTP STARTTLS (`mailer.SMTPSender`) built its `tls.Config` with no
+  `MinVersion`, allowing negotiation down to TLS 1.0 against a permissive or misconfigured mail
+  relay. Pinned to TLS 1.2.
 
 ## [2026-08-07] — `78f41f5`
 

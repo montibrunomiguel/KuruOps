@@ -67,7 +67,7 @@ func (SMTPSender) Send(ctx context.Context, cfg Config, msg Message) error {
 
 	if cfg.UseTLS {
 		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
+			if err := client.StartTLS(&tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
 				return fmt.Errorf("starttls: %w", err)
 			}
 		}

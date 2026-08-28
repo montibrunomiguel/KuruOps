@@ -31,6 +31,11 @@ export function AlertsListPage() {
   const [tag, setTag] = useState("");
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q);
+  // Trimmed so a whitespace-only search (e.g. an accidental space-bar
+  // press) doesn't count as "changed" -- resetting the page/selection and
+  // sending a query the backend would trim to nothing anyway -- the way it
+  // would if debouncedQ were used raw here.
+  const trimmedQ = debouncedQ.trim();
   const [timeRange, setTimeRange] = useState<TimeRangeValue>(EMPTY_TIME_RANGE);
   // Memoized so timeRangeParams' internal Date.now() (for preset ranges)
   // isn't recomputed on every render -- only when the picker's own value
@@ -49,7 +54,7 @@ export function AlertsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Alert>(
-    ["alerts", severity, status, source, correlated, tag, debouncedQ, range.since, range.until],
+    ["alerts", severity, status, source, correlated, tag, trimmedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
       if (severity) params.set("severity", severity);
@@ -57,7 +62,7 @@ export function AlertsListPage() {
       if (source) params.set("source", source);
       if (correlated) params.set("correlated", correlated);
       if (tag) params.set("tag", tag);
-      if (debouncedQ) params.set("q", debouncedQ);
+      if (trimmedQ) params.set("q", trimmedQ);
       if (range.since) params.set("since", range.since);
       if (range.until) params.set("until", range.until);
       params.set("limit", String(limit));
@@ -73,7 +78,7 @@ export function AlertsListPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   useEffect(() => {
     setSelected(new Set());
-  }, [severity, status, source, correlated, tag, debouncedQ, range.since, range.until, page, pageSize]);
+  }, [severity, status, source, correlated, tag, trimmedQ, range.since, range.until, page, pageSize]);
 
   function toggleRow(id: string) {
     setSelected((prev) => {

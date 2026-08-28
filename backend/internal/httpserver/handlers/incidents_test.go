@@ -517,6 +517,15 @@ func TestIncidentHandlers_List_Filters(t *testing.T) {
 		assert.Len(t, incidents, 1)
 	})
 
+	t.Run("whitespace-only q behaves like no search at all, not a zero-result search", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/?q=%20%20%20", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 1)
+	})
+
 	t.Run("tag filter excludes an untagged incident", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/?tag=phishing", nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)
