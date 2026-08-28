@@ -63,7 +63,14 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	}
 
 	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetTitle("Incident Report: "+inc.Title, false)
+	// isUTF8=true: inc.Title is a real UTF-8 Go string (unlike the content-
+	// stream text below, PDF metadata fields like /Title take a UTF8 flag
+	// gofpdf itself uses to pick UTF-16BE encoding -- passing false here
+	// would embed inc.Title's raw UTF-8 bytes as if they were Latin-1/
+	// PDFDocEncoding, the same class of mojibake bug as the content-stream
+	// text tr() below fixes, just in a PDF viewer's title bar/properties
+	// dialog instead of the visible page.
+	pdf.SetTitle("Incident Report: "+inc.Title, true)
 	pdf.SetAuthor("ArgusOps", false)
 	// Uncompressed: these reports are short (a handful of KB at most), so
 	// the size cost is negligible, and it keeps the generated PDF's content
@@ -74,12 +81,25 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	pdf.SetMargins(18, 18, 18)
 	pdf.AddPage()
 
-	renderPDFHeader(pdf, inc)
-	renderPDFOverview(pdf, inc)
-	renderPDFTimeline(pdf, inc, history)
-	renderPDFRoles(pdf, inc)
-	renderPDFLinkedAlerts(pdf, linkedAlerts)
-	renderPDFTeamNotes(pdf, comments)
+	// gofpdf's built-in "Arial" is a PDF standard font, which the spec (and
+	// gofpdf itself, see SetFont's doc comment) requires to be interpreted
+	// as cp1252 -- every string reaching CellFormat/MultiCell has to be
+	// translated from Go's native UTF-8 into that encoding first, or any
+	// non-ASCII character (e.g. the accents this app's own pt-BR locale
+	// uses -- ã, ç, é) comes out as mojibake, one mangled glyph per UTF-8
+	// continuation byte. tr is that translator; every render*/pdfKV helper
+	// below takes it and applies it to each piece of incident-derived text
+	// before handing it to gofpdf (fixed English section labels are ASCII,
+	// so translating them too is harmless -- simpler than tracking which
+	// strings need it).
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+
+	renderPDFHeader(pdf, tr, inc)
+	renderPDFOverview(pdf, tr, inc)
+	renderPDFTimeline(pdf, tr, inc, history)
+	renderPDFRoles(pdf, tr, inc)
+	renderPDFLinkedAlerts(pdf, tr, linkedAlerts)
+	renderPDFTeamNotes(pdf, tr, comments)
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
@@ -88,9 +108,9 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	return buf.Bytes(), true, nil
 }
 
-func renderPDFHeader(pdf *gofpdf.Fpdf, inc *domain.Incident) {
+func renderPDFHeader(pdf *gofpdf.Fpdf, tr func(string) string, inc *domain.Incident) {
 	pdf.SetFont("Arial", "B", 18)
-	pdf.MultiCell(0, 9, inc.Title, "", "L", false)
+	pdf.MultiCell(0, 9, tr(inc.Title), "", "L", false)
 	pdf.SetFont("Arial", "", 9)
 	pdf.SetTextColor(110, 110, 110)
 	pdf.CellFormat(0, 5, "Incident Report -- generated "+time.Now().UTC().Format("2006-01-02 15:04")+" UTC", "", 1, "L", false, 0, "")
@@ -110,7 +130,8 @@ func pdfSectionHeader(pdf *gofpdf.Fpdf, title string) {
 // value taking the rest of the line. Every field this is used for is a
 // short single-line value (severity, a date, a tag list); Description and
 // team-note bodies (which can be long/multi-line) use MultiCell directly
-// instead, further below.
+// instead, further below. value is expected to already be translated (tr)
+// by the caller when it's incident-derived text, not a label constant.
 func pdfKV(pdf *gofpdf.Fpdf, label, value string) {
 	pdf.SetFont("Arial", "B", 11)
 	pdf.CellFormat(38, pdfLineHeight, label+":", "", 0, "L", false, 0, "")
@@ -118,7 +139,7 @@ func pdfKV(pdf *gofpdf.Fpdf, label, value string) {
 	pdf.CellFormat(0, pdfLineHeight, value, "", 1, "L", false, 0, "")
 }
 
-func renderPDFOverview(pdf *gofpdf.Fpdf, inc *domain.Incident) {
+func renderPDFOverview(pdf *gofpdf.Fpdf, tr func(string) string, inc *domain.Incident) {
 	pdfSectionHeader(pdf, "Overview")
 
 	pdfKV(pdf, "Severity", strings.ToUpper(string(inc.Severity)))
@@ -132,7 +153,7 @@ func renderPDFOverview(pdf *gofpdf.Fpdf, inc *domain.Incident) {
 		pdfKV(pdf, "SLA due", fmt.Sprintf("%s (%s)", inc.SLADueAt.Format(time.RFC3339), slaOutcome(inc)))
 	}
 	if len(inc.Tags) > 0 {
-		pdfKV(pdf, "Tags", strings.Join(inc.Tags, ", "))
+		pdfKV(pdf, "Tags", tr(strings.Join(inc.Tags, ", ")))
 	}
 
 	if inc.Description != "" {
@@ -140,14 +161,14 @@ func renderPDFOverview(pdf *gofpdf.Fpdf, inc *domain.Incident) {
 		pdf.SetFont("Arial", "B", 11)
 		pdf.CellFormat(0, pdfLineHeight, "Description", "", 1, "L", false, 0, "")
 		pdf.SetFont("Arial", "", 11)
-		pdf.MultiCell(0, pdfLineHeight, inc.Description, "", "L", false)
+		pdf.MultiCell(0, pdfLineHeight, tr(inc.Description), "", "L", false)
 	}
 }
 
 // renderPDFTimeline is the PDF rendering of the exact same data
 // PostmortemService.renderTimeline turns into Markdown -- see its doc
 // comment for the duration/correction semantics, unchanged here.
-func renderPDFTimeline(pdf *gofpdf.Fpdf, inc *domain.Incident, history []domain.IncidentStatusHistoryEntry) {
+func renderPDFTimeline(pdf *gofpdf.Fpdf, tr func(string) string, inc *domain.Incident, history []domain.IncidentStatusHistoryEntry) {
 	ordered := orderedHistory(history)
 	if len(ordered) == 0 {
 		return
@@ -180,12 +201,12 @@ func renderPDFTimeline(pdf *gofpdf.Fpdf, inc *domain.Incident, history []domain.
 				reason = *entry.CorrectionReason
 			}
 			pdf.SetFont("Arial", "I", 10)
-			pdf.MultiCell(0, 5, fmt.Sprintf("    Corrected from %s: %s", entry.EnteredAt.Format(time.RFC3339), reason), "", "L", false)
+			pdf.MultiCell(0, 5, tr(fmt.Sprintf("    Corrected from %s: %s", entry.EnteredAt.Format(time.RFC3339), reason)), "", "L", false)
 		}
 	}
 }
 
-func renderPDFRoles(pdf *gofpdf.Fpdf, inc *domain.Incident) {
+func renderPDFRoles(pdf *gofpdf.Fpdf, tr func(string) string, inc *domain.Incident) {
 	if len(inc.Roles) == 0 {
 		return
 	}
@@ -195,7 +216,7 @@ func renderPDFRoles(pdf *gofpdf.Fpdf, inc *domain.Incident) {
 		if label == "" {
 			label = string(assignment.Role)
 		}
-		pdfKV(pdf, label, assignment.User.Name)
+		pdfKV(pdf, label, tr(assignment.User.Name))
 	}
 }
 
@@ -204,7 +225,7 @@ func renderPDFRoles(pdf *gofpdf.Fpdf, inc *domain.Incident) {
 // printed/shared standalone should say "none" explicitly rather than
 // silently omit the section, since there's no sibling page (like the
 // incident detail view) around it to fall back on for context.
-func renderPDFLinkedAlerts(pdf *gofpdf.Fpdf, alerts []domain.Alert) {
+func renderPDFLinkedAlerts(pdf *gofpdf.Fpdf, tr func(string) string, alerts []domain.Alert) {
 	pdfSectionHeader(pdf, "Linked Alerts")
 	pdf.SetFont("Arial", "", 11)
 	if len(alerts) == 0 {
@@ -213,11 +234,11 @@ func renderPDFLinkedAlerts(pdf *gofpdf.Fpdf, alerts []domain.Alert) {
 	}
 	for _, a := range alerts {
 		line := fmt.Sprintf("- %s (%s, %s) -- %s", a.Title, a.Severity, a.Status, a.Source)
-		pdf.MultiCell(0, pdfLineHeight, line, "", "L", false)
+		pdf.MultiCell(0, pdfLineHeight, tr(line), "", "L", false)
 	}
 }
 
-func renderPDFTeamNotes(pdf *gofpdf.Fpdf, comments []domain.IncidentComment) {
+func renderPDFTeamNotes(pdf *gofpdf.Fpdf, tr func(string) string, comments []domain.IncidentComment) {
 	pdfSectionHeader(pdf, "Team Notes")
 	if len(comments) == 0 {
 		pdf.SetFont("Arial", "", 11)
@@ -226,9 +247,9 @@ func renderPDFTeamNotes(pdf *gofpdf.Fpdf, comments []domain.IncidentComment) {
 	}
 	for _, c := range comments {
 		pdf.SetFont("Arial", "B", 11)
-		pdf.MultiCell(0, pdfLineHeight, fmt.Sprintf("%s (%s):", c.AuthorName, c.CreatedAt.Format(time.RFC3339)), "", "L", false)
+		pdf.MultiCell(0, pdfLineHeight, tr(fmt.Sprintf("%s (%s):", c.AuthorName, c.CreatedAt.Format(time.RFC3339))), "", "L", false)
 		pdf.SetFont("Arial", "", 11)
-		pdf.MultiCell(0, pdfLineHeight, c.Body, "", "L", false)
+		pdf.MultiCell(0, pdfLineHeight, tr(c.Body), "", "L", false)
 		pdf.Ln(1)
 	}
 }

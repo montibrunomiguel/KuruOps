@@ -20,7 +20,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   alertas vinculados e notas da equipe. Disponível em qualquer fase, diferente do postmortem em
   Markdown (que só aparece quando o incidente chega em Pós-Incidente) -- este é um export factual
   de um momento específico, não um documento narrativo de encerramento. Geração de PDF em Go puro
-  (`github.com/jung-kurt/gofpdf`), sem adicionar dependência de navegador headless/Chromium.
+  (`github.com/jung-kurt/gofpdf`), sem adicionar dependência de navegador headless/Chromium. Texto
+  não-ASCII (títulos/descrições/notas em pt-BR com acento, tags, nomes) passa por
+  `pdf.UnicodeTranslatorFromDescriptor` antes de renderizar -- a fonte "Arial" embutida do gofpdf
+  exige cp1252, e bytes UTF-8 crus passados direto pra ela saem como caracteres corrompidos.
 - Autenticação em dois fatores (TOTP): autoatendimento, opcional por usuário, ativada em
   Configurações → Perfil → Autenticação em Dois Fatores (escaneie um QR code ou digite o segredo
   manualmente em um aplicativo autenticador, depois confirme com um código de 6 dígitos). Um login

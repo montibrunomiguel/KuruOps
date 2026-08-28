@@ -19,7 +19,9 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   notes. Available at any phase, unlike the Markdown postmortem (which only appears once an
   incident reaches Post-Incident) — this is a point-in-time factual export, not a closing
   narrative. Pure-Go PDF generation (`github.com/jung-kurt/gofpdf`), no headless-browser/Chromium
-  dependency added.
+  dependency added. Non-ASCII text (accented pt-BR titles/descriptions/notes, tags, names) is
+  translated through `pdf.UnicodeTranslatorFromDescriptor` before rendering — the built-in "Arial"
+  font gofpdf uses requires cp1252, and raw UTF-8 bytes fed to it directly come out as mojibake.
 - Two-factor authentication (TOTP): self-service, optional per-user, enrolled from Settings →
   Profile → Two-Factor Authentication (scan a QR code or enter the secret manually into an
   authenticator app, then confirm with a 6-digit code). A local login for an enrolled account stops

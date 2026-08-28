@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jung-kurt/gofpdf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -122,6 +123,47 @@ func TestIncidentReportService_GeneratePDF_MinimalRecord(t *testing.T) {
 	assert.Contains(t, doc, "Team Notes")
 	assert.Contains(t, doc, "None.")
 	assert.NotContains(t, doc, "Team Roles", "no roles assigned -- that section must be omitted entirely, not printed empty")
+}
+
+// TestIncidentReportService_GeneratePDF_NonASCIIText guards against gofpdf's
+// built-in "Arial" font's cp1252 encoding mangling non-ASCII text (this
+// app's own pt-BR locale routinely produces accented incident titles/
+// descriptions) -- GeneratePDF must translate through
+// pdf.UnicodeTranslatorFromDescriptor before handing text to
+// CellFormat/MultiCell, or every accented character comes out as one
+// mangled glyph per UTF-8 continuation byte instead of the actual
+// character. Checks the *encoded* form is present (proving the translator
+// ran) and that the untranslated raw UTF-8 bytes are absent (proving it
+// isn't just passing the string through unmodified).
+func TestIncidentReportService_GeneratePDF_NonASCIIText(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	incidentRepo := repository.NewIncidentRepository()
+	tagSvc := service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository())
+	incSvc := service.NewIncidentService(pool, incidentRepo, tagSvc, repository.NewUserRepository(), service.NewIncidentSLAService(pool, repository.NewIncidentSLARepository(), repository.NewAdminAuditEventRepository()))
+	reportSvc := service.NewIncidentReportService(incSvc)
+
+	const title = "Phishing na área de RH"
+	const description = "Investigação em andamento -- informações comprometidas."
+	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: title, Description: description, Severity: domain.SeverityMedium, Priority: domain.PriorityP3,
+	})
+	require.NoError(t, err)
+
+	pdfBytes, found, err := reportSvc.GeneratePDF(t.Context(), tenantID, inc.ID, nil)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	doc := string(pdfBytes)
+	assert.NotContains(t, doc, title, "raw UTF-8 title bytes must not appear unencoded in the content stream")
+	assert.NotContains(t, doc, description, "raw UTF-8 description bytes must not appear unencoded in the content stream")
+
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
+	assert.Contains(t, doc, tr(title))
+	assert.Contains(t, doc, tr(description))
 }
 
 // TestIncidentReportService_GeneratePDF_OutOfScopeTag confirms GeneratePDF
