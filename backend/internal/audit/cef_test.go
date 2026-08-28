@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/audit"
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/audit"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 func TestFormatCEF(t *testing.T) {
@@ -28,7 +28,7 @@ func TestFormatCEF(t *testing.T) {
 
 	line := audit.FormatCEF(e)
 
-	require.True(t, strings.HasPrefix(line, "CEF:0|ArgusOps|ArgusOps|1.0|alert.status_changed|"), "got: %s", line)
+	require.True(t, strings.HasPrefix(line, "CEF:0|KuruOps|KuruOps|1.0|alert.status_changed|"), "got: %s", line)
 	assert.Contains(t, line, "Suspicious login: status changed")
 	assert.Contains(t, line, "rt="+strconv.FormatInt(createdAt.UnixMilli(), 10))
 	assert.Contains(t, line, "cat=alert")

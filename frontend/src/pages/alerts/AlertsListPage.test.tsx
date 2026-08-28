@@ -291,7 +291,7 @@ describe("AlertsListPage", () => {
 
   it("reloads the list when a live alert event comes in over the event stream", async () => {
     localStorage.setItem(
-      "argusops.session",
+      "kuruops.session",
       JSON.stringify({
         token: "tok",
         refreshToken: "rt",

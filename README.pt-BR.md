@@ -1,13 +1,13 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
 <p align="center">
-  <img src="docs/logo.png" alt="ArgusOps" width="420" />
+  <img src="docs/logo.png" alt="KuruOps" width="420" />
 </p>
 
-# ArgusOps
+# KuruOps
 
 SOC/SIEM alert & incident management — Go + PostgreSQL backend, React frontend, desenhado a partir
-do handoff em `design_handoff_argusops/`. Ver `backend/README.pt-BR.md`, `frontend/README.pt-BR.md` e
+do handoff em `design_handoff_kuruops/`. Ver `backend/README.pt-BR.md`, `frontend/README.pt-BR.md` e
 `db/README.pt-BR.md` para detalhes de cada parte; este README cobre como subir tudo e o que esperar
 depois que sobe.
 
@@ -24,7 +24,7 @@ task deploy:up
 ```
 
 Isso faz, nessa ordem: sobe o Postgres e espera ficar saudável, aplica as migrations
-(`db/migrations`), cria o role `argusops_app` (least-privilege — é o que faz a row-level security
+(`db/migrations`), cria o role `kuruops_app` (least-privilege — é o que faz a row-level security
 valer alguma coisa, ver `db/README.pt-BR.md`), builda as imagens e sobe `api` + `ingest` + `worker` +
 `frontend`. No final, imprime:
 
@@ -47,12 +47,12 @@ task frontend:dev   # :5173, faz proxy de /api e /auth pro :8080
 
 ### Primeiro login
 
-Todo deploy novo já vem com um admin: **`admin@argusops.local` / `ChangeMe123!`**. A senha é
+Todo deploy novo já vem com um admin: **`admin@kuruops.local` / `ChangeMe123!`**. A senha é
 pública (está neste repo) de propósito — o primeiro login força a troca antes de liberar qualquer
 outra coisa, tanto na tela quanto no backend (nenhuma rota além de trocar senha responde enquanto
 `mustChangePassword` estiver ativo). Troque assim que entrar.
 
-ArgusOps é pensado pra rodar como **uma instância só** — não tem conceito de "empresa"/tenant no
+KuruOps é pensado pra rodar como **uma instância só** — não tem conceito de "empresa"/tenant no
 login. "Empresa" existe apenas como tag em alertas/incidentes, usada para restringir o que cada
 usuário enxerga (`allowedTags`); um mesmo usuário pode ter acesso a alertas de várias empresas ao
 mesmo tempo.
@@ -193,7 +193,7 @@ graph TD
 `cmd/worker`) para escalar/falhar independentemente — `ingest` é a única superfície exposta a
 webhooks de terceiros (superfície de ataque menor e isolada do resto da API), `worker` não expõe
 porta nenhuma (só cron interno). Todos os três conectam no Postgres como o mesmo role
-least-privilege (`argusops_app`), então a row-level security por `tenant_id` vale para qualquer um
+least-privilege (`kuruops_app`), então a row-level security por `tenant_id` vale para qualquer um
 deles, não só para requests vindos do navegador — ver `db/README.pt-BR.md`. Os componentes externos
 (IdP, LLM, MCP, blobstore, secrets backend, SMTP, on-call) são todos opcionais e configurados por
 tenant em Settings; sem nenhum configurado, o sistema roda só com auth local + storage em disco
@@ -203,7 +203,7 @@ local + segredos criptografados no próprio Postgres.
 
 Duas peças do `api` guardam estado em memória, no processo — `internal/events.Broadcaster` (fan-out
 de eventos SSE para as abas conectadas) e `middleware.NewRateLimiter` (rate limit de login, por
-IP/conta). Isso é suficiente pro modelo single-instance do ArgusOps (ver "Primeiro login" acima —
+IP/conta). Isso é suficiente pro modelo single-instance do KuruOps (ver "Primeiro login" acima —
 não existe conceito de tenant/empresa no login, então nunca houve razão pra rodar mais de uma
 réplica do `api`), mas significa que **rodar duas ou mais réplicas do `api` atrás de um load
 balancer quebra os dois**: um cliente conectado à réplica A nunca recebe um evento publicado pela

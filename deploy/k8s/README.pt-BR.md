@@ -1,6 +1,6 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# ArgusOps no Kubernetes
+# KuruOps no Kubernetes
 
 Manifests básicos para rodar a stack real (api, ingest, worker, frontend) em
 um cluster. Deliberadamente minimalista: sem Helm chart, sem
@@ -16,7 +16,7 @@ para isso, em vez deste projeto escolher uma opção por você.
   StatefulSet que você gerencia separadamente etc.) — a mesma premissa de
   "banco de dados fornecido pelo cliente" que a própria funcionalidade de
   migração para banco de dados externo em Settings do app já assume. As
-  roles `argusops_app`/`argusops_worker` e as políticas de RLS já precisam
+  roles `kuruops_app`/`kuruops_worker` e as políticas de RLS já precisam
   existir lá (veja `db/init/*.sql` e `db/README.md`) antes de apontar o
   `01-secret.example.yaml` para ela.
 - **Ingress/TLS.** O Service do `frontend` é `ClusterIP` — alcançá-lo de fora
@@ -50,7 +50,7 @@ kubectl apply -f deploy/k8s/02-configmap.yaml
 # Espera o Job de fato terminar antes de continuar -- api/ingest/worker
 # assumem que o schema já existe na primeira inicialização.
 kubectl apply -f deploy/k8s/03-migration-job.yaml
-kubectl wait --for=condition=complete --timeout=120s -n argusops job/argusops-migrate
+kubectl wait --for=condition=complete --timeout=120s -n kuruops job/kuruops-migrate
 
 kubectl apply -f deploy/k8s/04-api.yaml
 kubectl apply -f deploy/k8s/05-ingest.yaml
@@ -86,7 +86,7 @@ Construídas da mesma forma que o `docker-compose.yml` as constrói localmente
 `frontend/Dockerfile`) — envie-as para o registry que o seu cluster consiga
 puxar e atualize os campos `image:` de acordo; esses manifests referenciam
 os mesmos nomes locais sem tag que o `docker compose build` produz
-(`argusops-api:latest`, etc.) como placeholder.
+(`kuruops-api:latest`, etc.) como placeholder.
 
 ## Health checks e limites de recursos
 
@@ -103,8 +103,8 @@ tempestade de reinícios sincronizados em vez de simplesmente deixar a
 readiness contornar o problema. `resources.requests`/`limits` espelham o
 `mem_limit`/`cpus` do `docker-compose.yml` para os mesmos serviços — mesma
 ressalva se aplica: dimensionado para experimentar, não uma recomendação de
-dimensionamento de produção. Observe as séries reais `argusops_db_pool_*` /
-`argusops_http_request_duration_seconds` em `/metrics` depois de implantado
+dimensionamento de produção. Observe as séries reais `kuruops_db_pool_*` /
+`kuruops_http_request_duration_seconds` em `/metrics` depois de implantado
 e ajuste a partir daí.
 
 ## Monitoring

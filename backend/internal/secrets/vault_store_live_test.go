@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/secrets"
 )
 
 func skipUnlessVaultLive(t *testing.T) (addr, token string) {

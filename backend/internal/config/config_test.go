@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/config"
+	"github.com/kuruops/kuruops/internal/config"
 )
 
 func clearEnv(t *testing.T) {
@@ -31,11 +31,11 @@ func TestLoad_MissingDatabaseURL(t *testing.T) {
 
 func TestLoad_Defaults(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 
 	cfg, err := config.Load(nil)
 	require.NoError(t, err)
-	assert.Equal(t, "postgres://localhost/argusops", cfg.DatabaseURL)
+	assert.Equal(t, "postgres://localhost/kuruops", cfg.DatabaseURL)
 	assert.Equal(t, ":8080", cfg.HTTPAddr)
 	assert.Equal(t, "jwt", cfg.AuthMode)
 	assert.Equal(t, 15*time.Second, cfg.ShutdownTimeout)
@@ -50,11 +50,11 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_SecretsBackendOverrides(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 	t.Setenv("SECRETS_BACKEND", "vault")
 	t.Setenv("VAULT_ADDR", "https://vault.internal:8200")
 	t.Setenv("VAULT_TOKEN", "s.abc123")
-	t.Setenv("VAULT_MOUNT", "argusops-secrets")
+	t.Setenv("VAULT_MOUNT", "kuruops-secrets")
 	t.Setenv("KMS_REGION", "us-east-1")
 	t.Setenv("KMS_ACCESS_KEY_ID", "AKIA...")
 	t.Setenv("KMS_SECRET_ACCESS_KEY", "shh")
@@ -65,7 +65,7 @@ func TestLoad_SecretsBackendOverrides(t *testing.T) {
 	assert.Equal(t, "vault", cfg.SecretsBackend)
 	assert.Equal(t, "https://vault.internal:8200", cfg.VaultAddr)
 	assert.Equal(t, "s.abc123", cfg.VaultToken)
-	assert.Equal(t, "argusops-secrets", cfg.VaultMount)
+	assert.Equal(t, "kuruops-secrets", cfg.VaultMount)
 	assert.Equal(t, "us-east-1", cfg.KMSRegion)
 	assert.Equal(t, "AKIA...", cfg.KMSAccessKeyID)
 	assert.Equal(t, "shh", cfg.KMSSecretAccessKey)
@@ -74,7 +74,7 @@ func TestLoad_SecretsBackendOverrides(t *testing.T) {
 
 func TestLoad_OverridesFromEnv(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 	t.Setenv("HTTP_ADDR", ":9090")
 	t.Setenv("JWT_PUBLIC_KEY_PATH", "/keys/pub.pem")
 	t.Setenv("JWT_PRIVATE_KEY_PATH", "/keys/priv.pem")
@@ -92,7 +92,7 @@ func TestLoad_OverridesFromEnv(t *testing.T) {
 
 func TestLoad_InvalidDurationFallsBackToDefault(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 	t.Setenv("SHUTDOWN_TIMEOUT", "not-a-duration")
 
 	cfg, err := config.Load(nil)
@@ -102,7 +102,7 @@ func TestLoad_InvalidDurationFallsBackToDefault(t *testing.T) {
 
 func TestLoad_InvalidInt32FallsBackToDefault(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 	t.Setenv("LOGIN_RATE_LIMIT_PER_MINUTE", "not-a-number")
 
 	cfg, err := config.Load(nil)
@@ -112,7 +112,7 @@ func TestLoad_InvalidInt32FallsBackToDefault(t *testing.T) {
 
 func TestLoad_RateLimitOverridesFromEnv(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://localhost/argusops")
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
 	t.Setenv("LOGIN_RATE_LIMIT_PER_MINUTE", "5")
 	t.Setenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "120")
 

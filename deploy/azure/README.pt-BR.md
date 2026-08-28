@@ -1,8 +1,8 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# ArgusOps no Azure (AKS)
+# KuruOps no Azure (AKS)
 
-Provisiona a infraestrutura de nuvem que o ArgusOps precisa: um resource
+Provisiona a infraestrutura de nuvem que o KuruOps precisa: um resource
 group + VNet, um cluster AKS, um Azure Database for PostgreSQL Flexible
 Server integrado à VNet (somente acesso privado) e um Azure Container
 Registry contendo as quatro imagens. Isso **não** aplica os manifests de
@@ -56,11 +56,11 @@ $(terraform output -raw acr_login_command)
 cd ../..   # raiz do repositório
 REGISTRY=$(cd deploy/azure && terraform output -raw acr_login_server)
 for target in api ingest worker; do
-  docker build --target "$target" -t "$REGISTRY/argusops/$target:latest" -f backend/Dockerfile .
-  docker push "$REGISTRY/argusops/$target:latest"
+  docker build --target "$target" -t "$REGISTRY/kuruops/$target:latest" -f backend/Dockerfile .
+  docker push "$REGISTRY/kuruops/$target:latest"
 done
-docker build -t "$REGISTRY/argusops/frontend:latest" ./frontend
-docker push "$REGISTRY/argusops/frontend:latest"
+docker build -t "$REGISTRY/kuruops/frontend:latest" ./frontend
+docker push "$REGISTRY/kuruops/frontend:latest"
 ```
 
 ## 4. Criar as roles do banco de dados
@@ -72,11 +72,11 @@ a partir de um pod descartável:
 
 ```bash
 kubectl run psql-tmp --rm -it --restart=Never --image=postgres:16-alpine -- \
-  psql "postgres://argusops_admin:$(cd deploy/azure && terraform output -raw db_master_password)@$(cd deploy/azure && terraform output -raw db_host)/argusops?sslmode=require"
+  psql "postgres://kuruops_admin:$(cd deploy/azure && terraform output -raw db_master_password)@$(cd deploy/azure && terraform output -raw db_host)/kuruops?sslmode=require"
 ```
 
-depois cole o conteúdo de `db/init/argusops_app_role.sql` e
-`argusops_worker_role.sql` (substituindo senhas reais nas variáveis psql
+depois cole o conteúdo de `db/init/kuruops_app_role.sql` e
+`kuruops_worker_role.sql` (substituindo senhas reais nas variáveis psql
 `:app_password`/`:worker_password`, ou execute o corpo de cada script
 diretamente).
 
@@ -84,9 +84,9 @@ diretamente).
 
 Copie `deploy/k8s/01-secret.example.yaml` e preencha:
 - `DATABASE_URL_APP` / `DATABASE_URL_WORKER` — o output `db_host` + as
-  senhas que você acabou de definir para `argusops_app`/`argusops_worker`
+  senhas que você acabou de definir para `kuruops_app`/`kuruops_worker`
 - `DATABASE_URL_MIGRATE` — o output `db_host` + as credenciais de
-  `argusops_admin` (outputs `db_master_username`/`db_master_password`)
+  `kuruops_admin` (outputs `db_master_username`/`db_master_password`)
 - `SECRETS_ENCRYPTION_KEY` — `openssl rand -base64 32`
 - `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY` — gere conforme o próprio comentário
   daquele arquivo
@@ -98,7 +98,7 @@ vai expor o Service do frontend (veja o passo 7).
 
 Atualize o `image:` em `deploy/k8s/04-api.yaml`, `05-ingest.yaml`,
 `06-worker.yaml`, `07-frontend.yaml` e o initContainer `copy-migrations` de
-`03-migration-job.yaml` para `$REGISTRY/argusops/<name>:latest` do passo 3,
+`03-migration-job.yaml` para `$REGISTRY/kuruops/<name>:latest` do passo 3,
 então siga a ordem de aplicação de `deploy/k8s/README.md`.
 
 ## 7. Acessar a aplicação de fora do cluster
@@ -107,7 +107,7 @@ O Service do `frontend` é `ClusterIP` de propósito — não há controlador de
 ingress aqui. Forma mais rápida de experimentar:
 
 ```bash
-kubectl -n argusops port-forward svc/frontend 8080:8080
+kubectl -n kuruops port-forward svc/frontend 8080:8080
 ```
 
 Para algo real, instale o add-on de application routing gerenciado pelo AKS

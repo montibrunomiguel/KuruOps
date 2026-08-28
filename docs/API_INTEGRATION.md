@@ -2,14 +2,14 @@
 
 # API & Webhook Integration Guide
 
-ArgusOps exposes two separate HTTP surfaces, on two separate services, for two separate audiences:
+KuruOps exposes two separate HTTP surfaces, on two separate services, for two separate audiences:
 
 | Surface | Service | Port (local) | Audience | Spec |
 |---|---|---|---|---|
-| REST API (`/api/v1/**`, `/auth/**`) | `cmd/api` | `:8080` | The frontend, and any admin tooling you build against ArgusOps itself | [`docs/openapi.yaml`](openapi.yaml) — the full, authoritative contract |
-| Webhook ingest (`/hooks`) | `cmd/ingest` | `:8081` | Your SIEM/XDR/alerting sources, pushing alerts *into* ArgusOps | This document |
+| REST API (`/api/v1/**`, `/auth/**`) | `cmd/api` | `:8080` | The frontend, and any admin tooling you build against KuruOps itself | [`docs/openapi.yaml`](openapi.yaml) — the full, authoritative contract |
+| Webhook ingest (`/hooks`) | `cmd/ingest` | `:8081` | Your SIEM/XDR/alerting sources, pushing alerts *into* KuruOps | This document |
 
-This document covers the second one: **how an external system sends an alert into ArgusOps**. It's deliberately narrative — `openapi.yaml` doesn't cover `/hooks` at all, because its request shape isn't one fixed schema (see "Payload shape by source" below), which doesn't fit OpenAPI's per-path single-schema model well. Everything about the REST API itself (listing/updating alerts, managing settings, authentication) is fully specified in `openapi.yaml`; don't duplicate it here.
+This document covers the second one: **how an external system sends an alert into KuruOps**. It's deliberately narrative — `openapi.yaml` doesn't cover `/hooks` at all, because its request shape isn't one fixed schema (see "Payload shape by source" below), which doesn't fit OpenAPI's per-path single-schema model well. Everything about the REST API itself (listing/updating alerts, managing settings, authentication) is fully specified in `openapi.yaml`; don't duplicate it here.
 
 ## 1. Create a webhook endpoint
 
@@ -27,7 +27,7 @@ The response includes a bearer **token**, shown exactly once:
 }
 ```
 
-Store that token in your SIEM/sender's configuration now — ArgusOps never shows it again (only the endpoint's `tokenLast4`, for recognizing which token is which in the UI). If you lose it, regenerate a new one from Settings (`POST /api/v1/settings/webhooks/{id}/regenerate`) — the old one stops working the moment you do.
+Store that token in your SIEM/sender's configuration now — KuruOps never shows it again (only the endpoint's `tokenLast4`, for recognizing which token is which in the UI). If you lose it, regenerate a new one from Settings (`POST /api/v1/settings/webhooks/{id}/regenerate`) — the old one stops working the moment you do.
 
 By default, a token expires 90 days after it's issued or last regenerated; set `expiresInDays` explicitly at creation (0 or negative = never expires) if that default doesn't fit your rotation policy.
 
@@ -55,7 +55,7 @@ Content-Type: application/json
 | `401 Unauthorized` | Missing/invalid/expired token. |
 | `403 Forbidden` | The endpoint exists but is disabled (Settings → Webhook Endpoints → Disable). |
 | `429 Too Many Requests` | Rate limit exceeded (see above). |
-| `500 Internal Server Error` | Something failed on ArgusOps' side — the alert was not ingested; safe to retry. |
+| `500 Internal Server Error` | Something failed on KuruOps' side — the alert was not ingested; safe to retry. |
 
 ## 3. Payload shape by source
 
@@ -75,7 +75,7 @@ Every source variant is normalized down to the same internal shape before an ale
 }
 ```
 
-`title` and `severity` are required (severity must be exactly one of the five values above, case-sensitive). Everything else is optional. Use this shape for any source without a dedicated adapter below — write your sender to emit this envelope directly, no need to wait for ArgusOps to add native support for your specific tool.
+`title` and `severity` are required (severity must be exactly one of the five values above, case-sensitive). Everything else is optional. Use this shape for any source without a dedicated adapter below — write your sender to emit this envelope directly, no need to wait for KuruOps to add native support for your specific tool.
 
 ### `wazuh`
 
@@ -88,7 +88,7 @@ Every source variant is normalized down to the same internal shape before an ale
 }
 ```
 
-`rule.level` (Wazuh's own 0–15+ scale) maps to ArgusOps severity: `>=12` critical, `>=9` high, `>=6` medium, `>=3` low, otherwise informational. `rule.groups` becomes the alert's tags (auto-created if new — see §4). `rule.description` becomes the title.
+`rule.level` (Wazuh's own 0–15+ scale) maps to KuruOps severity: `>=12` critical, `>=9` high, `>=6` medium, `>=3` low, otherwise informational. `rule.groups` becomes the alert's tags (auto-created if new — see §4). `rule.description` becomes the title.
 
 ### `crowdstrike`
 
@@ -122,7 +122,7 @@ Every source variant is normalized down to the same internal shape before an ale
 }
 ```
 
-`severity` is GuardDuty's own 0.1–8.9 float score, banded into the five ArgusOps tiers.
+`severity` is GuardDuty's own 0.1–8.9 float score, banded into the five KuruOps tiers.
 
 Adding a new dedicated normalizer (rather than relying on `generic`) is a backend code change — see `backend/internal/ingest/normalize_*.go` for the pattern (`Normalizer` interface, one adapter file per source) if you're contributing one.
 

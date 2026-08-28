@@ -35,7 +35,7 @@ func (SlackSender) Send(ctx context.Context, destination string, n Notification)
 		fmt.Fprintf(&b, "%s\n", n.Description)
 	}
 	if n.URL != "" {
-		fmt.Fprintf(&b, "<%s|View in ArgusOps>", n.URL)
+		fmt.Fprintf(&b, "<%s|View in KuruOps>", n.URL)
 	}
 
 	body, err := json.Marshal(slackMessage{Text: b.String()})

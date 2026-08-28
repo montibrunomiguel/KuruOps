@@ -504,7 +504,7 @@
   },
   "settings": {
     "title": "Configurações",
-    "subtitle": "Integrações, identidade, operação e auditoria do ArgusOps.",
+    "subtitle": "Integrações, identidade, operação e auditoria do KuruOps.",
     "navSearchPlaceholder": "Buscar configurações...",
     "navSearchNoResults": "Nenhuma configuração encontrada.",
     "panelError": {
@@ -787,7 +787,7 @@
       "saml": {
         "title": "SAML",
         "configured": "configurado",
-        "helper": "Login SSO iniciado pelo ArgusOps (SP-initiated). Ao salvar pela primeira vez, um par de chaves de assinatura é gerado — registre a metadata abaixo no seu IdP.",
+        "helper": "Login SSO iniciado pelo KuruOps (SP-initiated). Ao salvar pela primeira vez, um par de chaves de assinatura é gerado — registre a metadata abaixo no seu IdP.",
         "saved": "Configuração salva.",
         "registerWithIdp": "Registre no seu IdP",
         "spMetadataUrl": "SP Metadata URL",
@@ -849,7 +849,7 @@
         "folderIdHint": "O ID da URL da pasta no Drive (a parte depois de /folders/). A pasta precisa já existir.",
         "folderIdRequired": "O ID da pasta é obrigatório.",
         "serviceAccountJson": "Credenciais da Service Account (JSON)",
-        "serviceAccountHint": "A service account precisa já ter essa pasta compartilhada com ela pelo lado do Drive -- o ArgusOps não consegue conceder esse acesso por você.",
+        "serviceAccountHint": "A service account precisa já ter essa pasta compartilhada com ela pelo lado do Drive -- o KuruOps não consegue conceder esse acesso por você.",
         "connectButton": "Conectar com Google",
         "connectedAs": "Conectado como {{email}}",
         "oauthHint": "Você será redirecionado ao Google para conceder acesso, e voltará para cá em seguida."
@@ -881,7 +881,7 @@
     },
     "slack": {
       "title": "Slack",
-      "helper": "Conecte um workspace do Slack para que o ArgusOps possa abrir incidentes pelo Slack e sincronizar mensagens e arquivos de canais/threads. Esta é apenas a fundação -- por enquanto só conectar/desconectar, com a integração completa de mensagens chegando em uma atualização futura.",
+      "helper": "Conecte um workspace do Slack para que o KuruOps possa abrir incidentes pelo Slack e sincronizar mensagens e arquivos de canais/threads. Esta é apenas a fundação -- por enquanto só conectar/desconectar, com a integração completa de mensagens chegando em uma atualização futura.",
       "connectedBadge": "Conectado a {{team}}",
       "connectedMessage": "Workspace conectado.",
       "workspace": "Workspace",
@@ -1034,8 +1034,8 @@
     },
     "retention": {
       "title": "Retenção",
-      "helper": "Por quanto tempo um alerta ou incidente fechado fica no ArgusOps depois de fechado, antes de ser excluído permanentemente. Um alerta/incidente aberto nunca é excluído, não importa a idade. Quer guardar uma cópia do que vai ser excluído? Exporte antes com a Exportação de Auditoria, acima.",
-      "warning": "Reduzir qualquer um dos valores abaixo da idade de um registro fechado já existente faz com que ele seja excluído permanentemente na próxima varredura -- isso não pode ser desfeito. As evidências anexadas a um alerta/incidente excluído não são removidas de onde estão armazenadas (S3, GCS, Google Drive ou disco local) -- só o registro do ArgusOps é removido.",
+      "helper": "Por quanto tempo um alerta ou incidente fechado fica no KuruOps depois de fechado, antes de ser excluído permanentemente. Um alerta/incidente aberto nunca é excluído, não importa a idade. Quer guardar uma cópia do que vai ser excluído? Exporte antes com a Exportação de Auditoria, acima.",
+      "warning": "Reduzir qualquer um dos valores abaixo da idade de um registro fechado já existente faz com que ele seja excluído permanentemente na próxima varredura -- isso não pode ser desfeito. As evidências anexadas a um alerta/incidente excluído não são removidas de onde estão armazenadas (S3, GCS, Google Drive ou disco local) -- só o registro do KuruOps é removido.",
       "usingDefault": "Usando o padrão (18 meses)",
       "alertRetentionMonths": "Retenção de alertas (meses)",
       "incidentRetentionMonths": "Retenção de incidentes (meses)",
@@ -1045,7 +1045,7 @@
     },
     "databaseMigration": {
       "title": "Banco de Dados Externo",
-      "helper": "Migre do container Postgres embutido para um banco de dados fornecido por você. Esta é uma migração assistida e única, não uma troca ao vivo -- o ArgusOps lê sua conexão de banco apenas na inicialização, então os serviços api/ingest/worker ainda precisam ser reiniciados manualmente depois, com as strings de conexão mostradas abaixo.",
+      "helper": "Migre do container Postgres embutido para um banco de dados fornecido por você. Esta é uma migração assistida e única, não uma troca ao vivo -- o KuruOps lê sua conexão de banco apenas na inicialização, então os serviços api/ingest/worker ainda precisam ser reiniciados manualmente depois, com as strings de conexão mostradas abaixo.",
       "testOk": "Conexão bem-sucedida.",
       "testConnection": "Testar Conexão",
       "testing": "Testando...",
@@ -1053,7 +1053,7 @@
       "port": "Porta",
       "database": "Nome do banco",
       "user": "Usuário",
-      "userHint": "(precisa ter privilégio suficiente para CREATE ROLE e CREATE EXTENSION -- não é a role de baixo privilégio que o ArgusOps usará depois)",
+      "userHint": "(precisa ter privilégio suficiente para CREATE ROLE e CREATE EXTENSION -- não é a role de baixo privilégio que o KuruOps usará depois)",
       "password": "Senha",
       "sslMode": "Modo SSL",
       "migrateButton": "Migrar e Trocar",

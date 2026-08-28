@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // wazuhNormalizer maps a Wazuh alert (as delivered by Wazuh's own webhook
@@ -71,7 +71,7 @@ func (wazuhNormalizer) Normalize(raw []byte) (NormalizedAlert, error) {
 	return na, nil
 }
 
-// wazuhSeverity maps rule.level (0-15+) to ArgusOps' 5-tier severity,
+// wazuhSeverity maps rule.level (0-15+) to KuruOps' 5-tier severity,
 // following the qualitative bands Wazuh's own documentation describes for
 // the default ruleset ("0-3: low importance", ..., "12-15: severe attack").
 func wazuhSeverity(level int) domain.Severity {

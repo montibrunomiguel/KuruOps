@@ -13,8 +13,8 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: argusops-migrate
-  namespace: argusops
+  name: kuruops-migrate
+  namespace: kuruops
 spec:
   backoffLimit: 2
   template:
@@ -22,7 +22,7 @@ spec:
       restartPolicy: Never
       initContainers:
         - name: copy-migrations
-          image: argusops-api:latest
+          image: kuruops-api:latest
           command: ["sh", "-c", "cp -r /app/db/migrations/. /migrations/"]
           volumeMounts:
             - name: migrations
@@ -38,7 +38,7 @@ spec:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: argusops-secrets
+                  name: kuruops-secrets
                   key: DATABASE_URL_MIGRATE
           volumeMounts:
             - name: migrations

@@ -4,7 +4,7 @@
 
 ## Supported Versions
 
-Only the latest release and the `main` branch of ArgusOps receive security updates.
+Only the latest release and the `main` branch of KuruOps receive security updates.
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -12,12 +12,12 @@ Only the latest release and the `main` branch of ArgusOps receive security updat
 
 ## Reporting a Vulnerability
 
-As ArgusOps is a cybersecurity alert and incident management system, security is our top priority. We take security vulnerabilities very seriously.
+As KuruOps is a cybersecurity alert and incident management system, security is our top priority. We take security vulnerabilities very seriously.
 
-If you discover a security vulnerability in ArgusOps, please follow these steps:
+If you discover a security vulnerability in KuruOps, please follow these steps:
 
 1. **Do NOT open a public GitHub issue** for security vulnerabilities.
-2. Email your findings to `security@argusops.org` (or contact the maintainers privately via GitHub Security Advisories).
+2. Email your findings to `security@kuruops.org` (or contact the maintainers privately via GitHub Security Advisories).
 3. Include detailed information:
    - Description of the vulnerability
    - Steps to reproduce the issue
@@ -30,4 +30,4 @@ If you discover a security vulnerability in ArgusOps, please follow these steps:
 - **Assessment**: We will assess the impact and severity of the reported issue.
 - **Fix & Disclosure**: We will work on a fix and coordinate the release date with you before public disclosure.
 
-Thank you for helping keep ArgusOps and its community safe!
+Thank you for helping keep KuruOps and its community safe!

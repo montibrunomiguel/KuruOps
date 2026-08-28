@@ -1,6 +1,6 @@
 ---
 name: Relatório de bug (PT-BR)
-about: Crie um relatório para nos ajudar a melhorar o ArgusOps
+about: Crie um relatório para nos ajudar a melhorar o KuruOps
 title: '[BUG] '
 labels: 'bug'
 assignees: ''

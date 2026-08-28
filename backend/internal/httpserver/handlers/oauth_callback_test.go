@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // newOAuthCallbackHandlers wires OAuthCallbackHandlers against the real
@@ -31,11 +31,11 @@ func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *s
 
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
-		oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
+		oauthStates, "test-client-id", "test-client-secret", "https://kuruops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 	slackSvc := service.NewSlackConfigService(pool, repository.NewSlackConfigRepository(), secrets.NewEnvStore(),
-		oauthStates, "test-slack-client-id", "test-slack-client-secret", "https://argusops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
+		oauthStates, "test-slack-client-id", "test-slack-client-secret", "https://kuruops.example/auth/oauth/slack/callback", repository.NewAdminAuditEventRepository())
 
-	return handlers.NewOAuthCallbackHandlers(authSvc, storageSvc, slackSvc, "https://argusops.example"), storageSvc, slackSvc
+	return handlers.NewOAuthCallbackHandlers(authSvc, storageSvc, slackSvc, "https://kuruops.example"), storageSvc, slackSvc
 }
 
 func TestOAuthCallbackHandlers_GDrive(t *testing.T) {

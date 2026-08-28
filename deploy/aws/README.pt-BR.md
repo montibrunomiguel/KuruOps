@@ -1,8 +1,8 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# ArgusOps na AWS (EKS)
+# KuruOps na AWS (EKS)
 
-Provisiona a infraestrutura de nuvem que o ArgusOps precisa: uma VPC, um
+Provisiona a infraestrutura de nuvem que o KuruOps precisa: uma VPC, um
 cluster EKS com um node group gerenciado, uma instância RDS Postgres 16,
 quatro repositórios ECR (api/ingest/worker/frontend) e — opcionalmente — um
 bucket S3 para upload de anexos. Isso **não** aplica os manifests de
@@ -57,7 +57,7 @@ docker push "$repo:latest"
 
 ## 4. Criar as roles do banco de dados
 
-`db/init/argusops_app_role.sql` e `argusops_worker_role.sql` configuram as
+`db/init/kuruops_app_role.sql` e `kuruops_worker_role.sql` configuram as
 duas roles de privilégio mínimo com as quais a aplicação realmente se
 conecta (RLS só se aplica a uma role sem `BYPASSRLS`/posse da tabela — veja
 `db/README.md`). Execute-as uma vez contra a instância RDS usando as
@@ -69,19 +69,19 @@ DB_HOST=$(terraform output -raw db_endpoint)
 DB_USER=$(terraform output -raw db_master_username)
 DB_PASS=$(terraform output -raw db_master_password)
 
-psql "postgres://$DB_USER:$DB_PASS@$DB_HOST/argusops?sslmode=require" \
+psql "postgres://$DB_USER:$DB_PASS@$DB_HOST/kuruops?sslmode=require" \
   -v app_password='CHANGE-ME-APP-PASSWORD' \
-  -f ../../db/init/argusops_app_role.sql
-psql "postgres://$DB_USER:$DB_PASS@$DB_HOST/argusops?sslmode=require" \
+  -f ../../db/init/kuruops_app_role.sql
+psql "postgres://$DB_USER:$DB_PASS@$DB_HOST/kuruops?sslmode=require" \
   -v worker_password='CHANGE-ME-WORKER-PASSWORD' \
-  -f ../../db/init/argusops_worker_role.sql
+  -f ../../db/init/kuruops_worker_role.sql
 ```
 
 ## 5. Preencher o Secret e o ConfigMap de `deploy/k8s/`
 
 Copie `deploy/k8s/01-secret.example.yaml` e preencha:
 - `DATABASE_URL_APP` / `DATABASE_URL_WORKER` — o `db_endpoint` acima + as
-  senhas que você acabou de definir para `argusops_app`/`argusops_worker`
+  senhas que você acabou de definir para `kuruops_app`/`kuruops_worker`
 - `DATABASE_URL_MIGRATE` — o `db_endpoint` acima + as credenciais master do
   RDS (outputs `db_master_username`/`db_master_password`)
 - `SECRETS_ENCRYPTION_KEY` — `openssl rand -base64 32`
@@ -105,7 +105,7 @@ um controlador de ingress nem o AWS Load Balancer Controller. Forma mais
 rápida de experimentar:
 
 ```bash
-kubectl -n argusops port-forward svc/frontend 8080:8080
+kubectl -n kuruops port-forward svc/frontend 8080:8080
 ```
 
 Para algo real, instale o AWS Load Balancer Controller e adicione um

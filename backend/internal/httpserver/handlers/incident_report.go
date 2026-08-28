@@ -7,7 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 // reportPDF streams a generated PDF report for the incident -- same

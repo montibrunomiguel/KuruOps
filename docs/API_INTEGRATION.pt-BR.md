@@ -2,14 +2,14 @@
 
 # Guia de Integração — API & Webhooks
 
-O ArgusOps expõe duas superfícies HTTP separadas, em dois serviços separados, para dois públicos separados:
+O KuruOps expõe duas superfícies HTTP separadas, em dois serviços separados, para dois públicos separados:
 
 | Superfície | Serviço | Porta (local) | Público | Especificação |
 |---|---|---|---|---|
-| API REST (`/api/v1/**`, `/auth/**`) | `cmd/api` | `:8080` | O frontend, e qualquer ferramenta de admin que você construir sobre o próprio ArgusOps | [`docs/openapi.yaml`](openapi.yaml) — o contrato completo e autoritativo |
-| Ingestão via webhook (`/hooks`) | `cmd/ingest` | `:8081` | Suas fontes de SIEM/XDR/alerta, enviando alertas *para dentro* do ArgusOps | Este documento |
+| API REST (`/api/v1/**`, `/auth/**`) | `cmd/api` | `:8080` | O frontend, e qualquer ferramenta de admin que você construir sobre o próprio KuruOps | [`docs/openapi.yaml`](openapi.yaml) — o contrato completo e autoritativo |
+| Ingestão via webhook (`/hooks`) | `cmd/ingest` | `:8081` | Suas fontes de SIEM/XDR/alerta, enviando alertas *para dentro* do KuruOps | Este documento |
 
-Este documento cobre a segunda: **como um sistema externo envia um alerta para o ArgusOps**. É deliberadamente narrativo — o `openapi.yaml` não cobre o `/hooks` de jeito nenhum, porque o formato da requisição não é um schema fixo único (ver "Formato do payload por fonte" abaixo), o que não se encaixa bem no modelo de schema único por rota do OpenAPI. Tudo sobre a API REST em si (listar/atualizar alertas, gerenciar settings, autenticação) está totalmente especificado no `openapi.yaml`; não duplicamos isso aqui.
+Este documento cobre a segunda: **como um sistema externo envia um alerta para o KuruOps**. É deliberadamente narrativo — o `openapi.yaml` não cobre o `/hooks` de jeito nenhum, porque o formato da requisição não é um schema fixo único (ver "Formato do payload por fonte" abaixo), o que não se encaixa bem no modelo de schema único por rota do OpenAPI. Tudo sobre a API REST em si (listar/atualizar alertas, gerenciar settings, autenticação) está totalmente especificado no `openapi.yaml`; não duplicamos isso aqui.
 
 ## 1. Criar um endpoint de webhook
 
@@ -27,7 +27,7 @@ A resposta inclui um **token** bearer, mostrado exatamente uma vez:
 }
 ```
 
-Guarde esse token na configuração do seu SIEM/sistema emissor agora — o ArgusOps nunca mostra ele de novo (só o `tokenLast4` do endpoint, para reconhecer qual token é qual na UI). Se perder, regenere um novo pela Settings (`POST /api/v1/settings/webhooks/{id}/regenerate`) — o antigo para de funcionar no exato momento em que você faz isso.
+Guarde esse token na configuração do seu SIEM/sistema emissor agora — o KuruOps nunca mostra ele de novo (só o `tokenLast4` do endpoint, para reconhecer qual token é qual na UI). Se perder, regenere um novo pela Settings (`POST /api/v1/settings/webhooks/{id}/regenerate`) — o antigo para de funcionar no exato momento em que você faz isso.
 
 Por padrão, um token expira 90 dias depois de emitido ou regenerado pela última vez; defina `expiresInDays` explicitamente na criação (0 ou negativo = nunca expira) se esse padrão não servir pra sua política de rotação.
 
@@ -55,7 +55,7 @@ Content-Type: application/json
 | `401 Unauthorized` | Token ausente/inválido/expirado. |
 | `403 Forbidden` | O endpoint existe mas está desabilitado (Settings → Webhook Endpoints → Disable). |
 | `429 Too Many Requests` | Rate limit excedido (ver acima). |
-| `500 Internal Server Error` | Algo falhou do lado do ArgusOps — o alerta não foi ingerido; seguro tentar de novo. |
+| `500 Internal Server Error` | Algo falhou do lado do KuruOps — o alerta não foi ingerido; seguro tentar de novo. |
 
 ## 3. Formato do payload por fonte
 
@@ -75,7 +75,7 @@ Toda variante de fonte é normalizada para o mesmo formato interno antes de um a
 }
 ```
 
-`title` e `severity` são obrigatórios (severity precisa ser exatamente um dos cinco valores acima, sensível a maiúsculas/minúsculas). Todo o resto é opcional. Use esse formato para qualquer fonte sem um adaptador dedicado abaixo — configure seu emissor pra mandar esse envelope diretamente, sem precisar esperar o ArgusOps ganhar suporte nativo pra sua ferramenta específica.
+`title` e `severity` são obrigatórios (severity precisa ser exatamente um dos cinco valores acima, sensível a maiúsculas/minúsculas). Todo o resto é opcional. Use esse formato para qualquer fonte sem um adaptador dedicado abaixo — configure seu emissor pra mandar esse envelope diretamente, sem precisar esperar o KuruOps ganhar suporte nativo pra sua ferramenta específica.
 
 ### `wazuh`
 
@@ -88,7 +88,7 @@ Toda variante de fonte é normalizada para o mesmo formato interno antes de um a
 }
 ```
 
-`rule.level` (a escala própria do Wazuh, 0–15+) mapeia pra severidade do ArgusOps: `>=12` critical, `>=9` high, `>=6` medium, `>=3` low, caso contrário informational. `rule.groups` vira as tags do alerta (auto-criadas se novas — ver §4). `rule.description` vira o título.
+`rule.level` (a escala própria do Wazuh, 0–15+) mapeia pra severidade do KuruOps: `>=12` critical, `>=9` high, `>=6` medium, `>=3` low, caso contrário informational. `rule.groups` vira as tags do alerta (auto-criadas se novas — ver §4). `rule.description` vira o título.
 
 ### `crowdstrike`
 
@@ -122,7 +122,7 @@ Toda variante de fonte é normalizada para o mesmo formato interno antes de um a
 }
 ```
 
-`severity` é o score float próprio do GuardDuty (0.1–8.9), dividido em faixas nos cinco níveis do ArgusOps.
+`severity` é o score float próprio do GuardDuty (0.1–8.9), dividido em faixas nos cinco níveis do KuruOps.
 
 Adicionar um normalizador dedicado novo (em vez de depender do `generic`) é uma mudança de código no backend — ver `backend/internal/ingest/normalize_*.go` para o padrão (interface `Normalizer`, um arquivo adaptador por fonte) se você for contribuir com um.
 

@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
-// Normalizer extracts the fields ArgusOps needs to open an alert from a raw
+// Normalizer extracts the fields KuruOps needs to open an alert from a raw
 // webhook body. The full body is always kept as domain.Alert.Payload
 // regardless of what the normalizer manages to extract, so nothing is lost
 // even when a field is missing or a new source isn't fully mapped yet.

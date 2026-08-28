@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/argusops/argusops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
 )
 
 // nilOptions builds Options with every handler set to its zero-value

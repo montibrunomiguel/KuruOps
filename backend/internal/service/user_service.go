@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
 )
 
 type UserService struct {
@@ -166,7 +166,7 @@ func (s *UserService) UpdateAccess(ctx context.Context, tenantID, actorID, id, r
 // UpdatePhone is the admin "edit an existing user's phone" action --
 // Settings -> Users & Roles has no general edit-user form (see
 // UpdateAccess's own doc comment on why name/email aren't editable there),
-// but phone is ArgusOps-local metadata, not identity-sourced, so an admin
+// but phone is KuruOps-local metadata, not identity-sourced, so an admin
 // can set or clear it for any user regardless of auth provider.
 func (s *UserService) UpdatePhone(ctx context.Context, tenantID, actorID, id uuid.UUID, phone string) error {
 	phone = strings.TrimSpace(phone)

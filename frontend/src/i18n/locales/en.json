@@ -504,7 +504,7 @@
   },
   "settings": {
     "title": "Settings",
-    "subtitle": "Integrations, identity, operations, and audit for ArgusOps.",
+    "subtitle": "Integrations, identity, operations, and audit for KuruOps.",
     "navSearchPlaceholder": "Search settings...",
     "navSearchNoResults": "No matching settings.",
     "panelError": {
@@ -849,7 +849,7 @@
         "folderIdHint": "The ID from the target folder's Drive URL (the part after /folders/). The folder must already exist.",
         "folderIdRequired": "Folder ID is required.",
         "serviceAccountJson": "Service Account Credentials (JSON)",
-        "serviceAccountHint": "The service account must already have this folder shared with it from the Drive side -- ArgusOps can't grant that access for you.",
+        "serviceAccountHint": "The service account must already have this folder shared with it from the Drive side -- KuruOps can't grant that access for you.",
         "connectButton": "Connect with Google",
         "connectedAs": "Connected as {{email}}",
         "oauthHint": "You'll be redirected to Google to grant access, then brought back here."
@@ -881,7 +881,7 @@
     },
     "slack": {
       "title": "Slack",
-      "helper": "Connect a Slack workspace so ArgusOps can open incidents from Slack and sync channel/thread messages and files. This is the foundation only -- connect/disconnect for now, with the full messaging integration arriving in a later update.",
+      "helper": "Connect a Slack workspace so KuruOps can open incidents from Slack and sync channel/thread messages and files. This is the foundation only -- connect/disconnect for now, with the full messaging integration arriving in a later update.",
       "connectedBadge": "Connected to {{team}}",
       "connectedMessage": "Workspace connected.",
       "workspace": "Workspace",
@@ -1034,8 +1034,8 @@
     },
     "retention": {
       "title": "Retention",
-      "helper": "How long a closed alert or incident stays in ArgusOps after it closes, before it's permanently deleted. An open alert/incident is never deleted, no matter its age. Want to keep a copy of what gets purged? Export it first with Audit Export, above.",
-      "warning": "Lowering either value below an existing closed record's age causes it to be permanently deleted on the next sweep -- this cannot be undone. Evidence attached to a deleted alert/incident is not removed from wherever it's stored (S3, GCS, Google Drive, or local disk) -- only ArgusOps's own record of it.",
+      "helper": "How long a closed alert or incident stays in KuruOps after it closes, before it's permanently deleted. An open alert/incident is never deleted, no matter its age. Want to keep a copy of what gets purged? Export it first with Audit Export, above.",
+      "warning": "Lowering either value below an existing closed record's age causes it to be permanently deleted on the next sweep -- this cannot be undone. Evidence attached to a deleted alert/incident is not removed from wherever it's stored (S3, GCS, Google Drive, or local disk) -- only KuruOps's own record of it.",
       "usingDefault": "Using default (18 months)",
       "alertRetentionMonths": "Alert retention (months)",
       "incidentRetentionMonths": "Incident retention (months)",
@@ -1045,7 +1045,7 @@
     },
     "databaseMigration": {
       "title": "External Database",
-      "helper": "Migrate off the bundled Postgres container onto a database you provide. This is a one-time, assisted cutover, not a live swap -- ArgusOps reads its database connection once at startup, so the api/ingest/worker services still need a manual restart afterward with the connection strings shown below.",
+      "helper": "Migrate off the bundled Postgres container onto a database you provide. This is a one-time, assisted cutover, not a live swap -- KuruOps reads its database connection once at startup, so the api/ingest/worker services still need a manual restart afterward with the connection strings shown below.",
       "testOk": "Connection succeeded.",
       "testConnection": "Test Connection",
       "testing": "Testing...",
@@ -1053,7 +1053,7 @@
       "port": "Port",
       "database": "Database name",
       "user": "User",
-      "userHint": "(must be privileged enough to CREATE ROLE and CREATE EXTENSION -- not the low-privilege role ArgusOps will connect as afterward)",
+      "userHint": "(must be privileged enough to CREATE ROLE and CREATE EXTENSION -- not the low-privilege role KuruOps will connect as afterward)",
       "password": "Password",
       "sslMode": "SSL mode",
       "migrateButton": "Migrate & Switch",

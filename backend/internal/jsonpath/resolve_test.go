@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/jsonpath"
+	"github.com/kuruops/kuruops/internal/jsonpath"
 )
 
 func TestResolve(t *testing.T) {

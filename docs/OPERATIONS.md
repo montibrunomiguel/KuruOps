@@ -2,7 +2,7 @@
 
 # Operations
 
-Runbook for whoever is watching ArgusOps run (assisted production): what the healthchecks mean,
+Runbook for whoever is watching KuruOps run (assisted production): what the healthchecks mean,
 how to read the logs, how to roll back a bad deploy, how to restore from a backup. Don't confuse
 this with `TROUBLESHOOTING.md` (development/CI gotchas) or `THREAT_MODEL.md` (secret rotation and
 threat model) — this one is "what to do when something blinks on the dashboard," the other two
@@ -46,9 +46,9 @@ correlates all the lines from the same request, including across different handl
 There's no blue-green or canary here — it's a real `kubectl rollout undo`:
 
 ```bash
-kubectl rollout history deployment/argusops-api -n argusops
-kubectl rollout undo deployment/argusops-api -n argusops
-# repeat for argusops-ingest / argusops-worker / argusops-frontend if the bad deploy touched those too
+kubectl rollout history deployment/kuruops-api -n kuruops
+kubectl rollout undo deployment/kuruops-api -n kuruops
+# repeat for kuruops-ingest / kuruops-worker / kuruops-frontend if the bad deploy touched those too
 ```
 
 A new migration (`deploy/k8s/03-migration-job.yaml`) is **not** automatically rolled back by
@@ -64,10 +64,10 @@ not a rename/drop) before trusting the Deployment rollback alone.
 ~24h (see the manifest's own comment). To restore:
 
 1. Download the most recent dump from the configured S3 bucket (`aws s3 cp
-   s3://$BACKUP_S3_BUCKET/argusops/<file>.dump .`).
+   s3://$BACKUP_S3_BUCKET/kuruops/<file>.dump .`).
 2. **Never restore straight over the production database without validating the dump first** —
    run `task db:backup:restore-test` locally first (it points at the most recent dump in
-   `backups/`, restores into a disposable `argusops_backup_verify` database, runs a sanity count
+   `backups/`, restores into a disposable `kuruops_backup_verify` database, runs a sanity count
    on `tenants`/`alerts`/`incidents`, then tears down the disposable database). This never touches
    the real database — it's safe to run at any time to confirm a dump is actually restorable.
 3. Only after it's validated, restore into the real database:
@@ -86,12 +86,12 @@ not a rename/drop) before trusting the Deployment rollback alone.
 queries below are for manual investigation during the assisted window — paste them into
 `http://<prometheus>:9090/graph`:
 
-- **Error rate per service**: `sum by (job) (rate(argusops_http_requests_5xx_total[5m])) / sum by (job) (rate(argusops_http_requests_total[5m]))`
-- **p99 latency per service**: `histogram_quantile(0.99, sum by (le, job) (rate(argusops_http_request_duration_seconds_bucket[5m])))`
-- **Connection pool saturation**: `argusops_db_pool_acquired_conns / argusops_db_pool_max_conns`
-- **Active SSE connections** (should vary with logged-in analysts, not grow unbounded): `argusops_sse_active_connections`
-- **How long since each worker sweep last succeeded** (in minutes): `(time() - argusops_worker_last_sweep_success_timestamp) / 60`
-- **Scrape targets that are down**: `up{job=~"argusops-.*"} == 0`
+- **Error rate per service**: `sum by (job) (rate(kuruops_http_requests_5xx_total[5m])) / sum by (job) (rate(kuruops_http_requests_total[5m]))`
+- **p99 latency per service**: `histogram_quantile(0.99, sum by (le, job) (rate(kuruops_http_request_duration_seconds_bucket[5m])))`
+- **Connection pool saturation**: `kuruops_db_pool_acquired_conns / kuruops_db_pool_max_conns`
+- **Active SSE connections** (should vary with logged-in analysts, not grow unbounded): `kuruops_sse_active_connections`
+- **How long since each worker sweep last succeeded** (in minutes): `(time() - kuruops_worker_last_sweep_success_timestamp) / 60`
+- **Scrape targets that are down**: `up{job=~"kuruops-.*"} == 0`
 
 ## Capacity baseline
 
@@ -116,5 +116,5 @@ the assisted launch and compare against the numbers above.
 
 _Fill in with the team's real contacts before releasing to assisted production — who gets paged
 when an Alertmanager alert fires, and over which channel (the same PagerDuty/Slack/webhook that
-ArgusOps itself uses to escalate tenant security incidents, or a separate channel for platform
+KuruOps itself uses to escalate tenant security incidents, or a separate channel for platform
 incidents)._

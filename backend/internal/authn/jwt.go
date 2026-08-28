@@ -66,7 +66,7 @@ func (i *Issuer) Issue(tenantID, userID uuid.UUID, isAdmin bool, resourceAccess 
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(tokenTTL)),
-			Issuer:    "argusops",
+			Issuer:    "kuruops",
 		},
 		TenantID:           tenantID,
 		UserID:             userID,

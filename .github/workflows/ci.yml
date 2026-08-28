@@ -79,7 +79,7 @@ jobs:
 
       # Runs the exact same Taskfile target a developer runs locally: brings
       # up Postgres via docker compose, creates+migrates a dedicated
-      # argusops_test database with the real least-privilege app/worker
+      # kuruops_test database with the real least-privilege app/worker
       # roles, runs the full unit+integration suite with coverage, then
       # fails the build if coverage dropped below backend/coverage-baseline.txt.
       # Previously this job only ran `go test ./...` with no Postgres

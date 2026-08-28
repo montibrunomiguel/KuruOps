@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestTenantRepository_GetDefault(t *testing.T) {
@@ -16,7 +16,7 @@ func TestTenantRepository_GetDefault(t *testing.T) {
 	repo := repository.NewTenantRepository()
 
 	// The seed migration guarantees at least one tenant exists in any
-	// migrated database (including argusops_test) -- GetDefault must
+	// migrated database (including kuruops_test) -- GetDefault must
 	// resolve it without needing app.tenant_id set at all.
 	tenant, err := repo.GetDefault(context.Background(), pool)
 	require.NoError(t, err)

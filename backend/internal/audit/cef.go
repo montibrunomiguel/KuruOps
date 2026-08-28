@@ -1,4 +1,4 @@
-// Package audit formats ArgusOps' append-only alert/incident event log as
+// Package audit formats KuruOps' append-only alert/incident event log as
 // CEF (Common Event Format) -- a single-line-per-event text format most
 // SIEMs (Splunk, ArcSight, QRadar...) can ingest directly, whether pulled
 // via the export endpoint or fed into a log shipper pointed at the
@@ -13,13 +13,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 const (
 	cefVersion    = "0"
-	deviceVendor  = "ArgusOps"
-	deviceProduct = "ArgusOps"
+	deviceVendor  = "KuruOps"
+	deviceProduct = "KuruOps"
 	deviceVersion = "1.0"
 	// cefSeverity is fixed for every event: this log is an audit trail of
 	// what changed (status/phase transitions, comments, tag edits...), not

@@ -13,7 +13,7 @@ import (
 
 // S3Store backs Store with an AWS S3 bucket, using long-lived static
 // credentials entered by the admin in Settings (see StorageConfigService)
-// rather than an IAM instance role -- ArgusOps is self-hosted and may not
+// rather than an IAM instance role -- KuruOps is self-hosted and may not
 // be running inside AWS at all, so there is no role to assume by default.
 type S3Store struct {
 	client *s3.Client

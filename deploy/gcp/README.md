@@ -1,8 +1,8 @@
 <p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# ArgusOps on GCP (GKE)
+# KuruOps on GCP (GKE)
 
-Provisions the cloud infrastructure ArgusOps needs: a VPC-native network, a
+Provisions the cloud infrastructure KuruOps needs: a VPC-native network, a
 private-nodes GKE cluster, a Cloud SQL Postgres 16 instance (private IP), one
 Artifact Registry repo holding all four images, and — optionally — a GCS
 bucket for attachment uploads. It does **not** apply `deploy/k8s/`'s
@@ -66,19 +66,19 @@ cd deploy/gcp
 cloud-sql-proxy "$(terraform output -raw db_connection_name)" &
 
 DB_PASS=$(terraform output -raw db_master_password)
-psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/argusops?sslmode=disable" \
+psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/kuruops?sslmode=disable" \
   -v app_password='CHANGE-ME-APP-PASSWORD' \
-  -f ../../db/init/argusops_app_role.sql
-psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/argusops?sslmode=disable" \
+  -f ../../db/init/kuruops_app_role.sql
+psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/kuruops?sslmode=disable" \
   -v worker_password='CHANGE-ME-WORKER-PASSWORD' \
-  -f ../../db/init/argusops_worker_role.sql
+  -f ../../db/init/kuruops_worker_role.sql
 ```
 
 ## 5. Fill in `deploy/k8s/`'s Secret and ConfigMap
 
 Copy `deploy/k8s/01-secret.example.yaml`, fill in:
 - `DATABASE_URL_APP` / `DATABASE_URL_WORKER` — `db_private_ip` output + the
-  passwords you just set for `argusops_app`/`argusops_worker`
+  passwords you just set for `kuruops_app`/`kuruops_worker`
 - `DATABASE_URL_MIGRATE` — `db_private_ip` output + the `postgres` superuser
   password (`db_master_password` output)
 - `SECRETS_ENCRYPTION_KEY` — `openssl rand -base64 32`
@@ -100,7 +100,7 @@ follow `deploy/k8s/README.md`'s apply order.
 Fastest way to try it:
 
 ```bash
-kubectl -n argusops port-forward svc/frontend 8080:8080
+kubectl -n kuruops port-forward svc/frontend 8080:8080
 ```
 
 For anything real, install a GKE Ingress (GCE ingress class) or switch

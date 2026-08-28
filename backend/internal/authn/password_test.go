@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/argon2"
 
-	"github.com/argusops/argusops/internal/authn"
+	"github.com/kuruops/kuruops/internal/authn"
 )
 
 func TestHashPassword_ProducesSelfDescribingHash(t *testing.T) {

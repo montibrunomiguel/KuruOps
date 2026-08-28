@@ -11,7 +11,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function withLoggedInSession() {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: ["alerts"] },

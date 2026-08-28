@@ -2,7 +2,7 @@
 
 # Threat Model
 
-This document describes ArgusOps's trust boundaries, what each layer of defense guarantees
+This document describes KuruOps's trust boundaries, what each layer of defense guarantees
 (and what it explicitly does not guarantee), and how to rotate a secret without downtime. It's a
 complement to the code, not a substitute — where the two diverge, the code is right and this
 document is stale; update it in the same PR that changes the behavior described here (see the
@@ -18,7 +18,7 @@ nginx (frontend) -- serves the SPA, proxies /api and /auth
    │ internal Docker Compose network
    ▼
 api / ingest (Go, trusted) -- authentication and authorization are checked here
-   │ argusops_app role, no BYPASSRLS
+   │ kuruops_app role, no BYPASSRLS
    ▼
 Postgres -- RLS by tenant_id
 ```
@@ -37,7 +37,7 @@ Postgres -- RLS by tenant_id
 - **`worker` has no HTTP surface at all** — it only runs internal cron jobs (materialized view
   refresh, SLA/escalation sweep), so it isn't a network target.
 - **api/ingest/worker → Postgres**: all three connect as the same least-privilege role
-  (`argusops_app`, see `db/init/argusops_app_role.sql`) — no `BYPASSRLS`, no table ownership. The
+  (`kuruops_app`, see `db/init/kuruops_app_role.sql`) — no `BYPASSRLS`, no table ownership. The
   `postgres` role (superuser, used only by migrations/`task db:*`) bypasses RLS entirely, on
   purpose — it's never the role a user request uses.
 
@@ -74,7 +74,7 @@ a provider's redirect is a plain browser GET with no JWT to attach.
 ## What Row-Level Security guarantees — and what it doesn't
 
 RLS filters every query by the session's `tenant_id` (`set_config('app.tenant_id', ...)`, see
-`db.Pool.WithTenant`). Today ArgusOps runs as a single instance — there's no concept of a
+`db.Pool.WithTenant`). Today KuruOps runs as a single instance — there's no concept of a
 "company"/tenant at login (root `README.md`) — so in current practice, RLS by `tenant_id` is
 defense in depth against a query bug that "forgot" the right filter, not the mechanism that
 separates users from one another day to day. It exists ready for a real multi-tenant SaaS future
@@ -99,7 +99,7 @@ without a schema rewrite.
 ## What the data retention sweep guarantees — and what it doesn't
 
 Settings → Data & Audit → Retention configures how long a **closed** alert/incident stays in
-ArgusOps before `cmd/worker`'s hourly `sweepDataRetention` job permanently deletes it (default 18
+KuruOps before `cmd/worker`'s hourly `sweepDataRetention` job permanently deletes it (default 18
 months, separately configurable per resource type — `internal/service/retention_config_service.go`).
 
 - **Deletion is hard, not soft-archive, and irreversible.** There is no undelete, no trash, no
@@ -114,7 +114,7 @@ months, separately configurable per resource type — `internal/service/retentio
 - **Evidence in blob storage is never touched.** Alert/incident comment attachments live in
   whatever storage backend a tenant has configured (S3/GCS/Google Drive/local disk), referenced by
   URL/key — `internal/blobstore.Store` has no `Delete` method anywhere in this codebase, so a purge
-  here can only ever remove ArgusOps's own database record, never the underlying file. This is a
+  here can only ever remove KuruOps's own database record, never the underlying file. This is a
   known, deliberate scope limit, not an oversight: cleaning up orphaned blob storage is unimplemented.
 - **Who can configure it**: same admin-only gate as every other Settings panel
   (`middleware.RequireAdmin()`) — lowering a retention period is effectively a
@@ -167,7 +167,7 @@ anthropic's fixed `api.anthropic.com` isn't user-configurable, so it isn't in sc
 SAML identity provider's metadata URL (`internal/authn/saml.go`'s `ResolveIDPMetadata`). Anyone
 with Settings access to those areas can otherwise point them at `http://169.254.169.254/...`
 (a cloud metadata endpoint) or `http://localhost:5432/...` (an internal service that trusts
-requests originating from this process) and get argusops-api/argusops-worker to make that request
+requests originating from this process) and get kuruops-api/kuruops-worker to make that request
 for them — a classic SSRF pivot from "can edit config" to "can reach internal-only network". The
 Slack and SAML cases were found and closed in a post-hardening-plan audit sweep, after the
 original SSRF fix (below) shipped covering only the first three.
@@ -248,7 +248,7 @@ certificate).
 The sections above cover application-level secrets (LDAP, SAML, LLM/MCP) — resolved via
 `secrets.Store` and rotatable from the Settings UI without restarting anything.
 `docker-compose.yml` has a different, more basic category of secret: the credentials that stand up
-the stack itself (the Postgres password, the `argusops_app`/`argusops_worker` role passwords, the
+the stack itself (the Postgres password, the `kuruops_app`/`kuruops_worker` role passwords, the
 `secrets.Store` encryption key). These **do not** go through the UI — they're read directly from
 environment variables at the moment each container comes up.
 
@@ -269,8 +269,8 @@ IP other than `localhost`.
      requires updating the hardcoded `docker compose exec postgres psql -U postgres ...` calls in
      `Taskfile.yml` (`db:up`, `db:test:up`, `db:backup`, etc. — they don't read the variable, they
      assume `postgres` literally).
-   - `ARGUSOPS_APP_PASSWORD` / `ARGUSOPS_WORKER_PASSWORD`: any strong password — they just need to
-     match what `db/init/argusops_app_role.sql` / `argusops_worker_role.sql` set up when creating
+   - `KURUOPS_APP_PASSWORD` / `KURUOPS_WORKER_PASSWORD`: any strong password — they just need to
+     match what `db/init/kuruops_app_role.sql` / `kuruops_worker_role.sql` set up when creating
      the roles (run `task db:reset` after changing, to recreate the roles with the new password).
    - `SECRETS_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Warning**: changing this key after
      secrets already exist in Postgres (`secret_store`) makes them unreadable — generate the final

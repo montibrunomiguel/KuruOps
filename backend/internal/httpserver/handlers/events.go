@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/argusops/argusops/internal/events"
+	"github.com/kuruops/kuruops/internal/events"
 )
 
 // sseKeepAliveInterval bounds how long the connection can go silent before

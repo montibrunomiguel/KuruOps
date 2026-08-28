@@ -8,7 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

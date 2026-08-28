@@ -10,11 +10,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // fakeIdentityConfigRepo lets a test fail a specific repo call on demand --
@@ -121,8 +121,8 @@ func TestIdentityConfigService_SAML(t *testing.T) {
 	metadataURL := "https://idp.example.com/metadata"
 	require.NoError(t, svc.SaveSAMLConfig(t.Context(), tenantID, actorID, service.SaveSAMLConfigInput{
 		IDPMetadataURL: &metadataURL,
-		SPEntityID:     "https://argusops.example/saml/metadata",
-		ACSURL:         "https://argusops.example/auth/saml/acs",
+		SPEntityID:     "https://kuruops.example/saml/metadata",
+		ACSURL:         "https://kuruops.example/auth/saml/acs",
 	}))
 
 	cfg, err := svc.GetSAMLConfig(t.Context(), tenantID)
@@ -135,8 +135,8 @@ func TestIdentityConfigService_SAML(t *testing.T) {
 		newURL := "https://idp2.example.com/metadata"
 		require.NoError(t, svc.SaveSAMLConfig(t.Context(), tenantID, actorID, service.SaveSAMLConfigInput{
 			IDPMetadataURL: &newURL,
-			SPEntityID:     "https://argusops.example/saml/metadata",
-			ACSURL:         "https://argusops.example/auth/saml/acs",
+			SPEntityID:     "https://kuruops.example/saml/metadata",
+			ACSURL:         "https://kuruops.example/auth/saml/acs",
 		}))
 		got, err := svc.GetSAMLConfig(t.Context(), tenantID)
 		require.NoError(t, err)
@@ -214,7 +214,7 @@ func TestIdentityConfigService_RepoErrors(t *testing.T) {
 
 	t.Run("SaveSAMLConfig wraps a GetSAMLConfig failure", func(t *testing.T) {
 		err := newSvc(&fakeIdentityConfigRepo{getSAMLErr: errors.New("get boom")}).SaveSAMLConfig(t.Context(), tenantID, actorID, service.SaveSAMLConfigInput{
-			SPEntityID: "https://argusops.example/saml/metadata", ACSURL: "https://argusops.example/auth/saml/acs",
+			SPEntityID: "https://kuruops.example/saml/metadata", ACSURL: "https://kuruops.example/auth/saml/acs",
 		})
 		assert.ErrorContains(t, err, "get boom")
 	})

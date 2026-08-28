@@ -22,7 +22,7 @@ resource "google_storage_bucket" "uploads" {
 resource "google_service_account" "uploads" {
   count        = var.create_uploads_bucket ? 1 : 0
   account_id   = "${var.name}-${var.environment}-uploads"
-  display_name = "ArgusOps uploads (Settings -> Storage Integration)"
+  display_name = "KuruOps uploads (Settings -> Storage Integration)"
 }
 
 resource "google_storage_bucket_iam_member" "uploads" {

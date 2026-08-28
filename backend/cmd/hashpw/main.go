@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/argusops/argusops/internal/authn"
+	"github.com/kuruops/kuruops/internal/authn"
 )
 
 func main() {

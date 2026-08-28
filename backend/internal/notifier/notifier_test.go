@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/notifier"
+	"github.com/kuruops/kuruops/internal/notifier"
 )
 
 func TestNew(t *testing.T) {

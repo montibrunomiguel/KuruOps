@@ -1,7 +1,7 @@
 # Managed Postgres for the app -- same role as the AWS/GCP stacks' rds.tf /
 # cloudsql.tf. VNet-integrated (private access only, no public endpoint),
 # reachable from AKS over the shared VNet. db/migrations/ and the
-# argusops_app/argusops_worker roles (db/init/*.sql) still need to be
+# kuruops_app/kuruops_worker roles (db/init/*.sql) still need to be
 # applied against it after this resource exists -- see the top-level
 # deploy/README.md.
 
@@ -24,7 +24,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   sku_name   = var.db_sku_name
   storage_mb = var.db_storage_mb
 
-  administrator_login    = "argusops_admin"
+  administrator_login    = "kuruops_admin"
   administrator_password = local.db_master_password
 
   delegated_subnet_id = azurerm_subnet.db.id
@@ -38,8 +38,8 @@ resource "azurerm_postgresql_flexible_server" "main" {
   depends_on = [azurerm_private_dns_zone_virtual_network_link.db]
 }
 
-resource "azurerm_postgresql_flexible_server_database" "argusops" {
-  name      = "argusops"
+resource "azurerm_postgresql_flexible_server_database" "kuruops" {
+  name      = "kuruops"
   server_id = azurerm_postgresql_flexible_server.main.id
   charset   = "UTF8"
   collation = "en_US.utf8"

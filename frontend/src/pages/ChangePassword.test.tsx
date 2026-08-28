@@ -6,10 +6,10 @@ import { AuthProvider } from "../auth/AuthContext";
 
 function renderWithSession() {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
-      user: { id: "1", email: "admin@argusops.local", name: "Admin", role: "admin", mustChangePassword: true, resourceAccess: [] },
+      user: { id: "1", email: "admin@kuruops.local", name: "Admin", role: "admin", mustChangePassword: true, resourceAccess: [] },
     }),
   );
   return render(

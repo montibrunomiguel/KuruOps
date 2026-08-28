@@ -48,7 +48,7 @@ apropriado.
 ## Aplicação
 
 Casos de comportamento abusivo, de assédio ou de outra forma inaceitável podem ser reportados aos
-líderes da comunidade responsáveis pela aplicação em `conduct@argusops.org`. Todas as reclamações
+líderes da comunidade responsáveis pela aplicação em `conduct@kuruops.org`. Todas as reclamações
 serão revisadas e investigadas de forma pronta e justa.
 
 Todos os líderes da comunidade têm a obrigação de respeitar a privacidade e a segurança de quem

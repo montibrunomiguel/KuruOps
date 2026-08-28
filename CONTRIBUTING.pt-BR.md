@@ -1,9 +1,9 @@
 <p align="right"><a href="CONTRIBUTING.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# Contribuindo com o ArgusOps
+# Contribuindo com o KuruOps
 
-Antes de mais nada, obrigado por considerar contribuir com o ArgusOps! São contribuições como a sua
-que fazem do ArgusOps uma ótima ferramenta open-source de gestão de incidentes de cibersegurança.
+Antes de mais nada, obrigado por considerar contribuir com o KuruOps! São contribuições como a sua
+que fazem do KuruOps uma ótima ferramenta open-source de gestão de incidentes de cibersegurança.
 
 ## Código de Conduta
 
@@ -23,8 +23,8 @@ Ao participar deste projeto, você concorda em seguir nosso
 
 1. Faça um fork e clone o repositório:
    ```bash
-   git clone https://github.com/your-username/ArgusOps.git
-   cd ArgusOps
+   git clone https://github.com/your-username/KuruOps.git
+   cd KuruOps
    ```
 
 2. Suba toda a stack de desenvolvimento com um único comando:
@@ -33,7 +33,7 @@ Ao participar deste projeto, você concorda em seguir nosso
    ```
 
 3. Acesse a interface web em `http://localhost:3000` com as credenciais padrão:
-   `admin@argusops.local` / `ChangeMe123!`.
+   `admin@kuruops.local` / `ChangeMe123!`.
 
 ## Fluxo de Desenvolvimento
 

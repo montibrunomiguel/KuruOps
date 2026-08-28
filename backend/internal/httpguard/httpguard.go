@@ -4,7 +4,7 @@
 // an MCP server endpoint, a self-hosted/OpenAI-compatible LLM base URL),
 // where the value comes from someone with Settings access, not from this
 // codebase's own trusted config. Without this, that access is enough to
-// make argusops-api/argusops-worker issue a request to
+// make kuruops-api/kuruops-worker issue a request to
 // http://169.254.169.254/... (a cloud metadata endpoint) or
 // http://localhost:5432/... (an internal service that trusts requests
 // originating from this process) -- a classic SSRF pivot.

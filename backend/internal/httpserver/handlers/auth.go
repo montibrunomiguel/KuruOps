@@ -10,14 +10,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 // AuthHandlers serves every login flow (local, LDAP, SAML) that converges
 // on service.AuthService issuing a session JWT. Mounted unauthenticated at
-// /auth -- see httpserver.NewRouter. ArgusOps is single-instance software
+// /auth -- see httpserver.NewRouter. KuruOps is single-instance software
 // (see TenantRepository.GetDefault): every handler here resolves the one
 // tenant a deployment has instead of taking it from the request, so login
 // never asks for a company/tenant name.

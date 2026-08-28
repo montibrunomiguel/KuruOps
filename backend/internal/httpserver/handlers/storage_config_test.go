@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestStorageConfigHandlers_S3(t *testing.T) {
@@ -154,7 +154,7 @@ func TestStorageConfigHandlers_GDriveAuthorizeURL(t *testing.T) {
 	t.Run("configured client returns a redirect url", func(t *testing.T) {
 		oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 		svc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),
-			oauthStates, "test-client-id", "test-client-secret", "https://argusops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
+			oauthStates, "test-client-id", "test-client-secret", "https://kuruops.example/auth/oauth/gdrive/callback", repository.NewAdminAuditEventRepository())
 		h := handlers.NewStorageConfigHandlers(svc)
 		r := newRouter(h.Routes)
 

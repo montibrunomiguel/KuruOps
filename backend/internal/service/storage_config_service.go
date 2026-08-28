@@ -13,11 +13,11 @@ import (
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
 
-	"github.com/argusops/argusops/internal/blobstore"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/blobstore"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 )
 
 // storageConfigRepo is the subset of *repository.StorageConfigRepository
@@ -209,7 +209,7 @@ type SaveGDriveServiceAccountInput struct {
 
 // SaveGDriveServiceAccount is SaveGCS's Drive counterpart -- the service
 // account named in ServiceAccountJSON must already be shared (from the
-// Drive side) with access to FolderID; ArgusOps has no way to grant that
+// Drive side) with access to FolderID; KuruOps has no way to grant that
 // on the admin's behalf.
 func (s *StorageConfigService) SaveGDriveServiceAccount(ctx context.Context, tenantID, actorID uuid.UUID, in SaveGDriveServiceAccountInput) error {
 	if in.FolderID == "" {

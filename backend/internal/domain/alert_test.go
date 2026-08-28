@@ -3,8 +3,8 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/argusops/argusops/internal/domain"
 	"github.com/google/uuid"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 func TestAlertSeverityConstants(t *testing.T) {

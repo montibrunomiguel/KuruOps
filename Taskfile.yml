@@ -1,8 +1,8 @@
 version: "3"
 
 vars:
-  APP_PASSWORD: '{{.ARGUSOPS_APP_PASSWORD | default "argusops_app"}}'
-  WORKER_PASSWORD: '{{.ARGUSOPS_WORKER_PASSWORD | default "argusops_worker"}}'
+  APP_PASSWORD: '{{.KURUOPS_APP_PASSWORD | default "kuruops_app"}}'
+  WORKER_PASSWORD: '{{.KURUOPS_WORKER_PASSWORD | default "kuruops_worker"}}'
 
 tasks:
   # ---- Postgres ------------------------------------------------------
@@ -29,18 +29,18 @@ tasks:
       - docker compose run --rm migrate down {{.N}}
 
   db:roles:
-    desc: Create/update the argusops_app + argusops_worker roles (run after db:migrate)
+    desc: Create/update the kuruops_app + kuruops_worker roles (run after db:migrate)
     cmds:
-      - docker compose exec -T postgres psql -U postgres -d argusops -v app_password="{{.APP_PASSWORD}}" -f - < db/init/argusops_app_role.sql
-      - docker compose exec -T postgres psql -U postgres -d argusops -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/argusops_worker_role.sql
+      - docker compose exec -T postgres psql -U postgres -d kuruops -v app_password="{{.APP_PASSWORD}}" -f - < db/init/kuruops_app_role.sql
+      - docker compose exec -T postgres psql -U postgres -d kuruops -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/kuruops_worker_role.sql
 
   db:reset:
-    desc: Drop and recreate the local argusops database (DESTRUCTIVE — local dev only)
-    prompt: This drops all data in the local argusops database. Continue?
+    desc: Drop and recreate the local kuruops database (DESTRUCTIVE — local dev only)
+    prompt: This drops all data in the local kuruops database. Continue?
     cmds:
-      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'argusops' and pid <> pg_backend_pid()"
-      - docker compose exec -T postgres psql -U postgres -c "drop database if exists argusops"
-      - docker compose exec -T postgres psql -U postgres -c "create database argusops"
+      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'kuruops' and pid <> pg_backend_pid()"
+      - docker compose exec -T postgres psql -U postgres -c "drop database if exists kuruops"
+      - docker compose exec -T postgres psql -U postgres -c "create database kuruops"
       - task: db:migrate
       - task: db:roles
 
@@ -53,64 +53,64 @@ tasks:
     desc: Open a psql shell in the running Postgres container
     interactive: true
     cmds:
-      - docker compose exec postgres psql -U postgres -d argusops
+      - docker compose exec postgres psql -U postgres -d kuruops
 
   db:test:up:
-    desc: Create/migrate a dedicated argusops_test database, reusing the running Postgres container -- for integration tests, never touches the argusops dev database
+    desc: Create/migrate a dedicated kuruops_test database, reusing the running Postgres container -- for integration tests, never touches the kuruops dev database
     cmds:
       - task: db:up
       - |
-        docker compose exec -T postgres psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'argusops_test'" | grep -q 1 || docker compose exec -T postgres psql -U postgres -c "CREATE DATABASE argusops_test"
-      - docker compose run --rm --entrypoint migrate migrate -path=/migrations -database=postgres://postgres:postgres@postgres:5432/argusops_test?sslmode=disable up
-      - docker compose exec -T postgres psql -U postgres -d argusops_test -v app_password="{{.APP_PASSWORD}}" -f - < db/init/argusops_app_role.sql
-      - docker compose exec -T postgres psql -U postgres -d argusops_test -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/argusops_worker_role.sql
+        docker compose exec -T postgres psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'kuruops_test'" | grep -q 1 || docker compose exec -T postgres psql -U postgres -c "CREATE DATABASE kuruops_test"
+      - docker compose run --rm --entrypoint migrate migrate -path=/migrations -database=postgres://postgres:postgres@postgres:5432/kuruops_test?sslmode=disable up
+      - docker compose exec -T postgres psql -U postgres -d kuruops_test -v app_password="{{.APP_PASSWORD}}" -f - < db/init/kuruops_app_role.sql
+      - docker compose exec -T postgres psql -U postgres -d kuruops_test -v worker_password="{{.WORKER_PASSWORD}}" -f - < db/init/kuruops_worker_role.sql
 
   db:test:reset:
-    desc: Drop and recreate argusops_test from scratch (DESTRUCTIVE -- test data only, never touches the argusops dev database)
+    desc: Drop and recreate kuruops_test from scratch (DESTRUCTIVE -- test data only, never touches the kuruops dev database)
     cmds:
-      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'argusops_test' and pid <> pg_backend_pid()"
-      - docker compose exec -T postgres psql -U postgres -c "drop database if exists argusops_test"
+      - docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'kuruops_test' and pid <> pg_backend_pid()"
+      - docker compose exec -T postgres psql -U postgres -c "drop database if exists kuruops_test"
       - task: db:test:up
 
   db:backup:
-    desc: "Dump the local argusops database to backups/ (set BACKUP_S3_BUCKET to also upload to S3 -- same var the k8s CronJob uses)"
+    desc: "Dump the local kuruops database to backups/ (set BACKUP_S3_BUCKET to also upload to S3 -- same var the k8s CronJob uses)"
     vars:
       TIMESTAMP:
         sh: date -u +%Y%m%dT%H%M%SZ
-      FILE: "argusops-{{.TIMESTAMP}}.dump"
+      FILE: "kuruops-{{.TIMESTAMP}}.dump"
     cmds:
       - mkdir -p backups
-      - docker compose exec -T postgres pg_dump -U postgres -Fc argusops > backups/{{.FILE}}
+      - docker compose exec -T postgres pg_dump -U postgres -Fc kuruops > backups/{{.FILE}}
       - 'echo "Dump written to backups/{{.FILE}}"'
       - |
         if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
-          aws s3 cp backups/{{.FILE}} "s3://$BACKUP_S3_BUCKET/argusops/{{.FILE}}"
+          aws s3 cp backups/{{.FILE}} "s3://$BACKUP_S3_BUCKET/kuruops/{{.FILE}}"
         else
           echo "BACKUP_S3_BUCKET not set -- skipping upload, dump kept locally only" 1>&2
         fi
 
   db:backup:restore-test:
-    desc: "Restore the most recent backups/*.dump into a disposable database and sanity-check it -- never touches the real argusops database"
+    desc: "Restore the most recent backups/*.dump into a disposable database and sanity-check it -- never touches the real kuruops database"
     cmds:
       - |
         # Sort lexically, not by mtime (`ls -t` behaves inconsistently across
         # the different `ls` implementations Task's embedded shell can end up
         # resolving to on Windows) -- the dump filenames from `task db:backup`
-        # are UTC timestamps in a sortable format (argusops-YYYYMMDDTHHMMSSZ),
+        # are UTC timestamps in a sortable format (kuruops-YYYYMMDDTHHMMSSZ),
         # so lexical order and chronological order are the same thing here.
         latest=$(printf '%s\n' backups/*.dump 2>/dev/null | sort | tail -n1)
         if [ -z "$latest" ] || [ "$latest" = "backups/*.dump" ]; then
           echo "No dump found in backups/ -- run 'task db:backup' first" 1>&2
           exit 1
         fi
-        echo "Restoring $latest into argusops_backup_verify..."
-        docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'argusops_backup_verify' and pid <> pg_backend_pid()" >/dev/null 2>&1 || true
-        docker compose exec -T postgres psql -U postgres -c "drop database if exists argusops_backup_verify"
-        docker compose exec -T postgres psql -U postgres -c "create database argusops_backup_verify"
-        docker compose exec -T postgres pg_restore -U postgres -d argusops_backup_verify --no-owner --no-privileges < "$latest"
+        echo "Restoring $latest into kuruops_backup_verify..."
+        docker compose exec -T postgres psql -U postgres -c "select pg_terminate_backend(pid) from pg_stat_activity where datname = 'kuruops_backup_verify' and pid <> pg_backend_pid()" >/dev/null 2>&1 || true
+        docker compose exec -T postgres psql -U postgres -c "drop database if exists kuruops_backup_verify"
+        docker compose exec -T postgres psql -U postgres -c "create database kuruops_backup_verify"
+        docker compose exec -T postgres pg_restore -U postgres -d kuruops_backup_verify --no-owner --no-privileges < "$latest"
         echo "Sanity check -- tenant/alert/incident counts in the restored database:"
-        docker compose exec -T postgres psql -U postgres -d argusops_backup_verify -c "select (select count(*) from tenants) as tenants, (select count(*) from alerts) as alerts, (select count(*) from incidents) as incidents"
-        docker compose exec -T postgres psql -U postgres -c "drop database argusops_backup_verify"
+        docker compose exec -T postgres psql -U postgres -d kuruops_backup_verify -c "select (select count(*) from tenants) as tenants, (select count(*) from alerts) as alerts, (select count(*) from incidents) as incidents"
+        docker compose exec -T postgres psql -U postgres -c "drop database kuruops_backup_verify"
 
   # ---- Backend (Go) ---------------------------------------------------
 
@@ -159,14 +159,14 @@ tasks:
     dir: backend
     deps: [db:test:up]
     env:
-      TEST_DATABASE_URL: 'postgres://argusops_app:{{.APP_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
-      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/argusops_test?sslmode=disable
+      TEST_DATABASE_URL: 'postgres://kuruops_app:{{.APP_PASSWORD}}@localhost:5432/kuruops_test?sslmode=disable'
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/kuruops_test?sslmode=disable
       # Deliberately the real least-privilege role cmd/worker connects as in
       # production, not the superuser admin URL above -- a permission gap
       # (e.g. missing UPDATE on a table a new worker job needs) only shows up
       # against this role. Superuser bypasses ALL grants, not just RLS, so it
       # would silently mask exactly this kind of bug.
-      TEST_DATABASE_WORKER_URL: 'postgres://argusops_worker:{{.WORKER_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
+      TEST_DATABASE_WORKER_URL: 'postgres://kuruops_worker:{{.WORKER_PASSWORD}}@localhost:5432/kuruops_test?sslmode=disable'
     cmds:
       - go test ./... -coverprofile=coverage.out -covermode=atomic
       - go tool cover -func=coverage.out | tail -1
@@ -188,16 +188,16 @@ tasks:
     dir: backend
     # db:test:reset (not db:test:up) -- the test resolves "the" tenant the
     # same way production does (oldest row in `tenants`), so it needs a
-    # freshly reset argusops_test with no leftover tenants from other
+    # freshly reset kuruops_test with no leftover tenants from other
     # tests/runs, or it migrates the wrong tenant's data.
     deps: [db:test:reset, db:migration-target:up]
     env:
-      TEST_DATABASE_URL: 'postgres://argusops_app:{{.APP_PASSWORD}}@localhost:5432/argusops_test?sslmode=disable'
-      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/argusops_test?sslmode=disable
+      TEST_DATABASE_URL: 'postgres://kuruops_app:{{.APP_PASSWORD}}@localhost:5432/kuruops_test?sslmode=disable'
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/kuruops_test?sslmode=disable
       TEST_MIGRATION_TARGET_ENABLED: "1"
       TEST_MIGRATION_TARGET_HOST: localhost
       TEST_MIGRATION_TARGET_PORT: "5433"
-      TEST_MIGRATION_TARGET_DB: argusops_target
+      TEST_MIGRATION_TARGET_DB: kuruops_target
       TEST_MIGRATION_TARGET_USER: postgres
       TEST_MIGRATION_TARGET_PASSWORD: postgres
     cmds:
@@ -345,34 +345,34 @@ tasks:
   # ---- Load testing (k6, via Docker -- no local k6 install needed) --------
 
   perf:smoke:
-    desc: "Light load test (5 VUs, 30s) against the local stack -- see scripts/loadtest/argusops.js for required env vars (API_TOKEN/WEBHOOK_TOKEN)"
+    desc: "Light load test (5 VUs, 30s) against the local stack -- see scripts/loadtest/kuruops.js for required env vars (API_TOKEN/WEBHOOK_TOKEN)"
     cmds:
       - |
-        # --network argusops_default (the docker-compose stack's own network,
+        # --network kuruops_default (the docker-compose stack's own network,
         # not --network host) so this works the same on Docker Desktop
         # (Windows/Mac, where host networking isn't available the way it is
         # on Linux) as on a Linux dev machine -- api/ingest are reached by
         # their container DNS names, same as any other service-to-service
         # call in this stack, not via a host-mapped localhost port.
-        docker run --rm -i --network argusops_default \
+        docker run --rm -i --network kuruops_default \
           -e BASE_URL="${BASE_URL:-http://api:8080}" \
           -e WEBHOOK_URL="${WEBHOOK_URL:-http://ingest:8081}" \
           -e API_TOKEN \
           -e WEBHOOK_TOKEN \
-          grafana/k6 run - < scripts/loadtest/argusops.js
+          grafana/k6 run - < scripts/loadtest/kuruops.js
 
   perf:load:
     desc: "Heavier load test (VUS/DURATION env vars, default 20 VUs/2m) -- manual/local only, never run in CI"
     cmds:
       - |
-        docker run --rm -i --network argusops_default \
+        docker run --rm -i --network kuruops_default \
           -e BASE_URL="${BASE_URL:-http://api:8080}" \
           -e WEBHOOK_URL="${WEBHOOK_URL:-http://ingest:8081}" \
           -e API_TOKEN \
           -e WEBHOOK_TOKEN \
           -e VUS="${VUS:-20}" \
           -e DURATION="${DURATION:-2m}" \
-          grafana/k6 run - < scripts/loadtest/argusops.js
+          grafana/k6 run - < scripts/loadtest/kuruops.js
 
   default:
     desc: List available tasks

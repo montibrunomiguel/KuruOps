@@ -1,4 +1,4 @@
-module github.com/argusops/argusops
+module github.com/kuruops/kuruops
 
 go 1.25.0
 

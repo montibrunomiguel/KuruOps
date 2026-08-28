@@ -1,13 +1,13 @@
 # No env vars: nginx.conf's proxy_pass targets are hardcoded to
 # http://api:8080 (see frontend/nginx.conf) -- which is exactly why 04-api.yaml's
-# Service is named plain "api", not "argusops-api": it must resolve via
+# Service is named plain "api", not "kuruops-api": it must resolve via
 # in-cluster DNS under that literal name for this container's reverse proxy
 # to work unchanged.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  namespace: argusops
+  namespace: kuruops
 spec:
   replicas: 1
   selector:
@@ -25,7 +25,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: frontend
-          image: argusops-frontend:latest
+          image: kuruops-frontend:latest
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -44,7 +44,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: frontend
-  namespace: argusops
+  namespace: kuruops
 spec:
   # ClusterIP is deliberate -- there's no ingress manifest here (see
   # README.md's scope note), so reaching this from outside the cluster is

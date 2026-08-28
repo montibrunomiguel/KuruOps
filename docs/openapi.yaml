@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: ArgusOps API
+  title: KuruOps API
   version: "0.1.0"
   description: >
-    REST API for ArgusOps, a single-tenant SOC alert/incident-management
+    REST API for KuruOps, a single-tenant SOC alert/incident-management
     platform (Go backend, PostgreSQL, React frontend). This document covers
     every route mounted by internal/httpserver/router.go: the unauthenticated
     /auth/** login flows, /healthz and /metrics, and the JWT-protected
@@ -2074,7 +2074,7 @@ paths:
         Sends the real outbound POST configured on this playbook step,
         against the given alert -- see PlaybookService.TriggerStepWebhook.
         502 (not 400/500) is deliberate: a failure here is the receiving
-        webhook's own problem, not a malformed request or an ArgusOps bug.
+        webhook's own problem, not a malformed request or a KuruOps bug.
       parameters:
         - name: stepId
           in: path
@@ -3514,7 +3514,7 @@ paths:
       summary: Configure Google Drive storage using a service-account key
       description: >
         The service account named in serviceAccountJson must already have
-        folderId shared with it from the Drive side -- ArgusOps cannot
+        folderId shared with it from the Drive side -- KuruOps cannot
         grant that access on the admin's behalf.
       requestBody:
         required: true

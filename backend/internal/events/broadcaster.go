@@ -28,7 +28,7 @@ import (
 // notifyChannel is the fixed Postgres NOTIFY/LISTEN channel every
 // Broadcaster instance -- across every cmd/api and cmd/ingest process --
 // uses.
-const notifyChannel = "argusops_events"
+const notifyChannel = "kuruops_events"
 
 // reconnectDelay is how long Start waits before retrying the LISTEN
 // connection after it drops (network blip, Postgres restart, etc.).

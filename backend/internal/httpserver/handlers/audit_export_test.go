@@ -12,11 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestAuditExportHandlers_ExportCEF(t *testing.T) {
@@ -53,8 +53,8 @@ func TestAuditExportHandlers_ExportCEF(t *testing.T) {
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
-		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment; filename=\"argusops-audit-")
-		assert.True(t, strings.HasPrefix(rec.Body.String(), "CEF:0|ArgusOps|ArgusOps|1.0|alert.received|"))
+		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment; filename=\"kuruops-audit-")
+		assert.True(t, strings.HasPrefix(rec.Body.String(), "CEF:0|KuruOps|KuruOps|1.0|alert.received|"))
 	})
 
 	t.Run("limit=1 returns a next-cursor pair of headers", func(t *testing.T) {
@@ -105,7 +105,7 @@ func TestAuditExportHandlers_ExportJSON(t *testing.T) {
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "application/x-ndjson; charset=utf-8", rec.Header().Get("Content-Type"))
-		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment; filename=\"argusops-audit-")
+		assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment; filename=\"kuruops-audit-")
 		assert.True(t, strings.HasSuffix(rec.Header().Get("Content-Disposition"), ".ndjson\""))
 
 		lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")

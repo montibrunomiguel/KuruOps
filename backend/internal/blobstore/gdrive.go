@@ -40,7 +40,7 @@ type GDriveStore struct {
 // from whatever JSON it's handed -- this admin-supplied blob is only ever
 // meant to be a plain service-account key). The service account itself
 // must be granted access to folderID from the Drive side (shared with its
-// email) -- ArgusOps has no way to do that on the admin's behalf.
+// email) -- KuruOps has no way to do that on the admin's behalf.
 func NewGDriveStoreFromServiceAccount(ctx context.Context, credentialsJSON, folderID string) (*GDriveStore, error) {
 	svc, err := drive.NewService(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, []byte(credentialsJSON)))
 	if err != nil {

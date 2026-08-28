@@ -18,16 +18,16 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/config"
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/events"
-	"github.com/argusops/argusops/internal/httpserver"
-	"github.com/argusops/argusops/internal/httpserver/middleware"
-	"github.com/argusops/argusops/internal/ingest"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/telemetry"
+	"github.com/kuruops/kuruops/internal/config"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/events"
+	"github.com/kuruops/kuruops/internal/httpserver"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/ingest"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/telemetry"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	otelShutdown, tracer, err := telemetry.Setup(ctx, "argusops-ingest", cfg.OTelExporterOTLPEndpoint)
+	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-ingest", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)

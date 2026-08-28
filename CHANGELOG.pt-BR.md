@@ -12,6 +12,24 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Changed
+
+- **Projeto renomeado de ArgusOps para KuruOps** -- inspirado no Curupira, personagem do folclore
+  brasileiro que protege a floresta e avisa os animais com seu grito característico. A renomeação
+  cobre a base de código inteira: o caminho do módulo Go (`github.com/argusops/argusops` →
+  `github.com/kuruops/kuruops`), todo nome de imagem/container/volume/rede Docker, o nome do banco
+  Postgres e dos roles (`argusops`/`argusops_app`/`argusops_worker` →
+  `kuruops`/`kuruops_app`/`kuruops_worker`), as env vars `ARGUSOPS_APP_PASSWORD`/
+  `ARGUSOPS_WORKER_PASSWORD` (agora `KURUOPS_*`), o email do admin padrão semeado
+  (`admin@argusops.local` → `admin@kuruops.local`), prefixos de nome de métrica do Prometheus,
+  nomes de recurso Kubernetes/Terraform, a marca no frontend (título da página, sidebar, login,
+  logo), e toda a documentação. Sem mudança funcional -- puramente uma renomeação, verificada com
+  as suites de teste completas de backend/frontend, um `docker compose up` do zero, e um fluxo real
+  de login → criar webhook → ingerir alerta → dashboard. Deploys locais existentes ganham volumes/
+  banco Docker novos sob o novo nome de projeto (os antigos `argusops_*` não são migrados
+  automaticamente) -- ver a documentação de deploy se precisar levar os dados adiante em vez de
+  começar do zero.
+
 ### Added
 
 - Relatório de incidente exportável em PDF: um botão "Baixar Relatório (PDF)" na página de detalhe
@@ -67,7 +85,7 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   alerta/incidente fechado é excluído permanentemente pelo job `sweepDataRetention` (roda a cada
   hora em `backend/cmd/worker`) assim que seu prazo de retenção vence a partir do fechamento — um
   aberto nunca é tocado, não importa a idade. Evidências anexadas a um alerta/incidente excluído
-  (imagens em S3/GCS/Google Drive/disco local) nunca são removidas -- só o registro do ArgusOps
+  (imagens em S3/GCS/Google Drive/disco local) nunca são removidas -- só o registro do KuruOps
   sobre o alerta/incidente, já que nada neste código jamais implementou exclusão do armazenamento
   de blobs.
 - Configurações → Conectores → Slack: conectar/desconectar um workspace do Slack via OAuth de bot
@@ -168,7 +186,7 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   servidor MCP e o `base_url` de um provedor LLM self-hosted/compatível com OpenAI eram todos
   acessados com um `http.Client` simples — qualquer um com acesso de Settings a essas três áreas
   podia apontar um deles pra `http://169.254.169.254/...` (endpoint de metadata de nuvem) ou um
-  serviço interno e fazer o ArgusOps mandar essa requisição por ele (SSRF). As três agora acessam
+  serviço interno e fazer o KuruOps mandar essa requisição por ele (SSRF). As três agora acessam
   via um novo `internal/httpguard.NewClient`, que recusa conectar num endereço
   loopback/link-local/privado (checado contra o IP resolvido, não só a string do hostname, então
   não é contornável por DNS rebinding); um deploy genuinamente on-prem pode sair dessa proteção com

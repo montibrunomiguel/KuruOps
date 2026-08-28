@@ -6,7 +6,7 @@ describe("setLanguage", () => {
     // Restore the deterministic language every other test file's
     // assertions are written against -- see src/test/setup.ts.
     void i18n.changeLanguage("en");
-    localStorage.removeItem("argusops.language");
+    localStorage.removeItem("kuruops.language");
   });
 
   it("changes the active i18next language", async () => {
@@ -17,9 +17,9 @@ describe("setLanguage", () => {
 
   it("persists the choice to localStorage so a reload keeps it", () => {
     setLanguage("pt");
-    expect(localStorage.getItem("argusops.language")).toBe("pt");
+    expect(localStorage.getItem("kuruops.language")).toBe("pt");
 
     setLanguage("en");
-    expect(localStorage.getItem("argusops.language")).toBe("en");
+    expect(localStorage.getItem("kuruops.language")).toBe("en");
   });
 });

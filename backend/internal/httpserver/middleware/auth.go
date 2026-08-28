@@ -13,8 +13,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/argusops/argusops/internal/authn"
-	"github.com/argusops/argusops/internal/service"
+	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 type ctxKey string

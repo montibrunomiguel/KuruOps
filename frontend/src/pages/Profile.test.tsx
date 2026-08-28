@@ -7,13 +7,13 @@ import { AuthProvider } from "../auth/AuthContext";
 
 function renderWithSession(phone?: string, mfaEnabled = false) {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       refreshToken: "rt",
       user: {
         id: "1",
-        email: "analyst@argusops.local",
+        email: "analyst@kuruops.local",
         name: "Ana Lyst",
         phone,
         role: "analyst",
@@ -55,7 +55,7 @@ describe("ProfilePage", () => {
     renderWithSession("+5511912345678");
 
     expect(screen.getByLabelText("Name")).toHaveValue("Ana Lyst");
-    expect(screen.getByLabelText("Email")).toHaveValue("analyst@argusops.local");
+    expect(screen.getByLabelText("Email")).toHaveValue("analyst@kuruops.local");
     expect(screen.getByLabelText(/Phone/)).toHaveValue("+5511912345678");
   });
 
@@ -104,7 +104,7 @@ describe("ProfilePage", () => {
     expect(screen.queryByLabelText(/required to change your email/)).not.toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText("Email"));
-    await userEvent.type(screen.getByLabelText("Email"), "new@argusops.local");
+    await userEvent.type(screen.getByLabelText("Email"), "new@kuruops.local");
 
     expect(screen.getByLabelText(/required to change your email/)).toBeInTheDocument();
   });
@@ -138,7 +138,7 @@ describe("ProfilePage", () => {
     renderWithSession();
 
     await userEvent.clear(screen.getByLabelText("Email"));
-    await userEvent.type(screen.getByLabelText("Email"), "new@argusops.local");
+    await userEvent.type(screen.getByLabelText("Email"), "new@kuruops.local");
     await userEvent.type(screen.getByLabelText(/required to change your email/), "wrong");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -260,7 +260,7 @@ describe("ProfilePage", () => {
       const fetchMock = vi.fn().mockImplementation((url: string) => {
         if (url.includes("/mfa/enroll")) {
           return Promise.resolve(
-            jsonResponse(200, { secret: "JBSWY3DPEHPK3PXP", otpauthUrl: "otpauth://totp/ArgusOps:analyst@argusops.local?secret=JBSWY3DPEHPK3PXP&issuer=ArgusOps" }),
+            jsonResponse(200, { secret: "JBSWY3DPEHPK3PXP", otpauthUrl: "otpauth://totp/KuruOps:analyst@kuruops.local?secret=JBSWY3DPEHPK3PXP&issuer=KuruOps" }),
           );
         }
         return Promise.resolve(jsonResponse(200, []));

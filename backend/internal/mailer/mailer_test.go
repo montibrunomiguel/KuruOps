@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/mailer"
 )
 
 // fakeSMTPServer is a minimal, non-TLS SMTP server that just accepts every
@@ -93,7 +93,7 @@ func TestSMTPSender_Send(t *testing.T) {
 	sender := mailer.SMTPSender{}
 	cfg := mailer.Config{
 		Host: host, Port: port, UseTLS: false,
-		From: "ArgusOps <no-reply@argusops.local>",
+		From: "KuruOps <no-reply@kuruops.local>",
 	}
 	msg := mailer.Message{
 		To:      "analyst@test.local",

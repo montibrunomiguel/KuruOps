@@ -1,4 +1,4 @@
-// Basic load test for ArgusOps' highest-traffic real paths: the paginated
+// Basic load test for KuruOps' highest-traffic real paths: the paginated
 // alert list, the dashboard summary, and webhook ingest (the one endpoint
 // that receives genuine external traffic, not just analyst browser
 // requests). Run via `task perf:smoke` (light, few VUs/seconds) or

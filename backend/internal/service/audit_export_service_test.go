@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestAuditExportService_ExportCEF(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAuditExportService_ExportCEF(t *testing.T) {
 		lines, next, err := svc.ExportCEF(t.Context(), tenantID, nil, 100)
 		require.NoError(t, err)
 		require.Len(t, lines, 1)
-		assert.True(t, strings.HasPrefix(lines[0], "CEF:0|ArgusOps|ArgusOps|1.0|alert.received|"))
+		assert.True(t, strings.HasPrefix(lines[0], "CEF:0|KuruOps|KuruOps|1.0|alert.received|"))
 		assert.Nil(t, next, "a page shorter than the limit has no next cursor")
 	})
 

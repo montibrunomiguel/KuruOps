@@ -4,8 +4,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: argusops-config
-  namespace: argusops
+  name: kuruops-config
+  namespace: kuruops
 data:
   HTTP_ADDR: ":8080"
   SHUTDOWN_TIMEOUT: "15s"
@@ -21,7 +21,7 @@ data:
   # The frontend Service's externally-reachable URL -- used in escalation
   # notification links and password-reset emails. Adjust to your real
   # ingress/domain; there is no ingress manifest here (see README.md).
-  APP_BASE_URL: "https://argusops.example.com"
+  APP_BASE_URL: "https://kuruops.example.com"
   # "env" (default) needs only SECRETS_ENCRYPTION_KEY (see the Secret) --
   # switch to "vault" or "kms" and add the matching VAULT_*/KMS_* keys here
   # (non-sensitive) plus VAULT_TOKEN/KMS_SECRET_ACCESS_KEY in the Secret if

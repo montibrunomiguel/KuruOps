@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: worker
-  namespace: argusops
+  namespace: kuruops
 spec:
   replicas: 1
   selector:
@@ -22,24 +22,24 @@ spec:
         runAsNonRoot: true
       containers:
         - name: worker
-          image: argusops-worker:latest
+          image: kuruops-worker:latest
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
-                name: argusops-config
+                name: kuruops-config
           env:
-            # argusops_worker: BYPASSRLS, owns the materialized views --
-            # see db/init/argusops_worker_role.sql. Never argusops_app here.
+            # kuruops_worker: BYPASSRLS, owns the materialized views --
+            # see db/init/kuruops_worker_role.sql. Never kuruops_app here.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: argusops-secrets
+                  name: kuruops-secrets
                   key: DATABASE_URL_WORKER
             - name: SECRETS_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
-                  name: argusops-secrets
+                  name: kuruops-secrets
                   key: SECRETS_ENCRYPTION_KEY
           # worker's only HTTP surface is /healthz + /livez + /metrics (see
           # cmd/worker/main.go) -- it serves no application traffic.
@@ -61,7 +61,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: worker
-  namespace: argusops
+  namespace: kuruops
 spec:
   selector:
     app: worker

@@ -1,6 +1,6 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# Implantando o ArgusOps
+# Implantando o KuruOps
 
 Duas camadas, mantidas separadas de propósito:
 
@@ -27,7 +27,7 @@ Duas camadas, mantidas separadas de propósito:
 | Armazenamento de upload da app | S3 (opcional, `internal/blobstore` já suporta) | GCS (opcional, mesma coisa) | nenhum — `internal/blobstore` ainda não tem backend de Azure Blob; permanece no PVC local com `replicas: 1`, veja `azure/README.pt-BR.md` |
 
 Cada `<cloud>/README.md` tem o passo a passo completo (provisionar → build/push
-das imagens → criar as roles de banco `argusops_app`/`argusops_worker` →
+das imagens → criar as roles de banco `kuruops_app`/`kuruops_worker` →
 preencher o Secret/ConfigMap → aplicar `k8s/`).
 
 ## O que nada disso inclui

@@ -1,7 +1,7 @@
 # Managed Postgres for the app -- deploy/k8s/'s own README already assumes
 # "an existing, reachable Postgres 16 instance (a managed RDS/Cloud SQL
 # instance...)" rather than running Postgres inside the cluster, this is
-# that instance. db/migrations/ and the argusops_app/argusops_worker roles
+# that instance. db/migrations/ and the kuruops_app/kuruops_worker roles
 # (db/init/*.sql) still need to be applied against it after this resource
 # exists -- see the top-level deploy/README.md for that step; Terraform
 # deliberately doesn't reach into the database's own schema/roles here.
@@ -66,7 +66,7 @@ resource "aws_db_instance" "main" {
   allocated_storage      = var.db_allocated_storage
   storage_type           = "gp3"
   storage_encrypted      = true
-  db_name                = "argusops"
+  db_name                = "kuruops"
   username               = var.db_master_username
   password               = local.db_master_password
   db_subnet_group_name   = aws_db_subnet_group.main.name

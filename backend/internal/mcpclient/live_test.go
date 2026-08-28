@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/mcpclient"
+	"github.com/kuruops/kuruops/internal/mcpclient"
 )
 
 func skipUnlessMCPServerLive(t *testing.T) string {
@@ -51,11 +51,11 @@ func TestMCPClient_Live_InitializeListToolsCallTool(t *testing.T) {
 	})
 
 	t.Run("CallTool invokes echo and gets a real response back", func(t *testing.T) {
-		result, err := client.CallTool(t.Context(), "echo", map[string]any{"message": "hello from argusops"})
+		result, err := client.CallTool(t.Context(), "echo", map[string]any{"message": "hello from kuruops"})
 		require.NoError(t, err)
 		require.False(t, result.IsError)
 		require.NotEmpty(t, result.Content)
-		assert.Equal(t, "Echo: hello from argusops", result.Content[0].Text)
+		assert.Equal(t, "Echo: hello from kuruops", result.Content[0].Text)
 	})
 
 	t.Run("CallTool on an unknown tool name is a real server-side error, not a client crash", func(t *testing.T) {

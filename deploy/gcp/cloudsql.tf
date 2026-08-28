@@ -1,6 +1,6 @@
 # Managed Postgres for the app -- same role as AWS's rds.tf. Private IP
 # only (no public IP), reachable from GKE over the VPC peering set up in
-# network.tf. db/migrations/ and the argusops_app/argusops_worker roles
+# network.tf. db/migrations/ and the kuruops_app/kuruops_worker roles
 # (db/init/*.sql) still need to be applied against it after this resource
 # exists -- see the top-level deploy/README.md.
 
@@ -44,8 +44,8 @@ resource "google_sql_database_instance" "main" {
   ]
 }
 
-resource "google_sql_database" "argusops" {
-  name     = "argusops"
+resource "google_sql_database" "kuruops" {
+  name     = "kuruops"
   instance = google_sql_database_instance.main.name
 }
 

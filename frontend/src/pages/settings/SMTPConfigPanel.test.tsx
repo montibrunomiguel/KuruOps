@@ -22,7 +22,7 @@ const configured = {
   useTls: true,
   username: "smtp-user",
   fromAddress: "no-reply@example.com",
-  fromName: "ArgusOps",
+  fromName: "KuruOps",
 };
 
 describe("SMTPConfigPanel", () => {

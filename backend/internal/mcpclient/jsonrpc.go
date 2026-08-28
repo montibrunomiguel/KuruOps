@@ -25,17 +25,17 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/argusops/argusops/internal/httpguard"
+	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
 // tracer's provider is whatever telemetry.Setup registered globally (a
 // no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) -- see post below, this
 // package's one choke point every call/notify eventually funnels through.
-var tracer = otel.Tracer("argusops/mcpclient")
+var tracer = otel.Tracer("kuruops/mcpclient")
 
 const (
 	protocolVersion = "2025-03-26"
-	clientName      = "argusops"
+	clientName      = "kuruops"
 	clientVersion   = "0.1.0"
 )
 

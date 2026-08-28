@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // noopSender is a mailer.Sender that always succeeds without touching the
@@ -71,7 +71,7 @@ func TestSMTPConfigHandlers(t *testing.T) {
 	saveBody, _ := json.Marshal(map[string]any{
 		"host": "smtp.example.com", "port": 587, "useTls": true,
 		"username": "smtp-user", "password": "s3cret",
-		"fromAddress": "no-reply@example.com", "fromName": "ArgusOps",
+		"fromAddress": "no-reply@example.com", "fromName": "KuruOps",
 	})
 	saveReq := withClaims(httptest.NewRequest("PUT", "/", bytes.NewReader(saveBody)), tenantID, uuid.New(), nil)
 	assert.Equal(t, http.StatusNoContent, doRequest(r, saveReq).Code)

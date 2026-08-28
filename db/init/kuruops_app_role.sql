@@ -12,21 +12,21 @@
 -- if the role already exists, then unconditionally ALTER ROLE ... PASSWORD,
 -- both as plain top-level statements where interpolation works normally.
 \set ON_ERROR_STOP off
-create role argusops_app with login nosuperuser nocreatedb nocreaterole nobypassrls;
+create role kuruops_app with login nosuperuser nocreatedb nocreaterole nobypassrls;
 \set ON_ERROR_STOP on
 
-alter role argusops_app with password :'app_password';
+alter role kuruops_app with password :'app_password';
 
-grant usage on schema public to argusops_app;
-grant select, insert, update, delete on all tables in schema public to argusops_app;
-grant usage, select on all sequences in schema public to argusops_app;
+grant usage on schema public to kuruops_app;
+grant select, insert, update, delete on all tables in schema public to kuruops_app;
+grant usage, select on all sequences in schema public to kuruops_app;
 
 -- Make the grants apply to tables created by future migrations too, so
 -- `task db:migrate` after this step never needs a manual re-grant.
-alter default privileges in schema public grant select, insert, update, delete on tables to argusops_app;
-alter default privileges in schema public grant usage, select on sequences to argusops_app;
+alter default privileges in schema public grant select, insert, update, delete on tables to kuruops_app;
+alter default privileges in schema public grant usage, select on sequences to kuruops_app;
 
--- mv_alert_daily_stats/mv_incident_kpis are NOT owned by argusops_app --
--- see db/init/argusops_worker_role.sql for why (a materialized view's
+-- mv_alert_daily_stats/mv_incident_kpis are NOT owned by kuruops_app --
+-- see db/init/kuruops_worker_role.sql for why (a materialized view's
 -- defining query runs with its OWNER's RLS context, and these two need to
 -- see across all tenants when cmd/worker refreshes them).

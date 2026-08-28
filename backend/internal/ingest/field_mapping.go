@@ -3,8 +3,8 @@ package ingest
 import (
 	"encoding/json"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/jsonpath"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/jsonpath"
 )
 
 // applyFieldMappingTemplate layers a webhook endpoint's configured rules on

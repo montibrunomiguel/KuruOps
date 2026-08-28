@@ -17,7 +17,7 @@ output "db_host" {
 }
 
 output "db_master_username" {
-  value = "argusops_admin"
+  value = "kuruops_admin"
 }
 
 output "db_master_password" {

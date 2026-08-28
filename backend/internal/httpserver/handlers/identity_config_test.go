@@ -10,11 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/argusops/argusops/internal/httpserver/handlers"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/httpserver/handlers"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestIdentityConfigHandlers_LDAP(t *testing.T) {
@@ -81,8 +81,8 @@ func TestIdentityConfigHandlers_SAML(t *testing.T) {
 	})
 
 	body, _ := json.Marshal(map[string]string{
-		"spEntityId":     "https://argusops.example/saml/metadata",
-		"acsUrl":         "https://argusops.example/auth/saml/acs",
+		"spEntityId":     "https://kuruops.example/saml/metadata",
+		"acsUrl":         "https://kuruops.example/auth/saml/acs",
 		"idpMetadataUrl": "https://idp.example.com/metadata",
 	})
 	req := withClaims(httptest.NewRequest("PUT", "/saml", bytes.NewReader(body)), tenantID, uuid.New(), nil)

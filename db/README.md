@@ -1,6 +1,6 @@
 <p align="right"><a href="README.pt-BR.md">🇧🇷 Português</a> · <b>🇺🇸 English</b></p>
 
-# ArgusOps — database
+# KuruOps — database
 
 Migrations in `migrations/`, `golang-migrate` format (`{version}_{name}.up.sql` / `.down.sql`).
 
@@ -13,8 +13,8 @@ does all of this, including the application role below, against the Postgres fro
 Manual, against an already-running Postgres:
 
 ```bash
-createdb argusops
-migrate -database "postgres://localhost:5432/argusops?sslmode=disable" -path migrations up
+createdb kuruops
+migrate -database "postgres://localhost:5432/kuruops?sslmode=disable" -path migrations up
 ```
 
 Without `golang-migrate` installed:
@@ -28,23 +28,23 @@ tables and does **not** have `BYPASSRLS`. Running the migrations as a superuser/
 connecting the application with that same user makes RLS harmless — the table owner bypasses
 policies by default.
 
-`task db:roles` runs exactly this (`db/init/argusops_app_role.sql`, idempotent — safe to run again
+`task db:roles` runs exactly this (`db/init/kuruops_app_role.sql`, idempotent — safe to run again
 on every deploy). Manual equivalent:
 
 ```sql
-create role argusops_app with login password '...' nosuperuser nocreatedb nocreaterole nobypassrls;
-grant usage on schema public to argusops_app;
-grant select, insert, update, delete on all tables in schema public to argusops_app;
-grant usage, select on all sequences in schema public to argusops_app;
+create role kuruops_app with login password '...' nosuperuser nocreatedb nocreaterole nobypassrls;
+grant usage on schema public to kuruops_app;
+grant select, insert, update, delete on all tables in schema public to kuruops_app;
+grant usage, select on all sequences in schema public to kuruops_app;
 ```
 
-The backend's `DATABASE_URL` must point to `argusops_app`, not to the table-owning user used to
+The backend's `DATABASE_URL` must point to `kuruops_app`, not to the table-owning user used to
 run the migrations.
 
 ## Worker role (`cmd/worker`, materialized view refresh)
 
-`cmd/worker` does **not** connect as `argusops_app` — it connects as `argusops_worker`
-(`db/init/argusops_worker_role.sql`, also created by `task db:roles`), which has `BYPASSRLS`.
+`cmd/worker` does **not** connect as `kuruops_app` — it connects as `kuruops_worker`
+(`db/init/kuruops_worker_role.sql`, also created by `task db:roles`), which has `BYPASSRLS`.
 
 Reason: `REFRESH MATERIALIZED VIEW` can only be run by the view's owner, and a materialized view
 runs its query with the **owner's** privileges, not the caller's (same rule as regular views).
@@ -52,7 +52,7 @@ runs its query with the **owner's** privileges, not the caller's (same rule as r
 definition (grouped by `tenant_id`, with no single tenant), and the refresh runs outside of any
 tenant context — so if the view's owner is a role without `BYPASSRLS`, the `alerts`/`incidents`
 policy `tenant_id = current_tenant_id()` never matches (no tenant is set), and the REFRESH
-"succeeds" but always recomputes to zero rows, with no error at all. `argusops_worker` exists for
+"succeeds" but always recomputes to zero rows, with no error at all. `kuruops_worker` exists for
 this — mostly just `SELECT`, plus a handful of narrow, column-scoped `UPDATE` grants
 (`incidents.sla_breached`, `alerts.escalated_at`/`sla_escalation_step`,
 `ai_analysis_runs.status`/`error`/`updated_at`) for the other periodic sweeps that also run under
@@ -60,7 +60,7 @@ this role. `sweepDataRetention` (permanently deletes closed alerts/incidents onc
 retention period elapses — Settings → Retention, `tenant_retention_config`) is the one job that
 needs real `DELETE` rather than a column-scoped `UPDATE`, granted on `alerts`/`incidents` and
 every table they cascade into, plus `ai_analysis_runs`/`ai_tool_calls` (no FK/cascade back to
-alerts/incidents — the sweep deletes these explicitly; see `db/init/argusops_worker_role.sql` for
+alerts/incidents — the sweep deletes these explicitly; see `db/init/kuruops_worker_role.sql` for
 the full grant and why each table needs it). Don't reuse this role for anything beyond these
 specific responsibilities.
 

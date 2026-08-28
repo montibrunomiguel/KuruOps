@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/argusops/argusops/internal/db"
+	"github.com/kuruops/kuruops/internal/db"
 )
 
 // refreshInterval is how often a running PersistentEnvStore reloads its

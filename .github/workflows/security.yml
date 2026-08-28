@@ -68,16 +68,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: argusops-api
+          - image: kuruops-api
             dockerfile: backend/Dockerfile
             target: api
-          - image: argusops-ingest
+          - image: kuruops-ingest
             dockerfile: backend/Dockerfile
             target: ingest
-          - image: argusops-worker
+          - image: kuruops-worker
             dockerfile: backend/Dockerfile
             target: worker
-          - image: argusops-frontend
+          - image: kuruops-frontend
             dockerfile: frontend/Dockerfile
             target: ""
     steps:

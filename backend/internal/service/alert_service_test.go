@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // testPayload is a stand-in for the raw webhook body every real alert
@@ -807,7 +807,7 @@ func TestAlertService_Escalate(t *testing.T) {
 	scheduleRepo := repository.NewOnCallScheduleRepository()
 	onCallSvc := service.NewOnCallScheduleService(pool, scheduleRepo, users, repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
 	escalationPolicySvc := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), scheduleRepo, onCallSvc, userSvc, store, repository.NewAdminAuditEventRepository())
-	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "https://argusops.example")
+	alertSvc.EnableEscalation(incidentSvc, escalationPolicySvc, "https://kuruops.example")
 
 	t.Run("unknown alert id -- nil, nil", func(t *testing.T) {
 		incident, err := alertSvc.Escalate(t.Context(), tenantID, actorID, uuid.New(), nil)

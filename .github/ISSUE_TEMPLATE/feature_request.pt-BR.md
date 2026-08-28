@@ -1,6 +1,6 @@
 ---
 name: Solicitação de funcionalidade (PT-BR)
-about: Sugira uma ideia ou melhoria para o ArgusOps
+about: Sugira uma ideia ou melhoria para o KuruOps
 title: '[FEAT] '
 labels: 'enhancement'
 assignees: ''

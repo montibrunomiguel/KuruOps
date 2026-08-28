@@ -1,7 +1,7 @@
 variable "name" {
   description = "Short name prefixed onto every resource (resource group, AKS cluster, ACR, DB server...)."
   type        = string
-  default     = "argusops"
+  default     = "kuruops"
 }
 
 variable "environment" {

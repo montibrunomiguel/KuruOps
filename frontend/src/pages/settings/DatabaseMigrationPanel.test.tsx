@@ -21,7 +21,7 @@ async function fillForm() {
   const portInput = screen.getByLabelText("Port");
   await userEvent.clear(portInput);
   await userEvent.type(portInput, "5432");
-  await userEvent.type(screen.getByLabelText("Database name"), "argusops");
+  await userEvent.type(screen.getByLabelText("Database name"), "kuruops");
   await userEvent.type(screen.getByLabelText(/^User/), "postgres");
   await userEvent.type(screen.getByLabelText("Password"), "s3cret");
 }
@@ -45,7 +45,7 @@ describe("DatabaseMigrationPanel", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            host: "target.example.com", database: "argusops", user: "postgres",
+            host: "target.example.com", database: "kuruops", user: "postgres",
             password: "s3cret", sslMode: "disable", port: 5432,
           }),
         }),
@@ -68,8 +68,8 @@ describe("DatabaseMigrationPanel", () => {
       jsonResponse({
         schemaVersion: 29,
         rowCounts: { alerts: { source: 3, target: 3 }, incidents: { source: 1, target: 1 } },
-        appDsn: "postgres://argusops_app:xyz@target.example.com:5432/argusops?sslmode=disable",
-        workerDsn: "postgres://argusops_worker:abc@target.example.com:5432/argusops?sslmode=disable",
+        appDsn: "postgres://kuruops_app:xyz@target.example.com:5432/kuruops?sslmode=disable",
+        workerDsn: "postgres://kuruops_worker:abc@target.example.com:5432/kuruops?sslmode=disable",
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -88,7 +88,7 @@ describe("DatabaseMigrationPanel", () => {
     expect(await screen.findByText("Migration complete")).toBeInTheDocument();
     expect(screen.getByText(/version 29/)).toBeInTheDocument();
     expect(screen.getByText("alerts")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("postgres://argusops_app:xyz@target.example.com:5432/argusops?sslmode=disable")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("postgres://kuruops_app:xyz@target.example.com:5432/kuruops?sslmode=disable")).toBeInTheDocument();
   });
 
   it("shows the server's error message on a failed migration", async () => {

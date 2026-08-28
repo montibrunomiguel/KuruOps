@@ -8,7 +8,7 @@ import (
 )
 
 func TestSetup_EmptyEndpointReturnsWorkingNoopTracer(t *testing.T) {
-	shutdown, tracer, err := Setup(context.Background(), "argusops-test", "")
+	shutdown, tracer, err := Setup(context.Background(), "kuruops-test", "")
 	require.NoError(t, err)
 	require.NotNil(t, tracer)
 
@@ -24,7 +24,7 @@ func TestSetup_InvalidEndpointStillReturnsUsableTracer(t *testing.T) {
 	// otlptracehttp.New doesn't dial eagerly -- an unreachable/malformed
 	// endpoint is only ever discovered on export, so Setup itself should
 	// succeed and hand back a tracer that's safe to start spans on.
-	shutdown, tracer, err := Setup(context.Background(), "argusops-test", "http://127.0.0.1:0")
+	shutdown, tracer, err := Setup(context.Background(), "kuruops-test", "http://127.0.0.1:0")
 	require.NoError(t, err)
 	require.NotNil(t, tracer)
 

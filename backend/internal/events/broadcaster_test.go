@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/events"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/events"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // newTestBroadcaster builds a Broadcaster against a real test database

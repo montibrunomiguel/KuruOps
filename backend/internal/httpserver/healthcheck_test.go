@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/argusops/argusops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 )
 
 func TestHealthCheck_UnreachableDatabaseReturns503(t *testing.T) {

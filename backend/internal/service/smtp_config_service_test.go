@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 // fakeSMTPConfigRepo lets a test fail a specific repo call on demand --
@@ -67,7 +67,7 @@ func TestSMTPConfigService_Save(t *testing.T) {
 
 	require.NoError(t, svc.Save(t.Context(), tenantID, actorID, service.SaveSMTPInput{
 		Host: "smtp.example.com", Port: 587, UseTLS: true,
-		Username: "smtp-user", Password: "s3cret", FromAddress: "no-reply@example.com", FromName: "ArgusOps",
+		Username: "smtp-user", Password: "s3cret", FromAddress: "no-reply@example.com", FromName: "KuruOps",
 	}))
 
 	cfg, err := svc.Get(t.Context(), tenantID)
@@ -78,7 +78,7 @@ func TestSMTPConfigService_Save(t *testing.T) {
 	t.Run("re-saving without a new password keeps the existing one", func(t *testing.T) {
 		require.NoError(t, svc.Save(t.Context(), tenantID, actorID, service.SaveSMTPInput{
 			Host: "smtp.example.com", Port: 587, UseTLS: true,
-			Username: "smtp-user", FromAddress: "alerts@example.com", FromName: "ArgusOps",
+			Username: "smtp-user", FromAddress: "alerts@example.com", FromName: "KuruOps",
 		}))
 		got, err := svc.Get(t.Context(), tenantID)
 		require.NoError(t, err)

@@ -7,7 +7,7 @@ import { AuthProvider } from "../../auth/AuthContext";
 
 function sessionWith(resourceAccess: string[]) {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       user: { id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess },

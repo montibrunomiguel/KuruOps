@@ -34,7 +34,7 @@ type MetricsCollector struct {
 	durationSumMicros    atomic.Uint64
 
 	// pool is optional (see SetPool) -- MetricsHandler simply omits the
-	// argusops_db_pool_* gauges when it's never registered.
+	// kuruops_db_pool_* gauges when it's never registered.
 	pool *pgxpool.Pool
 
 	// lastSweepSuccessUnix tracks, per cmd/worker sweep job name (see
@@ -116,7 +116,7 @@ func (m *MetricsCollector) DecSSE() {
 	m.activeSSE.Add(-1)
 }
 
-// SetPool registers the pool MetricsHandler reports argusops_db_pool_*
+// SetPool registers the pool MetricsHandler reports kuruops_db_pool_*
 // gauges for -- called once at startup (see cmd/api/main.go,
 // cmd/worker/main.go). Sizing these correctly matters once running more
 // than one replica (see config.Config's DBPoolMaxConns doc comment); seeing
@@ -144,47 +144,47 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
 
-	fmt.Fprintf(w, "# HELP argusops_http_requests_total Total number of HTTP requests processed.\n")
-	fmt.Fprintf(w, "# TYPE argusops_http_requests_total counter\n")
-	fmt.Fprintf(w, "argusops_http_requests_total %d\n\n", m.httpRequestsTotal.Load())
+	fmt.Fprintf(w, "# HELP kuruops_http_requests_total Total number of HTTP requests processed.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_http_requests_total counter\n")
+	fmt.Fprintf(w, "kuruops_http_requests_total %d\n\n", m.httpRequestsTotal.Load())
 
-	fmt.Fprintf(w, "# HELP argusops_http_requests_2xx_total Total number of 2xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE argusops_http_requests_2xx_total counter\n")
-	fmt.Fprintf(w, "argusops_http_requests_2xx_total %d\n\n", m.http2xxTotal.Load())
+	fmt.Fprintf(w, "# HELP kuruops_http_requests_2xx_total Total number of 2xx HTTP responses.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_http_requests_2xx_total counter\n")
+	fmt.Fprintf(w, "kuruops_http_requests_2xx_total %d\n\n", m.http2xxTotal.Load())
 
-	fmt.Fprintf(w, "# HELP argusops_http_requests_4xx_total Total number of 4xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE argusops_http_requests_4xx_total counter\n")
-	fmt.Fprintf(w, "argusops_http_requests_4xx_total %d\n\n", m.http4xxTotal.Load())
+	fmt.Fprintf(w, "# HELP kuruops_http_requests_4xx_total Total number of 4xx HTTP responses.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_http_requests_4xx_total counter\n")
+	fmt.Fprintf(w, "kuruops_http_requests_4xx_total %d\n\n", m.http4xxTotal.Load())
 
-	fmt.Fprintf(w, "# HELP argusops_http_requests_5xx_total Total number of 5xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE argusops_http_requests_5xx_total counter\n")
-	fmt.Fprintf(w, "argusops_http_requests_5xx_total %d\n\n", m.http5xxTotal.Load())
+	fmt.Fprintf(w, "# HELP kuruops_http_requests_5xx_total Total number of 5xx HTTP responses.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_http_requests_5xx_total counter\n")
+	fmt.Fprintf(w, "kuruops_http_requests_5xx_total %d\n\n", m.http5xxTotal.Load())
 
-	fmt.Fprintf(w, "# HELP argusops_http_request_duration_seconds HTTP request duration in seconds.\n")
-	fmt.Fprintf(w, "# TYPE argusops_http_request_duration_seconds histogram\n")
+	fmt.Fprintf(w, "# HELP kuruops_http_request_duration_seconds HTTP request duration in seconds.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_http_request_duration_seconds histogram\n")
 	for i, bound := range durationBucketBoundsSeconds {
-		fmt.Fprintf(w, "argusops_http_request_duration_seconds_bucket{le=\"%g\"} %d\n", bound, m.durationBucketCounts[i].Load())
+		fmt.Fprintf(w, "kuruops_http_request_duration_seconds_bucket{le=\"%g\"} %d\n", bound, m.durationBucketCounts[i].Load())
 	}
 	count := m.durationCount.Load()
-	fmt.Fprintf(w, "argusops_http_request_duration_seconds_bucket{le=\"+Inf\"} %d\n", count)
-	fmt.Fprintf(w, "argusops_http_request_duration_seconds_sum %g\n", float64(m.durationSumMicros.Load())/1e6)
-	fmt.Fprintf(w, "argusops_http_request_duration_seconds_count %d\n\n", count)
+	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_bucket{le=\"+Inf\"} %d\n", count)
+	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_sum %g\n", float64(m.durationSumMicros.Load())/1e6)
+	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_count %d\n\n", count)
 
-	fmt.Fprintf(w, "# HELP argusops_sse_active_connections Current active SSE stream connections.\n")
-	fmt.Fprintf(w, "# TYPE argusops_sse_active_connections gauge\n")
-	fmt.Fprintf(w, "argusops_sse_active_connections %d\n", m.activeSSE.Load())
+	fmt.Fprintf(w, "# HELP kuruops_sse_active_connections Current active SSE stream connections.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_sse_active_connections gauge\n")
+	fmt.Fprintf(w, "kuruops_sse_active_connections %d\n", m.activeSSE.Load())
 
 	// Absent entirely on a fresh process until each job's first tick
 	// completes -- Prometheus tolerates a gauge series simply not existing
 	// yet, no need to pre-seed zeros for jobs that haven't run.
 	var sweepLines []string
 	m.lastSweepSuccessUnix.Range(func(k, v any) bool {
-		sweepLines = append(sweepLines, fmt.Sprintf("argusops_worker_last_sweep_success_timestamp{sweep_job=%q} %d\n", k, v))
+		sweepLines = append(sweepLines, fmt.Sprintf("kuruops_worker_last_sweep_success_timestamp{sweep_job=%q} %d\n", k, v))
 		return true
 	})
 	if len(sweepLines) > 0 {
-		fmt.Fprintf(w, "\n# HELP argusops_worker_last_sweep_success_timestamp Unix time each named cmd/worker sweep job last completed a tick without panicking.\n")
-		fmt.Fprintf(w, "# TYPE argusops_worker_last_sweep_success_timestamp gauge\n")
+		fmt.Fprintf(w, "\n# HELP kuruops_worker_last_sweep_success_timestamp Unix time each named cmd/worker sweep job last completed a tick without panicking.\n")
+		fmt.Fprintf(w, "# TYPE kuruops_worker_last_sweep_success_timestamp gauge\n")
 		for _, line := range sweepLines {
 			fmt.Fprint(w, line)
 		}
@@ -192,20 +192,20 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if m.pool != nil {
 		stat := m.pool.Stat()
-		fmt.Fprintf(w, "\n# HELP argusops_db_pool_total_conns Current total connections (idle + in use) in the pool.\n")
-		fmt.Fprintf(w, "# TYPE argusops_db_pool_total_conns gauge\n")
-		fmt.Fprintf(w, "argusops_db_pool_total_conns %d\n\n", stat.TotalConns())
+		fmt.Fprintf(w, "\n# HELP kuruops_db_pool_total_conns Current total connections (idle + in use) in the pool.\n")
+		fmt.Fprintf(w, "# TYPE kuruops_db_pool_total_conns gauge\n")
+		fmt.Fprintf(w, "kuruops_db_pool_total_conns %d\n\n", stat.TotalConns())
 
-		fmt.Fprintf(w, "# HELP argusops_db_pool_idle_conns Current idle connections in the pool.\n")
-		fmt.Fprintf(w, "# TYPE argusops_db_pool_idle_conns gauge\n")
-		fmt.Fprintf(w, "argusops_db_pool_idle_conns %d\n\n", stat.IdleConns())
+		fmt.Fprintf(w, "# HELP kuruops_db_pool_idle_conns Current idle connections in the pool.\n")
+		fmt.Fprintf(w, "# TYPE kuruops_db_pool_idle_conns gauge\n")
+		fmt.Fprintf(w, "kuruops_db_pool_idle_conns %d\n\n", stat.IdleConns())
 
-		fmt.Fprintf(w, "# HELP argusops_db_pool_acquired_conns Current in-use (acquired) connections in the pool.\n")
-		fmt.Fprintf(w, "# TYPE argusops_db_pool_acquired_conns gauge\n")
-		fmt.Fprintf(w, "argusops_db_pool_acquired_conns %d\n\n", stat.AcquiredConns())
+		fmt.Fprintf(w, "# HELP kuruops_db_pool_acquired_conns Current in-use (acquired) connections in the pool.\n")
+		fmt.Fprintf(w, "# TYPE kuruops_db_pool_acquired_conns gauge\n")
+		fmt.Fprintf(w, "kuruops_db_pool_acquired_conns %d\n\n", stat.AcquiredConns())
 
-		fmt.Fprintf(w, "# HELP argusops_db_pool_max_conns The pool's configured maximum size.\n")
-		fmt.Fprintf(w, "# TYPE argusops_db_pool_max_conns gauge\n")
-		fmt.Fprintf(w, "argusops_db_pool_max_conns %d\n", stat.MaxConns())
+		fmt.Fprintf(w, "# HELP kuruops_db_pool_max_conns The pool's configured maximum size.\n")
+		fmt.Fprintf(w, "# TYPE kuruops_db_pool_max_conns gauge\n")
+		fmt.Fprintf(w, "kuruops_db_pool_max_conns %d\n", stat.MaxConns())
 	}
 }

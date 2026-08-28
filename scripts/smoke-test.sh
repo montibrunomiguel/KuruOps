@@ -18,7 +18,7 @@ set -uo pipefail
 
 API_URL="${API_URL:-http://localhost:8080}"
 INGEST_URL="${INGEST_URL:-http://localhost:8081}"
-EMAIL="admin@argusops.local"
+EMAIL="admin@kuruops.local"
 DEFAULT_PASSWORD="ChangeMe123!"
 ROTATED_PASSWORD="SmokeTest-Rotated-Pw1!"
 # Unique per run so re-running this script against a deploy that already has

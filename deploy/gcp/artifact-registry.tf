@@ -1,6 +1,6 @@
 # One Docker-format repo holding all four images (Artifact Registry's own
 # convention -- unlike ECR's one-repo-per-image, an AR repo is a namespace
-# you push multiple image names into: .../argusops/api, .../argusops/ingest,
+# you push multiple image names into: .../kuruops/api, .../kuruops/ingest,
 # etc.).
 
 resource "google_artifact_registry_repository" "images" {

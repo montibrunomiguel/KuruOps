@@ -59,7 +59,7 @@ interface AuthContextValue extends AuthState {
   logout: () => void;
 }
 
-const STORAGE_KEY = "argusops.session";
+const STORAGE_KEY = "kuruops.session";
 
 function loadStoredSession(): AuthState {
   const raw = localStorage.getItem(STORAGE_KEY);

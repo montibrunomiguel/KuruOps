@@ -23,14 +23,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	"github.com/argusops/argusops/internal/httpguard"
+	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
 // tracer's provider is whatever telemetry.Setup registered globally (a
 // no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) -- see doRequest below,
 // this package's one choke point every provider's Complete/CompleteWithTools
 // call eventually funnels through.
-var tracer = otel.Tracer("argusops/llmclient")
+var tracer = otel.Tracer("kuruops/llmclient")
 
 // Client sends one system+user prompt pair to an LLM and returns its text
 // response, or (via CompleteWithTools) runs one turn of a multi-turn,

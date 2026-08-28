@@ -33,7 +33,7 @@ func TestExchangeCode(t *testing.T) {
 	oauthAccessURL = srv.URL
 	t.Cleanup(func() { oauthAccessURL = original })
 
-	result, err := ExchangeCode(t.Context(), "client-id", "client-secret", "auth-code", "https://argusops.example/auth/oauth/slack/callback")
+	result, err := ExchangeCode(t.Context(), "client-id", "client-secret", "auth-code", "https://kuruops.example/auth/oauth/slack/callback")
 	require.NoError(t, err)
 	assert.Equal(t, "xoxb-test-token", result.AccessToken)
 	assert.Equal(t, "T456", result.TeamID)
@@ -44,7 +44,7 @@ func TestExchangeCode(t *testing.T) {
 	assert.Equal(t, []string{"client-id"}, gotForm["client_id"])
 	assert.Equal(t, []string{"client-secret"}, gotForm["client_secret"])
 	assert.Equal(t, []string{"auth-code"}, gotForm["code"])
-	assert.Equal(t, []string{"https://argusops.example/auth/oauth/slack/callback"}, gotForm["redirect_uri"])
+	assert.Equal(t, []string{"https://kuruops.example/auth/oauth/slack/callback"}, gotForm["redirect_uri"])
 }
 
 func TestExchangeCode_SlackError(t *testing.T) {
@@ -58,6 +58,6 @@ func TestExchangeCode_SlackError(t *testing.T) {
 	oauthAccessURL = srv.URL
 	t.Cleanup(func() { oauthAccessURL = original })
 
-	_, err := ExchangeCode(t.Context(), "client-id", "client-secret", "bad-code", "https://argusops.example/auth/oauth/slack/callback")
+	_, err := ExchangeCode(t.Context(), "client-id", "client-secret", "bad-code", "https://kuruops.example/auth/oauth/slack/callback")
 	assert.ErrorContains(t, err, "invalid_code")
 }

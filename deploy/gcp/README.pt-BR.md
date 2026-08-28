@@ -1,8 +1,8 @@
 <p align="right"><a href="README.md">🇺🇸 English</a> · <b>🇧🇷 Português</b></p>
 
-# ArgusOps no GCP (GKE)
+# KuruOps no GCP (GKE)
 
-Provisiona a infraestrutura de nuvem que o ArgusOps precisa: uma rede
+Provisiona a infraestrutura de nuvem que o KuruOps precisa: uma rede
 VPC-native, um cluster GKE com nós privados, uma instância Cloud SQL
 Postgres 16 (IP privado), um repositório Artifact Registry contendo as
 quatro imagens e — opcionalmente — um bucket GCS para upload de anexos.
@@ -68,19 +68,19 @@ cd deploy/gcp
 cloud-sql-proxy "$(terraform output -raw db_connection_name)" &
 
 DB_PASS=$(terraform output -raw db_master_password)
-psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/argusops?sslmode=disable" \
+psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/kuruops?sslmode=disable" \
   -v app_password='CHANGE-ME-APP-PASSWORD' \
-  -f ../../db/init/argusops_app_role.sql
-psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/argusops?sslmode=disable" \
+  -f ../../db/init/kuruops_app_role.sql
+psql "postgres://postgres:$DB_PASS@127.0.0.1:5432/kuruops?sslmode=disable" \
   -v worker_password='CHANGE-ME-WORKER-PASSWORD' \
-  -f ../../db/init/argusops_worker_role.sql
+  -f ../../db/init/kuruops_worker_role.sql
 ```
 
 ## 5. Preencher o Secret e o ConfigMap de `deploy/k8s/`
 
 Copie `deploy/k8s/01-secret.example.yaml` e preencha:
 - `DATABASE_URL_APP` / `DATABASE_URL_WORKER` — o output `db_private_ip` + as
-  senhas que você acabou de definir para `argusops_app`/`argusops_worker`
+  senhas que você acabou de definir para `kuruops_app`/`kuruops_worker`
 - `DATABASE_URL_MIGRATE` — o output `db_private_ip` + a senha do superusuário
   `postgres` (output `db_master_password`)
 - `SECRETS_ENCRYPTION_KEY` — `openssl rand -base64 32`
@@ -103,7 +103,7 @@ O Service do `frontend` é `ClusterIP` de propósito — não há controlador de
 ingress aqui. Forma mais rápida de experimentar:
 
 ```bash
-kubectl -n argusops port-forward svc/frontend 8080:8080
+kubectl -n kuruops port-forward svc/frontend 8080:8080
 ```
 
 Para algo real, instale um GKE Ingress (classe de ingress GCE) ou troque o

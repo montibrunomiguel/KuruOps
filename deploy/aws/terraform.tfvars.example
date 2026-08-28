@@ -2,7 +2,7 @@
 # purpose (see .gitignore) -- never commit real values, especially
 # db_master_password.
 
-project     = "argusops"
+project     = "kuruops"
 environment = "sample"
 region      = "us-east-1"
 azs         = ["us-east-1a", "us-east-1b"]

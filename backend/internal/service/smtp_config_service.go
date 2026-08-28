@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/mailer"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 )
 
 // smtpConfigRepo is the subset of *repository.SMTPConfigRepository this
@@ -178,8 +178,8 @@ func (s *SMTPConfigService) SendTestEmail(ctx context.Context, tenantID uuid.UUI
 		}
 		return s.sender.Send(ctx, cfg, mailer.Message{
 			To:      to,
-			Subject: "ArgusOps test email",
-			Body:    "This is a test email from ArgusOps to confirm your SMTP configuration is working.",
+			Subject: "KuruOps test email",
+			Body:    "This is a test email from KuruOps to confirm your SMTP configuration is working.",
 		})
 	})
 }

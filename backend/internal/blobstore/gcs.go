@@ -12,7 +12,7 @@ import (
 // GCSStore backs Store with a Google Cloud Storage bucket, authenticating
 // with an explicit service-account JSON key entered by the admin in
 // Settings (see StorageConfigService) rather than Application Default
-// Credentials -- ArgusOps is self-hosted and may not be running on GCP at
+// Credentials -- KuruOps is self-hosted and may not be running on GCP at
 // all, so there is no ambient credential to fall back on.
 type GCSStore struct {
 	client *storage.Client

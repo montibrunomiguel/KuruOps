@@ -36,7 +36,7 @@ var httpClient = &http.Client{Timeout: 10 * time.Second}
 type Notification struct {
 	Title       string
 	Description string
-	// Severity is ArgusOps' own domain.Severity string ("critical", "high",
+	// Severity is KuruOps' own domain.Severity string ("critical", "high",
 	// "medium", "low", "informational") -- each Sender maps it to whatever
 	// scale its own API expects.
 	Severity string

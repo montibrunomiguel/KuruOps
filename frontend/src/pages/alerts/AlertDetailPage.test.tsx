@@ -89,7 +89,7 @@ describe("AlertDetailPage", () => {
 
   it("clicking Start Investigating assigns the alert to the logged-in analyst and marks it investigating", async () => {
     localStorage.setItem(
-      "argusops.session",
+      "kuruops.session",
       JSON.stringify({
         token: "tok",
         refreshToken: "rt",

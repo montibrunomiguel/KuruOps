@@ -26,26 +26,26 @@ func TestMetricsHandler(t *testing.T) {
 	}
 
 	body := rr.Body.String()
-	if !strings.Contains(body, "argusops_http_requests_total") {
-		t.Fatal("expected body to contain argusops_http_requests_total")
+	if !strings.Contains(body, "kuruops_http_requests_total") {
+		t.Fatal("expected body to contain kuruops_http_requests_total")
 	}
-	if !strings.Contains(body, "argusops_sse_active_connections") {
-		t.Fatal("expected body to contain argusops_sse_active_connections")
+	if !strings.Contains(body, "kuruops_sse_active_connections") {
+		t.Fatal("expected body to contain kuruops_sse_active_connections")
 	}
-	if !strings.Contains(body, "argusops_http_request_duration_seconds_bucket") {
-		t.Fatal("expected body to contain argusops_http_request_duration_seconds_bucket")
+	if !strings.Contains(body, "kuruops_http_request_duration_seconds_bucket") {
+		t.Fatal("expected body to contain kuruops_http_request_duration_seconds_bucket")
 	}
-	if !strings.Contains(body, `argusops_http_request_duration_seconds_bucket{le="+Inf"} 3`) {
+	if !strings.Contains(body, `kuruops_http_request_duration_seconds_bucket{le="+Inf"} 3`) {
 		t.Fatal("expected +Inf bucket to count all 3 observations")
 	}
-	if !strings.Contains(body, "argusops_http_request_duration_seconds_count 3") {
+	if !strings.Contains(body, "kuruops_http_request_duration_seconds_count 3") {
 		t.Fatal("expected duration count of 3")
 	}
 }
 
 // TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet confirms a fresh
 // process (no sweep tick has completed yet) doesn't emit the
-// argusops_worker_last_sweep_success_timestamp series at all -- a metric
+// kuruops_worker_last_sweep_success_timestamp series at all -- a metric
 // that's simply absent is normal in Prometheus, unlike one that's present
 // with a misleading zero value (which would read as "last successful run
 // was at the Unix epoch", immediately tripping a staleness alert).
@@ -59,7 +59,7 @@ func TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet(t *testing.T) {
 	rr := httptest.NewRecorder()
 	MetricsHandler(rr, req)
 
-	if strings.Contains(rr.Body.String(), "argusops_worker_last_sweep_success_timestamp") {
+	if strings.Contains(rr.Body.String(), "kuruops_worker_last_sweep_success_timestamp") {
 		t.Fatal("expected no sweep-success gauge before any job has recorded a success")
 	}
 }
@@ -79,13 +79,13 @@ func TestMetricsCollector_RecordSweepSuccess(t *testing.T) {
 	MetricsHandler(rr, req)
 
 	body := rr.Body.String()
-	if !strings.Contains(body, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`) {
+	if !strings.Contains(body, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`) {
 		t.Fatalf("expected the sweep-success gauge labeled by job, got body: %s", body)
 	}
 
 	var got int64
-	line := body[strings.Index(body, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`):]
-	if _, err := fmt.Sscanf(line, `argusops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"} %d`, &got); err != nil {
+	line := body[strings.Index(body, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`):]
+	if _, err := fmt.Sscanf(line, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"} %d`, &got); err != nil {
 		t.Fatalf("parse gauge value: %v", err)
 	}
 	if got < before || got > after {
@@ -103,7 +103,7 @@ func TestMetricsHandler_OmitsPoolGaugesWhenPoolNotSet(t *testing.T) {
 	rr := httptest.NewRecorder()
 	MetricsHandler(rr, req)
 
-	if strings.Contains(rr.Body.String(), "argusops_db_pool_total_conns") {
+	if strings.Contains(rr.Body.String(), "kuruops_db_pool_total_conns") {
 		t.Fatal("expected no db_pool gauges when SetPool was never called")
 	}
 }

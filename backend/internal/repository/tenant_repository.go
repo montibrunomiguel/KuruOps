@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // TenantRepository is the one repository that does NOT take a pgx.Tx from
@@ -24,7 +24,7 @@ func NewTenantRepository() *TenantRepository {
 }
 
 // GetDefault resolves "the" tenant, before app.tenant_id can be set — this
-// is the login-time equivalent of WebhookRepository.ResolveToken. ArgusOps
+// is the login-time equivalent of WebhookRepository.ResolveToken. KuruOps
 // is single-instance software (see db/migrations/0002_seed_default_admin.up.sql): there
 // is exactly one row in `tenants`, seeded on first migrate, and every login
 // flow (local/LDAP/SAML) resolves it automatically instead of asking for a

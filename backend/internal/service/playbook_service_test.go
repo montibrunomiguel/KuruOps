@@ -13,18 +13,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/argusops/argusops/internal/db"
-	"github.com/argusops/argusops/internal/domain"
-	"github.com/argusops/argusops/internal/repository"
-	"github.com/argusops/argusops/internal/service"
-	"github.com/argusops/argusops/internal/testutil"
+	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/testutil"
 )
 
 func TestPlaybookService_CRUD(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://argusops.example")
+	svc := service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://kuruops.example")
 
 	pb, err := svc.Create(t.Context(), tenantID, actorID, domain.SavePlaybookInput{
 		Title: "Phishing Response", Category: "Phishing",
@@ -67,7 +67,7 @@ func TestPlaybookService_MatchForAlertTitle(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
-	svc := service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://argusops.example")
+	svc := service.NewPlaybookService(pool, repository.NewPlaybookRepository(), repository.NewAlertRepository(), "https://kuruops.example")
 
 	_, err := svc.Create(t.Context(), tenantID, actorID, domain.SavePlaybookInput{
 		Title: "Phishing Response", Category: "Phishing", AlertNamePattern: "%phishing%",
@@ -132,7 +132,7 @@ func TestPlaybookService_TriggerStepWebhook(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	svc := service.NewPlaybookService(pool, playbookRepo, alertRepo, "https://argusops.example")
+	svc := service.NewPlaybookService(pool, playbookRepo, alertRepo, "https://kuruops.example")
 
 	pb, err := svc.Create(t.Context(), tenantID, actorID, domain.SavePlaybookInput{
 		Title: "Ransomware Response", Category: "Ransomware",

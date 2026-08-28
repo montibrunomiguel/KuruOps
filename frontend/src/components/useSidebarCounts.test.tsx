@@ -10,7 +10,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 function loggedInSession() {
   localStorage.setItem(
-    "argusops.session",
+    "kuruops.session",
     JSON.stringify({
       token: "tok",
       user: { id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess: ["alerts", "incidents"] },
