@@ -11,6 +11,15 @@ import (
 	"github.com/argusops/argusops/internal/domain"
 )
 
+// PasswordResetRepository is structurally near-identical to
+// RefreshTokenRepository (same hashed/expiring/single-use-token shape,
+// same Insert/GetByHash/mark-consumed/delete-all methods) -- flagged by
+// dupl during the post-hardening-plan audit sweep and deliberately left
+// unmerged rather than extracted into a shared generic repository: both
+// are small, stable, security-critical auth-token stores that are fully
+// tested and working today, and a generic-over-domain-type extraction
+// here would touch both without adding real safety margin. Worth
+// revisiting only if a third token table with this same shape shows up.
 type PasswordResetRepository struct{}
 
 func NewPasswordResetRepository() *PasswordResetRepository {
