@@ -89,7 +89,7 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 
 	return chatFixture{
 		alertHandlers:    handlers.NewAlertHandlers(alertSvc, aiSvc, mcpToolSvc, userSvc),
-		incidentHandlers: handlers.NewIncidentHandlers(incidentSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc),
+		incidentHandlers: handlers.NewIncidentHandlers(incidentSvc, userSvc, aiSvc, postmortemSvc, service.NewIncidentReportService(incidentSvc), mcpToolSvc),
 		mcpTool:          mcpToolSvc,
 		tenantID:         tenantID, actorID: actorID, alertID: alert.ID, incidentID: inc.ID,
 		analyzed: analyzed,

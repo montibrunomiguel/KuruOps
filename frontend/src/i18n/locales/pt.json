@@ -443,6 +443,8 @@
       "closeIncident": "Fechar Incidente",
       "generatePostmortem": "Gerar Postmortem",
       "generatingPostmortem": "Gerando...",
+      "downloadReport": "Baixar Relatório (PDF)",
+      "generatingReport": "Gerando...",
       "closedEvent": "Incidente fechado",
       "closing": "Fechando...",
       "closeRequiresPostIncident": "Mova para Pós-Incidente antes de fechar",

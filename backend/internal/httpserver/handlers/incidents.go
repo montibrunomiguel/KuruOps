@@ -25,13 +25,14 @@ type IncidentHandlers struct {
 	users      *service.UserService
 	ai         *service.AIAnalysisService
 	postmortem *service.PostmortemService
+	report     *service.IncidentReportService
 	// mcpTools backs the AnalysisChat's inline tool-call approve/reject --
 	// see AlertHandlers.mcpTools's doc comment, same reasoning.
 	mcpTools *service.MCPToolService
 }
 
-func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService, postmortem *service.PostmortemService, mcpTools *service.MCPToolService) *IncidentHandlers {
-	return &IncidentHandlers{svc: svc, users: users, ai: ai, postmortem: postmortem, mcpTools: mcpTools}
+func NewIncidentHandlers(svc *service.IncidentService, users *service.UserService, ai *service.AIAnalysisService, postmortem *service.PostmortemService, report *service.IncidentReportService, mcpTools *service.MCPToolService) *IncidentHandlers {
+	return &IncidentHandlers{svc: svc, users: users, ai: ai, postmortem: postmortem, report: report, mcpTools: mcpTools}
 }
 
 func (h *IncidentHandlers) Routes(r chi.Router) {
@@ -60,6 +61,7 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Post("/{id}/analyze/tool-calls/{callId}/approve", h.approveAnalysisToolCall)
 	r.Post("/{id}/analyze/tool-calls/{callId}/reject", h.rejectAnalysisToolCall)
 	r.Get("/{id}/postmortem", h.postmortemDoc)
+	r.Get("/{id}/report.pdf", h.reportPDF)
 }
 
 func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {

@@ -446,6 +446,8 @@
       "closeRequiresPostIncident": "Move to Post-Incident before closing",
       "generatePostmortem": "Generate Postmortem",
       "generatingPostmortem": "Generating...",
+      "downloadReport": "Download Report (PDF)",
+      "generatingReport": "Generating...",
       "openedLine": "Opened {{date}}",
       "closedBadge": "Closed",
       "slaBreachedBadge": "SLA Breached",

@@ -92,6 +92,11 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   `db/migrations/0001_initial_schema.up.sql`. Skipping a phase (e.g. New → Eradication directly) isn't
   blocked, but it's flagged with a warning event on the timeline, so poorly-followed process doesn't
   silently skew MTTR metrics.
+- **Incident Reports** (in the incident detail view) — "Download Report (PDF)" pulls a point-in-time
+  export (severity/priority, phase timeline with durations, team roles, description, tags, linked
+  alerts, team notes) at any phase; "Generate Postmortem" (only offered once the incident reaches
+  Post-Incident) produces the same record as a Markdown document, with an AI-generated executive
+  summary prepended when an LLM provider is configured.
 - **Playbooks** — a library of procedures by category/phase, with automatic suggestions on the alert
   detail view.
 - **Settings** (admin) — Webhook Endpoints (token with an expiration/rotation policy — 90 days by
