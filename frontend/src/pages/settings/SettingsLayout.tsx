@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ErrorBoundary } from "../../components/ErrorBoundary";
+import { ChevronIcon } from "../../components/icons";
 import { WebhooksPanel } from "./WebhooksPanel";
 import { FieldMappingTemplatesPanel } from "./FieldMappingTemplatesPanel";
 import { LLMProvidersPanel } from "./LLMProvidersPanel";
@@ -83,6 +84,35 @@ const NAV_GROUPS = [
   },
 ] as const;
 
+// Which group labelKeys are collapsed, persisted across reloads -- same
+// "small standalone localStorage read/write, no cross-component event
+// needed" shape as theme.ts, just without onThemeChange's pub/sub since
+// only SettingsLayout itself ever reads this. Storing collapsed (not
+// expanded) keys means an empty/missing/corrupt value reads as "nothing
+// collapsed" -- every group starts open the first time this ships, instead
+// of an unset default silently hiding the whole nav.
+const NAV_COLLAPSED_STORAGE_KEY = "kuruops.settings-nav-collapsed";
+
+function getStoredCollapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(NAV_COLLAPSED_STORAGE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function storeCollapsedGroups(groups: Set<string>) {
+  try {
+    localStorage.setItem(NAV_COLLAPSED_STORAGE_KEY, JSON.stringify([...groups]));
+  } catch {
+    // Private-browsing/storage-full: the toggle still works for the rest of
+    // this session via React state, it just won't survive a reload -- not
+    // worth surfacing an error for a purely cosmetic preference.
+  }
+}
+
 // Scoped fallback for a crash inside one settings panel: the nav one level
 // up in SettingsLayout is still rendered fine (it's outside this boundary),
 // so this only needs to replace the broken panel itself, not the whole app
@@ -101,7 +131,19 @@ function SettingsPanelErrorFallback() {
 
 export function SettingsLayout() {
   const { t } = useTranslation();
+  const location = useLocation();
   const [navSearch, setNavSearch] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(getStoredCollapsedGroups);
+
+  function toggleGroup(labelKey: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelKey)) next.delete(labelKey);
+      else next.add(labelKey);
+      storeCollapsedGroups(next);
+      return next;
+    });
+  }
 
   // Client-side substring match against each item's own translated label --
   // past ~18 items across 5 groups, scrolling to find one you already know
@@ -137,16 +179,35 @@ export function SettingsLayout() {
               {t("settings.navSearchNoResults")}
             </p>
           )}
-          {filteredGroups.map((group) => (
-            <div className="settings-nav-group" key={group.labelKey}>
-              <div className="settings-nav-group-label">{t(group.labelKey)}</div>
-              {group.items.map((item) => (
-                <NavLink key={item.to} to={item.to} end>
-                  {({ isActive }) => <span data-active={isActive}>{t(item.labelKey)}</span>}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+          {filteredGroups.map((group) => {
+            // The group holding the current page always renders its items,
+            // regardless of stored collapse state -- collapsing a category
+            // should never hide where you already are. Searching does the
+            // same for every group with a match: collapse state is a
+            // browsing convenience, not something that should be able to
+            // hide a search result.
+            const isActiveGroup = group.items.some((item) => location.pathname.startsWith(item.to));
+            const expanded = Boolean(query) || isActiveGroup || !collapsedGroups.has(group.labelKey);
+            return (
+              <div className="settings-nav-group" key={group.labelKey}>
+                <button
+                  type="button"
+                  className="settings-nav-group-label settings-nav-group-toggle"
+                  onClick={() => toggleGroup(group.labelKey)}
+                  aria-expanded={expanded}
+                >
+                  {t(group.labelKey)}
+                  <ChevronIcon width={13} height={13} className={expanded ? undefined : "settings-nav-group-chevron-collapsed"} />
+                </button>
+                {expanded &&
+                  group.items.map((item) => (
+                    <NavLink key={item.to} to={item.to} end>
+                      {({ isActive }) => <span data-active={isActive}>{t(item.labelKey)}</span>}
+                    </NavLink>
+                  ))}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="settings-panel">

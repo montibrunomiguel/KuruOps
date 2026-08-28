@@ -27,6 +27,11 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   round-trip. Existing local deployments get fresh Docker volumes/database under the new project
   name (the old `argusops_*` ones aren't migrated automatically) — see the deploy docs if you need
   to carry data over instead of starting fresh.
+- Settings navigation groups (Integrations, Connectors, Identity & Access, Operations, Data &
+  Audit) now collapse and expand — click a group's label to toggle it, instead of always scrolling
+  past every category's full item list. The group containing whatever settings page you're
+  currently on always stays expanded, and searching the nav still surfaces a match from an
+  otherwise-collapsed group. Per-group collapsed state persists across reloads (`localStorage`).
 
 ### Added
 

@@ -299,6 +299,35 @@
   color: var(--text-muted);
 }
 
+/* The label doubles as the collapse/expand toggle -- same visual weight as
+   before (a plain <div> got no button chrome), just made interactive: reset
+   the <button> defaults so it still reads as a label, not a control. */
+.settings-nav-group-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 7px;
+  font-family: inherit;
+}
+
+.settings-nav-group-toggle:hover {
+  color: var(--text);
+}
+
+.settings-nav-group-toggle svg {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.settings-nav-group-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
 .settings-nav a {
   display: block;
   text-decoration: none;
