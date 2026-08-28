@@ -81,10 +81,10 @@ separates users from one another day to day. It exists ready for a real multi-te
 without a schema rewrite.
 
 **RLS does not guarantee**:
-- **Fine-grained authorization within a tenant** — that's `role`/`resourceAccess`/`allowedTags`,
-  enforced at the service/handler layer (`middleware.RequireRole`,
-  `middleware.RequireResourceAccess`, the `tags && $allowedTags` filter in the query), not in the
-  RLS policy itself. A bug in that layer is not covered by RLS.
+- **Fine-grained authorization within a tenant** — that's the assigned `Role`'s
+  `isAdmin`/`resourceAccess`/`allowedTags`, enforced at the service/handler layer
+  (`middleware.RequireAdmin`, `middleware.RequireResourceAccess`, the `tags && $allowedTags` filter
+  in the query), not in the RLS policy itself. A bug in that layer is not covered by RLS.
 - **Isolation against the `postgres` role** — intentional; that role is only used for
   administrative setup, never by an HTTP request.
 - **Consistency of incident sub-resources** — comments, alert links, and the timeline still don't
@@ -117,8 +117,8 @@ months, separately configurable per resource type — `internal/service/retentio
   here can only ever remove ArgusOps's own database record, never the underlying file. This is a
   known, deliberate scope limit, not an oversight: cleaning up orphaned blob storage is unimplemented.
 - **Who can configure it**: same admin-only gate as every other Settings panel
-  (`middleware.RequireRole("admin")`) — lowering a retention period is effectively a
-  data-destruction action available to anyone with that role, which is why the frontend gates a
+  (`middleware.RequireAdmin()`) — lowering a retention period is effectively a
+  data-destruction action available to anyone with an admin Role, which is why the frontend gates a
   *lowered* value behind an explicit inline confirmation (raising a value, or saving for the first
   time, needs no confirmation since neither can delete anything that wasn't already going to be
   deleted).

@@ -42,12 +42,18 @@ tags:
     description: Live server-sent-event stream of alert/incident activity.
   - name: Settings - Webhooks
     description: Admin-only ingest webhook endpoint management.
+  - name: Settings - Field Mapping Templates
+    description: >
+      Admin-only catalog of reusable JSON-path field-mapping rule sets,
+      assignable to zero or more Webhook Endpoints (Settings - Webhooks).
   - name: Settings - LLM Providers
     description: Admin-only "Analyze with AI" provider configuration.
   - name: Settings - MCP Servers
     description: Admin-only MCP tool-server configuration and tool-call approvals.
   - name: Settings - Users
     description: Admin-only user/role/access management and IdP group mappings.
+  - name: Settings - Roles
+    description: Admin-only named, reusable access bundles (isAdmin, resourceAccess, allowedTags) users and IdP group mappings are assigned to.
   - name: Settings - Identity Providers
     description: Admin-only LDAP/SAML configuration.
   - name: Settings - Tags
@@ -92,12 +98,43 @@ paths:
   /healthz:
     get:
       tags: [System]
-      summary: Liveness check
-      description: Unauthenticated. Always returns 200 with a plain "ok" body when the process is up.
+      summary: Readiness check
+      description: >-
+        Unauthenticated. Pings the database (2s timeout) and returns 503 if
+        unreachable -- correct for readiness (pull this replica from the
+        load balancer until it can actually serve a request), but
+        deliberately not used for a Kubernetes liveness probe: a transient
+        Postgres blip would otherwise get every api/ingest/worker replica
+        killed and restarted at once. Use /livez for that instead.
       security: []
       responses:
         "200":
-          description: Service is up
+          description: Service is up and the database is reachable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+        "503":
+          description: Database unreachable
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: database unreachable
+
+  /livez:
+    get:
+      tags: [System]
+      summary: Liveness check
+      description: >-
+        Unauthenticated. Unconditionally returns 200 -- a pure "this
+        process is alive" check with no downstream dependency, unlike
+        /healthz. This is the one to point a Kubernetes liveness probe at.
+      security: []
+      responses:
+        "200":
+          description: Process is up
           content:
             text/plain:
               schema:
@@ -400,6 +437,55 @@ paths:
               schema:
                 type: string
 
+  /auth/oauth/gdrive/callback:
+    get:
+      tags: [Auth]
+      summary: Google Drive OAuth callback
+      description: >-
+        Unauthenticated top-level browser redirect target -- not an XHR/JSON
+        endpoint. code/state come from Google; on success or failure alike
+        this always ends in a 302 back to Settings -> Storage
+        (?gdrive_connected=1 or ?gdrive_error=...), never a JSON body. The
+        real error (if any) is logged server-side only, never put in the
+        redirect URL. See internal/httpserver/handlers/oauth_callback.go.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: error
+          in: query
+          description: Present when the user declined consent, or Google itself rejected the request.
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the frontend's Storage settings page, either outcome
+
+  /auth/oauth/slack/callback:
+    get:
+      tags: [Auth]
+      summary: Slack OAuth callback
+      description: >-
+        Same shape as /auth/oauth/gdrive/callback, for Settings ->
+        Conectores -> Slack (?slack_connected=1 or ?slack_error=...).
+      security: []
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the frontend's Slack settings page, either outcome
+
   # --------------------------------------------------------------- Account
   /api/v1/account/change-password:
     post:
@@ -555,6 +641,73 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/account/api-tokens:
+    get:
+      tags: [Account]
+      summary: List the caller's own personal API tokens
+      description: Never returns a token's plaintext value -- only tokenLast4, same convention as webhook endpoint tokens.
+      responses:
+        "200":
+          description: The caller's API tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/APIToken' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Account]
+      summary: Create a personal API token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                expiresInDays:
+                  type: integer
+                  nullable: true
+                  description: Omitted/null defaults to 90 days; 0 or negative means the token never expires.
+              required: [name]
+      responses:
+        "201":
+          description: >-
+            Token created -- plaintext is included in this response body
+            only, and is never retrievable again afterward.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { $ref: '#/components/schemas/APIToken' }
+                  plaintext: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/account/api-tokens/{id}:
+    delete:
+      tags: [Account]
+      summary: Revoke a personal API token
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Revoked
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ---------------------------------------------------------------- Alerts
   /api/v1/alerts:
@@ -895,26 +1048,143 @@ paths:
   /api/v1/alerts/{id}/analyze:
     post:
       tags: [Alerts]
-      summary: Run "Analyze with AI" on this alert
-      description: Synchronous -- blocks for the duration of the LLM call (can take several seconds).
+      summary: Start "Analyze with AI" on this alert
+      description: >-
+        Asynchronous -- kicks off the run in the background and returns 202
+        immediately; the eventual result (or failure) shows up on the alert
+        itself once a live-update event (see GET /api/v1/events/stream)
+        tells a connected client to reload. Poll/subscribe and then read
+        GET .../analyze/messages for the actual transcript. 409 if a run is
+        already in progress or paused for this alert.
       parameters:
         - $ref: '#/components/parameters/AlertId'
       responses:
-        "200":
-          description: Analysis result
+        "202":
+          description: Analysis started
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  result:
-                    type: string
+                  status: { type: string, example: running }
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/alerts/{id}/analyze/messages:
+    get:
+      tags: [Alerts]
+      summary: Get this alert's AI analysis chat transcript
+      description: >-
+        Backs the analysis chat's initial load and its refetch on every
+        live-update event -- the synthetic seed prompt (the auto-generated
+        alert context dump) is never included, only messages an analyst or
+        the model actually exchanged after that.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        "200":
+          description: The chat transcript
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatTranscript' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Alerts]
+      summary: Continue this alert's AI analysis chat
+      description: >-
+        Asynchronous, same 202 shape as POST .../analyze: the analyst's own
+        message is already persisted by the time this returns, but the
+        model's reply isn't yet -- poll/subscribe and re-fetch GET
+        .../analyze/messages. 409 if a run is already in progress or paused
+        (resolve the pending tool call first, see .../tool-calls/{callId}).
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses:
+        "202":
+          description: Message accepted, next turn started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: running }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/alerts/{id}/analyze/tool-calls/{callId}/approve:
+    post:
+      tags: [Alerts]
+      summary: Approve a tool call this alert's analysis chat is paused on
+      description: >-
+        Same underlying approval as
+        POST /api/v1/settings/mcp-servers/tool-calls/{callId}/approve, but
+        reachable without admin access to Settings -> MCP Servers -- gated
+        here by confirming the call actually belongs to this alert first.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Approved (and executed); the run resumes in the background
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: No such tool call, or it doesn't belong to this alert
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/alerts/{id}/analyze/tool-calls/{callId}/reject:
+    post:
+      tags: [Alerts]
+      summary: Reject a tool call this alert's analysis chat is paused on
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Rejected; the run resumes in the background
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: No such tool call, or it doesn't belong to this alert
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /api/v1/alerts/{id}/comments:
     get:
@@ -1493,26 +1763,157 @@ paths:
   /api/v1/incidents/{id}/analyze:
     post:
       tags: [Incidents]
-      summary: Run "Analyze with AI" on this incident
-      description: Synchronous -- blocks for the duration of the LLM call.
+      summary: Start "Analyze with AI" on this incident
+      description: >-
+        Asynchronous -- same 202-and-poll-the-transcript shape as
+        POST /api/v1/alerts/{id}/analyze, see that entry's description. 409
+        if a run is already in progress or paused for this incident.
       parameters:
         - $ref: '#/components/parameters/IncidentId'
       responses:
-        "200":
-          description: Analysis result
+        "202":
+          description: Analysis started
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  result:
-                    type: string
+                  status: { type: string, example: running }
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/incidents/{id}/analyze/messages:
+    get:
+      tags: [Incidents]
+      summary: Get this incident's AI analysis chat transcript
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: The chat transcript
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatTranscript' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Incidents]
+      summary: Continue this incident's AI analysis chat
+      description: >-
+        Same shape as POST /api/v1/alerts/{id}/analyze/messages, see that
+        entry's description.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+              required: [text]
+      responses:
+        "202":
+          description: Message accepted, next turn started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: running }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/incidents/{id}/analyze/tool-calls/{callId}/approve:
+    post:
+      tags: [Incidents]
+      summary: Approve a tool call this incident's analysis chat is paused on
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Approved (and executed); the run resumes in the background
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: No such tool call, or it doesn't belong to this incident
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/incidents/{id}/analyze/tool-calls/{callId}/reject:
+    post:
+      tags: [Incidents]
+      summary: Reject a tool call this incident's analysis chat is paused on
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+        - $ref: '#/components/parameters/ToolCallId'
+      responses:
+        "204":
+          description: Rejected; the run resumes in the background
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          description: No such tool call, or it doesn't belong to this incident
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/v1/incidents/{id}/postmortem:
+    get:
+      tags: [Incidents]
+      summary: Download a Markdown postmortem document for this incident
+      description: >-
+        Unlike the PDF report (which is a factual export available at any
+        phase), this is a narrative closing document -- see
+        PostmortemService.Generate. Streamed as a forced download, not a
+        JSON envelope.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: The Markdown postmortem
+          content:
+            text/markdown:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/v1/incidents/{id}/report.pdf:
     get:
@@ -1664,6 +2065,42 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "500":
           $ref: '#/components/responses/InternalError'
+
+  /api/v1/playbooks/steps/{stepId}/trigger:
+    post:
+      tags: [Playbooks]
+      summary: Fire a playbook step's configured outbound webhook
+      description: >-
+        Sends the real outbound POST configured on this playbook step,
+        against the given alert -- see PlaybookService.TriggerStepWebhook.
+        502 (not 400/500) is deliberate: a failure here is the receiving
+        webhook's own problem, not a malformed request or an ArgusOps bug.
+      parameters:
+        - name: stepId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alertId: { type: string, format: uuid }
+              required: [alertId]
+      responses:
+        "204":
+          description: Webhook fired successfully
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "502":
+          description: The step's configured webhook request failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   # ------------------------------------------------------------------ Tags
   /api/v1/tags:
@@ -2038,6 +2475,159 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/settings/webhooks/{id}/field-mapping-template:
+    put:
+      tags: [Settings - Webhooks]
+      summary: Assign (or clear) this endpoint's Field Mapping Template
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                templateId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: Null clears the association -- the endpoint goes back to only the sender's own top-level "metadata" object.
+              required: [templateId]
+      responses:
+        "204":
+          description: Assigned/cleared
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/webhooks/{id}/group-by-fields:
+    put:
+      tags: [Settings - Webhooks]
+      summary: Set (or clear) this endpoint's dedup group-by fields
+      parameters:
+        - $ref: '#/components/parameters/WebhookId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                groupByFields:
+                  type: array
+                  items: { type: string }
+                  description: Empty array turns dedup back off for this endpoint entirely.
+                dedupWindowMinutes:
+                  type: integer
+                  nullable: true
+                  description: Omitted/null or <= 0 falls back to the service default (30).
+              required: [groupByFields]
+      responses:
+        "204":
+          description: Set/cleared
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------ Settings: Field Mapping Templates
+  /api/v1/settings/field-mapping-templates:
+    get:
+      tags: [Settings - Field Mapping Templates]
+      summary: List field-mapping templates
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FieldMappingTemplate' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - Field Mapping Templates]
+      summary: Create a field-mapping template
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                rules:
+                  type: array
+                  items: { $ref: '#/components/schemas/FieldMappingRule' }
+              required: [name, rules]
+      responses:
+        "201":
+          description: Template created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldMappingTemplate' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/field-mapping-templates/{id}:
+    put:
+      tags: [Settings - Field Mapping Templates]
+      summary: Update a field-mapping template
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                rules:
+                  type: array
+                  items: { $ref: '#/components/schemas/FieldMappingRule' }
+              required: [name, rules]
+      responses:
+        "200":
+          description: Template updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FieldMappingTemplate' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - Field Mapping Templates]
+      summary: Delete a field-mapping template
+      parameters:
+        - $ref: '#/components/parameters/TemplateId'
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
   # --------------------------------------------------- Settings: LLM Providers
   /api/v1/settings/llm-providers:
     get:
@@ -2251,7 +2841,12 @@ paths:
     post:
       tags: [Settings - MCP Servers]
       summary: Connect to the server live and list its tool catalog
-      description: Backs the "Discover tools" button so an admin can pick allowedTools/sideEffectingTools from what the server actually exposes.
+      description: >-
+        Backs the "Discover tools" button so an admin can pick
+        allowedTools/sideEffectingTools from what the server actually
+        exposes (an MCP tools/list call, see internal/mcpclient). 502 (not
+        400) on failure -- the same "the far end's problem, not a bad
+        request" reasoning as POST .../playbooks/steps/{stepId}/trigger.
       parameters:
         - $ref: '#/components/parameters/MCPServerId'
       responses:
@@ -2269,7 +2864,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "502":
-          description: Could not reach or negotiate with the MCP server
+          description: Connecting to the MCP server, or its tools/list call, failed
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2347,7 +2942,11 @@ paths:
     post:
       tags: [Settings - Users]
       summary: Create a local user
-      description: Response includes a one-time temporaryPassword the admin must relay to the user.
+      description: >-
+        Response includes a one-time temporaryPassword the admin must relay
+        to the user. Access is granted entirely via roleId (see Settings -
+        Roles) -- a user has no resourceAccess/allowedTags of its own,
+        those live on the assigned Role.
       requestBody:
         required: true
         content:
@@ -2357,12 +2956,9 @@ paths:
               properties:
                 email: { type: string }
                 name: { type: string }
-                role: { $ref: '#/components/schemas/UserRole' }
-                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
-                allowedTags:
-                  type: array
-                  items: { type: string }
-              required: [email, name, role]
+                phone: { type: string }
+                roleId: { type: string, format: uuid }
+              required: [email, name, roleId]
       responses:
         "201":
           description: User created
@@ -2383,7 +2979,7 @@ paths:
   /api/v1/settings/users/{id}/access:
     put:
       tags: [Settings - Users]
-      summary: Update a user's role, resourceAccess, and allowedTags
+      summary: Reassign a user's role
       parameters:
         - $ref: '#/components/parameters/UserId'
       requestBody:
@@ -2393,14 +2989,40 @@ paths:
             schema:
               type: object
               properties:
-                role: { $ref: '#/components/schemas/UserRole' }
-                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
-                allowedTags:
-                  type: array
-                  items: { type: string }
+                roleId: { type: string, format: uuid }
+              required: [roleId]
       responses:
         "204":
-          description: Access updated
+          description: Role reassigned
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/users/{id}/phone:
+    put:
+      tags: [Settings - Users]
+      summary: Update a user's phone number
+      description: >-
+        Admin editing another user's own on-call contact number -- separate
+        from PUT /api/v1/account/profile, which only ever edits the caller's
+        own record.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone: { type: string }
+              required: [phone]
+      responses:
+        "204":
+          description: Phone updated
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -2523,11 +3145,8 @@ paths:
             schema:
               type: object
               properties:
-                role: { $ref: '#/components/schemas/UserRole' }
-                resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
-                allowedTags:
-                  type: array
-                  items: { type: string }
+                roleId: { type: string, format: uuid }
+              required: [roleId]
       responses:
         "200":
           description: Mapping saved
@@ -2559,6 +3178,87 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+
+  # ------------------------------------------------------- Settings: Roles
+  /api/v1/settings/roles:
+    get:
+      tags: [Settings - Roles]
+      summary: List roles
+      responses:
+        "200":
+          description: Roles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Role' }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings - Roles]
+      summary: Create a role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveRoleRequest' }
+      responses:
+        "201":
+          description: Role created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Role' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/roles/{id}:
+    put:
+      tags: [Settings - Roles]
+      summary: Update a role
+      parameters:
+        - $ref: '#/components/parameters/RoleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveRoleRequest' }
+      responses:
+        "200":
+          description: Role updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Role' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [Settings - Roles]
+      summary: Delete a role
+      parameters:
+        - $ref: '#/components/parameters/RoleId'
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          description: Role is still assigned to one or more users -- reassign them first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   # ---------------------------------------------- Settings: Identity Providers
   /api/v1/settings/identity-providers/ldap:
@@ -3687,10 +4387,25 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    TemplateId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RoleId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
 
   responses:
     BadRequest:
       description: Malformed request body, path, or query parameter
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: The request is well-formed, but conflicts with the resource's current state
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -3772,9 +4487,6 @@ components:
     IncidentRole:
       type: string
       enum: [commander, technical_lead, incident_handler, communications_lead, privacy_officer]
-    UserRole:
-      type: string
-      enum: [admin, analyst, viewer]
     AuthProvider:
       type: string
       enum: [local, ldap, saml]
@@ -3802,7 +4514,11 @@ components:
 
     User:
       type: object
-      description: PasswordHash/MFATOTPSecret are never serialized (json:"-" in the Go struct).
+      description: >-
+        PasswordHash/MFATOTPSecret are never serialized (json:"-" in the Go
+        struct). Access (isAdmin/resourceAccess/allowedTags) is not carried
+        directly on a User -- it's entirely delegated to the assigned Role,
+        via roleId.
       properties:
         id: { type: string, format: uuid }
         tenantId: { type: string, format: uuid }
@@ -3810,18 +4526,18 @@ components:
         name: { type: string }
         authProvider: { $ref: '#/components/schemas/AuthProvider' }
         externalId: { type: string, nullable: true }
-        role: { $ref: '#/components/schemas/UserRole' }
-        resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
-        allowedTags:
-          type: array
-          items: { type: string }
-          description: Empty = unrestricted, sees all tags.
+        roleId: { type: string, format: uuid }
+        role: { type: object, nullable: true, allOf: [{ $ref: '#/components/schemas/Role' }] }
+        phone:
+          type: string
+          nullable: true
+          description: E.164-ish, country code required -- surfaced in Escalation Chain webhook payloads as {{analystPhone}}.
         isActive: { type: boolean }
         mustChangePassword: { type: boolean }
         lastLoginAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-      required: [id, tenantId, email, name, authProvider, role, resourceAccess, allowedTags, isActive, mustChangePassword, createdAt, updatedAt]
+      required: [id, tenantId, email, name, authProvider, roleId, role, isActive, mustChangePassword, createdAt, updatedAt]
 
     AuthGroupMapping:
       type: object
@@ -3830,12 +4546,58 @@ components:
         tenantId: { type: string, format: uuid }
         provider: { $ref: '#/components/schemas/AuthProvider' }
         externalGroup: { type: string }
-        role: { $ref: '#/components/schemas/UserRole' }
+        roleId: { type: string, format: uuid }
+        role: { type: object, nullable: true, allOf: [{ $ref: '#/components/schemas/Role' }] }
+        createdAt: { type: string, format: date-time }
+
+    Role:
+      type: object
+      description: >-
+        A named, reusable access bundle -- users and IdP group mappings are
+        assigned to one via roleId, rather than carrying
+        isAdmin/resourceAccess/allowedTags individually.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        isAdmin: { type: boolean }
         resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
         allowedTags:
           type: array
           items: { type: string }
+          description: Empty = unrestricted, sees all tags.
         createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, tenantId, name, isAdmin, resourceAccess, allowedTags, createdAt, updatedAt]
+
+    SaveRoleRequest:
+      type: object
+      properties:
+        name: { type: string }
+        isAdmin: { type: boolean }
+        resourceAccess: { $ref: '#/components/schemas/ResourceAccess' }
+        allowedTags:
+          type: array
+          items: { type: string }
+      required: [name, isAdmin, resourceAccess, allowedTags]
+
+    APIToken:
+      type: object
+      description: A personal API token's metadata -- TokenHash is never serialized, and the plaintext value is returned only once, from the create-token response.
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        name: { type: string }
+        tokenLast4: { type: string }
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null for a token the user explicitly opted out of expiring.
+        createdAt: { type: string, format: date-time }
+        revokedAt: { type: string, format: date-time, nullable: true }
+      required: [id, tenantId, userId, name, tokenLast4, createdAt]
 
     LoginRequest:
       type: object
@@ -3911,7 +4673,16 @@ components:
         latestAnalysis:
           type: string
           nullable: true
-          description: Most recent completed "Analyze with AI" result. Only populated on GET of a single alert, not on list.
+          description: Most recent completed "Analyze with AI" result text -- only set once latestAnalysisStatus is "completed". Only populated on GET of a single alert, not on list.
+        latestAnalysisStatus:
+          type: string
+          nullable: true
+          enum: [running, paused, completed, failed]
+          description: Null if no analysis has ever been requested for this alert.
+        latestAnalysisError:
+          type: string
+          nullable: true
+          description: Set only when latestAnalysisStatus is "failed".
       required: [id, tenantId, title, source, severity, originalSeverity, status, tags, payload, metadata, receivedAt, createdAt, updatedAt]
 
     AlertComment:
@@ -3952,6 +4723,19 @@ components:
         closedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        latestAnalysis:
+          type: string
+          nullable: true
+          description: Most recent completed "Analyze with AI" result text -- only set once latestAnalysisStatus is "completed".
+        latestAnalysisStatus:
+          type: string
+          nullable: true
+          enum: [running, paused, completed, failed]
+          description: Null if no analysis has ever been requested for this incident.
+        latestAnalysisError:
+          type: string
+          nullable: true
+          description: Set only when latestAnalysisStatus is "failed".
       required: [id, tenantId, title, description, severity, priority, phase, assignees, roles, tags, slaBreached, openedAt, createdAt, updatedAt]
 
     IncidentRoleAssignment:
@@ -4063,6 +4847,43 @@ components:
         expiresAt: { type: string, format: date-time, nullable: true }
         createdBy: { type: string, format: uuid, nullable: true }
         createdAt: { type: string, format: date-time }
+        fieldMappingTemplateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Set via PUT /{id}/field-mapping-template.
+        groupByFields:
+          type: array
+          items: { type: string }
+          description: JSON-path list; empty means dedup is off for this endpoint. Set via PUT /{id}/group-by-fields.
+        dedupWindowMinutes:
+          type: integer
+          description: Only meaningful when groupByFields is non-empty; defaults to 30.
+
+    FieldMappingRule:
+      type: object
+      properties:
+        jsonPath:
+          type: string
+          description: Dot notation into the sender's raw payload, e.g. host.name.
+        label:
+          type: string
+          description: Key this value is merged into the alert's metadata object under -- skipped if that key already came from the automatic top-level "metadata" extraction.
+      required: [jsonPath, label]
+
+    FieldMappingTemplate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        name: { type: string }
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/FieldMappingRule' }
+        createdBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, tenantId, name, rules, createdAt, updatedAt]
 
     LLMProvider:
       type: object
@@ -4172,6 +4993,54 @@ components:
         approvedBy: { type: string, format: uuid, nullable: true }
         approvedAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time }
+
+    ChatToolCall:
+      type: object
+      description: A tool call as it appears inline in a ChatMessage -- the live-run counterpart of AIToolCall's forensic log row.
+      properties:
+        id: { type: string, description: "The AIToolCall's id, as a string." }
+        name: { type: string }
+        args:
+          description: Arguments the agent proposed calling the tool with.
+
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, tool]
+        content: { type: string }
+        toolCalls:
+          type: array
+          items: { $ref: '#/components/schemas/ChatToolCall' }
+        toolCallId:
+          type: string
+          description: Present on a "tool" role message -- which ChatToolCall this is the result of.
+      required: [role, content]
+
+    ChatTranscript:
+      type: object
+      description: >-
+        GET .../analyze/messages' response -- the run's full conversation
+        (minus the auto-generated seed prompt) plus enough status to drive
+        the chat UI.
+      properties:
+        runId: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [running, paused, completed, failed]
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ChatMessage' }
+        pendingToolCallId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Set (status "paused") when a proposed tool call is awaiting approve/reject via the .../tool-calls/{callId} endpoints.
+        error:
+          type: string
+          nullable: true
+      required: [messages]
 
     LDAPConfig:
       type: object

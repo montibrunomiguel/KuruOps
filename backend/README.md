@@ -116,14 +116,19 @@ rules for:
   protection via an `InResponseTo` cookie). All three converge in `AuthService`/`ProvisionFederated`,
   which applies `auth_group_mappings` (IdP group → role/resource_access/allowed_tags) and issues the
   same JWT. `internal/httpserver/middleware.JWTAuth` verifies that token on `/api/v1/**`.
-- **Authorization**: role and scope (`resourceAccess`/`allowedTags`) travel in the JWT
-  (`authn.Claims`) and are enforced at two points — `middleware.RequireRole("admin")` blocks all of
-  `/settings/**` for non-admins, and `middleware.RequireResourceAccess` blocks `/alerts` or
-  `/incidents` entirely based on the user's `resourceAccess`. Within each resource, `allowedTags`
-  filters the listing in the SQL query (`tags && $allowedTags`) and is checked again in
+- **Authorization**: access is entirely delegated to a named `Role` (Settings → Roles) a user is
+  assigned via `roleId` — not carried on the user record itself. `isAdmin`/`resourceAccess`/
+  `allowedTags` are mirrored from that Role into the JWT at login time (`authn.Claims`) and enforced
+  at two points — `middleware.RequireAdmin()` blocks all of `/settings/**` for non-admins, and
+  `middleware.RequireResourceAccess` blocks `/alerts` or `/incidents` entirely based on the user's
+  `resourceAccess`. Within each resource, `allowedTags` filters the listing in the SQL query
+  (`tags && $allowedTags`) and is checked again in
   `Get`/`ChangeStatus`/`Close`/`ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` — see
   `service/access.go` and the comment in `IncidentService` about sub-resources (comments, links,
-  timeline) that don't yet repeat this check and rely solely on tenant isolation via RLS.
+  timeline) that don't yet repeat this check and rely solely on tenant isolation via RLS. Because
+  the JWT only mirrors the Role at login, editing a Role (or reassigning a user to a different one)
+  takes effect on that user's next login/token refresh, not immediately — same staleness tradeoff
+  `authn.Claims`' own doc comment describes for `mustChangePassword`.
 
 ## Authentication: what's missing for production
 
@@ -185,6 +190,14 @@ approves/rejects it in Settings → MCP Servers → Pending Approvals (new panel
 via `ResumeAnalysisRun`. The "Analyze with AI" action on the alert/incident detail page triggers
 this loop end-to-end, and ingesting an alert also fires the same analysis automatically when an LLM
 provider is configured.
+
+A paused tool call can be resolved two ways, both ultimately calling the same
+`MCPToolService.ApproveToolCall`/`RejectToolCall`: from Settings → MCP Servers → Pending Approvals
+(any admin, sees every pending call tenant-wide), or directly from the alert/incident's own
+`AnalysisChat` panel (`POST /api/v1/{alerts,incidents}/{id}/analyze/tool-calls/{callId}/approve|reject`,
+`internal/httpserver/handlers/analysis_tool_calls.go`'s `resolveAnalysisToolCall`) — no admin access
+required, since it's gated instead by confirming the call actually belongs to the alert/incident the
+caller already has access to, not by a separate permission check.
 
 ### Configuring LDAP/SAML for a tenant
 

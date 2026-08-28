@@ -116,14 +116,19 @@ regras de negócio para:
   replay via cookie de `InResponseTo`). Os três convergem em `AuthService`/`ProvisionFederated`,
   que aplica `auth_group_mappings` (grupo do IdP → role/resource_access/allowed_tags) e emite o
   mesmo JWT. `internal/httpserver/middleware.JWTAuth` verifica esse token em `/api/v1/**`.
-- **Autorização**: role e escopo (`resourceAccess`/`allowedTags`) viajam no JWT (`authn.Claims`) e
-  são aplicados em dois pontos — `middleware.RequireRole("admin")` bloqueia todo `/settings/**` para
-  quem não é admin, e `middleware.RequireResourceAccess` bloqueia `/alerts` ou `/incidents` por
-  inteiro conforme o `resourceAccess` do usuário. Dentro de cada recurso, `allowedTags` filtra a
-  listagem na query SQL (`tags && $allowedTags`) e é checado de novo em `Get`/`ChangeStatus`/`Close`/
-  `ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` — ver `service/access.go` e o comentário
-  em `IncidentService` sobre os sub-recursos (comentários, links, timeline) que ainda não repetem
-  essa checagem e dependem só do isolamento por tenant via RLS.
+- **Autorização**: o acesso é totalmente delegado a um `Role` nomeado (Settings → Roles), atribuído
+  a um usuário via `roleId` — não fica no próprio registro do usuário. `isAdmin`/`resourceAccess`/
+  `allowedTags` são espelhados desse Role pro JWT no momento do login (`authn.Claims`) e aplicados
+  em dois pontos — `middleware.RequireAdmin()` bloqueia todo `/settings/**` para quem não é admin, e
+  `middleware.RequireResourceAccess` bloqueia `/alerts` ou `/incidents` por inteiro conforme o
+  `resourceAccess` do usuário. Dentro de cada recurso, `allowedTags` filtra a listagem na query SQL
+  (`tags && $allowedTags`) e é checado de novo em `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
+  `SetSeverityAndPriority`/`UpdateDescription` — ver `service/access.go` e o comentário em
+  `IncidentService` sobre os sub-recursos (comentários, links, timeline) que ainda não repetem essa
+  checagem e dependem só do isolamento por tenant via RLS. Como o JWT só espelha o Role no momento
+  do login, editar um Role (ou reatribuir um usuário a outro) só tem efeito no próximo login/refresh
+  de token desse usuário, não imediatamente — mesmo trade-off de defasagem que o próprio comentário
+  de `authn.Claims` descreve para `mustChangePassword`.
 
 ## Autenticação: o que falta para produção
 
@@ -183,6 +188,14 @@ Settings → Servidores MCP → Aprovações Pendentes (painel novo, `MCPServers
 `MCPToolService.SetOnToolCallResolved` retoma o run de onde parou via `ResumeAnalysisRun`. O
 "Analisar com IA" do detalhe de alerta/incidente aciona esse loop de ponta a ponta, e a ingestão de
 um alerta também dispara a mesma análise automaticamente quando há provedor LLM configurado.
+
+Uma tool call pausada pode ser resolvida de duas formas, ambas chamando no fim o mesmo
+`MCPToolService.ApproveToolCall`/`RejectToolCall`: em Settings → Servidores MCP → Aprovações
+Pendentes (qualquer admin, vê toda call pendente do tenant), ou direto no painel `AnalysisChat` do
+próprio alerta/incidente (`POST /api/v1/{alerts,incidents}/{id}/analyze/tool-calls/{callId}/approve|reject`,
+`internal/httpserver/handlers/analysis_tool_calls.go`'s `resolveAnalysisToolCall`) — sem precisar de
+acesso admin, já que a checagem aqui é confirmar que a call realmente pertence ao alerta/incidente
+ao qual quem chamou já tem acesso, não uma permissão separada.
 
 ### Configurando LDAP/SAML de um tenant
 
