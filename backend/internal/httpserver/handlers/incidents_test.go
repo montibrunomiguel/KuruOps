@@ -39,7 +39,7 @@ func newIncidentHandlerFixture(t *testing.T) (h *handlers.IncidentHandlers, tena
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
 	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
-	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc)
+	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, service.NewIncidentReportService(incSvc), mcpToolSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -83,7 +83,7 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
 	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
-	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, mcpToolSvc)
+	h := handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, service.NewIncidentReportService(incSvc), mcpToolSvc)
 
 	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
 		Title: "Ransomware suspected", Severity: domain.SeverityCritical, Priority: domain.PriorityP1,
@@ -279,6 +279,32 @@ func TestIncidentHandlers_Postmortem(t *testing.T) {
 
 	t.Run("malformed id -- 400", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/not-a-uuid/postmortem", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
+func TestIncidentHandlers_ReportPDF(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	req := withClaims(httptest.NewRequest("GET", "/"+incidentID.String()+"/report.pdf", nil), tenantID, actorID, nil)
+	rec := doRequest(r, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/pdf", rec.Header().Get("Content-Type"))
+	assert.Equal(t, `attachment; filename="incident-report-`+incidentID.String()+`.pdf"`, rec.Header().Get("Content-Disposition"))
+	body := rec.Body.Bytes()
+	require.True(t, len(body) > 4 && string(body[:5]) == "%PDF-", "must be a well-formed PDF")
+	assert.Contains(t, string(body), "Ransomware suspected")
+
+	t.Run("unknown -- 404", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/"+uuid.New().String()+"/report.pdf", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("malformed id -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/not-a-uuid/report.pdf", nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})

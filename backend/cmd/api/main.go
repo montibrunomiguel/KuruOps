@@ -187,7 +187,8 @@ func main() {
 	incidentService.EnableAnalysisLookup(aiAnalysisRunRepo)
 
 	postmortemService := service.NewPostmortemService(incidentService, aiAnalysisService)
-	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, mcpToolService)
+	incidentReportService := service.NewIncidentReportService(incidentService)
+	incidentHandlers := handlers.NewIncidentHandlers(incidentService, userService, aiAnalysisService, postmortemService, incidentReportService, mcpToolService)
 
 	playbookRepo := repository.NewPlaybookRepository()
 	playbookService := service.NewPlaybookService(pool, playbookRepo, alertRepo, cfg.AppBaseURL)

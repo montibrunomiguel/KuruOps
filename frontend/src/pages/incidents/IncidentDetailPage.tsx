@@ -70,6 +70,7 @@ export function IncidentDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [generatingPostmortem, setGeneratingPostmortem] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [showAnalysisChat, setShowAnalysisChat] = useState(false);
 
   // Every mutation below can append a row to the incident_events timeline
@@ -156,6 +157,32 @@ export function IncidentDetailPage() {
     }
   }
 
+  // Unlike the postmortem (only offered once the incident has actually
+  // reached post_incident -- see the button's own gate below), the PDF
+  // report is available at any phase: it's a point-in-time factual export
+  // (current state + history so far), not a closing narrative document, so
+  // there's no phase it wouldn't make sense to pull one from.
+  async function downloadReport() {
+    if (!id) return;
+    setGeneratingReport(true);
+    setActionError(null);
+    try {
+      const { blob, filename } = await api.downloadFile(`/api/v1/incidents/${id}/report.pdf`, token);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionError(mutationErrorMessage(err));
+    } finally {
+      setGeneratingReport(false);
+    }
+  }
+
   if (loading) return <div className="empty-state">{t("common.loading")}</div>;
   if (error) return <div className="error-banner">{error}</div>;
   if (!incident) return <div className="empty-state">{t("incidents.detail.notFound")}</div>;
@@ -193,6 +220,9 @@ export function IncidentDetailPage() {
             {incident.latestAnalysisStatus === "running" || incident.latestAnalysisStatus === "paused"
               ? t("incidents.detail.analyzing")
               : t("incidents.detail.analyzeWithAI")}
+          </button>
+          <button className="btn btn-sm" disabled={generatingReport} onClick={downloadReport}>
+            {generatingReport ? t("incidents.detail.generatingReport") : t("incidents.detail.downloadReport")}
           </button>
           {incident.phase === "post_incident" && (
             <button className="btn btn-sm" disabled={generatingPostmortem} onClick={downloadPostmortem}>

@@ -13,6 +13,13 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Exportable incident PDF report: a "Download Report (PDF)" button on the incident detail page
+  (`GET /api/v1/incidents/{id}/report.pdf`) — title, severity/priority, current phase, the full
+  phase-history timeline with durations, team roles, description, tags, linked alerts, and team
+  notes. Available at any phase, unlike the Markdown postmortem (which only appears once an
+  incident reaches Post-Incident) — this is a point-in-time factual export, not a closing
+  narrative. Pure-Go PDF generation (`github.com/jung-kurt/gofpdf`), no headless-browser/Chromium
+  dependency added.
 - Two-factor authentication (TOTP): self-service, optional per-user, enrolled from Settings →
   Profile → Two-Factor Authentication (scan a QR code or enter the secret manually into an
   authenticator app, then confirm with a 6-digit code). A local login for an enrolled account stops

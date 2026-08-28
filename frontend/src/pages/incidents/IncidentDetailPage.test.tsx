@@ -47,6 +47,17 @@ function routeFetch(
         }),
       );
     }
+    if (url.includes("/report.pdf")) {
+      return Promise.resolve(
+        new Response("%PDF-1.4 fake", {
+          status: 200,
+          headers: {
+            "content-type": "application/pdf",
+            "content-disposition": 'attachment; filename="incident-report-i1.pdf"',
+          },
+        }),
+      );
+    }
     if (url.includes("/timeline")) return Promise.resolve(jsonResponse(opts.events ?? []));
     if (url.includes("/comments")) {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ id: "c1" }, 201));
@@ -129,6 +140,33 @@ describe("IncidentDetailPage", () => {
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/postmortem", expect.objectContaining({ headers: expect.any(Object) })),
+    );
+    expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("Download Report (PDF) is visible regardless of phase, unlike Generate Postmortem", async () => {
+    vi.stubGlobal("fetch", routeFetch(incidentFixture({ phase: "new" })));
+    renderDetail();
+
+    expect(await screen.findByRole("button", { name: "Download Report (PDF)" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generate Postmortem" })).not.toBeInTheDocument();
+  });
+
+  it("clicking Download Report (PDF) fetches the report endpoint and triggers a download", async () => {
+    // jsdom doesn't implement the Blob-URL APIs the download flow uses.
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:mock"), revokeObjectURL: vi.fn() });
+    const fetchMock = routeFetch(incidentFixture());
+    vi.stubGlobal("fetch", fetchMock);
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderDetail();
+    await userEvent.click(await screen.findByRole("button", { name: "Download Report (PDF)" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/incidents/i1/report.pdf", expect.objectContaining({ headers: expect.any(Object) })),
     );
     expect(clickSpy).toHaveBeenCalled();
 

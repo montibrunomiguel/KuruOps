@@ -14,6 +14,13 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Relatório de incidente exportável em PDF: um botão "Baixar Relatório (PDF)" na página de detalhe
+  do incidente (`GET /api/v1/incidents/{id}/report.pdf`) -- título, severidade/prioridade, fase
+  atual, a timeline completa de histórico de fases com durações, papéis da equipe, descrição, tags,
+  alertas vinculados e notas da equipe. Disponível em qualquer fase, diferente do postmortem em
+  Markdown (que só aparece quando o incidente chega em Pós-Incidente) -- este é um export factual
+  de um momento específico, não um documento narrativo de encerramento. Geração de PDF em Go puro
+  (`github.com/jung-kurt/gofpdf`), sem adicionar dependência de navegador headless/Chromium.
 - Autenticação em dois fatores (TOTP): autoatendimento, opcional por usuário, ativada em
   Configurações → Perfil → Autenticação em Dois Fatores (escaneie um QR code ou digite o segredo
   manualmente em um aplicativo autenticador, depois confirme com um código de 6 dígitos). Um login

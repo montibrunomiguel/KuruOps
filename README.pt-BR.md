@@ -93,6 +93,11 @@ mesmo tempo.
   autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0001_initial_schema.up.sql`.
   Pular uma fase (ex.: New → Eradication direto) não é bloqueado, mas fica marcado com um evento de
   aviso na timeline, para não mascarar processo mal seguido em métricas de MTTR.
+- **Relatórios de Incidente** (no detalhe do incidente) — "Baixar Relatório (PDF)" gera um export de
+  um momento específico (severidade/prioridade, timeline de fases com durações, papéis da equipe,
+  descrição, tags, alertas vinculados, notas da equipe) em qualquer fase; "Gerar Postmortem"
+  (oferecido só quando o incidente chega em Pós-Incidente) produz o mesmo registro como um
+  documento Markdown, com um resumo executivo gerado por IA quando um provedor LLM está configurado.
 - **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no
   detalhe do alerta.
 - **Settings** (admin) — Webhook Endpoints (token com política de expiração/rotação — 90 dias por

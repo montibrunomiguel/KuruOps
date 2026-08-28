@@ -1514,6 +1514,38 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/incidents/{id}/report.pdf:
+    get:
+      tags: [Incidents]
+      summary: Download a PDF report of this incident
+      description: >-
+        A point-in-time factual export -- title, severity/priority, current
+        phase, the full phase-history timeline with durations, team roles,
+        description, tags, linked alerts (summary), and team notes.
+        Available at any phase, unlike the Markdown postmortem (which is
+        offered only once the incident reaches post_incident). Streamed as
+        a forced download, not a JSON envelope.
+      parameters:
+        - $ref: '#/components/parameters/IncidentId'
+      responses:
+        "200":
+          description: The PDF report
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   # ------------------------------------------------------------- Playbooks
   /api/v1/playbooks:
     get:
