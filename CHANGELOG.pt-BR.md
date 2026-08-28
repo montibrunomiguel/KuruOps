@@ -14,6 +14,18 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Mudança de status em massa nas listagens de Alertas/Incidentes: uma coluna de checkbox +
+  "selecionar todos desta página" em ambas as listagens, com uma barra de ações que aparece assim
+  que ≥1 linha é selecionada para mudar o status de todo alerta selecionado
+  (`POST /api/v1/alerts/bulk/status`) ou a fase NIST de todo incidente selecionado
+  (`POST /api/v1/incidents/bulk/phase`) em uma única ação. Implementado como um loop sobre o já
+  existente `ChangeStatus`/`ChangePhase` de ID único (não um novo UPDATE multi-linha), então todo
+  invariante já existente (visibilidade por tag, a trava de "fechado é terminal", um evento de
+  auditoria por item afetado) continua funcionando sem alteração; uma falha parcial (ex.: uma
+  linha que não é mais visível ao chamador) reporta resultados por ID em vez de falhar a
+  requisição inteira. Deliberadamente restrito a status/fase apenas -- fechamento em massa não é
+  suportado (transições diretas para "closed"/"post_incident" são rejeitadas), fechar um alerta ou
+  incidente ainda exige o fluxo existente de classificação/Fechamento por item.
 - Busca por texto completo em Alertas e Incidentes: um filtro `q` em ambas as listagens compara
   contra título, origem, ID de regra e ativo para alertas, e título/descrição para incidentes --
   baseado em uma coluna `tsvector` gerada pelo Postgres e um índice GIN por tabela

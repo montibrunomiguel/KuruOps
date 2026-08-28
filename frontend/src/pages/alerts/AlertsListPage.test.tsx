@@ -338,4 +338,85 @@ describe("AlertsListPage", () => {
       expect(alertsCalls).toBeGreaterThanOrEqual(2);
     });
   });
+
+  describe("bulk status-change", () => {
+    it("selecting a row shows the bulk toolbar with a count, and it disappears on clear", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture()])));
+      render(<AlertsListPage />, { wrapper });
+      await screen.findByText("Suspicious login");
+
+      expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("checkbox", { name: /Select alert/ }));
+      expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+    });
+
+    it("the header checkbox selects and deselects every row on the page", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse([alertFixture({ id: "a1" }), alertFixture({ id: "a2", title: "Second alert" })])),
+      );
+      render(<AlertsListPage />, { wrapper });
+      await screen.findByText("Suspicious login");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all alerts on this page" }));
+      expect(await screen.findByText("2 selected")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all alerts on this page" }));
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("applying a bulk status change posts the selected ids and shows a success summary", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/alerts/bulk/status") {
+          return Promise.resolve(
+            jsonResponse({ results: [{ id: "a1", success: true }] }),
+          );
+        }
+        return Promise.resolve(jsonResponse([alertFixture()]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<AlertsListPage />, { wrapper });
+      await screen.findByText("Suspicious login");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /Select alert/ }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+      await waitFor(() => {
+        const call = fetchMock.mock.calls.find((c) => c[0] === "/api/v1/alerts/bulk/status");
+        expect(call).toBeTruthy();
+        const body = JSON.parse((call![1] as RequestInit).body as string);
+        expect(body).toEqual({ ids: ["a1"], status: "investigating" });
+      });
+      expect(await screen.findByText("1 alert updated.")).toBeInTheDocument();
+      // the selection clears after a successful apply
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("a partial failure shows the success/failed breakdown", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/alerts/bulk/status") {
+          return Promise.resolve(
+            jsonResponse({
+              results: [
+                { id: "a1", success: true },
+                { id: "a2", success: false, error: "alert a2 not found" },
+              ],
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse([alertFixture({ id: "a1" }), alertFixture({ id: "a2", title: "Second alert" })]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<AlertsListPage />, { wrapper });
+      await screen.findByText("Suspicious login");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all alerts on this page" }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+      expect(await screen.findByText("1 updated, 1 failed.")).toBeInTheDocument();
+    });
+  });
 });

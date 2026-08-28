@@ -356,6 +356,67 @@ func TestAlertHandlers_ChangeStatus(t *testing.T) {
 	})
 }
 
+func TestAlertHandlers_BulkChangeStatus(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+	otherID := newSecondAlert(t, h, tenantID)
+
+	t.Run("valid ids -- 200 with one result per id", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{alertID.String(), otherID.String()}, "status": "investigating"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/status", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Results []struct {
+				ID      string `json:"id"`
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Results, 2)
+		for _, res := range resp.Results {
+			assert.True(t, res.Success)
+		}
+	})
+
+	t.Run("a bad id among good ones still returns 200, with that one marked failed", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{alertID.String(), uuid.New().String()}, "status": "escalated"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/status", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Results []struct {
+				Success bool `json:"success"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Results, 2)
+		successes := 0
+		for _, res := range resp.Results {
+			if res.Success {
+				successes++
+			}
+		}
+		assert.Equal(t, 1, successes)
+	})
+
+	t.Run("empty ids -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{}, "status": "investigating"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/status", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("malformed body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/bulk/status", bytes.NewReader([]byte("not json"))), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
 func TestAlertHandlers_Close(t *testing.T) {
 	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
 	r := newRouter(h.Routes)

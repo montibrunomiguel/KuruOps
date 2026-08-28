@@ -13,6 +13,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Bulk status-change on Alerts/Incidents lists: a checkbox column + "select all on this page" on
+  both list pages, with a toolbar that appears once ≥1 row is selected to change every selected
+  alert's status (`POST /api/v1/alerts/bulk/status`) or every selected incident's NIST phase
+  (`POST /api/v1/incidents/bulk/phase`) in one action. Implemented as a loop over the existing
+  single-ID `ChangeStatus`/`ChangePhase` (not a new multi-row UPDATE), so every existing invariant
+  (tag-based visibility, the "closed is terminal" guard, one audit event per affected item) keeps
+  working unmodified; a partial failure (e.g. a row no longer visible to the caller) reports
+  per-ID results rather than failing the whole request. Deliberately scoped to status/phase only —
+  bulk-close is not supported (direct transitions to "closed"/"post_incident" are rejected),
+  closing an alert or incident still requires the existing per-item classification/Close flow.
 - Full-text search on Alerts and Incidents: a `q` filter on both list pages matches against title,
   source, rule ID and asset for alerts, and title/description for incidents — backed by a Postgres
   generated `tsvector` column and GIN index per table (`db/migrations/0008_fulltext_search`), not a

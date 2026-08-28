@@ -287,6 +287,70 @@ func TestIncidentService_ChangePhase(t *testing.T) {
 	})
 }
 
+func TestIncidentService_BulkChangePhase(t *testing.T) {
+	_, incSvc, _ := newIncidentServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	i1, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: "i1", Severity: domain.SeverityHigh, Priority: domain.PriorityP2,
+	})
+	require.NoError(t, err)
+	i2, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{
+		Title: "i2", Severity: domain.SeverityHigh, Priority: domain.PriorityP2,
+	})
+	require.NoError(t, err)
+
+	t.Run("every id succeeds, and the phase actually changed", func(t *testing.T) {
+		results, err := incSvc.BulkChangePhase(t.Context(), tenantID, actorID, []uuid.UUID{i1.ID, i2.ID}, domain.PhaseContainment, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		for _, r := range results {
+			assert.True(t, r.Success)
+			assert.Empty(t, r.Error)
+		}
+
+		got, err := incSvc.Get(t.Context(), tenantID, i1.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, domain.PhaseContainment, got.Phase)
+	})
+
+	t.Run("one bad id among good ones fails only that one", func(t *testing.T) {
+		unknownID := uuid.New()
+		results, err := incSvc.BulkChangePhase(t.Context(), tenantID, actorID, []uuid.UUID{i1.ID, unknownID}, domain.PhaseEradication, nil)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+
+		byID := map[uuid.UUID]service.BulkResult{}
+		for _, r := range results {
+			byID[r.ID] = r
+		}
+		assert.True(t, byID[i1.ID].Success)
+		assert.False(t, byID[unknownID].Success)
+		assert.Contains(t, byID[unknownID].Error, "not found")
+
+		got, err := incSvc.Get(t.Context(), tenantID, i1.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, domain.PhaseEradication, got.Phase, "the good id's change still went through despite the other one failing")
+	})
+
+	t.Run("bulk-setting post_incident is rejected up front, for the whole request -- bulk-close is descoped", func(t *testing.T) {
+		results, err := incSvc.BulkChangePhase(t.Context(), tenantID, actorID, []uuid.UUID{i1.ID, i2.ID}, domain.PhasePostIncident, nil)
+		assert.ErrorContains(t, err, "use Close")
+		assert.Nil(t, results)
+
+		got, err := incSvc.Get(t.Context(), tenantID, i1.ID, nil)
+		require.NoError(t, err)
+		assert.NotEqual(t, domain.PhasePostIncident, got.Phase, "the whole-request rejection must happen before any incident is touched")
+	})
+
+	t.Run("empty ids returns an empty result set, not an error", func(t *testing.T) {
+		results, err := incSvc.BulkChangePhase(t.Context(), tenantID, actorID, nil, domain.PhaseRecovery, nil)
+		require.NoError(t, err)
+		assert.Empty(t, results)
+	})
+}
+
 func TestIncidentService_SetSeverityAndPriorityAndDescription(t *testing.T) {
 	_, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)

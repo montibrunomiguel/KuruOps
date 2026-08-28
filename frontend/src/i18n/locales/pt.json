@@ -361,6 +361,19 @@
       "posting": "Publicando...",
       "noNotes": "Nenhuma nota ainda.",
       "assigneeTitle": "Analista Responsável"
+    },
+    "bulk": {
+      "selectAllAria": "Selecionar todos os alertas desta página",
+      "selectRowAria": "Selecionar alerta {{id}}",
+      "selected_one": "{{count}} selecionado",
+      "selected_other": "{{count}} selecionados",
+      "statusLabel": "Mudar status para...",
+      "apply": "Aplicar",
+      "applying": "Aplicando...",
+      "clearSelection": "Limpar",
+      "resultSummary": "{{success}} atualizados, {{failed}} falharam.",
+      "allSucceeded_one": "{{count}} alerta atualizado.",
+      "allSucceeded_other": "{{count}} alertas atualizados."
     }
   },
   "incidents": {
@@ -449,6 +462,19 @@
         "privacy_officer": "Privacy Officer",
         "technical_lead": "Technical Lead"
       }
+    },
+    "bulk": {
+      "selectAllAria": "Selecionar todos os incidentes desta página",
+      "selectRowAria": "Selecionar incidente {{id}}",
+      "selected_one": "{{count}} selecionado",
+      "selected_other": "{{count}} selecionados",
+      "phaseLabel": "Mudar fase para...",
+      "apply": "Aplicar",
+      "applying": "Aplicando...",
+      "clearSelection": "Limpar",
+      "resultSummary": "{{success}} atualizados, {{failed}} falharam.",
+      "allSucceeded_one": "{{count}} incidente atualizado.",
+      "allSucceeded_other": "{{count}} incidentes atualizados."
     }
   },
   "settings": {

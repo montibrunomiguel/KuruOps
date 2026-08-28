@@ -38,6 +38,7 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
 	r.Get("/{id}", h.get)
+	r.Post("/bulk/phase", h.bulkChangePhase)
 	r.Post("/{id}/phase", h.changePhase)
 	r.Post("/{id}/close", h.close)
 	r.Post("/{id}/severity-priority", h.setSeverityPriority)
@@ -196,6 +197,46 @@ func (h *IncidentHandlers) changePhase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type bulkChangePhaseRequest struct {
+	IDs   []uuid.UUID          `json:"ids"`
+	Phase domain.IncidentPhase `json:"phase"`
+}
+
+// bulkChangePhase applies one phase change across many incidents (the
+// IncidentsListPage row-selection toolbar's Apply button). post_incident is
+// rejected up front by IncidentService.BulkChangePhase -- bulk-close was
+// explicitly descoped, closing still requires the single-item Close flow.
+// A per-incident failure doesn't fail the whole request -- see
+// bulkChangeStatus's doc comment, same reasoning.
+func (h *IncidentHandlers) bulkChangePhase(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	var req bulkChangePhaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must not be empty")
+		return
+	}
+	if len(req.IDs) > maxBulkIDs {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d ids per request", maxBulkIDs))
+		return
+	}
+
+	results, err := h.svc.BulkChangePhase(r.Context(), tenantID, userID, req.IDs, req.Phase, middleware.AllowedTags(r.Context()))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 func (h *IncidentHandlers) close(w http.ResponseWriter, r *http.Request) {

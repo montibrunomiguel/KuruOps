@@ -488,6 +488,44 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
+  /api/v1/alerts/bulk/status:
+    post:
+      tags: [Alerts]
+      summary: Change the status of many alerts at once
+      description: >-
+        Applies ChangeStatus to each id in turn (one transaction per alert,
+        not a single multi-row update), so every invariant that endpoint
+        already enforces -- tag-visibility, the "closed is read-only" guard
+        -- keeps working unmodified. A per-alert failure doesn't fail the
+        whole request; the response reports one result per id. Direct
+        transitions to "closed" are rejected per-item, same as the
+        single-alert endpoint -- closing still requires the classification
+        flow on the alert detail page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                status: { $ref: '#/components/schemas/AlertStatus' }
+              required: [ids, status]
+      responses:
+        "200":
+          description: Per-alert results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkResponse' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
   /api/v1/alerts/{id}/status:
     post:
       tags: [Alerts]
@@ -893,6 +931,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         "500":
           $ref: '#/components/responses/InternalError'
+
+  /api/v1/incidents/bulk/phase:
+    post:
+      tags: [Incidents]
+      summary: Change the NIST phase of many incidents at once
+      description: >-
+        Applies ChangePhase to each id in turn (one transaction per
+        incident, not a single multi-row update), so every invariant that
+        endpoint already enforces keeps working unmodified. A per-incident
+        failure doesn't fail the whole request; the response reports one
+        result per id. "post_incident" is rejected for the whole request up
+        front, not per-item -- reaching it via ChangePhase alone never
+        stamps closedAt (only the explicit Close action does), and
+        bulk-close was explicitly descoped: closing still requires the
+        single-item Close flow on the incident detail page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                phase: { $ref: '#/components/schemas/IncidentPhase' }
+              required: [ids, phase]
+      responses:
+        "200":
+          description: Per-incident results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkResponse' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/incidents/{id}/phase:
     post:
@@ -3484,6 +3561,26 @@ components:
         error:
           type: string
       required: [error]
+
+    BulkResult:
+      type: object
+      description: >-
+        The outcome of one item within a bulk operation -- a partial failure
+        (e.g. one of the selected ids is no longer visible to the caller)
+        doesn't fail the whole request, so each id's outcome is reported
+        independently here.
+      properties:
+        id: { type: string, format: uuid }
+        success: { type: boolean }
+        error: { type: string }
+      required: [id, success]
+    BulkResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/BulkResult' }
+      required: [results]
 
     Severity:
       type: string

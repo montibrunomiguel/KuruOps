@@ -376,6 +376,61 @@ func TestAlertService_ChangeStatus(t *testing.T) {
 	})
 }
 
+func TestAlertService_BulkChangeStatus(t *testing.T) {
+	_, alertSvc, _ := newAlertServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+
+	a1, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{Title: "t1", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
+	require.NoError(t, err)
+	a2, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{Title: "t2", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
+	require.NoError(t, err)
+
+	t.Run("every id succeeds, and the status actually changed", func(t *testing.T) {
+		results := alertSvc.BulkChangeStatus(t.Context(), tenantID, actorID, []uuid.UUID{a1.ID, a2.ID}, domain.AlertStatusInvestigating, nil)
+		require.Len(t, results, 2)
+		for _, r := range results {
+			assert.True(t, r.Success)
+			assert.Empty(t, r.Error)
+		}
+
+		got, err := alertSvc.Get(t.Context(), tenantID, a1.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, domain.AlertStatusInvestigating, got.Status)
+	})
+
+	t.Run("one bad id among good ones fails only that one, and its message survives to the result", func(t *testing.T) {
+		unknownID := uuid.New()
+		results := alertSvc.BulkChangeStatus(t.Context(), tenantID, actorID, []uuid.UUID{a1.ID, unknownID}, domain.AlertStatusEscalated, nil)
+		require.Len(t, results, 2)
+
+		byID := map[uuid.UUID]service.BulkResult{}
+		for _, r := range results {
+			byID[r.ID] = r
+		}
+		assert.True(t, byID[a1.ID].Success)
+		assert.False(t, byID[unknownID].Success)
+		assert.Contains(t, byID[unknownID].Error, "not found")
+
+		got, err := alertSvc.Get(t.Context(), tenantID, a1.ID, nil)
+		require.NoError(t, err)
+		assert.Equal(t, domain.AlertStatusEscalated, got.Status, "the good id's change still went through despite the other one failing")
+	})
+
+	t.Run("bulk-closing is rejected per-item, same as a single ChangeStatus call", func(t *testing.T) {
+		results := alertSvc.BulkChangeStatus(t.Context(), tenantID, actorID, []uuid.UUID{a2.ID}, domain.AlertStatusClosed, nil)
+		require.Len(t, results, 1)
+		assert.False(t, results[0].Success)
+		assert.Contains(t, results[0].Error, "use Close")
+	})
+
+	t.Run("empty ids returns an empty result set, not an error", func(t *testing.T) {
+		results := alertSvc.BulkChangeStatus(t.Context(), tenantID, actorID, nil, domain.AlertStatusInvestigating, nil)
+		assert.Empty(t, results)
+	})
+}
+
 func TestAlertService_AddCommentAndComments(t *testing.T) {
 	_, alertSvc, _ := newAlertServices(t)
 	tenantID := testutil.NewTenant(t)

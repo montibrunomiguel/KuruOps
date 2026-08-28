@@ -298,6 +298,80 @@ func TestIncidentHandlers_ChangePhaseAndClose(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+func TestIncidentHandlers_BulkChangePhase(t *testing.T) {
+	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	createBody, _ := json.Marshal(map[string]any{"title": "Second incident", "severity": "high", "priority": "p2"})
+	createReq := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(createBody)), tenantID, actorID, nil)
+	createRec := doRequest(r, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+	var created domain.Incident
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	otherID := created.ID
+
+	t.Run("valid ids -- 200 with one result per id", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{incidentID.String(), otherID.String()}, "phase": "containment"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/phase", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Results []struct {
+				ID      string `json:"id"`
+				Success bool   `json:"success"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Results, 2)
+		for _, res := range resp.Results {
+			assert.True(t, res.Success)
+		}
+	})
+
+	t.Run("a bad id among good ones still returns 200, with that one marked failed", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{incidentID.String(), uuid.New().String()}, "phase": "eradication"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/phase", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Results []struct {
+				Success bool `json:"success"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Results, 2)
+		successes := 0
+		for _, res := range resp.Results {
+			if res.Success {
+				successes++
+			}
+		}
+		assert.Equal(t, 1, successes)
+	})
+
+	t.Run("post_incident (bulk-close) is rejected -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{incidentID.String()}, "phase": "post_incident"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/phase", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("empty ids -- 400", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"ids": []string{}, "phase": "containment"})
+		req := withClaims(httptest.NewRequest("POST", "/bulk/phase", bytes.NewReader(body)), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("malformed body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/bulk/phase", bytes.NewReader([]byte("not json"))), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+}
+
 func TestIncidentHandlers_SetSeverityPriorityAndDescriptionAndTags(t *testing.T) {
 	h, tenantID, actorID, incidentID := newIncidentHandlerFixture(t)
 	r := newRouter(h.Routes)
