@@ -8,9 +8,9 @@ import { AuthProvider } from "../../auth/AuthContext";
 // A path that matches none of SettingsLayout's own internal <Route>s --
 // this suite is about the nav search filter, not routing/panel content, so
 // no panel mounts and there's nothing to mock fetch for.
-function renderLayout() {
+function renderLayout(initialPath = "/settings/__none__") {
   return render(
-    <MemoryRouter initialEntries={["/settings/__none__"]}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <AuthProvider>
         <SettingsLayout />
       </AuthProvider>
@@ -64,5 +64,57 @@ describe("SettingsLayout nav search", () => {
 
     await userEvent.clear(search);
     expect(screen.getByRole("link", { name: "Retention" })).toBeInTheDocument();
+  });
+});
+
+describe("SettingsLayout nav collapse/expand", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("collapses a group's items on toggle click and expands them again on a second click", async () => {
+    renderLayout();
+    const toggle = screen.getByRole("button", { name: "Integrations" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Webhook Endpoints" })).toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Webhook Endpoints" })).not.toBeInTheDocument();
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Webhook Endpoints" })).toBeInTheDocument();
+  });
+
+  it("persists collapsed state across a remount via localStorage", async () => {
+    const { unmount } = renderLayout();
+    await userEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    expect(screen.queryByRole("link", { name: "Webhook Endpoints" })).not.toBeInTheDocument();
+    unmount();
+
+    renderLayout();
+    expect(screen.getByRole("button", { name: "Integrations" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Webhook Endpoints" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the group containing the active route expanded even when stored as collapsed", async () => {
+    const { unmount } = renderLayout();
+    await userEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    unmount();
+
+    renderLayout("/settings/webhooks");
+    expect(screen.getByRole("button", { name: "Integrations" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Webhook Endpoints" })).toBeInTheDocument();
+  });
+
+  it("still surfaces a matching item from a collapsed group while searching", async () => {
+    const { unmount } = renderLayout();
+    await userEvent.click(screen.getByRole("button", { name: "Integrations" }));
+    unmount();
+
+    renderLayout();
+    await userEvent.type(screen.getByPlaceholderText("Search settings..."), "webhook");
+    expect(screen.getByRole("link", { name: "Webhook Endpoints" })).toBeInTheDocument();
   });
 });

@@ -29,6 +29,12 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   banco Docker novos sob o novo nome de projeto (os antigos `argusops_*` não são migrados
   automaticamente) -- ver a documentação de deploy se precisar levar os dados adiante em vez de
   começar do zero.
+- Os grupos do menu de Configurações (Integrações, Conectores, Identidade & Acesso, Operações,
+  Dados & Auditoria) agora comprimem e expandem -- clique no rótulo de um grupo para alternar,
+  em vez de sempre rolar por todas as opções de cada categoria. O grupo que contém a página de
+  configuração em que você está sempre fica expandido, e buscar no menu continua trazendo à tona
+  um item de um grupo que estava recolhido. O estado de recolhido/expandido de cada grupo persiste
+  entre recarregamentos (`localStorage`).
 
 ### Added
 

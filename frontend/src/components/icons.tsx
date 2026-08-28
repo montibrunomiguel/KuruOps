@@ -194,3 +194,14 @@ export function CloseIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// ChevronIcon points down by default -- callers rotate it -90deg for a
+// collapsed/pointing-right state (see .settings-nav-group-toggle) instead
+// of drawing a second "pointing right" variant.
+export function ChevronIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <Icon {...props}>
+      <path d="M6 9l6 6 6-6" />
+    </Icon>
+  );
+}
+
