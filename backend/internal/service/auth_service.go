@@ -8,12 +8,19 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/pquerna/otp/totp"
 
 	"github.com/argusops/argusops/internal/authn"
 	"github.com/argusops/argusops/internal/db"
 	"github.com/argusops/argusops/internal/domain"
 	"github.com/argusops/argusops/internal/repository"
 )
+
+// totpIssuer is the "issuer" label an authenticator app (Google
+// Authenticator, 1Password, ...) shows next to the account name once a
+// QR code from GenerateMFAEnrollment is scanned -- cosmetic only, does not
+// affect verification.
+const totpIssuer = "ArgusOps"
 
 // AuthService is where local, LDAP, and SAML login all converge on the same
 // two outputs: a domain.User (created/updated as needed) and a signed
@@ -23,12 +30,13 @@ type AuthService struct {
 	tenants       *repository.TenantRepository
 	users         *repository.UserRepository
 	refreshTokens *repository.RefreshTokenRepository
+	mfaPending    *repository.MFAPendingTokenRepository
 	roles         *RoleService
 	issuer        *authn.Issuer
 }
 
-func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, roles *RoleService, issuer *authn.Issuer) *AuthService {
-	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, roles: roles, issuer: issuer}
+func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, mfaPending *repository.MFAPendingTokenRepository, roles *RoleService, issuer *authn.Issuer) *AuthService {
+	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, mfaPending: mfaPending, roles: roles, issuer: issuer}
 }
 
 // refreshTokenTTL is how long a refresh token stays valid after issuance or
@@ -68,15 +76,32 @@ func (s *AuthService) ResolveDefaultTenant(ctx context.Context) (*domain.Tenant,
 	return s.tenants.GetDefault(ctx, s.pool)
 }
 
+// mfaPendingTokenTTL bounds how long a caller has to type the 6-digit code
+// after a correct password, before having to log in again from scratch --
+// short and single-use like oauth_states' TTL, not password reset's 1-hour
+// one: this only needs to survive the few seconds it takes to read a code
+// already showing on an authenticator app.
+const mfaPendingTokenTTL = 10 * time.Minute
+
+const mfaPendingTokenPrefix = "mfap_"
+
 // LoginLocal verifies email+password against the users table for
-// auth_provider='local'. Returns (nil, nil, nil) — not an error — for
-// unknown email or wrong password alike, so callers can't distinguish
+// auth_provider='local'. Returns (nil, "", "", "", nil) — not an error —
+// for unknown email or wrong password alike, so callers can't distinguish
 // "no such user" from "wrong password" through error type/message, which
 // would let a login form enumerate valid emails.
-func (s *AuthService) LoginLocal(ctx context.Context, tenantID uuid.UUID, email, password string) (*domain.User, string, string, error) {
-	var user *domain.User
-	var refreshToken string
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+//
+// A user with TOTP enrolled (MFATOTPSecret set) never gets a session from
+// this call alone: on a correct password it mints an mfa_pending_tokens row
+// instead and returns its plaintext as pendingToken, with user/token/
+// refreshToken all zero -- the caller must present that pendingToken plus
+// a valid code to VerifyMFA to actually complete the login. completeLogin
+// (stamp last login, issue refresh token, issue the session JWT) is shared
+// by both this method's no-MFA path and VerifyMFA's success path, so a
+// session is issued identically either way.
+func (s *AuthService) LoginLocal(ctx context.Context, tenantID uuid.UUID, email, password string) (user *domain.User, token, refreshToken, pendingToken string, err error) {
+	var verifiedUser *domain.User
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		u, err := s.users.GetByEmail(ctx, tx, tenantID, email)
 		if err != nil {
 			return fmt.Errorf("load user: %w", err)
@@ -90,29 +115,224 @@ func (s *AuthService) LoginLocal(ctx context.Context, tenantID uuid.UUID, email,
 			return nil
 		}
 
-		if err := s.users.StampLastLogin(ctx, tx, u.ID); err != nil {
-			return fmt.Errorf("stamp last login: %w", err)
+		if u.MFATOTPSecret != nil {
+			plaintext, err := generatePrefixedToken(mfaPendingTokenPrefix, 32)
+			if err != nil {
+				return fmt.Errorf("generate mfa pending token: %w", err)
+			}
+			mp := &domain.MFAPendingToken{
+				TenantID:  tenantID,
+				UserID:    u.ID,
+				TokenHash: hashToken(plaintext),
+				ExpiresAt: time.Now().Add(mfaPendingTokenTTL),
+			}
+			if err := s.mfaPending.Insert(ctx, tx, mp); err != nil {
+				return fmt.Errorf("insert mfa pending token: %w", err)
+			}
+			pendingToken = plaintext
+			return nil
 		}
-		rt, err := s.issueRefreshToken(ctx, tx, tenantID, u.ID)
+
+		verifiedUser = u
+		return nil
+	})
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if pendingToken != "" {
+		return nil, "", "", pendingToken, nil
+	}
+	if verifiedUser == nil {
+		return nil, "", "", "", nil
+	}
+
+	user, token, refreshToken, err = s.completeLogin(ctx, tenantID, verifiedUser)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return user, token, refreshToken, "", nil
+}
+
+// VerifyMFA is the second leg of a login for a TOTP-enrolled user: consumes
+// pendingToken (single-use, see MFAPendingTokenRepository.ConsumeByHash),
+// loads the user it belongs to, and checks code against their enrolled
+// secret. Same opaque-failure discipline as LoginLocal -- an unknown/
+// expired/already-used pendingToken and a wrong code are indistinguishable
+// to the caller, both just (nil, "", "", nil).
+func (s *AuthService) VerifyMFA(ctx context.Context, tenantID uuid.UUID, pendingToken, code string) (*domain.User, string, string, error) {
+	var verifiedUser *domain.User
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		mp, err := s.mfaPending.GetByHash(ctx, tx, hashToken(pendingToken))
 		if err != nil {
-			return err
+			return fmt.Errorf("load mfa pending token: %w", err)
 		}
-		refreshToken = rt
-		user = u
+		if mp == nil {
+			return nil
+		}
+
+		u, err := s.users.Get(ctx, tx, tenantID, mp.UserID)
+		if err != nil {
+			return fmt.Errorf("load user: %w", err)
+		}
+		if u == nil || !u.IsActive || u.MFATOTPSecret == nil {
+			return nil
+		}
+
+		if !totp.Validate(code, *u.MFATOTPSecret) {
+			return nil
+		}
+		// Only burn the pending token once the code has actually checked
+		// out -- see MFAPendingTokenRepository.GetByHash's doc comment for
+		// why a wrong code must not invalidate it.
+		if err := s.mfaPending.MarkConsumed(ctx, tx, mp.ID); err != nil {
+			return fmt.Errorf("mark mfa pending token consumed: %w", err)
+		}
+		verifiedUser = u
 		return nil
 	})
 	if err != nil {
 		return nil, "", "", err
 	}
-	if user == nil {
+	if verifiedUser == nil {
 		return nil, "", "", nil
 	}
+	return s.completeLogin(ctx, tenantID, verifiedUser)
+}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword)
+// completeLogin is the tail end every successful login (local, non-MFA;
+// local, post-MFA) shares: stamp last login and issue a refresh token
+// inside one transaction, then issue the session JWT once it's committed --
+// the exact steps LoginLocal used to inline itself before MFA gave it a
+// second path to the same destination.
+func (s *AuthService) completeLogin(ctx context.Context, tenantID uuid.UUID, user *domain.User) (*domain.User, string, string, error) {
+	var refreshToken string
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.users.StampLastLogin(ctx, tx, user.ID); err != nil {
+			return fmt.Errorf("stamp last login: %w", err)
+		}
+		rt, err := s.issueRefreshToken(ctx, tx, tenantID, user.ID)
+		if err != nil {
+			return err
+		}
+		refreshToken = rt
+		return nil
+	})
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword, user.MFATOTPSecret != nil)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("issue token: %w", err)
 	}
 	return user, token, refreshToken, nil
+}
+
+// GenerateMFAEnrollment creates a fresh random TOTP secret and its
+// otpauth:// URI for the caller to render as a QR code -- deliberately NOT
+// persisted here. The secret only reaches users.mfa_totp_secret via
+// ConfirmMFA, once the caller has proven they actually captured it (by
+// producing a code from it) -- generating and saving in one step here would
+// let a scan the user never completed (interrupted before scanning, wrong
+// QR entirely) silently lock their account behind an authenticator app that
+// never has the right secret.
+func (s *AuthService) GenerateMFAEnrollment(ctx context.Context, tenantID, userID uuid.UUID) (secret, otpauthURL string, err error) {
+	var email string
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
+		if err != nil {
+			return fmt.Errorf("load user: %w", err)
+		}
+		if u == nil {
+			return fmt.Errorf("user not found")
+		}
+		email = u.Email
+		return nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: totpIssuer, AccountName: email})
+	if err != nil {
+		return "", "", fmt.Errorf("generate totp key: %w", err)
+	}
+	return key.Secret(), key.URL(), nil
+}
+
+// ConfirmMFA activates 2FA for userID: re-validates code against the
+// caller-supplied secret (proof the enrollment's QR/manual-entry secret was
+// actually captured by a real authenticator app, not just round-tripped
+// blind) before persisting it to users.mfa_totp_secret. Returns a freshly
+// issued token with mfa_enabled now true -- same reasoning ChangePassword's
+// doc comment gives for re-issuing after a mutation that changes what the
+// current token's claims should say: the frontend swaps it in immediately
+// (AuthContext.applyNewToken) instead of the change only showing up after
+// the next login/refresh.
+func (s *AuthService) ConfirmMFA(ctx context.Context, tenantID, userID uuid.UUID, secret, code string) (string, error) {
+	if !totp.Validate(code, secret) {
+		return "", fmt.Errorf("invalid code")
+	}
+
+	var user *domain.User
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.users.SetMFASecret(ctx, tx, userID, &secret); err != nil {
+			return fmt.Errorf("save mfa secret: %w", err)
+		}
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
+		if err != nil {
+			return fmt.Errorf("reload user: %w", err)
+		}
+		user = u
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword, true)
+	if err != nil {
+		return "", fmt.Errorf("issue token: %w", err)
+	}
+	return token, nil
+}
+
+// DisableMFA turns 2FA back off for userID -- requires re-entering the
+// current password, same reasoning UpdateProfile's email-change guard
+// documents: a valid session alone isn't proof of intent to weaken the
+// account's own login requirements, someone at an unlocked, unattended
+// session shouldn't be able to strip 2FA silently. Returns a freshly issued
+// token with mfa_enabled now false, same reasoning as ConfirmMFA's.
+func (s *AuthService) DisableMFA(ctx context.Context, tenantID, userID uuid.UUID, currentPassword string) (string, error) {
+	var user *domain.User
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		u, err := s.users.Get(ctx, tx, tenantID, userID)
+		if err != nil {
+			return fmt.Errorf("load user: %w", err)
+		}
+		if u == nil || u.PasswordHash == nil {
+			return fmt.Errorf("current password is incorrect")
+		}
+		ok, err := authn.VerifyPassword(*u.PasswordHash, currentPassword)
+		if err != nil || !ok {
+			return fmt.Errorf("current password is incorrect")
+		}
+		if err := s.users.SetMFASecret(ctx, tx, userID, nil); err != nil {
+			return fmt.Errorf("clear mfa secret: %w", err)
+		}
+		u.MFATOTPSecret = nil
+		user = u
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword, false)
+	if err != nil {
+		return "", fmt.Errorf("issue token: %w", err)
+	}
+	return token, nil
 }
 
 // Refresh exchanges a valid, unrevoked refresh token for a new access
@@ -158,7 +378,7 @@ func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshTo
 		return "", "", nil
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword, user.MFATOTPSecret != nil)
 	if err != nil {
 		return "", "", fmt.Errorf("issue token: %w", err)
 	}
@@ -215,7 +435,7 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 		return "", err
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false, user.MFATOTPSecret != nil)
 	if err != nil {
 		return "", fmt.Errorf("issue token: %w", err)
 	}
@@ -357,7 +577,7 @@ func (s *AuthService) ProvisionFederated(ctx context.Context, tenantID uuid.UUID
 		return nil, "", "", err
 	}
 
-	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false)
+	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false, user.MFATOTPSecret != nil)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("issue token: %w", err)
 	}

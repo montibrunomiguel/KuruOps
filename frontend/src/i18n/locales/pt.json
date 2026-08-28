@@ -102,7 +102,15 @@
     "submit": "Entrar",
     "submitting": "Entrando...",
     "forgotPassword": "Esqueceu a senha?",
-    "ssoHint": "Login com LDAP ou SAML? Peça ao seu administrador o link de SSO."
+    "ssoHint": "Login com LDAP ou SAML? Peça ao seu administrador o link de SSO.",
+    "mfa": {
+      "title": "Autenticação em Dois Fatores",
+      "helper": "Digite o código de 6 dígitos do seu aplicativo autenticador.",
+      "codeLabel": "Código",
+      "verify": "Verificar",
+      "verifying": "Verificando...",
+      "back": "Voltar"
+    }
   },
   "forgotPassword": {
     "title": "Esqueci a Senha",
@@ -143,6 +151,21 @@
     "currentPasswordHint": "(necessária para alterar seu e-mail)",
     "passwordTitle": "Alterar Senha",
     "saved": "Salvo.",
+    "mfa": {
+      "title": "Autenticação em Dois Fatores",
+      "hint": "Adicione uma segunda etapa ao seu login usando um aplicativo autenticador (Google Authenticator, 1Password, Authy...).",
+      "enabled": "Ativado",
+      "enable": "Ativar",
+      "enrolling": "Gerando...",
+      "scanHint": "Escaneie este QR code com seu aplicativo autenticador, ou digite o segredo manualmente, depois confirme com o código de 6 dígitos gerado.",
+      "secretLabel": "Ou digite este segredo manualmente",
+      "codeLabel": "Código",
+      "activate": "Ativar",
+      "activating": "Ativando...",
+      "disable": "Desativar",
+      "disableHint": "(necessária para desativar a autenticação em dois fatores)",
+      "confirmDisable": "Confirmar & Desativar"
+    },
     "apiTokens": {
       "title": "Tokens de API",
       "hint": "Tokens pessoais para autenticar suas próprias requisições à API, como alternativa a fazer login -- eles carregam suas permissões atuais e param de funcionar assim que revogados.",

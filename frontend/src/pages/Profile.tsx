@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { QRCodeSVG } from "qrcode.react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { useList, mutationErrorMessage } from "../api/hooks";
@@ -25,6 +26,7 @@ export function ProfilePage() {
       <p className="page-sub">{t("profile.subtitle")}</p>
       <ProfileForm />
       <PasswordSection />
+      <MFASection />
       <APITokensSection />
     </>
   );
@@ -220,6 +222,199 @@ function PasswordSection() {
         </button>
       </div>
     </form>
+  );
+}
+
+// Self-service TOTP enrollment/management. Unlike PasswordSection/
+// APITokensSection, there's no dedicated GET endpoint backing this --
+// user.mfaEnabled (decoded from the JWT, see AuthContext) is the only
+// source of truth for whether 2FA is currently on, same staleness
+// discipline as isAdmin/resourceAccess already accept. ConfirmMFA/DisableMFA
+// both return a fresh token specifically so this component's view of that
+// flag updates immediately via applyNewToken, without forcing a re-login.
+function MFASection() {
+  const { t } = useTranslation();
+  const { token, user, applyNewToken } = useAuth();
+  const { saved, markSaved, clearSaved } = useSavedFlag();
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Enrollment is a two-step dance: enroll() generates a secret server-side
+  // but never persists it (see AuthService.GenerateMFAEnrollment's doc
+  // comment) -- it only becomes real once confirm() proves the caller
+  // actually captured it by producing a real code from it.
+  const [enrolling, setEnrolling] = useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [code, setCode] = useState("");
+
+  const [showDisableConfirm, setShowDisableConfirm] = useState(false);
+  const [disablePassword, setDisablePassword] = useState("");
+
+  async function handleEnroll() {
+    setSubmitting(true);
+    setError(null);
+    clearSaved();
+    try {
+      const res = await api.post<{ secret: string; otpauthUrl: string }>("/api/v1/account/mfa/enroll", {}, token);
+      setEnrolling(res);
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleCancelEnroll() {
+    setEnrolling(null);
+    setCode("");
+    setError(null);
+  }
+
+  async function handleConfirm(e: FormEvent) {
+    e.preventDefault();
+    if (!enrolling) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await api.put<{ token: string }>(
+        "/api/v1/account/mfa",
+        { secret: enrolling.secret, code: code.trim() },
+        token,
+      );
+      applyNewToken(res.token);
+      setEnrolling(null);
+      setCode("");
+      markSaved();
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDisable(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    clearSaved();
+    try {
+      const res = await api.del<{ token: string }>("/api/v1/account/mfa", token, { currentPassword: disablePassword });
+      applyNewToken(res.token);
+      setShowDisableConfirm(false);
+      setDisablePassword("");
+      markSaved();
+    } catch (err) {
+      setError(mutationErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: 16 }}>
+      <div className="panel-header">
+        <h2 className="panel-title" style={{ marginBottom: 0 }}>
+          {t("profile.mfa.title")}
+        </h2>
+        {user?.mfaEnabled && <span className="badge badge-success">{t("profile.mfa.enabled")}</span>}
+      </div>
+      <p className="helper-text" style={{ marginBottom: 14 }}>
+        {t("profile.mfa.hint")}
+      </p>
+
+      {error && <div className="error-banner">{error}</div>}
+      {saved && <div className="helper-text" style={{ color: "var(--success)", marginBottom: 12 }}>{t("profile.saved")}</div>}
+
+      {!user?.mfaEnabled && !enrolling && (
+        <div className="row-actions">
+          <button className="btn btn-primary btn-sm" onClick={() => void handleEnroll()} disabled={submitting}>
+            {submitting ? t("profile.mfa.enrolling") : t("profile.mfa.enable")}
+          </button>
+        </div>
+      )}
+
+      {enrolling && (
+        <form onSubmit={handleConfirm}>
+          <p className="helper-text" style={{ marginBottom: 10 }}>
+            {t("profile.mfa.scanHint")}
+          </p>
+          <div style={{ background: "#fff", padding: 12, borderRadius: 8, display: "inline-block", marginBottom: 10 }}>
+            <QRCodeSVG value={enrolling.otpauthUrl} size={168} />
+          </div>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label>{t("profile.mfa.secretLabel")}</label>
+            <code className="mono" style={{ fontSize: 12.5, wordBreak: "break-all" }}>
+              {enrolling.secret}
+            </code>
+          </div>
+          <div className="field">
+            <label htmlFor="mfa-confirm-code">{t("profile.mfa.codeLabel")}</label>
+            <input
+              id="mfa-confirm-code"
+              className="input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="row-actions">
+            <button type="submit" className="btn btn-primary btn-sm" disabled={submitting || code.length !== 6}>
+              {submitting ? t("profile.mfa.activating") : t("profile.mfa.activate")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={handleCancelEnroll} disabled={submitting}>
+              {t("common.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {user?.mfaEnabled && !showDisableConfirm && (
+        <div className="row-actions">
+          <button className="btn btn-danger btn-sm" onClick={() => setShowDisableConfirm(true)}>
+            {t("profile.mfa.disable")}
+          </button>
+        </div>
+      )}
+
+      {user?.mfaEnabled && showDisableConfirm && (
+        <form onSubmit={handleDisable}>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label htmlFor="mfa-disable-password">
+              {t("profile.currentPassword")} <span className="field-hint">{t("profile.mfa.disableHint")}</span>
+            </label>
+            <input
+              id="mfa-disable-password"
+              className="input"
+              type="password"
+              value={disablePassword}
+              onChange={(e) => setDisablePassword(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="row-actions">
+            <button type="submit" className="btn btn-danger btn-sm" disabled={submitting}>
+              {submitting ? t("common.saving") : t("profile.mfa.confirmDisable")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setShowDisableConfirm(false);
+                setDisablePassword("");
+              }}
+              disabled={submitting}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }
 

@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -27,6 +29,17 @@ import (
 // -- resolveTenant always resolves that single tenant, so login-success
 // tests have no other way to reach it than through the actual seed data.
 func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
+	t.Helper()
+	h, _ := newAuthHandlersAndService(t)
+	return h
+}
+
+// newAuthHandlersAndService also hands back the underlying AuthService --
+// most tests in this file only need the HTTP surface, but the MFA tests
+// need to enroll/confirm a secret directly (there's no HTTP route for
+// AccountHandlers here, only AuthHandlers' login/verify routes) before
+// exercising the login flow through HTTP.
+func newAuthHandlersAndService(t *testing.T) (*handlers.AuthHandlers, *service.AuthService) {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
 
@@ -48,7 +61,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	tenants := repository.NewTenantRepository()
 	users := repository.NewUserRepository()
 	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
-	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), roleSvc, issuer)
+	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer)
 	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
 	ldapSvc := service.NewLDAPAuthService(pool, identityCfg, store, authSvc)
@@ -59,7 +72,7 @@ func newAuthHandlers(t *testing.T) *handlers.AuthHandlers {
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{}, repository.NewAdminAuditEventRepository())
 	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, smtpSvc, "http://localhost:3000")
 
-	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc)
+	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc), authSvc
 }
 
 func TestAuthHandlers_LoginLocal(t *testing.T) {
@@ -234,6 +247,93 @@ func TestAuthHandlers_Refresh(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"refreshToken": rotatedRefreshToken})
 		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
 		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+}
+
+// TestAuthHandlers_LoginLocal_MFA exercises the full two-step login for a
+// TOTP-enrolled account through HTTP: /login returns a pending token
+// instead of a session, and /mfa/verify (or a wrong code/token) decides
+// what happens next -- same fixture-in-the-real-default-tenant shape as
+// TestAuthHandlers_LoginLocal, since resolveTenant always resolves that one
+// tenant, not an arbitrary testutil.NewTenant().
+func TestAuthHandlers_LoginLocal_MFA(t *testing.T) {
+	h, authSvc := newAuthHandlersAndService(t)
+	r := newRouter(h.Routes)
+
+	tenant, err := authSvc.ResolveDefaultTenant(t.Context())
+	require.NoError(t, err)
+	userID := testutil.NewUser(t, tenant.ID, "analyst", nil)
+	pool := testutil.RequireTestDB(t)
+	tx := testutil.BeginTx(t, pool, tenant.ID)
+	user, err := repository.NewUserRepository().Get(t.Context(), tx, tenant.ID, userID)
+	require.NoError(t, err)
+	email := user.Email
+
+	secret, _, err := authSvc.GenerateMFAEnrollment(t.Context(), tenant.ID, userID)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, time.Now())
+	require.NoError(t, err)
+	_, err = authSvc.ConfirmMFA(t.Context(), tenant.ID, userID, secret, code)
+	require.NoError(t, err)
+
+	var pendingToken string
+	t.Run("login with a correct password returns mfaRequired + a pending token, not a session", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"email": email, "password": testutil.TestPassword})
+		req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			MFARequired  bool   `json:"mfaRequired"`
+			PendingToken string `json:"pendingToken"`
+			Token        string `json:"token"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.True(t, resp.MFARequired)
+		assert.NotEmpty(t, resp.PendingToken)
+		assert.Empty(t, resp.Token, "no session token before the code is verified")
+		pendingToken = resp.PendingToken
+	})
+
+	t.Run("verify with a wrong code -- 401, pending token still usable afterward", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"pendingToken": pendingToken, "code": "000000"})
+		req := httptest.NewRequest("POST", "/mfa/verify", bytes.NewReader(body))
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+	})
+
+	t.Run("verify with an unknown pending token -- 401", func(t *testing.T) {
+		freshCode, err := totp.GenerateCode(secret, time.Now())
+		require.NoError(t, err)
+		body, _ := json.Marshal(map[string]string{"pendingToken": "mfap_no-such-token", "code": freshCode})
+		req := httptest.NewRequest("POST", "/mfa/verify", bytes.NewReader(body))
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+	})
+
+	t.Run("malformed body -- 400", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/mfa/verify", bytes.NewReader([]byte("not json")))
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("verify with the correct code -- 200 with a real session", func(t *testing.T) {
+		freshCode, err := totp.GenerateCode(secret, time.Now())
+		require.NoError(t, err)
+		body, _ := json.Marshal(map[string]string{"pendingToken": pendingToken, "code": freshCode})
+		req := httptest.NewRequest("POST", "/mfa/verify", bytes.NewReader(body))
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.NotEmpty(t, resp["token"])
+		assert.NotEmpty(t, resp["refreshToken"])
+
+		t.Run("the same pending token cannot be reused afterward", func(t *testing.T) {
+			freshCode, err := totp.GenerateCode(secret, time.Now())
+			require.NoError(t, err)
+			body, _ := json.Marshal(map[string]string{"pendingToken": pendingToken, "code": freshCode})
+			req := httptest.NewRequest("POST", "/mfa/verify", bytes.NewReader(body))
+			assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
+		})
 	})
 }
 

@@ -444,3 +444,13 @@ export interface LoginResponse {
     mustChangePassword: boolean;
   };
 }
+
+// What POST /auth/login returns instead of LoginResponse when the account
+// has TOTP enrolled: the password was correct, but no session exists yet --
+// pendingToken must be presented alongside a 6-digit code to
+// POST /auth/mfa/verify (which itself returns a normal LoginResponse) before
+// there's a real session. See AuthContext.loginLocal/verifyMfa.
+export interface MfaRequiredResponse {
+  mfaRequired: true;
+  pendingToken: string;
+}

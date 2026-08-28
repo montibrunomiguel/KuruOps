@@ -35,7 +35,7 @@ func newUserHandlerFixtureWithAuth(t *testing.T) (h *handlers.UserHandlers, tena
 	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), roleSvc, authn.NewIssuer(priv))
+	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, authn.NewIssuer(priv))
 	h = handlers.NewUserHandlers(service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository()), authSvc)
 	return h, tenantID, targetUserID, authSvc
 }
@@ -194,7 +194,7 @@ func TestUserHandlers_Deactivate_RevokesRefreshToken(t *testing.T) {
 	r := newRouter(h.Routes)
 
 	// testutil.NewUser's fixture email is deterministic: "<id>@test.local".
-	_, _, rt, err := authSvc.LoginLocal(t.Context(), tenantID, targetUserID.String()+"@test.local", testutil.TestPassword)
+	_, _, rt, _, err := authSvc.LoginLocal(t.Context(), tenantID, targetUserID.String()+"@test.local", testutil.TestPassword)
 	require.NoError(t, err)
 	require.NotEmpty(t, rt)
 

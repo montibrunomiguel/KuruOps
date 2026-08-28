@@ -99,7 +99,7 @@ func TestUserService_ResetPassword(t *testing.T) {
 		priv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
 		roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
-		authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), roleSvc, authn.NewIssuer(priv))
+		authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, authn.NewIssuer(priv))
 		fedUser, _, _, err := authSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed,dc=example,dc=com", "fed@example.com", "Fed User", nil)
 		require.NoError(t, err)
 

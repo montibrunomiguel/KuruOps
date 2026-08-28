@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -26,7 +28,7 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -62,7 +64,7 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -119,7 +121,7 @@ func TestAccountHandlers_APITokens(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -174,5 +176,97 @@ func TestAccountHandlers_APITokens(t *testing.T) {
 	t.Run("malformed id -- 400", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("DELETE", "/api-tokens/not-a-uuid", nil), tenantID, userID, nil)
 		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+}
+
+func TestAccountHandlers_MFA(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", nil)
+	priv, err := authn.GenerateEphemeralKeyPair()
+	require.NoError(t, err)
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
+	r := newRouter(h.Routes)
+
+	var secret string
+	t.Run("enroll -- 200 with a secret and an otpauth URL, nothing persisted yet", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("POST", "/mfa/enroll", nil), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var resp struct {
+			Secret     string `json:"secret"`
+			OtpauthURL string `json:"otpauthUrl"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotEmpty(t, resp.Secret)
+		assert.Contains(t, resp.OtpauthURL, "otpauth://totp/")
+		secret = resp.Secret
+
+		// GenerateMFAEnrollment never writes to the DB -- confirm login
+		// isn't gated behind MFA yet by checking LoginLocal returns no
+		// pending token for this account.
+		_, _, _, pendingToken, err := authSvc.LoginLocal(t.Context(), tenantID, userID.String()+"@test.local", testutil.TestPassword)
+		require.NoError(t, err)
+		assert.Empty(t, pendingToken)
+	})
+
+	t.Run("confirm with a wrong code -- 400, still not active", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"secret": secret, "code": "000000"})
+		req := withClaims(httptest.NewRequest("PUT", "/mfa", bytes.NewReader(body)), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("confirm malformed body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("PUT", "/mfa", bytes.NewReader([]byte("not json"))), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("confirm with the correct code -- 200 with a fresh token, activates it", func(t *testing.T) {
+		code, err := totp.GenerateCode(secret, time.Now())
+		require.NoError(t, err)
+		body, _ := json.Marshal(map[string]string{"secret": secret, "code": code})
+		req := withClaims(httptest.NewRequest("PUT", "/mfa", bytes.NewReader(body)), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.NotEmpty(t, resp["token"])
+
+		_, _, _, pendingToken, err := authSvc.LoginLocal(t.Context(), tenantID, userID.String()+"@test.local", testutil.TestPassword)
+		require.NoError(t, err)
+		assert.NotEmpty(t, pendingToken, "login must now require the second factor")
+	})
+
+	t.Run("disable with the wrong password -- 400, stays enrolled", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"currentPassword": "wrong"})
+		req := withClaims(httptest.NewRequest("DELETE", "/mfa", bytes.NewReader(body)), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+
+		_, _, _, pendingToken, err := authSvc.LoginLocal(t.Context(), tenantID, userID.String()+"@test.local", testutil.TestPassword)
+		require.NoError(t, err)
+		assert.NotEmpty(t, pendingToken)
+	})
+
+	t.Run("disable malformed body -- 400", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("DELETE", "/mfa", bytes.NewReader([]byte("not json"))), tenantID, userID, nil)
+		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	})
+
+	t.Run("disable with the correct password -- 200 with a fresh token, login no longer requires a second factor", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"currentPassword": testutil.TestPassword})
+		req := withClaims(httptest.NewRequest("DELETE", "/mfa", bytes.NewReader(body)), tenantID, userID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.NotEmpty(t, resp["token"])
+
+		user, _, _, pendingToken, err := authSvc.LoginLocal(t.Context(), tenantID, userID.String()+"@test.local", testutil.TestPassword)
+		require.NoError(t, err)
+		require.NotNil(t, user)
+		assert.Empty(t, pendingToken)
 	})
 }

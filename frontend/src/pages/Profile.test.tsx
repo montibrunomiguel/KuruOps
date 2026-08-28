@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { ProfilePage } from "./Profile";
 import { AuthProvider } from "../auth/AuthContext";
 
-function renderWithSession(phone?: string) {
+function renderWithSession(phone?: string, mfaEnabled = false) {
   localStorage.setItem(
     "argusops.session",
     JSON.stringify({
@@ -19,6 +19,7 @@ function renderWithSession(phone?: string) {
         role: "analyst",
         mustChangePassword: false,
         resourceAccess: [],
+        mfaEnabled,
       },
     }),
   );
@@ -33,6 +34,15 @@ function renderWithSession(phone?: string) {
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+// A fake JWT whose payload segment decodes to the given claims -- same
+// shape AuthContext.test.tsx's fakeToken uses, needed here since
+// ConfirmMFA/DisableMFA's responses are re-decoded via applyNewToken.
+function fakeToken(claims: Record<string, unknown>): string {
+  const header = btoa(JSON.stringify({ alg: "RS256" }));
+  const payload = btoa(JSON.stringify(claims)).replace(/\+/g, "-").replace(/\//g, "_");
+  return `${header}.${payload}.fake-signature`;
 }
 
 describe("ProfilePage", () => {
@@ -234,5 +244,152 @@ describe("ProfilePage", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/v1/account/api-tokens/t1", expect.objectContaining({ method: "DELETE" })),
     );
     expect(await screen.findByText("No API tokens yet.")).toBeInTheDocument();
+  });
+
+  describe("Two-Factor Authentication", () => {
+    it("shows an Enable button and no Enabled badge when MFA is off", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, [])));
+      renderWithSession(undefined, false);
+
+      expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
+      expect(screen.queryByText("Enabled")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+    });
+
+    it("Enable fetches a secret + QR and shows the confirm-code step", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/mfa/enroll")) {
+          return Promise.resolve(
+            jsonResponse(200, { secret: "JBSWY3DPEHPK3PXP", otpauthUrl: "otpauth://totp/ArgusOps:analyst@argusops.local?secret=JBSWY3DPEHPK3PXP&issuer=ArgusOps" }),
+          );
+        }
+        return Promise.resolve(jsonResponse(200, []));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession(undefined, false);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
+
+      expect(await screen.findByText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
+      expect(screen.getByLabelText("Code")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/account/mfa/enroll", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("Cancel during enrollment returns to the Enable button without confirming", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string) => {
+          if (url.includes("/mfa/enroll")) return Promise.resolve(jsonResponse(200, { secret: "SECRET123", otpauthUrl: "otpauth://totp/x" }));
+          return Promise.resolve(jsonResponse(200, []));
+        }),
+      );
+      renderWithSession(undefined, false);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
+      await screen.findByText("SECRET123");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      expect(screen.getByRole("button", { name: "Enable" })).toBeInTheDocument();
+      expect(screen.queryByText("SECRET123")).not.toBeInTheDocument();
+    });
+
+    it("confirming with the code PUTs the secret+code and activates it", async () => {
+      const freshToken = fakeToken({ mfa_enabled: true });
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/mfa/enroll")) return Promise.resolve(jsonResponse(200, { secret: "SECRET123", otpauthUrl: "otpauth://totp/x" }));
+        if (url.endsWith("/api/v1/account/mfa") && init?.method === "PUT") {
+          return Promise.resolve(jsonResponse(200, { token: freshToken }));
+        }
+        return Promise.resolve(jsonResponse(200, []));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession(undefined, false);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
+      await screen.findByText("SECRET123");
+      await userEvent.type(screen.getByLabelText("Code"), "123456");
+      await userEvent.click(screen.getByRole("button", { name: "Activate" }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/v1/account/mfa",
+          expect.objectContaining({ method: "PUT", body: JSON.stringify({ secret: "SECRET123", code: "123456" }) }),
+        ),
+      );
+      expect(await screen.findByText("Enabled")).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Disable" })).toBeInTheDocument();
+    });
+
+    it("shows the server's error when confirming with a wrong code", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+          if (url.includes("/mfa/enroll")) return Promise.resolve(jsonResponse(200, { secret: "SECRET123", otpauthUrl: "otpauth://totp/x" }));
+          if (url.endsWith("/api/v1/account/mfa") && init?.method === "PUT") return Promise.resolve(jsonResponse(400, { error: "invalid code" }));
+          return Promise.resolve(jsonResponse(200, []));
+        }),
+      );
+      renderWithSession(undefined, false);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
+      await screen.findByText("SECRET123");
+      await userEvent.type(screen.getByLabelText("Code"), "000000");
+      await userEvent.click(screen.getByRole("button", { name: "Activate" }));
+
+      expect(await screen.findByText("invalid code")).toBeInTheDocument();
+    });
+
+    it("when MFA is on, shows the Enabled badge and a Disable button", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, [])));
+      renderWithSession(undefined, true);
+
+      expect(await screen.findByText("Enabled")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
+    });
+
+    it("Disable reveals a password field, and a wrong password shows an error without disabling", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+          if (url.endsWith("/api/v1/account/mfa") && init?.method === "DELETE") return Promise.resolve(jsonResponse(400, { error: "current password is incorrect" }));
+          return Promise.resolve(jsonResponse(200, []));
+        }),
+      );
+      renderWithSession(undefined, true);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
+      const pwField = screen.getByLabelText(/required to turn off two-factor authentication/);
+      await userEvent.type(pwField, "wrong");
+      await userEvent.click(screen.getByRole("button", { name: "Confirm & Disable" }));
+
+      expect(await screen.findByText("current password is incorrect")).toBeInTheDocument();
+      expect(screen.getByText("Enabled")).toBeInTheDocument();
+    });
+
+    it("Disable with the correct password turns MFA off", async () => {
+      const freshToken = fakeToken({ mfa_enabled: false });
+      const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.endsWith("/api/v1/account/mfa") && init?.method === "DELETE") {
+          return Promise.resolve(jsonResponse(200, { token: freshToken }));
+        }
+        return Promise.resolve(jsonResponse(200, []));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      renderWithSession(undefined, true);
+
+      await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
+      await userEvent.type(screen.getByLabelText(/required to turn off two-factor authentication/), "ChangeMe123!");
+      await userEvent.click(screen.getByRole("button", { name: "Confirm & Disable" }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/v1/account/mfa",
+          expect.objectContaining({ method: "DELETE", body: JSON.stringify({ currentPassword: "ChangeMe123!" }) }),
+        ),
+      );
+      expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
+      expect(screen.queryByText("Enabled")).not.toBeInTheDocument();
+    });
   });
 });

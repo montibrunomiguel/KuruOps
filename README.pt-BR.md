@@ -112,6 +112,11 @@ mesmo tempo.
   separadamente por tipo de recurso -- antes de serem excluídos permanentemente; nunca toca em
   evidências no armazenamento de blobs) e Banco de Dados Externo (migração assistida do Postgres
   embutido para um Postgres gerenciado pelo cliente).
+- **Minha Conta** (autoatendimento, todo usuário) — nome/e-mail/telefone, alteração de senha,
+  tokens de API pessoais, e autenticação em dois fatores opcional (TOTP via qualquer aplicativo
+  autenticador padrão -- escaneie um QR code ou digite o segredo manualmente, confirme com um código
+  de 6 dígitos para ativar; desativar exige a senha atual). Uma conta com 2FA ativado ganha uma
+  segunda etapa de login (um código de 6 dígitos) após a verificação de senha.
 
 ## Testes
 

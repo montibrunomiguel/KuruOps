@@ -53,6 +53,7 @@ func (h *AuthHandlers) Routes(r chi.Router) {
 	r.Post("/saml/acs", h.samlACS)
 	r.Post("/password-reset/request", h.passwordResetRequest)
 	r.Post("/password-reset/confirm", h.passwordResetConfirm)
+	r.Post("/mfa/verify", h.mfaVerify)
 }
 
 // resolveTenant fetches the single tenant every deployment has. A nil
@@ -100,6 +101,16 @@ type loginUser struct {
 	MustChangePassword bool    `json:"mustChangePassword"`
 }
 
+// mfaRequiredResponse is what loginLocal returns instead of loginResponse
+// when the account has TOTP enrolled -- the password was correct, but no
+// session exists yet. The frontend's login form must show a second,
+// code-entry step and call mfaVerify with pendingToken before it has a
+// usable session.
+type mfaRequiredResponse struct {
+	MFARequired  bool   `json:"mfaRequired"`
+	PendingToken string `json:"pendingToken"`
+}
+
 func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := h.resolveTenant(w, r)
 	if !ok {
@@ -116,13 +127,64 @@ func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, token, refreshToken, err := h.auth.LoginLocal(r.Context(), tenant.ID, req.Email, req.Password)
+	user, token, refreshToken, pendingToken, err := h.auth.LoginLocal(r.Context(), tenant.ID, req.Email, req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if pendingToken != "" {
+		writeJSON(w, http.StatusOK, mfaRequiredResponse{MFARequired: true, PendingToken: pendingToken})
+		return
+	}
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, loginResponse{
+		Token:        token,
+		RefreshToken: refreshToken,
+		User: loginUser{
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
+			MustChangePassword: user.MustChangePassword,
+		},
+	})
+}
+
+type mfaVerifyRequest struct {
+	PendingToken string `json:"pendingToken"`
+	Code         string `json:"code"`
+}
+
+// mfaVerify is the second step of a login for a TOTP-enrolled account --
+// same opaque-failure discipline as loginLocal itself (an unknown/expired
+// pendingToken and a wrong code both read as a plain 401, see
+// AuthService.VerifyMFA's doc comment), and rate-limited by pendingToken
+// the same way passwordResetConfirm is keyed by its reset token, since
+// brute-forcing a 6-digit code is the same threat class.
+func (h *AuthHandlers) mfaVerify(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := h.resolveTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var req mfaVerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !h.loginAttempts.Allow(normalizeLoginKey(req.PendingToken)) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts -- try again later")
+		return
+	}
+
+	user, token, refreshToken, err := h.auth.VerifyMFA(r.Context(), tenant.ID, req.PendingToken, req.Code)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if user == nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		writeError(w, http.StatusUnauthorized, "invalid or expired code")
 		return
 	}
 

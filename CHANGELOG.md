@@ -13,6 +13,14 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Two-factor authentication (TOTP): self-service, optional per-user, enrolled from Settings →
+  Profile → Two-Factor Authentication (scan a QR code or enter the secret manually into an
+  authenticator app, then confirm with a 6-digit code). A local login for an enrolled account stops
+  short of a session after the password check and returns a short-lived pending token instead; the
+  login form's second step exchanges that token plus a fresh code for the real session
+  (`POST /auth/mfa/verify`). Disabling requires re-entering the current password. Uses
+  `github.com/pquerna/otp` (backend) and `qrcode.react` (frontend) — no secret or QR image ever
+  leaves the browser except through the user's own enrollment request.
 - Bulk status-change on Alerts/Incidents lists: a checkbox column + "select all on this page" on
   both list pages, with a toolbar that appears once ≥1 row is selected to change every selected
   alert's status (`POST /api/v1/alerts/bulk/status`) or every selected incident's NIST phase

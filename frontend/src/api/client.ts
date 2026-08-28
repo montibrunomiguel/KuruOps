@@ -128,7 +128,12 @@ export const api = {
     request<T>(path, { method: "POST", body, token }),
   put: <T>(path: string, body: unknown, token: string | null) =>
     request<T>(path, { method: "PUT", body, token }),
-  del: <T>(path: string, token: string | null) => request<T>(path, { method: "DELETE", token }),
+  // body is optional and normally omitted (every other DELETE in this app
+  // identifies its target via the URL alone) -- account/mfa's disable is
+  // the one exception, since it needs the caller's current password as
+  // proof of intent (see AuthService.DisableMFA's doc comment), and a
+  // password has no business appearing in a URL/query string.
+  del: <T>(path: string, token: string | null, body?: unknown) => request<T>(path, { method: "DELETE", body, token }),
   // kind/id identify the alert or incident the evidence is attached to --
   // the backend uses them to build the storage key
   // (<Alert|Incident>/yyyy/mm/dd/Title/uuid_file.ext) and to enforce the

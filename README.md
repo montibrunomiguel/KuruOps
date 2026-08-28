@@ -109,6 +109,11 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   default, separately per resource type — before being permanently deleted; never touches evidence
   in blob storage), and External Database (assisted migration from the bundled Postgres to a
   customer-managed Postgres).
+- **My Account** (self-service, every user) — name/email/phone, password change, personal API
+  tokens, and optional two-factor authentication (TOTP via any standard authenticator app — scan a
+  QR code or enter the secret manually, confirm with a 6-digit code to activate; disabling requires
+  the current password). An enrolled account gets a second login step (a 6-digit code) after the
+  password check.
 
 ## Tests
 
