@@ -255,6 +255,34 @@ func (s *IncidentService) ChangePhase(ctx context.Context, tenantID, incidentID,
 	return err
 }
 
+// BulkChangePhase applies ChangePhase to each of ids in turn, one
+// transaction per incident -- same reasoning as AlertService.BulkChangeStatus,
+// see its doc comment. Unlike ChangeStatus (which already self-rejects a
+// direct transition to 'closed'), ChangePhase has no such guard for
+// PhasePostIncident -- Close is a distinct method that calls ChangePhase and
+// then separately stamps closed_at, so nothing inside ChangePhase itself
+// stops a caller from bulk-setting a whole page of incidents to
+// post_incident without ever recording a closedAt. Bulk-close was
+// explicitly descoped (closing still requires the existing per-item
+// classification flow via Close), so this rejects the whole request up
+// front rather than letting it through and silently leaving closed_at unset
+// on every affected incident.
+func (s *IncidentService) BulkChangePhase(ctx context.Context, tenantID, actorID uuid.UUID, ids []uuid.UUID, newPhase domain.IncidentPhase, allowedTags []string) ([]BulkResult, error) {
+	if newPhase == domain.PhasePostIncident {
+		return nil, fmt.Errorf("use Close to move an incident to post-incident, so closed_at is always captured")
+	}
+
+	results := make([]BulkResult, 0, len(ids))
+	for _, id := range ids {
+		if err := s.ChangePhase(ctx, tenantID, id, actorID, newPhase, allowedTags); err != nil {
+			results = append(results, BulkResult{ID: id, Success: false, Error: err.Error()})
+		} else {
+			results = append(results, BulkResult{ID: id, Success: true})
+		}
+	}
+	return results, nil
+}
+
 // Close moves the incident to PhasePostIncident (like ChangePhase would) and
 // additionally stamps closed_at — a distinct, explicit action from just
 // reaching the post_incident phase via the phase tracker.

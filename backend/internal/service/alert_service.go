@@ -228,6 +228,28 @@ func (s *AlertService) ChangeStatus(ctx context.Context, tenantID, alertID, acto
 	return err
 }
 
+// BulkChangeStatus applies ChangeStatus to each of ids in turn, one
+// transaction per alert (same as calling ChangeStatus that many times by
+// hand) -- not a single multi-row UPDATE, so every invariant ChangeStatus
+// already enforces (tag-visibility via loadVisible, the "closed is
+// read-only" guard, one AlertEvent per change) keeps working unmodified.
+// A caller attempting to bulk-close is naturally rejected per-item by
+// ChangeStatus's own "use Close instead" guard, same as it would be for a
+// single alert -- no separate whole-request check needed here for that
+// case. One alert failing (not found, no longer visible, already closed)
+// doesn't stop the rest from being attempted.
+func (s *AlertService) BulkChangeStatus(ctx context.Context, tenantID, actorID uuid.UUID, ids []uuid.UUID, newStatus domain.AlertStatus, allowedTags []string) []BulkResult {
+	results := make([]BulkResult, 0, len(ids))
+	for _, id := range ids {
+		if err := s.ChangeStatus(ctx, tenantID, id, actorID, newStatus, allowedTags); err != nil {
+			results = append(results, BulkResult{ID: id, Success: false, Error: err.Error()})
+		} else {
+			results = append(results, BulkResult{ID: id, Success: true})
+		}
+	}
+	return results
+}
+
 // AdvanceManualEscalation advances alertID's manual-escalation counter
 // (entirely independent of the automatic SLA loop cmd/worker's
 // sweepEscalations drives) and returns which 0-indexed escalation chain

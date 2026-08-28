@@ -383,4 +383,93 @@ describe("IncidentsListPage", () => {
     expect(lastCall).toContain("limit=20");
     expect(lastCall).toContain("offset=20");
   });
+
+  describe("bulk phase-change", () => {
+    it("selecting a row shows the bulk toolbar with a count, and it disappears on clear", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture()])));
+      render(<IncidentsListPage />, { wrapper });
+      await screen.findByText("Ransomware suspected");
+
+      expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("checkbox", { name: /Select incident/ }));
+      expect(await screen.findByText("1 selected")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+      expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
+    });
+
+    it("the header checkbox selects and deselects every row on the page", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ id: "i1" }), incidentFixture({ id: "i2", title: "Second incident" })])),
+      );
+      render(<IncidentsListPage />, { wrapper });
+      await screen.findByText("Ransomware suspected");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all incidents on this page" }));
+      expect(await screen.findByText("2 selected")).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all incidents on this page" }));
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("the bulk phase dropdown never offers post_incident -- bulk-close is descoped", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture()])));
+      render(<IncidentsListPage />, { wrapper });
+      await screen.findByText("Ransomware suspected");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /Select incident/ }));
+      const bulkSelect = screen.getByRole("combobox", { name: "Change phase to..." });
+      const optionLabels = Array.from(bulkSelect.querySelectorAll("option")).map((o) => o.textContent);
+      expect(optionLabels).not.toContain("Post-Incident");
+    });
+
+    it("applying a bulk phase change posts the selected ids and shows a success summary", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/incidents/bulk/phase") {
+          return Promise.resolve(jsonResponse({ results: [{ id: "i1", success: true }] }));
+        }
+        return Promise.resolve(jsonResponse([incidentFixture()]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<IncidentsListPage />, { wrapper });
+      await screen.findByText("Ransomware suspected");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: /Select incident/ }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+      await waitFor(() => {
+        const call = fetchMock.mock.calls.find((c) => c[0] === "/api/v1/incidents/bulk/phase");
+        expect(call).toBeTruthy();
+        const body = JSON.parse((call![1] as RequestInit).body as string);
+        expect(body).toEqual({ ids: ["i1"], phase: "new" });
+      });
+      expect(await screen.findByText("1 incident updated.")).toBeInTheDocument();
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("a partial failure shows the success/failed breakdown", async () => {
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url === "/api/v1/incidents/bulk/phase") {
+          return Promise.resolve(
+            jsonResponse({
+              results: [
+                { id: "i1", success: true },
+                { id: "i2", success: false, error: "incident i2 not found" },
+              ],
+            }),
+          );
+        }
+        return Promise.resolve(jsonResponse([incidentFixture({ id: "i1" }), incidentFixture({ id: "i2", title: "Second incident" })]));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<IncidentsListPage />, { wrapper });
+      await screen.findByText("Ransomware suspected");
+
+      await userEvent.click(screen.getByRole("checkbox", { name: "Select all incidents on this page" }));
+      await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+      expect(await screen.findByText("1 updated, 1 failed.")).toBeInTheDocument();
+    });
+  });
 });

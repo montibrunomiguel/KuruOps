@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
@@ -7,6 +7,7 @@ import { usePagedList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import type { Severity } from "../../types/alerts";
+import type { BulkResponse } from "../../types/api";
 import type { Incident, IncidentPhase, IncidentPriority } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges";
@@ -21,8 +22,18 @@ import { formatDuration, shortId } from "../../lib/format";
 
 type SlaFilter = "" | "breached" | "ok";
 
+// Bulk phase-change deliberately excludes post_incident -- reaching it via
+// ChangePhase alone never stamps closedAt (only the explicit Close action
+// does, see IncidentService.Close's doc comment), and bulk-close was
+// explicitly descoped: closing still requires the single-item Close flow
+// on the incident detail page. IncidentService.BulkChangePhase itself
+// rejects the whole request if asked for post_incident, this filter just
+// keeps that option from ever being offered in the first place.
+const BULK_PHASE_OPTIONS = NIST_PHASE_ORDER.filter((p) => p !== "post_incident");
+
 export function IncidentsListPage() {
   const { t } = useTranslation();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const [severity, setSeverity] = useState<Severity | "">("");
   const [priority, setPriority] = useState<IncidentPriority | "">("");
@@ -64,6 +75,69 @@ export function IncidentsListPage() {
       return api.getPaged<Incident>(`/api/v1/incidents?${params.toString()}`, tk);
     },
   );
+
+  // Row selection -- scoped to what's currently on screen, same reasoning
+  // as AlertsListPage's selection state, see its comment.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelected(new Set());
+  }, [severity, priority, phase, sla, debouncedQ, range.since, range.until, page, pageSize]);
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const allOnPageSelected = incidents.length > 0 && incidents.every((i) => selected.has(i.id));
+  const someOnPageSelected = incidents.some((i) => selected.has(i.id));
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someOnPageSelected && !allOnPageSelected;
+    }
+  }, [someOnPageSelected, allOnPageSelected]);
+
+  function toggleSelectAll() {
+    if (allOnPageSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(incidents.map((i) => i.id)));
+    }
+  }
+
+  const [bulkPhase, setBulkPhase] = useState<IncidentPhase>(BULK_PHASE_OPTIONS[0]);
+  const [applying, setApplying] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkSummary, setBulkSummary] = useState<{ success: number; failed: number } | null>(null);
+
+  async function applyBulkPhase() {
+    setApplying(true);
+    setBulkError(null);
+    setBulkSummary(null);
+    try {
+      const resp = await api.post<BulkResponse>(
+        "/api/v1/incidents/bulk/phase",
+        { ids: Array.from(selected), phase: bulkPhase },
+        token,
+      );
+      const success = resp.results.filter((r) => r.success).length;
+      const failed = resp.results.length - success;
+      setBulkSummary({ success, failed });
+      setSelected(new Set());
+      reload();
+    } catch (err) {
+      setBulkError(mutationErrorMessage(err));
+    } finally {
+      setApplying(false);
+    }
+  }
 
   // Live updates: another analyst (or the same one, in another tab)
   // creating/changing an incident re-fetches the first page from scratch --
@@ -149,6 +223,39 @@ export function IncidentsListPage() {
         </div>
       </div>
 
+      {selected.size > 0 && (
+        <div className="bulk-toolbar">
+          <span className="bulk-toolbar-count">{t("incidents.bulk.selected", { count: selected.size })}</span>
+          <select
+            className="select"
+            aria-label={t("incidents.bulk.phaseLabel")}
+            value={bulkPhase}
+            onChange={(e) => setBulkPhase(e.target.value as IncidentPhase)}
+            disabled={applying}
+          >
+            {BULK_PHASE_OPTIONS.map((p) => (
+              <option key={p} value={p}>
+                {t(`common.phase.${p}`)}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-primary btn-sm" onClick={() => void applyBulkPhase()} disabled={applying}>
+            {applying ? t("incidents.bulk.applying") : t("incidents.bulk.apply")}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={applying}>
+            {t("incidents.bulk.clearSelection")}
+          </button>
+        </div>
+      )}
+      {bulkError && <div className="error-banner">{bulkError}</div>}
+      {bulkSummary && (
+        <div className="helper-text" style={{ marginBottom: 12 }}>
+          {bulkSummary.failed > 0
+            ? t("incidents.bulk.resultSummary", { success: bulkSummary.success, failed: bulkSummary.failed })
+            : t("incidents.bulk.allSucceeded", { count: bulkSummary.success })}
+        </div>
+      )}
+
       <div className="panel">
         {error && <div className="error-banner">{error}</div>}
         {loading && <div className="empty-state">{t("common.loading")}</div>}
@@ -159,6 +266,15 @@ export function IncidentsListPage() {
               <table className="table">
                 <thead>
                   <tr>
+                    <th className="table-select-cell">
+                      <input
+                        type="checkbox"
+                        ref={selectAllRef}
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAll}
+                        aria-label={t("incidents.bulk.selectAllAria")}
+                      />
+                    </th>
                     <th>{t("incidents.table.id")}</th>
                     <th>{t("incidents.table.title")}</th>
                     <th>{t("incidents.table.severity")}</th>
@@ -171,6 +287,14 @@ export function IncidentsListPage() {
                 <tbody>
                   {incidents.map((i) => (
                     <tr key={i.id}>
+                      <td className="table-select-cell">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(i.id)}
+                          onChange={() => toggleRow(i.id)}
+                          aria-label={t("incidents.bulk.selectRowAria", { id: shortId(i.id) })}
+                        />
+                      </td>
                       <td className="mono">
                         <Link to={`/incidents/${i.id}`} className="row-link-stretch" aria-label={i.title}>
                           {shortId(i.id)}

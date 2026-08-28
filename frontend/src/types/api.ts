@@ -414,6 +414,20 @@ export interface AnalysisChatTranscript {
   error?: string;
 }
 
+// The response shape from POST /api/v1/alerts/bulk/status and
+// /api/v1/incidents/bulk/phase -- one entry per requested id, since a
+// partial failure (e.g. one of N selected rows is no longer visible to the
+// caller) doesn't fail the whole request. See backend's service.BulkResult.
+export interface BulkResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface BulkResponse {
+  results: BulkResult[];
+}
+
 export interface LoginResponse {
   token: string;
   refreshToken: string;

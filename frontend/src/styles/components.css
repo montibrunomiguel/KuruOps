@@ -1235,6 +1235,29 @@
   min-width: 220px;
 }
 
+/* AlertsListPage/IncidentsListPage's bulk-action toolbar -- appears above
+   the table only once >=1 row is selected, tinted with the accent color so
+   it reads as a distinct "you're in a selection" mode rather than blending
+   into the regular filter bar above it. */
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.bulk-toolbar-count {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -1295,6 +1318,16 @@
 .row-link-stretch:focus-visible::after {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* A row-selection checkbox lives in the same <tr> as row-link-stretch's
+   ::after overlay (see above), which otherwise covers the entire row and
+   would swallow the checkbox's clicks -- position + z-index lifts it into
+   its own stacking layer above that overlay within the shared tr. */
+.table-select-cell {
+  position: relative;
+  z-index: 1;
+  width: 1%;
 }
 
 .table td.mono,

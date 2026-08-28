@@ -361,6 +361,19 @@
       "posting": "Posting...",
       "noNotes": "No notes yet.",
       "assigneeTitle": "Assigned Analyst"
+    },
+    "bulk": {
+      "selectAllAria": "Select all alerts on this page",
+      "selectRowAria": "Select alert {{id}}",
+      "selected_one": "{{count}} selected",
+      "selected_other": "{{count}} selected",
+      "statusLabel": "Change status to...",
+      "apply": "Apply",
+      "applying": "Applying...",
+      "clearSelection": "Clear",
+      "resultSummary": "{{success}} updated, {{failed}} failed.",
+      "allSucceeded_one": "{{count}} alert updated.",
+      "allSucceeded_other": "{{count}} alerts updated."
     }
   },
   "incidents": {
@@ -449,6 +462,19 @@
         "privacy_officer": "Privacy Officer",
         "technical_lead": "Technical Lead"
       }
+    },
+    "bulk": {
+      "selectAllAria": "Select all incidents on this page",
+      "selectRowAria": "Select incident {{id}}",
+      "selected_one": "{{count}} selected",
+      "selected_other": "{{count}} selected",
+      "phaseLabel": "Change phase to...",
+      "apply": "Apply",
+      "applying": "Applying...",
+      "clearSelection": "Clear",
+      "resultSummary": "{{success}} updated, {{failed}} failed.",
+      "allSucceeded_one": "{{count}} incident updated.",
+      "allSucceeded_other": "{{count}} incidents updated."
     }
   },
   "settings": {

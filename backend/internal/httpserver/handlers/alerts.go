@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +16,12 @@ import (
 	"github.com/argusops/argusops/internal/repository"
 	"github.com/argusops/argusops/internal/service"
 )
+
+// maxBulkIDs caps a single bulk request -- generous enough to cover a full
+// page at the list pages' largest page size (100/page, see Pagination.tsx),
+// with headroom, while still bounding how many single-ID ChangeStatus/
+// ChangePhase transactions one request can trigger.
+const maxBulkIDs = 200
 
 type AlertHandlers struct {
 	svc *service.AlertService
@@ -35,6 +43,7 @@ func NewAlertHandlers(svc *service.AlertService, ai *service.AIAnalysisService, 
 func (h *AlertHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
+	r.Post("/bulk/status", h.bulkChangeStatus)
 	r.Post("/{id}/status", h.changeStatus)
 	r.Post("/{id}/close", h.close)
 	r.Put("/{id}/tags", h.updateTags)
@@ -145,6 +154,41 @@ func (h *AlertHandlers) changeStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type bulkChangeStatusRequest struct {
+	IDs    []uuid.UUID        `json:"ids"`
+	Status domain.AlertStatus `json:"status"`
+}
+
+// bulkChangeStatus applies one status change across many alerts (the
+// AlertsListPage row-selection toolbar's Apply button). Unlike changeStatus,
+// a per-alert failure doesn't fail the whole request -- the 200 response
+// carries one result per id, same as AlertService.BulkChangeStatus itself
+// returns, so the frontend can show which of the selected alerts succeeded.
+func (h *AlertHandlers) bulkChangeStatus(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	var req bulkChangeStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must not be empty")
+		return
+	}
+	if len(req.IDs) > maxBulkIDs {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d ids per request", maxBulkIDs))
+		return
+	}
+
+	results := h.svc.BulkChangeStatus(r.Context(), tenantID, userID, req.IDs, req.Status, middleware.AllowedTags(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 type closeAlertRequest struct {

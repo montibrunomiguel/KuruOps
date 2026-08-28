@@ -76,7 +76,10 @@ mesmo tempo.
   data e hora exatas.
 - **Alertas / Incidentes** — listagem com filtros, busca por texto completo (título/origem/regra/
   ativo para alertas, título/descrição para incidentes, baseada em uma coluna `tsvector` do
-  Postgres + índice GIN, não um scan `ILIKE` lento) e paginação (`Carregar mais`), detalhe com
+  Postgres + índice GIN, não um scan `ILIKE` lento), paginação (`Carregar mais`), e mudança de
+  status/fase em massa (selecionar linhas via checkbox, mudar o status de todo alerta ou a fase
+  NIST de todo incidente selecionado em uma ação; uma falha parcial reporta resultados por linha, e
+  fechamento em massa não é suportado — fechar ainda passa pelo fluxo normal por item), detalhe com
   timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (manual via botão,
   ou automática na ingestão se houver um provedor LLM configurado). Um alerta recebido via webhook
   pode carregar metadados customizados (canal do Slack, link de playbook externo, ambiente, ou

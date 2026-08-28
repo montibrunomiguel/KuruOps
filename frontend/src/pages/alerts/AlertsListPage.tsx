@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { usePagedList } from "../../api/hooks";
+import { usePagedList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
+import type { BulkResponse } from "../../types/api";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
@@ -13,8 +15,15 @@ import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue
 import { Pagination } from "../../components/Pagination";
 import { formatRelative, shortId } from "../../lib/format";
 
+// Bulk status-change deliberately excludes "closed" -- ChangeStatus (and so
+// BulkChangeStatus, which just loops over it) rejects a direct transition
+// to closed so classification is always captured; closing an alert still
+// requires the existing per-item Close & Classify flow on the detail page.
+const BULK_STATUS_OPTIONS: AlertStatus[] = ["open", "investigating", "escalated"];
+
 export function AlertsListPage() {
   const { t } = useTranslation();
+  const { token } = useAuth();
   const [severity, setSeverity] = useState<Severity | "">("");
   const [status, setStatus] = useState<AlertStatus | "">("");
   const [source, setSource] = useState("");
@@ -56,6 +65,71 @@ export function AlertsListPage() {
       return api.getPaged<Alert>(`/api/v1/alerts?${params.toString()}`, tk);
     },
   );
+
+  // Row selection -- scoped to what's currently on screen, not persisted
+  // across a page/filter change, so the bulk toolbar's count never refers
+  // to rows the analyst can no longer see. Anything that swaps out which
+  // alerts are shown resets it via the effect below.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelected(new Set());
+  }, [severity, status, source, correlated, tag, debouncedQ, range.since, range.until, page, pageSize]);
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  const allOnPageSelected = alerts.length > 0 && alerts.every((a) => selected.has(a.id));
+  const someOnPageSelected = alerts.some((a) => selected.has(a.id));
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someOnPageSelected && !allOnPageSelected;
+    }
+  }, [someOnPageSelected, allOnPageSelected]);
+
+  function toggleSelectAll() {
+    if (allOnPageSelected) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(alerts.map((a) => a.id)));
+    }
+  }
+
+  const [bulkStatus, setBulkStatus] = useState<AlertStatus>("investigating");
+  const [applying, setApplying] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkSummary, setBulkSummary] = useState<{ success: number; failed: number } | null>(null);
+
+  async function applyBulkStatus() {
+    setApplying(true);
+    setBulkError(null);
+    setBulkSummary(null);
+    try {
+      const resp = await api.post<BulkResponse>(
+        "/api/v1/alerts/bulk/status",
+        { ids: Array.from(selected), status: bulkStatus },
+        token,
+      );
+      const success = resp.results.filter((r) => r.success).length;
+      const failed = resp.results.length - success;
+      setBulkSummary({ success, failed });
+      setSelected(new Set());
+      reload();
+    } catch (err) {
+      setBulkError(mutationErrorMessage(err));
+    } finally {
+      setApplying(false);
+    }
+  }
 
   // Live updates: another analyst (or the same one, in another tab)
   // changing an alert re-fetches the first page from scratch -- simplest
@@ -127,6 +201,39 @@ export function AlertsListPage() {
         {!loading && <span className="chart-card-sub">{t("alerts.count", { count: total })}</span>}
       </div>
 
+      {selected.size > 0 && (
+        <div className="bulk-toolbar">
+          <span className="bulk-toolbar-count">{t("alerts.bulk.selected", { count: selected.size })}</span>
+          <select
+            className="select"
+            aria-label={t("alerts.bulk.statusLabel")}
+            value={bulkStatus}
+            onChange={(e) => setBulkStatus(e.target.value as AlertStatus)}
+            disabled={applying}
+          >
+            {BULK_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {t(`common.alertStatus.${s}`)}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn-primary btn-sm" onClick={() => void applyBulkStatus()} disabled={applying}>
+            {applying ? t("alerts.bulk.applying") : t("alerts.bulk.apply")}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={applying}>
+            {t("alerts.bulk.clearSelection")}
+          </button>
+        </div>
+      )}
+      {bulkError && <div className="error-banner">{bulkError}</div>}
+      {bulkSummary && (
+        <div className="helper-text" style={{ marginBottom: 12 }}>
+          {bulkSummary.failed > 0
+            ? t("alerts.bulk.resultSummary", { success: bulkSummary.success, failed: bulkSummary.failed })
+            : t("alerts.bulk.allSucceeded", { count: bulkSummary.success })}
+        </div>
+      )}
+
       <div className="panel">
         {error && <div className="error-banner">{error}</div>}
         {loading && <div className="empty-state">{t("common.loading")}</div>}
@@ -137,6 +244,15 @@ export function AlertsListPage() {
               <table className="table">
                 <thead>
                   <tr>
+                    <th className="table-select-cell">
+                      <input
+                        type="checkbox"
+                        ref={selectAllRef}
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAll}
+                        aria-label={t("alerts.bulk.selectAllAria")}
+                      />
+                    </th>
                     <th>{t("alerts.table.id")}</th>
                     <th>{t("alerts.table.title")}</th>
                     <th>{t("alerts.table.source")}</th>
@@ -150,6 +266,14 @@ export function AlertsListPage() {
                 <tbody>
                   {alerts.map((a) => (
                     <tr key={a.id}>
+                      <td className="table-select-cell">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(a.id)}
+                          onChange={() => toggleRow(a.id)}
+                          aria-label={t("alerts.bulk.selectRowAria", { id: a.id.slice(0, 8) })}
+                        />
+                      </td>
                       <td className="mono">
                         <Link to={`/alerts/${a.id}`} className="row-link-stretch" aria-label={a.title}>
                           {a.id.slice(0, 8)}

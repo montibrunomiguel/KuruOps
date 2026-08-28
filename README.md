@@ -74,7 +74,10 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   (24h/7d/30d/90d) or a custom range with exact date and time.
 - **Alerts / Incidents** — listing with filters, full-text search (title/source/rule/asset for
   alerts, title/description for incidents, backed by a Postgres `tsvector` + GIN index, not a slow
-  `ILIKE` scan), and pagination (`Load more`); a detail view with an event timeline, comments,
+  `ILIKE` scan), pagination (`Load more`), and bulk status/phase-change (select rows with a
+  checkbox, change every selected alert's status or incident's NIST phase in one action; a partial
+  failure reports per-row results, and bulk-closing isn't supported — closing still goes through
+  the normal per-item flow); a detail view with an event timeline, comments,
   alert↔incident linking, and AI analysis (manual via a button, or
   automatic on ingest if an LLM provider is configured for it). An alert received via webhook can
   carry custom metadata (a Slack channel, an external playbook link, an environment, or any
