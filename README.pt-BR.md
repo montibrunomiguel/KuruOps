@@ -88,6 +88,11 @@ mesmo tempo.
   fonte externa (SIEM/XDR) envia alertas por webhook.
 - **Papéis da Equipe** (no detalhe do incidente) — Commander, Technical Lead, Incident Handler(s),
   Communications Lead e Privacy Officer (NIST 800-61), cada um atribuível a um usuário.
+- **Indicadores de Comprometimento** (no detalhe do incidente) — um botão "IOCs" abre um popup
+  listando o que já foi cadastrado, com um formulário inline pra adicionar um novo: tipo (de uma
+  lista cobrindo os próprios exemplos da NIST SP 800-61r3 mais os tipos de observável STIX 2.1 que a
+  NIST SP 800-150 aponta), valor, uma descrição opcional, e a data de identificação. Somente-inserção,
+  igual às notas da equipe; puxado automaticamente tanto pro postmortem quanto pro relatório em PDF.
 - **Histórico de Fases** (no detalhe do incidente) — cada fase NIST 800-61 registra quando foi
   entrada; o horário original nunca é sobrescrito. Uma correção exige motivo, fica registrada com
   autor, e gera um evento no log de auditoria (append-only) — ver `db/migrations/0001_initial_schema.up.sql`.
@@ -95,7 +100,7 @@ mesmo tempo.
   aviso na timeline, para não mascarar processo mal seguido em métricas de MTTR.
 - **Relatórios de Incidente** (no detalhe do incidente) — "Baixar Relatório (PDF)" gera um export de
   um momento específico (severidade/prioridade, timeline de fases com durações, papéis da equipe,
-  descrição, tags, alertas vinculados, notas da equipe) em qualquer fase; "Gerar Postmortem"
+  descrição, tags, alertas vinculados, IOCs, notas da equipe) em qualquer fase; "Gerar Postmortem"
   (oferecido só quando o incidente chega em Pós-Incidente) produz o mesmo registro como um
   documento Markdown, com um resumo executivo gerado por IA quando um provedor LLM está configurado.
 - **Playbooks** — biblioteca de procedimentos por categoria/fase, com sugestão automática no

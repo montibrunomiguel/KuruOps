@@ -58,6 +58,8 @@ func TestIncidentReportService_GeneratePDF_FullRecord(t *testing.T) {
 	require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{actorID}, nil))
 	_, err = incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst One", "Contained the affected shares.", nil)
 	require.NoError(t, err)
+	_, err = incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon traffic", time.Now())
+	require.NoError(t, err)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious SMB traffic", Source: "test", Severity: domain.SeverityHigh, Payload: testPayload,
@@ -90,14 +92,17 @@ func TestIncidentReportService_GeneratePDF_FullRecord(t *testing.T) {
 	assert.Contains(t, doc, "Analyst One")
 	assert.Contains(t, doc, "Contained the affected shares.")
 	assert.Contains(t, doc, "ransomware")
+	assert.Contains(t, doc, "Indicators of Compromise")
+	assert.Contains(t, doc, "203.0.113.42")
+	assert.Contains(t, doc, "C2 beacon traffic")
 }
 
 // TestIncidentReportService_GeneratePDF_MinimalRecord confirms the report
 // still renders cleanly for a bare-minimum incident -- no roles, no linked
-// alerts, no comments, only the phase it was created into -- showing
-// "None." for the sections that would otherwise be empty (see
-// renderPDFLinkedAlerts/renderPDFTeamNotes's doc comments for why those
-// always get a header printed, unlike the Markdown postmortem).
+// alerts, no comments, no IOCs, only the phase it was created into --
+// showing "None."/"None identified." for the sections that would otherwise
+// be empty (renderPDFLinkedAlerts/renderPDFTeamNotes/renderPDFIOCs all get
+// a header printed unconditionally).
 func TestIncidentReportService_GeneratePDF_MinimalRecord(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)
@@ -120,6 +125,8 @@ func TestIncidentReportService_GeneratePDF_MinimalRecord(t *testing.T) {
 	doc := string(pdfBytes)
 	assert.Contains(t, doc, "Bare incident")
 	assert.Contains(t, doc, "Linked Alerts")
+	assert.Contains(t, doc, "Indicators of Compromise")
+	assert.Contains(t, doc, "None identified.")
 	assert.Contains(t, doc, "Team Notes")
 	assert.Contains(t, doc, "None.")
 	assert.NotContains(t, doc, "Team Roles", "no roles assigned -- that section must be omitted entirely, not printed empty")

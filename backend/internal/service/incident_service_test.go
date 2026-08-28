@@ -499,6 +499,42 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 	})
 }
 
+func TestIncidentService_IOCs(t *testing.T) {
+	_, incSvc, _ := newIncidentServices(t)
+	tenantID := testutil.NewTenant(t)
+	actorID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	inc, err := incSvc.Create(t.Context(), tenantID, actorID, domain.CreateIncidentInput{Title: "t", Severity: domain.SeverityLow, Priority: domain.PriorityP4})
+	require.NoError(t, err)
+
+	t.Run("adds and lists an IOC", func(t *testing.T) {
+		ioc, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon", time.Now())
+		require.NoError(t, err)
+		assert.Equal(t, "203.0.113.42", ioc.Value)
+		assert.Equal(t, "Analyst One", ioc.CreatedByName)
+
+		iocs, err := incSvc.IOCs(t.Context(), tenantID, inc.ID)
+		require.NoError(t, err)
+		require.Len(t, iocs, 1)
+		assert.Equal(t, domain.IOCTypeIPAddress, iocs[0].Type)
+	})
+
+	t.Run("rejects an unknown type", func(t *testing.T) {
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCType("not_a_real_type"), "x", "", time.Now())
+		assert.Error(t, err)
+	})
+
+	t.Run("rejects an empty value", func(t *testing.T) {
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "", "", time.Now())
+		assert.Error(t, err)
+	})
+
+	t.Run("rejects a zero identifiedAt", func(t *testing.T) {
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "http://x", "", time.Time{})
+		assert.Error(t, err)
+	})
+}
+
 func TestIncidentService_GetVisibility(t *testing.T) {
 	_, incSvc, _ := newIncidentServices(t)
 	tenantID := testutil.NewTenant(t)

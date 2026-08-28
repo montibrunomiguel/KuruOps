@@ -477,6 +477,38 @@
       "notFound": "Incidente não encontrado.",
       "warningBadge": "atenção"
     },
+    "iocs": {
+      "button": "IOCs",
+      "title": "Indicadores de Comprometimento",
+      "empty": "Nenhum IOC cadastrado ainda.",
+      "addButton": "Adicionar IOC",
+      "identifiedBy": "Identificado {{date}} por {{name}}",
+      "form": {
+        "type": "Tipo",
+        "identifiedAt": "Data de identificação",
+        "value": "Indicador",
+        "valuePlaceholder": "ex.: 203.0.113.42, evil.example.com, a1b2c3...",
+        "description": "Descrição",
+        "submit": "Adicionar IOC"
+      },
+      "type": {
+        "ip_address": "Endereço IP",
+        "domain_name": "Nome de Domínio",
+        "url": "URL",
+        "file_hash": "Hash de Arquivo",
+        "email_address": "Endereço de Email",
+        "email_subject": "Assunto de Email",
+        "file_name": "Nome de Arquivo",
+        "file_path": "Caminho de Arquivo",
+        "registry_key": "Chave de Registro",
+        "mutex": "Mutex",
+        "process_name": "Nome de Processo",
+        "user_agent": "User-Agent",
+        "cve": "CVE",
+        "certificate_fingerprint": "Fingerprint de Certificado",
+        "other": "Outro"
+      }
+    },
     "roles": {
       "title": "Papéis da Equipe",
       "unassigned": "— Não atribuído —",

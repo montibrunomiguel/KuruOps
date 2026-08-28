@@ -15,6 +15,7 @@ import { AddNoteForm } from "../../components/AddNoteForm";
 import { LinkSearchPicker } from "../../components/LinkSearchPicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { AnalysisChat } from "../../components/AnalysisChat";
+import { IOCsModal } from "../../components/IOCsModal";
 import { SparkleIcon } from "../../components/icons";
 import { formatDateTime, initials, shortId } from "../../lib/format";
 import { IncidentRolesPanel } from "./IncidentDetailPage/IncidentRolesPanel";
@@ -72,6 +73,7 @@ export function IncidentDetailPage() {
   const [generatingPostmortem, setGeneratingPostmortem] = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [showAnalysisChat, setShowAnalysisChat] = useState(false);
+  const [showIOCs, setShowIOCs] = useState(false);
 
   // Every mutation below can append a row to the incident_events timeline
   // (phase_changed, closed, severity_priority_changed, description_edited,
@@ -221,6 +223,9 @@ export function IncidentDetailPage() {
               ? t("incidents.detail.analyzing")
               : t("incidents.detail.analyzeWithAI")}
           </button>
+          <button className="btn btn-sm" onClick={() => setShowIOCs(true)}>
+            {t("incidents.iocs.button")}
+          </button>
           <button className="btn btn-sm" disabled={generatingReport} onClick={downloadReport}>
             {generatingReport ? t("incidents.detail.generatingReport") : t("incidents.detail.downloadReport")}
           </button>
@@ -253,6 +258,8 @@ export function IncidentDetailPage() {
       {showAnalysisChat && (
         <AnalysisChat contextType="incident" contextId={incident.id} onClose={() => setShowAnalysisChat(false)} />
       )}
+
+      {showIOCs && <IOCsModal incidentId={incident.id} onClose={() => setShowIOCs(false)} />}
 
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="phase-tracker">

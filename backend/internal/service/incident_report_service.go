@@ -61,6 +61,10 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	if err != nil {
 		return nil, false, fmt.Errorf("load linked alerts: %w", err)
 	}
+	iocs, err := s.incidents.IOCs(ctx, tenantID, incidentID)
+	if err != nil {
+		return nil, false, fmt.Errorf("load iocs: %w", err)
+	}
 
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	// isUTF8=true: inc.Title is a real UTF-8 Go string (unlike the content-
@@ -99,6 +103,7 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 	renderPDFTimeline(pdf, tr, inc, history)
 	renderPDFRoles(pdf, tr, inc)
 	renderPDFLinkedAlerts(pdf, tr, linkedAlerts)
+	renderPDFIOCs(pdf, tr, iocs)
 	renderPDFTeamNotes(pdf, tr, comments)
 
 	var buf bytes.Buffer
@@ -234,6 +239,22 @@ func renderPDFLinkedAlerts(pdf *gofpdf.Fpdf, tr func(string) string, alerts []do
 	}
 	for _, a := range alerts {
 		line := fmt.Sprintf("- %s (%s, %s) -- %s", a.Title, a.Severity, a.Status, a.Source)
+		pdf.MultiCell(0, pdfLineHeight, tr(line), "", "L", false)
+	}
+}
+
+func renderPDFIOCs(pdf *gofpdf.Fpdf, tr func(string) string, iocs []domain.IOC) {
+	pdfSectionHeader(pdf, "Indicators of Compromise (IOCs)")
+	pdf.SetFont("Arial", "", 11)
+	if len(iocs) == 0 {
+		pdf.CellFormat(0, pdfLineHeight, "None identified.", "", 1, "L", false, 0, "")
+		return
+	}
+	for _, i := range iocs {
+		line := fmt.Sprintf("- [%s] %s -- identified %s", iocTypeLabel(i.Type), i.Value, i.IdentifiedAt.Format("2006-01-02"))
+		if i.Description != "" {
+			line += ": " + i.Description
+		}
 		pdf.MultiCell(0, pdfLineHeight, tr(line), "", "L", false)
 	}
 }

@@ -52,6 +52,8 @@ func (h *IncidentHandlers) Routes(r chi.Router) {
 	r.Get("/{id}/timeline", h.timeline)
 	r.Get("/{id}/comments", h.listComments)
 	r.Post("/{id}/comments", h.addComment)
+	r.Get("/{id}/iocs", h.listIOCs)
+	r.Post("/{id}/iocs", h.addIOC)
 	r.Get("/{id}/alerts", h.linkedAlerts)
 	r.Put("/{id}/alerts/{alertId}", h.linkAlert)
 	r.Delete("/{id}/alerts/{alertId}", h.unlinkAlert)
@@ -517,6 +519,65 @@ func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, comment)
+}
+
+func (h *IncidentHandlers) listIOCs(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid incident id")
+		return
+	}
+
+	iocs, err := h.svc.IOCs(r.Context(), tenantID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, iocs)
+}
+
+type addIOCRequest struct {
+	Type         domain.IOCType `json:"type"`
+	Value        string         `json:"value"`
+	Description  string         `json:"description"`
+	IdentifiedAt time.Time      `json:"identifiedAt"`
+}
+
+// addIOC mirrors addComment's actor-name-resolution shape -- see that
+// handler's doc comment for why it looks up the user instead of trusting
+// something carried in the JWT.
+func (h *IncidentHandlers) addIOC(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+	var req addIOCRequest
+	id, ok := decodeAndParseID(w, r, "incident", &req)
+	if !ok {
+		return
+	}
+
+	actor, err := h.users.Get(r.Context(), tenantID, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if actor == nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+
+	ioc, err := h.svc.AddIOC(r.Context(), tenantID, id, userID, actor.Name, req.Type, req.Value, req.Description, req.IdentifiedAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, ioc)
 }
 
 func (h *IncidentHandlers) linkedAlerts(w http.ResponseWriter, r *http.Request) {

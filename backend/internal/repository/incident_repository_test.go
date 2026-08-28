@@ -453,6 +453,40 @@ func TestIncidentRepository_Comments(t *testing.T) {
 	assert.Equal(t, "Investigating now", comments[0].Body)
 }
 
+func TestIncidentRepository_IOCs(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", nil)
+	repo := repository.NewIncidentRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	inc := newTestIncident(tenantID, domain.SeverityHigh, domain.PriorityP2, nil)
+	require.NoError(t, repo.Insert(t.Context(), tx, inc))
+
+	older := &domain.IOC{
+		IncidentID: inc.ID, TenantID: tenantID, Type: domain.IOCTypeDomainName, Value: "evil.example.com",
+		Description: "C2 domain", IdentifiedAt: time.Now().Add(-time.Hour), CreatedBy: userID, CreatedByName: "Analyst One",
+	}
+	require.NoError(t, repo.InsertIOC(t.Context(), tx, older))
+	require.NotEqual(t, [16]byte{}, older.ID)
+
+	newer := &domain.IOC{
+		IncidentID: inc.ID, TenantID: tenantID, Type: domain.IOCTypeIPAddress, Value: "203.0.113.42",
+		IdentifiedAt: time.Now(), CreatedBy: userID, CreatedByName: "Analyst One",
+	}
+	require.NoError(t, repo.InsertIOC(t.Context(), tx, newer))
+
+	iocs, err := repo.ListIOCs(t.Context(), tx, inc.ID)
+	require.NoError(t, err)
+	require.Len(t, iocs, 2)
+	// Newest-identified-first (see ListIOCs' doc comment).
+	assert.Equal(t, newer.ID, iocs[0].ID)
+	assert.Equal(t, "203.0.113.42", iocs[0].Value)
+	assert.Equal(t, older.ID, iocs[1].ID)
+	assert.Equal(t, "C2 domain", iocs[1].Description)
+	assert.Equal(t, "Analyst One", iocs[1].CreatedByName)
+}
+
 func TestIncidentRepository_AlertLinks(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

@@ -63,6 +63,8 @@ func TestPostmortemService_Generate_WithoutAIProvider(t *testing.T) {
 	require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{actorID}, nil))
 	_, err = incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst One", "Contained the affected shares.", nil)
 	require.NoError(t, err)
+	_, err = incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon traffic", time.Now())
+	require.NoError(t, err)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious SMB traffic", Source: "test", Severity: domain.SeverityHigh, Payload: testPayload,
@@ -96,6 +98,10 @@ func TestPostmortemService_Generate_WithoutAIProvider(t *testing.T) {
 	assert.Contains(t, doc, "Analyst One")
 	assert.Contains(t, doc, "Contained the affected shares.")
 	assert.Contains(t, doc, "ransomware")
+	assert.Contains(t, doc, "## Indicators of Compromise (IOCs)")
+	assert.Contains(t, doc, "IP Address")
+	assert.Contains(t, doc, "203.0.113.42")
+	assert.Contains(t, doc, "C2 beacon traffic")
 }
 
 // TestPostmortemService_Generate_WithAIProvider confirms the other half of

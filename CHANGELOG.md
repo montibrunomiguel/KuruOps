@@ -30,6 +30,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Indicators of Compromise (IOCs) on incidents: an "IOCs" button on the incident detail page opens
+  a popup listing every IOC recorded so far, with an inline form to add a new one — type (a list
+  covering NIST SP 800-61r3's own IOC examples — IP address, domain name, URL, file hash, email
+  address/subject — plus the STIX 2.1 observable types NIST SP 800-150 points to for structured
+  exchange: registry key, mutex, process name, user-agent, CVE, certificate fingerprint, and an
+  "other" catch-all), the indicator value, an optional description, and the date it was identified.
+  Append-only (no edit/delete, same as Team Notes comments) — `GET`/`POST /api/v1/incidents/{id}/iocs`.
+  Automatically pulled into both the Markdown postmortem and the PDF report under a new "Indicators
+  of Compromise (IOCs)" section — nothing further is needed to have a newly-recorded IOC show up in
+  either document.
 - Exportable incident PDF report: a "Download Report (PDF)" button on the incident detail page
   (`GET /api/v1/incidents/{id}/report.pdf`) — title, severity/priority, current phase, the full
   phase-history timeline with durations, team roles, description, tags, linked alerts, and team

@@ -579,6 +579,50 @@ func (s *IncidentService) Comments(ctx context.Context, tenantID, incidentID uui
 	return comments, err
 }
 
+// AddIOC records a new Indicator of Compromise against incidentID -- see
+// domain.IOC's doc comment for why this is append-only (no update/delete)
+// and domain.IOCTypeIsValid's for why type validation lives here instead
+// of a DB check constraint.
+func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, actorName string, iocType domain.IOCType, value, description string, identifiedAt time.Time) (*domain.IOC, error) {
+	if !domain.IOCTypeIsValid(iocType) {
+		return nil, fmt.Errorf("invalid IOC type %q", iocType)
+	}
+	if value == "" {
+		return nil, fmt.Errorf("value is required")
+	}
+	if identifiedAt.IsZero() {
+		return nil, fmt.Errorf("identifiedAt is required")
+	}
+
+	ioc := &domain.IOC{
+		IncidentID:    incidentID,
+		TenantID:      tenantID,
+		Type:          iocType,
+		Value:         value,
+		Description:   description,
+		IdentifiedAt:  identifiedAt,
+		CreatedBy:     actorID,
+		CreatedByName: actorName,
+	}
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		return s.repo.InsertIOC(ctx, tx, ioc)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ioc, nil
+}
+
+func (s *IncidentService) IOCs(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IOC, error) {
+	var iocs []domain.IOC
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.repo.ListIOCs(ctx, tx, incidentID)
+		iocs = v
+		return err
+	})
+	return iocs, err
+}
+
 func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		if err := s.repo.LinkAlert(ctx, tx, incidentID, alertID, tenantID); err != nil {

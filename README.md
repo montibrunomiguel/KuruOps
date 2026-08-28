@@ -86,6 +86,11 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   (SIEM/XDR) sends alerts via webhook.
 - **Team Roles** (in the incident detail view) — Commander, Technical Lead, Incident Handler(s),
   Communications Lead, and Privacy Officer (NIST 800-61), each assignable to a user.
+- **Indicators of Compromise** (in the incident detail view) — an "IOCs" button opens a popup
+  listing what's recorded so far, with an inline form to add a new one: type (from a list covering
+  NIST SP 800-61r3's own examples plus the STIX 2.1 observable types NIST SP 800-150 points to),
+  value, an optional description, and the date identified. Append-only, same as Team Notes; pulled
+  automatically into both the postmortem and the PDF report.
 - **Phase History** (in the incident detail view) — every NIST 800-61 phase records when it was
   entered; the original timestamp is never overwritten. A correction requires a reason, is recorded
   with an author, and produces an entry in the append-only audit log — see
@@ -94,9 +99,9 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   silently skew MTTR metrics.
 - **Incident Reports** (in the incident detail view) — "Download Report (PDF)" pulls a point-in-time
   export (severity/priority, phase timeline with durations, team roles, description, tags, linked
-  alerts, team notes) at any phase; "Generate Postmortem" (only offered once the incident reaches
-  Post-Incident) produces the same record as a Markdown document, with an AI-generated executive
-  summary prepended when an LLM provider is configured.
+  alerts, IOCs, team notes) at any phase; "Generate Postmortem" (only offered once the incident
+  reaches Post-Incident) produces the same record as a Markdown document, with an AI-generated
+  executive summary prepended when an LLM provider is configured.
 - **Playbooks** — a library of procedures by category/phase, with automatic suggestions on the alert
   detail view.
 - **Settings** (admin) — Webhook Endpoints (token with an expiration/rotation policy — 90 days by

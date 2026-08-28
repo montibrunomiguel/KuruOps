@@ -137,3 +137,57 @@ export interface IncidentComment {
   attachmentUrl?: string;
   createdAt: string;
 }
+
+// IOCType mirrors backend domain.IOCType -- see that Go type's doc comment
+// for the NIST SP 800-61r3 / SP 800-150 / STIX 2.1 sourcing of this list.
+export type IOCType =
+  | "ip_address"
+  | "domain_name"
+  | "url"
+  | "file_hash"
+  | "email_address"
+  | "email_subject"
+  | "file_name"
+  | "file_path"
+  | "registry_key"
+  | "mutex"
+  | "process_name"
+  | "user_agent"
+  | "cve"
+  | "certificate_fingerprint"
+  | "other";
+
+// Display order for the IOC type dropdown -- same order as backend
+// domain.ValidIOCTypes.
+export const IOC_TYPE_ORDER: IOCType[] = [
+  "ip_address",
+  "domain_name",
+  "url",
+  "file_hash",
+  "email_address",
+  "email_subject",
+  "file_name",
+  "file_path",
+  "registry_key",
+  "mutex",
+  "process_name",
+  "user_agent",
+  "cve",
+  "certificate_fingerprint",
+  "other",
+];
+
+// IOC mirrors backend domain.IOC -- scoped to exactly one incident,
+// append-only (no update/delete route), see that Go type's doc comment.
+export interface IOC {
+  id: string;
+  incidentId: string;
+  tenantId: string;
+  type: IOCType;
+  value: string;
+  description: string;
+  identifiedAt: string;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+}
