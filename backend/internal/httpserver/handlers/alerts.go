@@ -87,7 +87,12 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 		b := v == "true"
 		f.Correlated = &b
 	}
-	if v := r.URL.Query().Get("q"); v != "" {
+	// Trimmed, not just non-empty: plainto_tsquery('english', '   ') has no
+	// extractable lexemes and matches nothing, so a whitespace-only query
+	// (e.g. an accidental space-bar press) would otherwise silently zero
+	// out the list instead of behaving like "no search applied," the way
+	// clearing the search box entirely does.
+	if v := strings.TrimSpace(r.URL.Query().Get("q")); v != "" {
 		f.Q = &v
 	}
 	f.ReceivedSince = parseSince(r)
