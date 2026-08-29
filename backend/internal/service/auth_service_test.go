@@ -13,6 +13,7 @@ import (
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/testutil"
 )
@@ -24,7 +25,7 @@ func newAuthService(t *testing.T) (*db.Pool, *service.AuthService) {
 	require.NoError(t, err)
 	issuer := authn.NewIssuer(priv)
 	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
-	svc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer)
+	svc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer, secrets.NewEnvStore())
 	return pool, svc
 }
 
@@ -145,7 +146,11 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		assert.ErrorContains(t, err, "incorrect")
 	})
 
-	t.Run("a correct change returns a fresh token and clears must_change_password", func(t *testing.T) {
+	t.Run("a correct change returns a fresh token, clears must_change_password, and revokes outstanding refresh tokens", func(t *testing.T) {
+		_, _, refreshToken, _, err := svc.LoginLocal(t.Context(), tenantID, emailFor(t, tenantID, userID), testutil.TestPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, refreshToken, "a session issued before the password change")
+
 		token, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "NewPassword123!")
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
@@ -154,6 +159,52 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, user)
 		assert.NotEmpty(t, loginToken)
+
+		newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		require.NoError(t, err)
+		assert.Empty(t, newToken, "the refresh token issued before the password change must no longer work")
+		assert.Empty(t, newRT)
+	})
+}
+
+func TestAuthService_Logout(t *testing.T) {
+	_, svc := newAuthService(t)
+	tenantID := testutil.NewTenant(t)
+	userID := testutil.NewUser(t, tenantID, "analyst", nil)
+
+	t.Run("revokes exactly the presented refresh token", func(t *testing.T) {
+		_, _, refreshToken, _, err := svc.LoginLocal(t.Context(), tenantID, emailFor(t, tenantID, userID), testutil.TestPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, refreshToken)
+
+		require.NoError(t, svc.Logout(t.Context(), tenantID, refreshToken))
+
+		token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		require.NoError(t, err)
+		assert.Empty(t, token, "a logged-out refresh token must no longer work")
+		assert.Empty(t, rt)
+	})
+
+	t.Run("does not revoke other sessions for the same user", func(t *testing.T) {
+		_, _, refreshTokenA, _, err := svc.LoginLocal(t.Context(), tenantID, emailFor(t, tenantID, userID), testutil.TestPassword)
+		require.NoError(t, err)
+		_, _, refreshTokenB, _, err := svc.LoginLocal(t.Context(), tenantID, emailFor(t, tenantID, userID), testutil.TestPassword)
+		require.NoError(t, err)
+
+		require.NoError(t, svc.Logout(t.Context(), tenantID, refreshTokenA))
+
+		newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshTokenB)
+		require.NoError(t, err)
+		assert.NotEmpty(t, newToken, "logging out session A must not affect session B")
+		assert.NotEmpty(t, newRT)
+	})
+
+	t.Run("an empty refresh token is a no-op, not an error", func(t *testing.T) {
+		require.NoError(t, svc.Logout(t.Context(), tenantID, ""))
+	})
+
+	t.Run("an unknown refresh token is a no-op, not an error", func(t *testing.T) {
+		require.NoError(t, svc.Logout(t.Context(), tenantID, "rt_no-such-token"))
 	})
 }
 
@@ -231,7 +282,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	t.Run("rejects a federated user", func(t *testing.T) {
 		priv, err := authn.GenerateEphemeralKeyPair()
 		require.NoError(t, err)
-		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+		fedSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 		fedUser, _, _, err := fedSvc.ProvisionFederated(t.Context(), tenantID, domain.AuthProviderLDAP, "cn=fed2,dc=example,dc=com", "fed2@example.com", "Fed User", nil)
 		require.NoError(t, err)
 
@@ -316,6 +367,13 @@ func TestAuthService_MFA(t *testing.T) {
 	confirmToken, err := svc.ConfirmMFA(t.Context(), tenantID, userID, secret, code)
 	require.NoError(t, err)
 	assert.NotEmpty(t, confirmToken, "a fresh token reflecting mfa_enabled=true must be returned")
+
+	t.Run("the raw TOTP secret is never persisted -- users.mfa_totp_secret holds a secrets.Store ref instead", func(t *testing.T) {
+		u, err := repository.NewUserRepository().Get(t.Context(), testutil.BeginTx(t, testutil.RequireTestDB(t), tenantID), tenantID, userID)
+		require.NoError(t, err)
+		require.NotNil(t, u.MFATOTPSecret)
+		assert.NotEqual(t, secret, *u.MFATOTPSecret, "the column must never equal the raw secret")
+	})
 
 	t.Run("a correct password no longer completes login by itself -- it returns a pending token instead", func(t *testing.T) {
 		user, token, refreshToken, pendingToken, err := svc.LoginLocal(t.Context(), tenantID, email, testutil.TestPassword)

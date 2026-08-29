@@ -20,9 +20,19 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: worker
           image: kuruops-worker:latest
+          # See 04-api.yaml's securityContext comment -- same reasoning.
+          # worker's only disk interaction is via kuruops_worker's Postgres
+          # connection, never the local filesystem.
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           envFrom:

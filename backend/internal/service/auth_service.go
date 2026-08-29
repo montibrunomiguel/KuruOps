@@ -14,6 +14,7 @@ import (
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 )
 
 // totpIssuer is the "issuer" label an authenticator app (Google
@@ -33,10 +34,25 @@ type AuthService struct {
 	mfaPending    *repository.MFAPendingTokenRepository
 	roles         *RoleService
 	issuer        *authn.Issuer
+	// secrets stores each user's TOTP secret via secrets.Store, the same
+	// boundary every other credential-class secret in this codebase (LLM
+	// API keys, MCP auth tokens, the SAML SP key, ...) already crosses --
+	// see GenerateMFAEnrollment/ConfirmMFA/VerifyMFA. users.mfa_totp_secret
+	// holds only the opaque ref this returns, never the raw secret.
+	secrets secrets.Store
 }
 
-func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, mfaPending *repository.MFAPendingTokenRepository, roles *RoleService, issuer *authn.Issuer) *AuthService {
-	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, mfaPending: mfaPending, roles: roles, issuer: issuer}
+func NewAuthService(pool *db.Pool, tenants *repository.TenantRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, mfaPending *repository.MFAPendingTokenRepository, roles *RoleService, issuer *authn.Issuer, store secrets.Store) *AuthService {
+	return &AuthService{pool: pool, tenants: tenants, users: users, refreshTokens: refreshTokens, mfaPending: mfaPending, roles: roles, issuer: issuer, secrets: store}
+}
+
+// mfaSecretPurpose is the secrets.Store purpose key for a user's TOTP
+// secret -- namespaced per-user (unlike "llm:"+name or "mcp:"+name, which
+// are unique enough within a tenant on their own) since two different
+// users' otherwise-identically-named enrollments must never collide on the
+// same ref.
+func mfaSecretPurpose(userID uuid.UUID) string {
+	return "mfa-totp:" + userID.String()
 }
 
 // refreshTokenTTL is how long a refresh token stays valid after issuance or
@@ -178,7 +194,13 @@ func (s *AuthService) VerifyMFA(ctx context.Context, tenantID uuid.UUID, pending
 			return nil
 		}
 
-		if !totp.Validate(code, *u.MFATOTPSecret) {
+		// users.mfa_totp_secret holds a secrets.Store ref, not the raw
+		// secret -- see ConfirmMFA.
+		secret, err := s.secrets.Resolve(ctx, *u.MFATOTPSecret)
+		if err != nil {
+			return fmt.Errorf("resolve mfa secret: %w", err)
+		}
+		if !totp.Validate(code, secret) {
 			return nil
 		}
 		// Only burn the pending token once the code has actually checked
@@ -274,9 +296,20 @@ func (s *AuthService) ConfirmMFA(ctx context.Context, tenantID, userID uuid.UUID
 		return "", fmt.Errorf("invalid code")
 	}
 
+	// Store the raw TOTP secret via secrets.Store and persist only the
+	// returned ref -- users.mfa_totp_secret must never hold the secret
+	// itself, same discipline as every other credential-class secret in
+	// this codebase. mfaSecretPurpose is deterministic per user, so
+	// re-enrolling (ConfirmMFA again after a prior DisableMFA) overwrites
+	// the same ref rather than accumulating orphaned ones.
+	ref, err := s.secrets.Put(ctx, tenantID.String(), mfaSecretPurpose(userID), secret)
+	if err != nil {
+		return "", fmt.Errorf("store mfa secret: %w", err)
+	}
+
 	var user *domain.User
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		if err := s.users.SetMFASecret(ctx, tx, userID, &secret); err != nil {
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		if err := s.users.SetMFASecret(ctx, tx, userID, &ref); err != nil {
 			return fmt.Errorf("save mfa secret: %w", err)
 		}
 		u, err := s.users.Get(ctx, tx, tenantID, userID)
@@ -395,12 +428,44 @@ func (s *AuthService) RevokeSessions(ctx context.Context, tenantID, userID uuid.
 	})
 }
 
+// Logout revokes exactly the one refresh token the caller presents -- the
+// session logging out -- and deliberately leaves every other refresh token
+// for the same user alone (unlike RevokeSessions), since logging out one
+// browser/tab shouldn't sign the user out of a session open elsewhere. An
+// empty, unknown, or already-revoked token is not an error: logout must
+// succeed even when the client's local state is already stale, matching
+// LoginLocal's discipline of never letting an auth endpoint's response
+// distinguish "valid but already handled" from "never existed".
+func (s *AuthService) Logout(ctx context.Context, tenantID uuid.UUID, refreshToken string) error {
+	if refreshToken == "" {
+		return nil
+	}
+	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		rt, err := s.refreshTokens.GetByHash(ctx, tx, hashToken(refreshToken))
+		if err != nil {
+			return fmt.Errorf("load refresh token: %w", err)
+		}
+		if rt == nil {
+			return nil
+		}
+		return s.refreshTokens.Revoke(ctx, tx, rt.ID)
+	})
+}
+
 // ChangePassword verifies currentPassword against the stored hash (even
 // when the account is locked to this endpoint by MustChangePassword --
 // knowing the default password is not itself proof of authorization, only
 // a valid session token plus the current password is), then rotates it and
 // re-issues a token with MustChangePassword cleared so the frontend can
-// swap it in immediately instead of forcing a fresh login.
+// swap it in immediately instead of forcing a fresh login. Also revokes
+// every outstanding refresh token for the user (same effect as
+// RevokeSessions) -- a password change is exactly the moment a stolen
+// refresh token must stop working, otherwise an attacker who captured one
+// before the legitimate user noticed and changed their password keeps a
+// working session indefinitely. The caller's own current access token
+// still works until its own 15-minute expiry (same tradeoff RevokeSessions'
+// doc comment already accepts); their next /auth/refresh simply fails and
+// they log in again, same as any other device that had a session open.
 func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID, currentPassword, newPassword string) (string, error) {
 	if err := validatePasswordPolicy(newPassword); err != nil {
 		return "", err
@@ -426,6 +491,9 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 		}
 		if err := s.users.SetPassword(ctx, tx, userID, newHash); err != nil {
 			return fmt.Errorf("set password: %w", err)
+		}
+		if err := s.refreshTokens.RevokeAllForUser(ctx, tx, userID); err != nil {
+			return fmt.Errorf("revoke refresh tokens: %w", err)
 		}
 		u.MustChangePassword = false
 		user = u

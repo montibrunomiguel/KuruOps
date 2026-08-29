@@ -162,6 +162,28 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Segurança**: `AuthenticateLDAP` refazia o bind como o DN do usuário resolvido com qualquer
+  senha enviada pelo chamador, inclusive uma vazia — a RFC 4513 §5.1.2 define que um bind com um
+  DN válido e senha de tamanho zero é um "unauthenticated bind" que muitos diretórios (inclusive o
+  OpenLDAP com config padrão) tratam como bem-sucedido sem checar nada, então qualquer usuário
+  provisionado via LDAP podia ser logado só sabendo o e-mail dele. Uma senha vazia/só espaços
+  agora é rejeitada antes mesmo de conectar ao diretório.
+- **Segurança**: refresh tokens nunca eram revogados no logout (não existia endpoint de logout) ou
+  na troca/reset de senha — um refresh token roubado continuava funcionando pelo TTL inteiro de 30
+  dias mesmo depois do usuário legítimo trocar a senha. Adicionado `POST /auth/logout` (revoga
+  exatamente o token apresentado) e `ChangePassword`/confirmação de reset de senha agora revogam
+  todo refresh token pendente do usuário, igual à ação admin "Revogar sessões" já existente.
+- **Segurança**: `users.mfa_totp_secret` guardava o segredo TOTP de cada usuário em texto puro — o
+  único segredo de classe credencial neste schema que nunca passava pelo `secrets.Store`, ao
+  contrário de toda credencial LLM/MCP/SAML/SMTP. Agora guarda uma referência opaca do
+  `secrets.Store` em vez disso; uma migration limpa qualquer valor em texto puro pré-existente
+  (o projeto ainda não tem deploy em produção, então o único impacto é reinscrição de MFA em
+  ambientes de dev/staging).
+- **Segurança**: os pods api/ingest/worker do `deploy/k8s` só definiam `runAsNonRoot` — adicionado
+  `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false` e
+  `capabilities: {drop: [ALL]}`, fechando técnicas de fuga de container que uma futura CVE em
+  alguma dependência poderia explorar (nenhum dos três binários escreve fora dos volumes que já
+  monta, então root somente leitura não precisou de volume novo).
 - **Segurança**: `middleware.NewRateLimiter` (usado no rate limit de login) confiava em
   `X-Forwarded-For`, um header que o próprio cliente controla — um atacante podia contornar o
   limite de tentativas de login só variando esse header a cada request. Agora confia
