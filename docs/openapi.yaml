@@ -318,6 +318,32 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke a refresh token
+      description: >-
+        Unauthenticated (same as /auth/refresh -- the refresh token itself is the credential).
+        Revokes exactly the refresh token presented, not every session for the user -- logging out
+        one browser/tab does not sign out sessions open elsewhere; use the admin "revoke sessions"
+        action for that. Always returns 204 regardless of whether the token was known, already
+        revoked, or omitted, so this endpoint cannot be used to probe token validity.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "204":
+          description: Token revoked (or already invalid/omitted -- treated the same)
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /auth/saml/metadata:
     get:
       tags: [Auth]

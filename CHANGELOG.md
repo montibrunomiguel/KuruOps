@@ -147,6 +147,27 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Security**: `AuthenticateLDAP` re-bound as the resolved user DN with whatever password the
+  caller sent, including an empty one — RFC 4513 §5.1.2 makes a bind with a valid DN and a
+  zero-length password an "unauthenticated bind" that many directories (including default
+  OpenLDAP) treat as successful without checking anything, so any LDAP-provisioned user could be
+  logged into just by knowing their email. An empty/whitespace-only password is now rejected
+  before ever dialing the directory.
+- **Security**: refresh tokens were never revoked on logout (there was no logout endpoint at all)
+  or on password change/reset — a stolen refresh token kept working for its full 30-day TTL even
+  after the legitimate user changed their password. Added `POST /auth/logout` (revokes exactly the
+  presented token) and wired `ChangePassword`/password-reset-confirm to revoke every outstanding
+  refresh token for the user, same as the existing admin "Revoke sessions" action.
+- **Security**: `users.mfa_totp_secret` stored each user's TOTP secret in plaintext — the one
+  credential-class secret in the schema that never went through `secrets.Store`, unlike every
+  LLM/MCP/SAML/SMTP credential. It now stores an opaque `secrets.Store` ref instead; a migration
+  clears any pre-existing plaintext value (no production deployment exists yet, so the only impact
+  is dev/staging MFA enrollments needing to re-enroll).
+- **Security**: `deploy/k8s`'s api/ingest/worker pods only set `runAsNonRoot` — added `seccompProfile:
+  RuntimeDefault`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, and
+  `capabilities: {drop: [ALL]}`, closing off container-breakout techniques a future dependency CVE
+  might otherwise get to use (none of the three binaries write outside their existing volume
+  mounts, so read-only root needed no new volumes).
 - **Security**: `middleware.NewRateLimiter` (used for login rate limiting) trusted
   `X-Forwarded-For`, a header the client itself controls — an attacker could bypass the login
   attempt limit just by varying that header on every request. It now trusts only `X-Real-IP`,
