@@ -31,7 +31,7 @@ func newPasswordResetService(t *testing.T, sender *fakeSender) (*service.Passwor
 	pool := testutil.RequireTestDB(t)
 	userRepo := repository.NewUserRepository()
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secrets.NewEnvStore(), sender, repository.NewAdminAuditEventRepository())
-	resetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), userRepo, smtpSvc, "http://localhost:3000")
+	resetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), userRepo, repository.NewRefreshTokenRepository(), smtpSvc, "http://localhost:3000")
 	return resetSvc, service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository())
 }
 
@@ -81,7 +81,7 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 		Host: "smtp.example.com", Port: 587, UseTLS: true, FromAddress: "no-reply@example.com", Password: "x",
 	}))
 
-	user, _, err := userSvc.CreateLocal(t.Context(), tenantID, actorID, "resetme2@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
+	user, tempPassword, err := userSvc.CreateLocal(t.Context(), tenantID, actorID, "resetme2@test.local", "Reset Me", "", testutil.NewRole(t, tenantID, false, []string{"alerts"}))
 	require.NoError(t, err)
 
 	t.Run("rejects an unknown token", func(t *testing.T) {
@@ -98,6 +98,13 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 		err := resetSvc.ConfirmReset(t.Context(), tenantID, "whatever", "12345678")
 		assert.ErrorContains(t, err, "at least one letter and one digit")
 	})
+
+	// A session issued under the temp password, before the reset -- used
+	// below to prove ConfirmReset revokes it.
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), mustEphemeralIssuer(t), secrets.NewEnvStore())
+	_, _, refreshToken, _, err := authSvc.LoginLocal(t.Context(), tenantID, user.Email, tempPassword)
+	require.NoError(t, err)
+	require.NotEmpty(t, refreshToken)
 
 	require.NoError(t, resetSvc.RequestReset(t.Context(), tenantID, user.Email))
 	require.Len(t, sender.sent, 1)
@@ -116,5 +123,22 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 			err := resetSvc.ConfirmReset(t.Context(), tenantID, token, "AnotherPassword123!")
 			assert.ErrorContains(t, err, "invalid or expired")
 		})
+
+		t.Run("a session issued before the reset is revoked", func(t *testing.T) {
+			newToken, newRT, err := authSvc.Refresh(t.Context(), tenantID, refreshToken)
+			require.NoError(t, err)
+			assert.Empty(t, newToken)
+			assert.Empty(t, newRT)
+		})
 	})
+}
+
+// mustEphemeralIssuer is the same throwaway-keypair issuer newAuthService
+// builds inline -- factored out here since this test needs an AuthService
+// alongside the PasswordResetService under test, not in place of it.
+func mustEphemeralIssuer(t *testing.T) *authn.Issuer {
+	t.Helper()
+	priv, err := authn.GenerateEphemeralKeyPair()
+	require.NoError(t, err)
+	return authn.NewIssuer(priv)
 }

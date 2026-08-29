@@ -48,6 +48,7 @@ func (h *AuthHandlers) Routes(r chi.Router) {
 	r.Post("/login", h.loginLocal)
 	r.Post("/login/ldap", h.loginLDAP)
 	r.Post("/refresh", h.refresh)
+	r.Post("/logout", h.logout)
 	r.Get("/saml/metadata", h.samlMetadata)
 	r.Get("/saml/login", h.samlLogin)
 	r.Post("/saml/acs", h.samlACS)
@@ -271,6 +272,31 @@ func (h *AuthHandlers) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, refreshResponse{Token: token, RefreshToken: newRefreshToken})
+}
+
+// logout revokes the refresh token the caller presents, so it can't be used
+// to mint further access tokens after this point -- see AuthService.Logout.
+// Unauthenticated like the rest of this handler group (no access token is
+// required, only the refresh token itself), since the whole point is to let
+// a client whose access token already expired still end its session
+// cleanly. Always returns 204 regardless of whether the token was known,
+// already revoked, or omitted -- same "don't let the response distinguish
+// states" discipline AuthService.Logout documents, so this endpoint can't
+// be used to probe whether a given refresh token is currently valid.
+func (h *AuthHandlers) logout(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := h.resolveTenant(w, r)
+	if !ok {
+		return
+	}
+
+	var req refreshRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if err := h.auth.Logout(r.Context(), tenant.ID, req.RefreshToken); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type passwordResetRequestRequest struct {

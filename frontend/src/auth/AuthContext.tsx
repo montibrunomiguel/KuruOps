@@ -174,7 +174,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // logout revokes the refresh token server-side (POST /auth/logout, see
+  // AuthService.Logout) before clearing local session state -- otherwise a
+  // captured refresh token would keep working to mint new access tokens
+  // after the user believes they've logged out. Best-effort: a network
+  // failure here must not block clearing local state, since getting the
+  // user's own browser out of a "logged in" state is the higher-priority
+  // half of logout, and the token will simply expire on its own 30-day TTL
+  // if the revoke call never lands.
   const logout = useCallback(() => {
+    const current = stateRef.current;
+    if (current.refreshToken) {
+      api.post("/auth/logout", { refreshToken: current.refreshToken }, null).catch(() => {});
+    }
     persist({ token: null, refreshToken: null, user: null });
   }, [persist]);
 

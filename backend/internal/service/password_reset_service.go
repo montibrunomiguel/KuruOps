@@ -27,15 +27,16 @@ const passwordResetTokenPrefix = "pr_"
 // depends on SMTPConfigService for real delivery (RequestReset degrades to
 // a logged no-op if SMTP isn't configured, per its own doc comment below).
 type PasswordResetService struct {
-	pool       *db.Pool
-	repo       *repository.PasswordResetRepository
-	users      *repository.UserRepository
-	smtp       *SMTPConfigService
-	appBaseURL string
+	pool          *db.Pool
+	repo          *repository.PasswordResetRepository
+	users         *repository.UserRepository
+	refreshTokens *repository.RefreshTokenRepository
+	smtp          *SMTPConfigService
+	appBaseURL    string
 }
 
-func NewPasswordResetService(pool *db.Pool, repo *repository.PasswordResetRepository, users *repository.UserRepository, smtp *SMTPConfigService, appBaseURL string) *PasswordResetService {
-	return &PasswordResetService{pool: pool, repo: repo, users: users, smtp: smtp, appBaseURL: appBaseURL}
+func NewPasswordResetService(pool *db.Pool, repo *repository.PasswordResetRepository, users *repository.UserRepository, refreshTokens *repository.RefreshTokenRepository, smtp *SMTPConfigService, appBaseURL string) *PasswordResetService {
+	return &PasswordResetService{pool: pool, repo: repo, users: users, refreshTokens: refreshTokens, smtp: smtp, appBaseURL: appBaseURL}
 }
 
 // RequestReset always succeeds from the caller's perspective -- it never
@@ -85,9 +86,13 @@ func (s *PasswordResetService) RequestReset(ctx context.Context, tenantID uuid.U
 }
 
 // ConfirmReset validates an unexpired, unused token, rotates the password,
-// marks the token used, and invalidates every other outstanding token for
-// the same user -- an older still-unexpired link can't also be used
-// afterward.
+// marks the token used, invalidates every other outstanding reset token for
+// the same user (an older still-unexpired link can't also be used
+// afterward), and revokes every outstanding refresh token for the user --
+// a password reset is a recovery flow, typically used because the account
+// may have been compromised, so any session token issued before the reset
+// must stop being renewable, same reasoning AuthService.ChangePassword's
+// doc comment gives for its own RevokeAllForUser call.
 func (s *PasswordResetService) ConfirmReset(ctx context.Context, tenantID uuid.UUID, token, newPassword string) error {
 	if err := validatePasswordPolicy(newPassword); err != nil {
 		return err
@@ -113,6 +118,9 @@ func (s *PasswordResetService) ConfirmReset(ctx context.Context, tenantID uuid.U
 		}
 		if err := s.repo.DeleteAllForUser(ctx, tx, t.UserID); err != nil {
 			return fmt.Errorf("invalidate other reset tokens: %w", err)
+		}
+		if err := s.refreshTokens.RevokeAllForUser(ctx, tx, t.UserID); err != nil {
+			return fmt.Errorf("revoke refresh tokens: %w", err)
 		}
 		return nil
 	})

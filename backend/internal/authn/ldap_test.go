@@ -139,6 +139,26 @@ func TestAuthenticateLDAP_InvalidUserCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid credentials")
 }
 
+func TestAuthenticateLDAP_EmptyPasswordRejectedBeforeDialing(t *testing.T) {
+	// RFC 4513 §5.1.2: a bind with a valid DN and a zero-length password is
+	// an "unauthenticated bind" that many directories treat as successful
+	// without checking anything -- so this must be rejected by
+	// AuthenticateLDAP itself, before ever reaching the server. Proven here
+	// by pointing at a port nothing listens on: if the empty-password check
+	// didn't run first, this would fail with "connect to ldap" instead.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().(*net.TCPAddr)
+	require.NoError(t, ln.Close())
+
+	for _, password := range []string{"", "   "} {
+		_, err := authn.AuthenticateLDAP(testParams("127.0.0.1", addr.Port), "jdoe@example.org", password)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid credentials")
+		assert.NotContains(t, err.Error(), "connect to ldap")
+	}
+}
+
 func TestAuthenticateLDAP_DialFailure(t *testing.T) {
 	// Nothing listens on this port (we opened and immediately closed it) --
 	// connection refused, exercising the "connect to ldap" error branch of
