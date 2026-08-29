@@ -147,6 +147,37 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- External-database migration (Settings → Data & Audit, `internal/dbmigrate`) would fail copying
+  any table with a full-text-search `generated always as (...) stored` column
+  (`alerts.search_vector`, `incidents.search_vector`) with `"row field count is N, expected N-1"`
+  — `COPY ... TO` includes a generated column's computed value by default, `COPY ... FROM` does
+  not accept one, so a bare `COPY tablename` with no explicit column list sent one more field per
+  row than the target side was prepared to read. Fixed by resolving each table's non-generated
+  columns once and using that exact column list explicitly on both the read and write side. Caught
+  by wiring `internal/dbmigrate`'s own integration test suite into CI for the first time (see
+  below) — it had never run automatically before, so this had zero test coverage in practice.
+- No detached background goroutine (AI analysis runs, manual-escalation notification sends, the
+  external-DB-migration row-copy stream, every long-running background loop) had panic recovery —
+  `chi.Recoverer` only protects the synchronous HTTP request path, so an unhandled panic on any of
+  them took the entire process down. New `internal/safego.Go` wraps every one of them, recovering
+  and logging a panic instead of crashing.
+- Three call sites silently discarded a real error (`AIAnalysisService.finishSimpleRun`/`failRun`,
+  `MCPToolService.recordFailure`) — a failed write left an AI analysis run stuck showing "running"
+  forever, or a tool call's database status permanently out of sync with its actual outcome, with
+  no log trace anywhere of why. Now logged via `slog.Error`.
+- A burst of alerts arriving faster than an LLM call completes could spawn an unbounded number of
+  concurrent auto-analysis goroutines, one per alert — now capped at 5 concurrent in-flight
+  analyses via a counting semaphore.
+- 62 handler call sites across 24 files wrote a raw Go error string (`err.Error()`) straight into
+  a 500 response body — a Postgres constraint/column name, a driver-level error, or an internal
+  file path routinely leaking into an API response. A new `writeInternalError` helper now logs the
+  real error server-side and returns a generic message to the client instead.
+- `docs/openapi.yaml` documented `/auth/login`'s 401/429 responses as `text/plain` — they're
+  actually `application/json` (`{"error": "..."}`), same as every other handler-level error in
+  this API; only the shared, genuinely-plain-text `Unauthorized`/`Forbidden` responses (issued by
+  the auth middleware, not a handler) are meant to differ.
+- Removed `RoleService.Get` — no HTTP route or other service ever called it, only its own test
+  file, as a convenience assertion helper now replaced with a direct repository read.
 - **Security**: `middleware.NewRateLimiter` (used for login rate limiting) trusted
   `X-Forwarded-For`, a header the client itself controls — an attacker could bypass the login
   attempt limit just by varying that header on every request. It now trusts only `X-Real-IP`,
