@@ -252,7 +252,8 @@ func main() {
 
 	issuer := authn.NewIssuer(privateKey)
 	verifier := authn.NewVerifier(publicKey)
-	authService := service.NewAuthService(pool, tenantRepo, userRepo, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleService, issuer)
+	refreshTokenRepo := repository.NewRefreshTokenRepository()
+	authService := service.NewAuthService(pool, tenantRepo, userRepo, refreshTokenRepo, repository.NewMFAPendingTokenRepository(), roleService, issuer, secretStore)
 	userHandlers := handlers.NewUserHandlers(userService, authService)
 
 	identityCfgRepo := repository.NewIdentityConfigRepository()
@@ -263,7 +264,7 @@ func main() {
 	samlAuthService := service.NewSAMLAuthService(pool, identityCfgRepo, secretStore, authService)
 	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
-	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, smtpConfigService, cfg.AppBaseURL)
+	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, refreshTokenRepo, smtpConfigService, cfg.AppBaseURL)
 	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)

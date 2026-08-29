@@ -24,9 +24,19 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: ingest
           image: kuruops-ingest:latest
+          # See 04-api.yaml's securityContext comment -- same reasoning,
+          # and ingest has even less of a footprint (no volume mounts at
+          # all, see this file's header comment).
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           envFrom:

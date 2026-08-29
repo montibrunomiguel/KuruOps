@@ -42,6 +42,19 @@ type LDAPResult struct {
 }
 
 func AuthenticateLDAP(p LDAPParams, email, password string) (*LDAPResult, error) {
+	// RFC 4513 §5.1.2: an LDAP bind with a valid DN and a zero-length
+	// password is an "unauthenticated bind" -- many directories (including
+	// OpenLDAP's default config) treat that as a SUCCESSFUL bind that
+	// verifies nothing. Without this check, the re-bind below at line ~80
+	// would let anyone log in as any LDAP-provisioned user just by knowing
+	// their email and sending an empty password. Checked here (not just in
+	// the service/handler layer) so this package's own contract can never
+	// be satisfied by an empty credential, regardless of what a future
+	// caller forgets to validate upstream.
+	if strings.TrimSpace(password) == "" {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
 	conn, err := dialLDAP(p)
 	if err != nil {
 		return nil, fmt.Errorf("connect to ldap: %w", err)

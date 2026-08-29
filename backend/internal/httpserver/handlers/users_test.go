@@ -16,6 +16,7 @@ import (
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/httpserver/handlers"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/testutil"
 )
@@ -35,7 +36,7 @@ func newUserHandlerFixtureWithAuth(t *testing.T) (h *handlers.UserHandlers, tena
 	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, authn.NewIssuer(priv))
+	authSvc = service.NewAuthService(pool, repository.NewTenantRepository(), userRepo, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, authn.NewIssuer(priv), secrets.NewEnvStore())
 	h = handlers.NewUserHandlers(service.NewUserService(pool, userRepo, repository.NewAdminAuditEventRepository()), authSvc)
 	return h, tenantID, targetUserID, authSvc
 }

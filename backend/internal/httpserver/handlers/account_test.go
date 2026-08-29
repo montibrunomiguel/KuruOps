@@ -16,6 +16,7 @@ import (
 	"github.com/kuruops/kuruops/internal/authn"
 	"github.com/kuruops/kuruops/internal/httpserver/handlers"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/testutil"
 )
@@ -28,7 +29,7 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -64,7 +65,7 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -121,7 +122,7 @@ func TestAccountHandlers_APITokens(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)
@@ -185,7 +186,7 @@ func TestAccountHandlers_MFA(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
-	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
 	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
 	r := newRouter(h.Routes)

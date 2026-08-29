@@ -61,16 +61,16 @@ func newAuthHandlersAndService(t *testing.T) (*handlers.AuthHandlers, *service.A
 	tenants := repository.NewTenantRepository()
 	users := repository.NewUserRepository()
 	roleSvc := service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository())
-	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer)
-	identityCfg := repository.NewIdentityConfigRepository()
 	store := secrets.NewEnvStore()
+	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer, store)
+	identityCfg := repository.NewIdentityConfigRepository()
 	ldapSvc := service.NewLDAPAuthService(pool, identityCfg, store, authSvc)
 	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc)
 	// noopSender is defined in smtp_config_test.go (same package) -- these
 	// login/refresh/SAML tests never actually exercise password-reset email
 	// delivery, so a real Sender isn't needed here.
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{}, repository.NewAdminAuditEventRepository())
-	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, smtpSvc, "http://localhost:3000")
+	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, repository.NewRefreshTokenRepository(), smtpSvc, "http://localhost:3000")
 
 	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc), authSvc
 }
@@ -247,6 +247,63 @@ func TestAuthHandlers_Refresh(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"refreshToken": rotatedRefreshToken})
 		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
 		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
+	})
+}
+
+func TestAuthHandlers_Logout(t *testing.T) {
+	h := newAuthHandlers(t)
+	r := newRouter(h.Routes)
+
+	login := func(t *testing.T) string {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "ChangeMe123!"})
+		req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.NotEmpty(t, resp.RefreshToken)
+		return resp.RefreshToken
+	}
+
+	t.Run("malformed body -- still 204, not an error", func(t *testing.T) {
+		// logout deliberately never fails on a bad/empty body -- see
+		// AuthHandlers.logout's doc comment.
+		req := httptest.NewRequest("POST", "/logout", bytes.NewReader([]byte("not json")))
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+	})
+
+	t.Run("unknown refreshToken -- 204", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{"refreshToken": "rt_not-a-real-token"})
+		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+	})
+
+	t.Run("a valid refreshToken -- 204, and it no longer works afterward", func(t *testing.T) {
+		refreshToken := login(t)
+
+		body, _ := json.Marshal(map[string]string{"refreshToken": refreshToken})
+		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		refreshBody, _ := json.Marshal(map[string]string{"refreshToken": refreshToken})
+		refreshReq := httptest.NewRequest("POST", "/refresh", bytes.NewReader(refreshBody))
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, refreshReq).Code)
+	})
+
+	t.Run("logging out one session does not affect another session for the same user", func(t *testing.T) {
+		refreshTokenA := login(t)
+		refreshTokenB := login(t)
+
+		body, _ := json.Marshal(map[string]string{"refreshToken": refreshTokenA})
+		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
+
+		refreshBody, _ := json.Marshal(map[string]string{"refreshToken": refreshTokenB})
+		refreshReq := httptest.NewRequest("POST", "/refresh", bytes.NewReader(refreshBody))
+		assert.Equal(t, http.StatusOK, doRequest(r, refreshReq).Code)
 	})
 }
 

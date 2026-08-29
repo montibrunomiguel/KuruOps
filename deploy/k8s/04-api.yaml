@@ -49,12 +49,30 @@ spec:
       # api/ingest/worker images already run as a non-root `kuruops` user
       # baked into the image itself (see backend/Dockerfile) -- runAsNonRoot
       # here just makes the kubelet refuse to start the pod if that ever
-      # regresses, instead of silently running as root.
+      # regresses, instead of silently running as root. seccompProfile at
+      # the pod level applies to every container below unless a container
+      # overrides it.
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: api
           image: kuruops-api:latest
+          # This binary never writes outside the uploads PVC/jwt-keys mount
+          # below (grep the backend for os.TempDir/CreateTemp -- there is
+          # none), so the rest of the image filesystem can be read-only:
+          # a remote-code-execution bug in a dependency can no longer drop
+          # a file anywhere on disk. dropping every Linux capability and
+          # blocking privilege escalation are both no-ops for this binary's
+          # actual behavior (it needs none of them) and only close off
+          # exactly the kind of container-breakout technique a CVE in some
+          # future dependency might otherwise get to use.
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
           envFrom:

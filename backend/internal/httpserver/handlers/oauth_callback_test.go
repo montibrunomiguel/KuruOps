@@ -27,7 +27,7 @@ func newOAuthCallbackHandlers(t *testing.T) (*handlers.OAuthCallbackHandlers, *s
 	priv, err := authn.GenerateEphemeralKeyPair()
 	require.NoError(t, err)
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(),
-		repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv))
+		repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 
 	oauthStates := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 	storageSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), t.TempDir(),

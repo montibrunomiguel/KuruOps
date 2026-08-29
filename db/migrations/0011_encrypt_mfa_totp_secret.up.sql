@@ -1,0 +1,19 @@
+-- users.mfa_totp_secret used to hold each enrolled user's raw TOTP secret
+-- in plaintext -- the only credential-class secret in this schema that
+-- never went through secrets.Store (see internal/secrets' doc comment: a
+-- Postgres dump/backup was never supposed to hand out a usable secret, and
+-- this column was the one exception). AuthService.ConfirmMFA now stores
+-- the secret via secrets.Store and writes only the returned ref here, and
+-- AuthService.VerifyMFA resolves it back at verification time -- see that
+-- package's doc comments.
+--
+-- This migration clears any secret written under the old plaintext
+-- convention: a value stored before this change is not a valid
+-- secrets.Store ref, so leaving it in place would make VerifyMFA fail with
+-- a confusing "resolve mfa secret" error on next login instead of a clear
+-- "MFA needs to be re-enrolled". Nulling it here means those users instead
+-- see mfa_enabled=false and can re-enroll cleanly via the normal
+-- enroll/confirm flow. No production deployment of this project has
+-- shipped yet (see docs/THREAT_MODEL.md's rotation runbook), so the blast
+-- radius of this reset is dev/staging TOTP enrollments only.
+update users set mfa_totp_secret = null where mfa_totp_secret is not null;

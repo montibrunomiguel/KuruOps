@@ -1,0 +1,4 @@
+-- No-op: the data this migration cleared (plaintext TOTP secrets) cannot be
+-- recovered, and there is nothing to reverse structurally -- the column
+-- itself is unchanged, only its contents' interpretation (raw secret vs.
+-- secrets.Store ref) changed at the application layer.
