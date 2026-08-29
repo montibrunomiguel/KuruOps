@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -270,8 +271,17 @@ func (s *MCPToolService) execute(ctx context.Context, tenantID uuid.UUID, call *
 
 func (s *MCPToolService) recordFailure(ctx context.Context, tenantID uuid.UUID, call *domain.AIToolCall, cause error) {
 	payload, _ := json.Marshal(map[string]string{"error": cause.Error()})
-	_ = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.toolCalls.SetResult(ctx, tx, call.ID, domain.ToolCallFailed, payload)
-	})
+	}); err != nil {
+		// cause is the tool call's own failure reason -- this is a second,
+		// independent failure (persisting that fact). call.Status/Result
+		// below are still updated in-memory either way, so the caller's
+		// immediate view is correct; only the database's own copy might now
+		// disagree, e.g. a stale "pending"/"approved" status surviving a
+		// process restart. Worth knowing about, not worth failing the tool
+		// call over a second time.
+		slog.Error("mcp tool call: failed to persist failure result", "tool_call_id", call.ID, "cause", cause, "error", err)
+	}
 	call.Status, call.Result = domain.ToolCallFailed, payload
 }

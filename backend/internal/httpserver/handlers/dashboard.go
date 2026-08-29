@@ -149,7 +149,7 @@ func (h *DashboardHandlers) stats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := h.svc.Stats(r.Context(), tenantID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
@@ -165,7 +165,7 @@ func (h *DashboardHandlers) activity(w http.ResponseWriter, r *http.Request) {
 
 	events, err := h.svc.Activity(r.Context(), tenantID, limit, kind, middleware.AllowedTags(r.Context()), parseSince(r), parseUntil(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
@@ -178,7 +178,7 @@ func (h *DashboardHandlers) followup(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := h.svc.Followup(r.Context(), tenantID, middleware.AllowedTags(r.Context()), parseSince(r), parseUntil(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, view)

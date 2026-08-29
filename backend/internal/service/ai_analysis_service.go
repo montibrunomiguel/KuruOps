@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
 )
 
@@ -335,7 +337,7 @@ func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUI
 		return err
 	}
 
-	go func() {
+	safego.Go("ai-analysis.startAnalysis", func() {
 		bgCtx := context.Background()
 		if len(tools) == 0 {
 			s.finishSimpleRun(bgCtx, run, client, prompt)
@@ -343,7 +345,7 @@ func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUI
 			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
 		}
 		s.notifyAnalyzed(tenantID, contextType, contextID)
-	}()
+	})
 	return nil
 }
 
@@ -405,11 +407,11 @@ func (s *AIAnalysisService) continueAnalysis(ctx context.Context, tenantID uuid.
 		return err
 	}
 
-	go func() {
+	safego.Go("ai-analysis.continueAnalysis", func() {
 		bgCtx := context.Background()
 		_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
 		s.notifyAnalyzed(tenantID, contextType, contextID)
-	}()
+	})
 	return nil
 }
 
@@ -560,10 +562,24 @@ func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIA
 	if err := s.pool.WithTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
 		return s.runs.SetCompleted(ctx, tx, run.ID, finalMessages, text)
 	}); err != nil {
+		// The LLM call itself succeeded -- only persisting its result
+		// failed. Left un-logged, this run stays stuck showing "running"
+		// forever with no trace anywhere of why, and no one to notice
+		// short of an analyst eventually asking "why did my analysis never
+		// finish".
+		slog.Error("ai analysis: failed to persist completed run", "run_id", run.ID, "context_type", run.ContextType, "context_id", run.ContextID, "error", err)
 		return
 	}
 
-	_ = s.recordEvent(ctx, run.TenantID, run.ActorID, run.ContextType, run.ContextID, text)
+	if err := s.recordEvent(ctx, run.TenantID, run.ActorID, run.ContextType, run.ContextID, text); err != nil {
+		// The run itself completed and is persisted (SetCompleted above
+		// already succeeded) -- only the timeline entry that surfaces it to
+		// an analyst failed. Not worth failing the whole run over, but
+		// worth knowing about: without this, the analysis result exists in
+		// the database but nothing in the alert/incident timeline ever
+		// points an analyst at it.
+		slog.Error("ai analysis: failed to record timeline event", "run_id", run.ID, "context_type", run.ContextType, "context_id", run.ContextID, "error", err)
+	}
 }
 
 // agentToolRoute is resolveAgentTools' answer to "if the model calls tool
@@ -802,9 +818,17 @@ func (s *AIAnalysisService) driveAgentLoop(ctx context.Context, run *domain.AIAn
 }
 
 func (s *AIAnalysisService) failRun(ctx context.Context, tenantID uuid.UUID, runID int64, cause error) {
-	_ = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		return s.runs.SetFailed(ctx, tx, runID, cause.Error())
-	})
+	}); err != nil {
+		// cause is already the reason the run failed in the first place --
+		// this is a second, independent failure (persisting that fact), so
+		// both need to be visible: without this log line, a run stuck
+		// "running" forever from a failed SetFailed write is
+		// indistinguishable from finishSimpleRun's own silent-failure case
+		// above, and just as hard to diagnose after the fact.
+		slog.Error("ai analysis: failed to persist failed run", "run_id", runID, "cause", cause, "error", err)
+	}
 }
 
 // recordEvent logs the finished analysis text onto the alert/incident

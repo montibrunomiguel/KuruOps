@@ -19,7 +19,19 @@ import (
 	"github.com/kuruops/kuruops/internal/jsonpath"
 	"github.com/kuruops/kuruops/internal/notifier"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/safego"
 )
+
+// maxConcurrentAutoAnalysis bounds how many auto-analysis goroutines
+// (Ingest's "go s.autoAnalyze(...)" launch, see below) can be in flight at
+// once. Ingest's webhook path can receive a burst of alerts far faster than
+// an LLM call completes, and without a cap each one spawns its own
+// unbounded goroutine -- a large enough burst turns into hundreds of
+// concurrent outbound LLM requests, which is a cost/rate-limit/resource
+// problem for this process and the tenant's LLM provider alike, not a
+// correctness one (nothing here changes what gets analyzed, only how many
+// analyses run at the same instant).
+const maxConcurrentAutoAnalysis = 5
 
 // OnCallResolver resolves who's on shift right now -- satisfied by
 // *OnCallScheduleService. Defined as an interface here (rather than AlertService
@@ -38,7 +50,12 @@ type AlertService struct {
 	onCall      OnCallResolver
 	publish     func(tenantID uuid.UUID, eventType string, payload any)
 	autoAnalyze func(tenantID, alertID uuid.UUID)
-	runs        *repository.AIAnalysisRunRepository
+	// autoAnalyzeSem enforces maxConcurrentAutoAnalysis -- see that
+	// constant's doc comment. Buffered channel used as a counting
+	// semaphore: send blocks once maxConcurrentAutoAnalysis goroutines are
+	// already holding a slot, receive releases one.
+	autoAnalyzeSem chan struct{}
+	runs           *repository.AIAnalysisRunRepository
 	// incidents/escalationPolicies/appBaseURL back Escalate -- see
 	// EnableEscalation's doc comment for why these are wired via a setter
 	// rather than a constructor parameter.
@@ -48,7 +65,7 @@ type AlertService struct {
 }
 
 func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService, playbooks *repository.PlaybookRepository) *AlertService {
-	return &AlertService{pool: pool, repo: repo, tags: tags, playbooks: playbooks}
+	return &AlertService{pool: pool, repo: repo, tags: tags, playbooks: playbooks, autoAnalyzeSem: make(chan struct{}, maxConcurrentAutoAnalysis)}
 }
 
 // EnableOnCallAutoAssign wires the on-call resolver used by Ingest to
@@ -464,9 +481,17 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 	// the time the goroutine runs, the request that triggered Ingest may
 	// already have returned and had its context cancelled. Never fires for
 	// a suppressed duplicate -- there's no new content to analyze.
+	//
+	// The semaphore acquire below only ever blocks this background
+	// goroutine, never Ingest's own caller -- Ingest already returned to
+	// its HTTP response path the instant this goroutine was launched.
 	if s.autoAnalyze != nil {
 		alertID := alert.ID
-		go s.autoAnalyze(tenantID, alertID)
+		safego.Go("alert.autoAnalyze", func() {
+			s.autoAnalyzeSem <- struct{}{}
+			defer func() { <-s.autoAnalyzeSem }()
+			s.autoAnalyze(tenantID, alertID)
+		})
 	}
 
 	return alert, false, nil
@@ -724,7 +749,9 @@ func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID 
 	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
 	// Ingest uses) so a slow/unreachable escalation-chain destination never
 	// delays this response -- see fireManualEscalationStep.
-	go s.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
+	safego.Go("alert.fireManualEscalationStep", func() {
+		s.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
+	})
 
 	return incident, nil
 }

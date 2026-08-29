@@ -26,6 +26,7 @@ import (
 	"github.com/kuruops/kuruops/internal/mailer"
 	"github.com/kuruops/kuruops/internal/notifier"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/telemetry"
@@ -79,12 +80,12 @@ func main() {
 		Handler:           httpserver.WrapWithObservability(healthMux, logger, tracer),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	go func() {
+	safego.Go("worker.ListenAndServe", func() {
 		logger.Info("worker health/metrics listening", "addr", cfg.HTTPAddr)
 		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("health server failed", "error", err)
 		}
-	}()
+	})
 
 	// Only needed to resolve an escalation policy's destination
 	// (PagerDuty routing key / Slack webhook URL / generic webhook URL) --

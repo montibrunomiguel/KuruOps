@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/service"
@@ -75,8 +76,7 @@ func TestRoleService_CreateUpdateList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{}, role.AllowedTags, "nil AllowedTags is normalized to empty, not NULL")
 
-	got, err := svc.Get(t.Context(), tenantID, role.ID)
-	require.NoError(t, err)
+	got := getRoleByID(t, pool, tenantID, role.ID)
 	require.NotNil(t, got)
 	assert.Equal(t, "Analyst", got.Name)
 
@@ -110,7 +110,20 @@ func TestRoleService_CreateUpdateList(t *testing.T) {
 	})
 }
 
+// getRoleByID reads a role straight from the repository (bypassing
+// RoleService, which has no Get of its own -- see role_service.go's doc
+// comment on why that method was removed) inside its own short-lived
+// transaction, same pattern auth_service_test.go's emailFor uses.
+func getRoleByID(t *testing.T, pool *db.Pool, tenantID, roleID uuid.UUID) *domain.Role {
+	t.Helper()
+	tx := testutil.BeginTx(t, pool, tenantID)
+	role, err := repository.NewRoleRepository().Get(t.Context(), tx, roleID)
+	require.NoError(t, err)
+	return role
+}
+
 func TestRoleService_Delete(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
 	svc := newRoleService(t)
 	tenantID := testutil.NewTenant(t)
 	actorID := testutil.NewUser(t, tenantID, "admin", nil)
@@ -120,9 +133,7 @@ func TestRoleService_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, svc.Delete(t.Context(), tenantID, actorID, role.ID))
-		got, err := svc.Get(t.Context(), tenantID, role.ID)
-		require.NoError(t, err)
-		assert.Nil(t, got)
+		assert.Nil(t, getRoleByID(t, pool, tenantID, role.ID))
 	})
 
 	t.Run("refuses to delete a role still assigned to a user", func(t *testing.T) {
@@ -132,9 +143,7 @@ func TestRoleService_Delete(t *testing.T) {
 		err := svc.Delete(t.Context(), tenantID, actorID, roleID)
 		assert.ErrorContains(t, err, "assigned to")
 
-		got, err := svc.Get(t.Context(), tenantID, roleID)
-		require.NoError(t, err)
-		assert.NotNil(t, got, "the role must still exist after a refused delete")
+		assert.NotNil(t, getRoleByID(t, pool, tenantID, roleID), "the role must still exist after a refused delete")
 	})
 }
 
@@ -160,8 +169,7 @@ func TestRoleService_EnsureUnmappedFallback(t *testing.T) {
 
 	assert.Equal(t, firstID, secondID, "a second call must reuse the same fallback role, not create a duplicate")
 
-	role, err := svc.Get(t.Context(), tenantID, firstID)
-	require.NoError(t, err)
+	role := getRoleByID(t, pool, tenantID, firstID)
 	require.NotNil(t, role)
 	assert.False(t, role.IsAdmin)
 	assert.NotEmpty(t, role.AllowedTags, "the fallback role's tag scope must be a restrictive sentinel, not unrestricted")

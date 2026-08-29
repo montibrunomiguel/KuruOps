@@ -25,6 +25,7 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/ingest"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/telemetry"
@@ -77,7 +78,7 @@ func main() {
 	// even though this is a different process. See internal/events'
 	// package doc comment.
 	eventBroadcaster := events.NewBroadcaster(pool.Pool, logger)
-	go eventBroadcaster.Start(ctx)
+	safego.Go("ingest.eventBroadcaster", func() { eventBroadcaster.Start(ctx) })
 	alertService.EnableEventPublishing(eventBroadcaster.Publish)
 
 	// On-call auto-assign is enabled only here, not in cmd/api -- it's a
@@ -154,13 +155,13 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	go func() {
+	safego.Go("ingest.ListenAndServe", func() {
 		logger.Info("ingest listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
-	}()
+	})
 
 	<-ctx.Done()
 	logger.Info("shutting down")

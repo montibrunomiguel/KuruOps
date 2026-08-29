@@ -29,6 +29,7 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/mailer"
 	"github.com/kuruops/kuruops/internal/repository"
+	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/telemetry"
@@ -114,7 +115,7 @@ func main() {
 	// reaches a browser tab connected to any api replica, not just its own
 	// process.
 	eventBroadcaster := events.NewBroadcaster(pool.Pool, logger)
-	go eventBroadcaster.Start(ctx)
+	safego.Go("api.eventBroadcaster", func() { eventBroadcaster.Start(ctx) })
 	eventsHandlers := handlers.NewEventsHandlers(eventBroadcaster)
 
 	alertRepo := repository.NewAlertRepository()
@@ -328,13 +329,13 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	go func() {
+	safego.Go("api.ListenAndServe", func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
-	}()
+	})
 
 	<-ctx.Done()
 	logger.Info("shutting down")

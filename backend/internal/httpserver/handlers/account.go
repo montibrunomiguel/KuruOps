@@ -120,7 +120,7 @@ func (h *AccountHandlers) enrollMFA(w http.ResponseWriter, r *http.Request) {
 
 	secret, otpauthURL, err := h.auth.GenerateMFAEnrollment(r.Context(), tenantID, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"secret": secret, "otpauthUrl": otpauthURL})
@@ -193,7 +193,7 @@ func (h *AccountHandlers) listAPITokens(w http.ResponseWriter, r *http.Request) 
 
 	tokens, err := h.apiTokens.List(r.Context(), tenantID, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, tokens)
@@ -249,7 +249,7 @@ func (h *AccountHandlers) revokeAPIToken(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := h.apiTokens.Revoke(r.Context(), tenantID, userID, id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -27,7 +27,7 @@ func (h *IncidentHandlers) reportPDF(w http.ResponseWriter, r *http.Request) {
 
 	pdfBytes, found, err := h.report.GeneratePDF(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if !found {

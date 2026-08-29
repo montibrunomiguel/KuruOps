@@ -34,7 +34,7 @@ func (h *LLMProviderHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	providers, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, providers)

@@ -127,6 +127,42 @@ jobs:
           cd frontend
           npm run build
 
+  dbmigrate-ci:
+    name: External DB Migration (dbmigrate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Setup Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      # internal/dbmigrate (the Settings -> external-database-migration
+      # feature: raw COPY BINARY streaming, FK-dependency-ordered table
+      # copying, role creation) had its own integration test suite gated
+      # behind TEST_MIGRATION_TARGET_ENABLED and only ever run manually via
+      # `task backend:test:migration` -- meaning it had zero CI signal, on
+      # this or any other branch, until this job. `task db:test:up` first
+      # brings up the main postgres container + a migrated kuruops_test
+      # (backend:test:migration's own deps assume it's already running,
+      # same as every other backend:test:* task in this file); `task
+      # backend:test:migration` then also brings up a second, standalone
+      # Postgres container (postgres-target) to stand in for the "external"
+      # database being migrated from.
+      - name: Run dbmigrate integration test
+        run: |
+          task db:test:up
+          task backend:test:migration
+
   k8s-manifests-ci:
     name: Kubernetes Manifests
     runs-on: ubuntu-latest

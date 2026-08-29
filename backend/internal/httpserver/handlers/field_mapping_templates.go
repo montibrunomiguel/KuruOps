@@ -38,7 +38,7 @@ func (h *FieldMappingTemplateHandlers) list(w http.ResponseWriter, r *http.Reque
 	}
 	templates, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, templates)

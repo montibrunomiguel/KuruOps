@@ -104,13 +104,13 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 
 	incidents, err := h.svc.List(r.Context(), tenantID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 
 	total, err := h.svc.Count(r.Context(), tenantID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
@@ -171,7 +171,7 @@ func (h *IncidentHandlers) get(w http.ResponseWriter, r *http.Request) {
 
 	inc, err := h.svc.Get(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if inc == nil {
@@ -404,7 +404,7 @@ func (h *IncidentHandlers) statusHistory(w http.ResponseWriter, r *http.Request)
 
 	entries, err := h.svc.StatusHistory(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, entries)
@@ -454,7 +454,7 @@ func (h *IncidentHandlers) timeline(w http.ResponseWriter, r *http.Request) {
 
 	events, err := h.svc.Timeline(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
@@ -473,7 +473,7 @@ func (h *IncidentHandlers) listComments(w http.ResponseWriter, r *http.Request) 
 
 	comments, err := h.svc.Comments(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, comments)
@@ -505,7 +505,7 @@ func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 	// (see domain.IncidentComment) without a new user-lookup route.
 	actor, err := h.users.Get(r.Context(), tenantID, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if actor == nil {
@@ -534,7 +534,7 @@ func (h *IncidentHandlers) listIOCs(w http.ResponseWriter, r *http.Request) {
 
 	iocs, err := h.svc.IOCs(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, iocs)
@@ -564,7 +564,7 @@ func (h *IncidentHandlers) addIOC(w http.ResponseWriter, r *http.Request) {
 
 	actor, err := h.users.Get(r.Context(), tenantID, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if actor == nil {
@@ -593,7 +593,7 @@ func (h *IncidentHandlers) linkedAlerts(w http.ResponseWriter, r *http.Request) 
 
 	alerts, err := h.svc.LinkedAlerts(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, alerts)
@@ -747,7 +747,7 @@ func (h *IncidentHandlers) postmortemDoc(w http.ResponseWriter, r *http.Request)
 
 	doc, found, err := h.postmortem.Generate(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if !found {

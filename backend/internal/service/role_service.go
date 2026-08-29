@@ -67,6 +67,13 @@ func roleAuditFields(r *domain.Role) map[string]any {
 	}
 }
 
+// A single-role Get intentionally does not exist here (removed as dead
+// code during the software-reliability audit sweep) -- nothing in the
+// HTTP surface or any other service ever needed one; every caller either
+// already has a *domain.Role in hand (Create/Update's own return value) or
+// wants the full List. A test that needs to read one role's row directly
+// goes through repository.RoleRepository.Get instead (see
+// role_service_test.go's getRoleByID).
 func (s *RoleService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.Role, error) {
 	var roles []domain.Role
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -75,16 +82,6 @@ func (s *RoleService) List(ctx context.Context, tenantID uuid.UUID) ([]domain.Ro
 		return err
 	})
 	return roles, err
-}
-
-func (s *RoleService) Get(ctx context.Context, tenantID, id uuid.UUID) (*domain.Role, error) {
-	var role *domain.Role
-	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		v, err := s.roles.Get(ctx, tx, id)
-		role = v
-		return err
-	})
-	return role, err
 }
 
 func (s *RoleService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in domain.SaveRoleInput) (*domain.Role, error) {

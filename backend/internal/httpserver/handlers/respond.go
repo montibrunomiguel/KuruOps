@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -19,6 +20,25 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// writeInternalError is writeError(w, http.StatusInternalServerError, ...)'s
+// safe replacement for every handler that was writing err.Error() straight
+// into a 500 response body. A raw Go error string routinely contains
+// internal detail that has no business reaching an API client -- a
+// Postgres constraint/column name, a driver-level error, an internal file
+// path, sometimes literally a SQL fragment -- none of which helps a
+// legitimate caller and all of which helps an attacker fingerprint the
+// backend. The real error is still fully logged server-side (where every
+// internal caller already looks for it), the client just gets a generic,
+// safe message instead. Unlike writeError's other 4xx call sites (a
+// validation message like "current password is incorrect" is deliberately
+// client-safe and stays as-is), a 500 by definition means something on
+// our side went wrong in a way the caller can't have caused or fixed, so
+// there's nothing case-specific worth telling them anyway.
+func writeInternalError(w http.ResponseWriter, r *http.Request, err error) {
+	slog.Error("internal server error", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeError(w, http.StatusInternalServerError, "an internal error occurred")
 }
 
 // mustTenantID reads the tenant ID out of the request context, writing a 401

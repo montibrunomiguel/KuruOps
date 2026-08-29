@@ -185,17 +185,20 @@ paths:
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
-          description: Invalid credentials
+          description: >-
+            Invalid credentials. Unlike the shared Unauthorized response
+            (issued by the auth middleware via http.Error, plain text),
+            this comes from the handler itself via writeError -- the same
+            application/json {"error": "..."} shape as every other
+            handler-level error in this API.
           content:
-            text/plain:
-              schema:
-                type: string
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "429":
-          description: Too many login attempts for this account or IP
+          description: Too many login attempts for this account or IP -- same handler-level JSON error shape as 401 above
           content:
-            text/plain:
-              schema:
-                type: string
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "500":
           $ref: '#/components/responses/InternalError'
 
