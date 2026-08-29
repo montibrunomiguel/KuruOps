@@ -43,7 +43,7 @@ func (h *OnCallScheduleHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	schedules, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, schedules)
@@ -61,7 +61,7 @@ func (h *OnCallScheduleHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}
 	sched, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if sched == nil {

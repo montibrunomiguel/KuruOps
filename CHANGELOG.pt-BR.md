@@ -162,6 +162,42 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- A migração de banco externo (Configurações → Dados & Auditoria, `internal/dbmigrate`) falhava
+  ao copiar qualquer tabela com uma coluna de busca full-text `generated always as (...) stored`
+  (`alerts.search_vector`, `incidents.search_vector`) com `"row field count is N, expected N-1"`
+  — `COPY ... TO` inclui o valor calculado de uma coluna gerada por padrão, `COPY ... FROM` não
+  aceita um, então um `COPY tablename` sem lista explícita de colunas enviava um campo a mais por
+  linha do que o lado de destino esperava ler. Corrigido resolvendo as colunas não-geradas de cada
+  tabela uma vez e usando essa lista exata explicitamente nos dois lados. Encontrado ao conectar a
+  própria suíte de testes de integração do `internal/dbmigrate` ao CI pela primeira vez (veja
+  abaixo) — ela nunca rodava automaticamente antes, então isso não tinha cobertura de teste na
+  prática.
+- Nenhuma goroutine de background desacoplada (execuções de análise de IA, envio de notificação de
+  escalonamento manual, o stream de cópia de linhas da migração de banco externo, todo loop de
+  background de longa duração) tinha recuperação de panic — `chi.Recoverer` só protege o caminho
+  síncrono de request HTTP, então um panic não tratado em qualquer uma delas derrubava o processo
+  inteiro. O novo `internal/safego.Go` envolve todas elas agora, recuperando e logando um panic em
+  vez de derrubar o processo.
+- Três pontos descartavam um erro real silenciosamente
+  (`AIAnalysisService.finishSimpleRun`/`failRun`, `MCPToolService.recordFailure`) — uma escrita
+  falha deixava uma execução de análise de IA travada mostrando "running" para sempre, ou o status
+  no banco de uma tool call permanentemente dessincronizado do resultado real, sem nenhum rastro
+  de log de por quê. Agora logado via `slog.Error`.
+- Uma rajada de alertas chegando mais rápido do que uma chamada de LLM completa podia disparar um
+  número ilimitado de goroutines concorrentes de auto-análise, uma por alerta — agora limitado a 5
+  análises concorrentes em andamento via um semáforo contador.
+- 62 pontos de handler em 24 arquivos escreviam uma string de erro Go crua (`err.Error()`) direto
+  no corpo de uma resposta 500 — um nome de constraint/coluna do Postgres, um erro de nível de
+  driver, ou um caminho de arquivo interno vazando rotineiramente em uma resposta da API. Um novo
+  helper `writeInternalError` agora loga o erro real no servidor e retorna uma mensagem genérica
+  ao cliente em vez disso.
+- `docs/openapi.yaml` documentava as respostas 401/429 de `/auth/login` como `text/plain` — na
+  verdade são `application/json` (`{"error": "..."}`), igual a todo outro erro no nível de handler
+  nesta API; só as respostas compartilhadas `Unauthorized`/`Forbidden`, genuinamente texto puro
+  (emitidas pelo middleware de auth, não por um handler), devem ser diferentes.
+- Removido `RoleService.Get` — nenhuma rota HTTP ou outro serviço nunca o chamava, só seu próprio
+  arquivo de teste, como helper de conveniência para assertions, agora substituído por uma leitura
+  direta do repositório.
 - **Segurança**: `AuthenticateLDAP` refazia o bind como o DN do usuário resolvido com qualquer
   senha enviada pelo chamador, inclusive uma vazia — a RFC 4513 §5.1.2 define que um bind com um
   DN válido e senha de tamanho zero é um "unauthenticated bind" que muitos diretórios (inclusive o

@@ -42,7 +42,7 @@ func (h *MCPServerHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	servers, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, servers)
@@ -202,7 +202,7 @@ func (h *MCPServerHandlers) listPendingToolCalls(w http.ResponseWriter, r *http.
 	}
 	calls, err := h.toolSvc.PendingApprovals(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, calls)

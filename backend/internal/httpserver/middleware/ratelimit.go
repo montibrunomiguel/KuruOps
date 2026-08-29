@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/kuruops/kuruops/internal/safego"
 )
 
 // KeyedLimiter is a generic sliding-window limiter backed by a shared
@@ -58,7 +60,7 @@ func negativeCacheTTL(window time.Duration) time.Duration {
 // limiter is ever constructed more than once per process, e.g. per-test).
 func NewKeyedLimiter(ctx context.Context, pool *pgxpool.Pool, scope string, limit int, window time.Duration) *KeyedLimiter {
 	limiter := &KeyedLimiter{pool: pool, scope: scope, limit: limit, window: window}
-	go limiter.cleanupLoop(ctx)
+	safego.Go("ratelimit.cleanupLoop["+scope+"]", func() { limiter.cleanupLoop(ctx) })
 	return limiter
 }
 

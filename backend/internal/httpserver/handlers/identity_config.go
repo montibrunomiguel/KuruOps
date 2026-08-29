@@ -38,7 +38,7 @@ func (h *IdentityConfigHandlers) getLDAP(w http.ResponseWriter, r *http.Request)
 	}
 	cfg, err := h.svc.GetLDAPConfig(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
@@ -96,7 +96,7 @@ func (h *IdentityConfigHandlers) deleteLDAP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.svc.DeleteLDAPConfig(r.Context(), tenantID, actorID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -109,7 +109,7 @@ func (h *IdentityConfigHandlers) getSAML(w http.ResponseWriter, r *http.Request)
 	}
 	cfg, err := h.svc.GetSAMLConfig(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
@@ -162,7 +162,7 @@ func (h *IdentityConfigHandlers) deleteSAML(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.svc.DeleteSAMLConfig(r.Context(), tenantID, actorID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

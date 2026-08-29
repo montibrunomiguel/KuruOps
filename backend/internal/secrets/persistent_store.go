@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kuruops/kuruops/internal/db"
+	"github.com/kuruops/kuruops/internal/safego"
 )
 
 // refreshInterval is how often a running PersistentEnvStore reloads its
@@ -89,7 +90,7 @@ func NewPersistentEnvStore(ctx context.Context, pool *db.Pool, encryptionKeyB64 
 	}
 	s.values = values
 
-	go s.refreshLoop(ctx)
+	safego.Go("secrets.PersistentEnvStore.refreshLoop", func() { s.refreshLoop(ctx) })
 	return s, nil
 }
 

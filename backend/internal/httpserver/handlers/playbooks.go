@@ -37,7 +37,7 @@ func (h *PlaybookHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	playbooks, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, playbooks)
@@ -55,7 +55,7 @@ func (h *PlaybookHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}
 	pb, err := h.svc.Get(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if pb == nil {
@@ -82,7 +82,7 @@ func (h *PlaybookHandlers) match(w http.ResponseWriter, r *http.Request) {
 	}
 	pb, err := h.svc.MatchForAlertTitle(r.Context(), tenantID, title)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if pb == nil {

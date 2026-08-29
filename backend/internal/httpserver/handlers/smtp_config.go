@@ -34,7 +34,7 @@ func (h *SMTPConfigHandlers) get(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := h.svc.Get(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
@@ -90,7 +90,7 @@ func (h *SMTPConfigHandlers) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.svc.Delete(r.Context(), tenantID, actorID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

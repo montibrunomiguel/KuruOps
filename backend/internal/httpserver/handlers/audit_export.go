@@ -81,7 +81,7 @@ func (h *AuditExportHandlers) exportCEF(w http.ResponseWriter, r *http.Request) 
 
 	lines, next, err := h.svc.ExportCEF(r.Context(), tenantID, cursor, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 
@@ -113,7 +113,7 @@ func (h *AuditExportHandlers) exportJSON(w http.ResponseWriter, r *http.Request)
 
 	events, next, err := h.svc.ExportJSON(r.Context(), tenantID, cursor, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 

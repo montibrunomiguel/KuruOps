@@ -52,7 +52,7 @@ func (h *UserHandlers) Directory(w http.ResponseWriter, r *http.Request) {
 	}
 	summaries, err := h.svc.ListSummaries(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, summaries)
@@ -65,7 +65,7 @@ func (h *UserHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := h.svc.List(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
@@ -221,7 +221,7 @@ func (h *UserHandlers) revokeSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.auth.RevokeSessions(r.Context(), tenantID, id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -264,7 +264,7 @@ func (h *UserHandlers) listGroupMappings(w http.ResponseWriter, r *http.Request)
 	}
 	mappings, err := h.svc.ListGroupMappings(r.Context(), tenantID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, mappings)

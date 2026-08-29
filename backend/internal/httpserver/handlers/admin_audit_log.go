@@ -67,7 +67,7 @@ func (h *AdminAuditLogHandlers) list(w http.ResponseWriter, r *http.Request) {
 
 	entries, next, err := h.svc.List(r.Context(), tenantID, cursor, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 

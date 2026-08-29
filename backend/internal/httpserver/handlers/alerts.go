@@ -102,13 +102,13 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 
 	alerts, err := h.svc.List(r.Context(), tenantID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 
 	total, err := h.svc.Count(r.Context(), tenantID, f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("X-Total-Count", strconv.Itoa(total))
@@ -128,7 +128,7 @@ func (h *AlertHandlers) get(w http.ResponseWriter, r *http.Request) {
 
 	alert, err := h.svc.Get(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if alert == nil {
@@ -513,7 +513,7 @@ func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
 
 	comments, err := h.svc.Comments(r.Context(), tenantID, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, comments)
@@ -545,7 +545,7 @@ func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 	// same reasoning as IncidentHandlers.addComment.
 	actor, err := h.users.Get(r.Context(), tenantID, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if actor == nil {

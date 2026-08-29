@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -262,21 +263,81 @@ func (s *Service) CopyData(ctx context.Context, sourcePool *db.Pool, tenantID uu
 	return counts, nil
 }
 
+// nonGeneratedColumns returns table's column names in schema-definition
+// (ordinal) order, excluding any `generated always as (...) stored` column
+// (e.g. alerts.search_vector, incidents.search_vector -- see
+// db/migrations/0008_fulltext_search) -- copyTable needs this because
+// Postgres' COPY BINARY is NOT symmetric by default for a table that has
+// one: `copy tablename to stdout` with no column list DOES include a
+// generated column's computed value in its output, but `copy tablename
+// from stdin` with no column list does NOT accept one (a generated
+// column's value can never be written directly, only computed), so a bare
+// COPY with no explicit column list sends one more field per row than the
+// receiving side is prepared to read the moment any table has a generated
+// column -- exactly the "row field count is N, expected N-1" error this
+// was written to fix. Both sides of copyTable use this exact same explicit
+// list, so they always agree regardless of that asymmetry.
+func nonGeneratedColumns(ctx context.Context, tx pgx.Tx, table string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		select column_name from information_schema.columns
+		where table_schema = 'public' and table_name = $1 and is_generated = 'NEVER'
+		order by ordinal_position`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cols []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cols = append(cols, c)
+	}
+	return cols, rows.Err()
+}
+
 // copyTable streams one table's rows from sourceTx to targetTx using raw
 // COPY BINARY, without buffering the whole table in memory -- CopyTo and
 // CopyFrom are both blocking, so they run on either side of an io.Pipe.
 func copyTable(ctx context.Context, sourceTx, targetTx pgx.Tx, table string) (int64, error) {
+	// Read column names from sourceTx -- target has already been migrated
+	// to the identical schema (RunSchemaMigrations, called before
+	// CopyData) by the time this runs, so the two never disagree on column
+	// set or order.
+	cols, err := nonGeneratedColumns(ctx, sourceTx, table)
+	if err != nil {
+		return 0, fmt.Errorf("resolve columns for %s: %w", table, err)
+	}
+	quotedCols := make([]string, len(cols))
+	for i, c := range cols {
+		quotedCols[i] = quoteIdent(c)
+	}
+	columnList := " (" + strings.Join(quotedCols, ", ") + ")"
+
 	pr, pw := io.Pipe()
 
 	var copyToErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_, copyToErr = sourceTx.Conn().PgConn().CopyTo(ctx, pw, `copy `+quoteIdent(table)+` to stdout (format binary)`)
-		_ = pw.CloseWithError(copyToErr)
+		// Not safego.Go here -- a panic must still close pw (with an error,
+		// so the CopyFrom side below unblocks with a failure instead of
+		// hanging forever waiting for data/EOF that will now never come)
+		// and set copyToErr before done is closed, none of which a generic
+		// recover-and-log wrapper knows how to do for this function's own
+		// invariants.
+		defer func() {
+			if r := recover(); r != nil {
+				copyToErr = fmt.Errorf("panic copying table %s: %v\n%s", table, r, debug.Stack())
+			}
+			_ = pw.CloseWithError(copyToErr)
+		}()
+		_, copyToErr = sourceTx.Conn().PgConn().CopyTo(ctx, pw, `copy `+quoteIdent(table)+columnList+` to stdout (format binary)`)
 	}()
 
-	tag, copyFromErr := targetTx.Conn().PgConn().CopyFrom(ctx, pr, `copy `+quoteIdent(table)+` from stdin (format binary)`)
+	tag, copyFromErr := targetTx.Conn().PgConn().CopyFrom(ctx, pr, `copy `+quoteIdent(table)+columnList+` from stdin (format binary)`)
 	<-done
 
 	if copyToErr != nil {

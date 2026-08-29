@@ -65,7 +65,7 @@ func (h *AuthHandlers) Routes(r chi.Router) {
 func (h *AuthHandlers) resolveTenant(w http.ResponseWriter, r *http.Request) (*domain.Tenant, bool) {
 	tenant, err := h.auth.ResolveDefaultTenant(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return nil, false
 	}
 	if tenant == nil {
@@ -130,7 +130,7 @@ func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 
 	user, token, refreshToken, pendingToken, err := h.auth.LoginLocal(r.Context(), tenant.ID, req.Email, req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if pendingToken != "" {
@@ -181,7 +181,7 @@ func (h *AuthHandlers) mfaVerify(w http.ResponseWriter, r *http.Request) {
 
 	user, token, refreshToken, err := h.auth.VerifyMFA(r.Context(), tenant.ID, req.PendingToken, req.Code)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if user == nil {
@@ -263,7 +263,7 @@ func (h *AuthHandlers) refresh(w http.ResponseWriter, r *http.Request) {
 
 	token, newRefreshToken, err := h.auth.Refresh(r.Context(), tenant.ID, req.RefreshToken)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	if token == "" {
@@ -324,7 +324,7 @@ func (h *AuthHandlers) passwordResetRequest(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := h.passwordReset.RequestReset(r.Context(), tenant.ID, req.Email); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
