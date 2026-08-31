@@ -16,7 +16,14 @@ const CHANNELS: EscalationChannelType[] = ["pagerduty", "slack", "webhook"];
 // returned by the API); "" on save means keep that position's existing
 // secret (see EscalationPolicyService.Save), which is only valid for a
 // position that already had a saved step there.
+//
+// key is purely a client-side React list key (crypto.randomUUID(), stable
+// for this step's lifetime in the form regardless of moveStep/removeStep
+// reordering the array around it) -- never sent to the backend, see save()
+// below, which builds SaveEscalationStepRequest explicitly field-by-field
+// rather than spreading this whole object.
 interface EditableStep {
+  key: string;
   scheduleId: string;
   delayMinutes: string;
   channelType: EscalationChannelType;
@@ -27,6 +34,7 @@ interface EditableStep {
 
 function toEditableStep(step: EscalationStep): EditableStep {
   return {
+    key: crypto.randomUUID(),
     scheduleId: step.scheduleId,
     delayMinutes: String(step.delayMinutes),
     channelType: step.channelType,
@@ -37,7 +45,7 @@ function toEditableStep(step: EscalationStep): EditableStep {
 }
 
 function emptyStep(defaultScheduleId: string): EditableStep {
-  return { scheduleId: defaultScheduleId, delayMinutes: "15", channelType: "webhook", destination: "", webhookPayloadTemplate: "", hadSavedSecret: false };
+  return { key: crypto.randomUUID(), scheduleId: defaultScheduleId, delayMinutes: "15", channelType: "webhook", destination: "", webhookPayloadTemplate: "", hadSavedSecret: false };
 }
 
 function destinationPlaceholder(channelType: EscalationChannelType): string {
@@ -125,7 +133,7 @@ export function EscalationEditForm({
       {error && <div className="error-banner" style={{ marginBottom: 10 }}>{error}</div>}
 
       {steps.map((step, idx) => (
-        <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
+        <div key={step.key} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 10, marginBottom: 10 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <strong style={{ fontSize: 12.5 }}>{t("settings.escalation.form.step", { num: idx + 1 })}</strong>
             <div className="row-actions">

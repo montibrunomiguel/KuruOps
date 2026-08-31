@@ -14,6 +14,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- `AlertsListPage.tsx`/`IncidentsListPage.tsx` tinham desenvolvido independentemente a mesma
+  máquina de estado de seleção de linhas de ~25 linhas (um `Set` de ids selecionados, selecionar
+  tudo com o estado indeterminate do checkbox do cabeçalho, reset ao mudar filtro/página) e o
+  mesmo estado de aplicar/erro/resumo de ação em massa. Extraído para hooks compartilhados
+  `useRowSelection`/`useBulkAction` -- sem mudança de comportamento, os testes já existentes de
+  ambas as páginas passam sem alteração.
+- `useSidebarCounts.ts` (os contadores "Alertas"/"Incidentes" da barra lateral) era o último hook
+  de busca de dados feito à mão com `useEffect`+`fetch`+flag de cancelado que restava no app, sem
+  nenhuma assinatura de atualização ao vivo -- os contadores só mudavam numa navegação de página
+  completa, ao contrário dos contadores das próprias páginas de listagem. Reconstruído sobre
+  `useList` (react-query) + `useEventStream`, o mesmo padrão que toda outra página de listagem/
+  detalhe já usa; os contadores agora atualizam ao vivo via SSE no instante em que a mudança de
+  outro analista chega, igual às páginas de listagem. `useList` ganhou uma flag `options.enabled`
+  (padrão `true`, nenhum call site existente é afetado) pra suportar isso -- pula a busca
+  inteiramente pra uma capacidade que o chamador não tem, em vez de disparar uma requisição
+  garantidamente 403.
+
 - **Projeto renomeado de ArgusOps para KuruOps** -- inspirado no Curupira, personagem do folclore
   brasileiro que protege a floresta e avisa os animais com seu grito característico. A renomeação
   cobre a base de código inteira: o caminho do módulo Go (`github.com/argusops/argusops` →
@@ -162,6 +179,19 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- Cinco formulários de lista reordenável/removível usavam o índice do array como key
+  (os passos de escalonamento do `EscalationEditForm.tsx`, os intervalos de horário de
+  funcionamento do `ScheduleForm.tsx`, os passos de playbook do `PlaybookDetailPage.tsx`, as
+  regras de mapeamento do `FieldMappingTemplatesPanel.tsx`, os campos de dedup do
+  `GroupByFieldsEditor.tsx`) -- remover ou reordenar uma linha desloca o índice de toda linha
+  posterior, então o React reaproveita o nó DOM de cada linha deslocada (e qualquer foco/estado
+  que ele estivesse segurando) pra uma linha lógica *diferente* da que ele estava de fato
+  renderizando um instante antes. Toda lista agora usa uma key estável em vez disso: um
+  `crypto.randomUUID()` gerado uma vez por linha (removido de novo antes do payload de salvar,
+  junto com a lista somente-leitura de passos de playbook, que já tinha um id real do backend
+  disponível o tempo todo e agora usa ele) pros quatro casos de array de objeto, e um pequeno
+  array paralelo de ids pro `string[]` puro do prop do `GroupByFieldsEditor`, que não tem objeto
+  nenhum pra pendurar um id.
 - A migração de banco externo (Configurações → Dados & Auditoria, `internal/dbmigrate`) falhava
   ao copiar qualquer tabela com uma coluna de busca full-text `generated always as (...) stored`
   (`alerts.search_vector`, `incidents.search_vector`) com `"row field count is N, expected N-1"`

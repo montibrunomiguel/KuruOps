@@ -48,6 +48,12 @@ function toDatetimeLocal(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// See workingHours' useState call below for why key exists -- stripped
+// again before this ever reaches SaveOnCallScheduleRequest.
+interface EditableWorkingHours extends OnCallWorkingHoursInterval {
+  key: string;
+}
+
 type Cadence = "daily" | "weekly" | "custom";
 
 function cadenceFor(periodDays: number): Cadence {
@@ -84,7 +90,15 @@ export function ScheduleForm({
   const [customPeriodDays, setCustomPeriodDays] = useState(schedule?.periodDays ?? 7);
   const [concurrentShifts, setConcurrentShifts] = useState(schedule?.concurrentShifts ?? 1);
   const [workingHoursMode, setWorkingHoursMode] = useState<OnCallWorkingHoursMode>(schedule?.workingHoursMode ?? "all_day");
-  const [workingHours, setWorkingHours] = useState<OnCallWorkingHoursInterval[]>(schedule?.workingHours ?? []);
+  // EditableWorkingHours adds a client-only React list key (crypto.randomUUID(),
+  // stripped again in save() below) -- OnCallWorkingHoursInterval itself has
+  // no id (it's a plain interval, not an entity with backend identity), and
+  // this list is reorderable/removable via addWorkingHours/removeWorkingHours,
+  // so a positional key would misattribute a row's DOM/focus state after a
+  // removal shifts every later row's index.
+  const [workingHours, setWorkingHours] = useState<EditableWorkingHours[]>(
+    (schedule?.workingHours ?? []).map((iv) => ({ ...iv, key: crypto.randomUUID() })),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { confirming: confirmingDelete, confirm: confirmDelete, cancel: cancelDelete } = useConfirm();
@@ -123,7 +137,7 @@ export function ScheduleForm({
   }
 
   function addWorkingHours() {
-    setWorkingHours((rows) => [...rows, { weekdays: [1, 2, 3, 4, 5], startMinute: 9 * 60, endMinute: 17 * 60 }]);
+    setWorkingHours((rows) => [...rows, { key: crypto.randomUUID(), weekdays: [1, 2, 3, 4, 5], startMinute: 9 * 60, endMinute: 17 * 60 }]);
   }
 
   function updateWorkingHours(idx: number, patch: Partial<OnCallWorkingHoursInterval>) {
@@ -160,7 +174,10 @@ export function ScheduleForm({
         periodDays,
         concurrentShifts,
         workingHoursMode,
-        workingHours: workingHoursMode === "specific_times" ? workingHours : [],
+        workingHours:
+          workingHoursMode === "specific_times"
+            ? workingHours.map((iv) => ({ id: iv.id, weekdays: iv.weekdays, startMinute: iv.startMinute, endMinute: iv.endMinute }))
+            : [],
       };
       if (isNew) {
         const created = await api.post<OnCallSchedule>("/api/v1/settings/on-call-schedules", body, token);
@@ -373,7 +390,7 @@ export function ScheduleForm({
         {workingHoursMode === "specific_times" && (
           <div>
             {workingHours.map((iv, idx) => (
-              <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+              <div key={iv.key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", gap: 2 }}>
                   {WEEKDAY_KEYS.map((key, weekday) => (
                     <button

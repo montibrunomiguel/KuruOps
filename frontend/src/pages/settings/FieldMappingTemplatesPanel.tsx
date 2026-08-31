@@ -118,6 +118,12 @@ export function FieldMappingTemplatesPanel() {
   );
 }
 
+// See TemplateForm's rules useState call below for why key exists --
+// stripped again before this ever reaches the save payload.
+interface EditableRule extends FieldMappingRule {
+  key: string;
+}
+
 function TemplateForm({
   existing,
   onCancel,
@@ -130,7 +136,14 @@ function TemplateForm({
   const { t } = useTranslation();
   const { token } = useAuth();
   const [name, setName] = useState(existing?.name ?? "");
-  const [rules, setRules] = useState<FieldMappingRule[]>(existing?.rules.length ? existing.rules : [{ jsonPath: "", label: "" }]);
+  // EditableRule adds a client-only React list key (crypto.randomUUID(),
+  // stripped again in handleSubmit's cleanRules below) -- FieldMappingRule
+  // itself has no id, and this list is reorderable via removeRule, so a
+  // positional key would misattribute a row's focus/DOM state after a
+  // removal shifts every later row's index.
+  const [rules, setRules] = useState<EditableRule[]>(
+    existing?.rules.length ? existing.rules.map((r) => ({ ...r, key: crypto.randomUUID() })) : [{ jsonPath: "", label: "", key: crypto.randomUUID() }],
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -150,7 +163,9 @@ function TemplateForm({
     // FieldMappingTemplateService.validateFieldMappingTemplate) so an empty
     // trailing row added via "+ Add rule" and never filled in doesn't
     // round-trip back as a visible-but-useless row after save.
-    const cleanRules = rules.filter((r) => r.jsonPath.trim() && r.label.trim());
+    const cleanRules: FieldMappingRule[] = rules
+      .filter((r) => r.jsonPath.trim() && r.label.trim())
+      .map((r) => ({ jsonPath: r.jsonPath, label: r.label }));
     try {
       if (existing) {
         await api.put(`/api/v1/settings/field-mapping-templates/${existing.id}`, { name, rules: cleanRules }, token);
@@ -183,7 +198,7 @@ function TemplateForm({
       <div className="field" style={{ marginTop: 10 }}>
         <label>{t("settings.fieldMappingTemplates.form.rules")}</label>
         {rules.map((rule, idx) => (
-          <div key={idx} className="form-grid" style={{ marginBottom: 6, alignItems: "end" }}>
+          <div key={rule.key} className="form-grid" style={{ marginBottom: 6, alignItems: "end" }}>
             <div className="field">
               <input
                 className="input"
@@ -212,7 +227,7 @@ function TemplateForm({
             </button>
           </div>
         ))}
-        <button type="button" className="btn btn-sm" onClick={() => setRules((prev) => [...prev, { jsonPath: "", label: "" }])}>
+        <button type="button" className="btn btn-sm" onClick={() => setRules((prev) => [...prev, { jsonPath: "", label: "", key: crypto.randomUUID() }])}>
           {t("settings.fieldMappingTemplates.form.addRule")}
         </button>
         <p className="helper-text" style={{ marginTop: 6 }}>
