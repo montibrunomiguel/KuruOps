@@ -14,6 +14,14 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- Playbooks não oferecem mais uma seção de fase "Novo" em "Passos por Fase" -- quando um incidente
+  ainda está em Novo/Identificação, o analista ainda não triou o alerta, então nunca havia nada
+  pra um playbook de resposta prescrever ali (passos só fazem sentido a partir de Detecção &
+  Análise em diante). Vale tanto para o editor (`PlaybookDetailPage.tsx`) quanto pro popup
+  somente-leitura de acionamento (`PlaybookViewModal.tsx`); o backend em si não foi tocado (ainda
+  aceita genericamente qualquer fase NIST pra um passo de playbook) -- é um recorte só de UI do
+  que é oferecido/exibido, não uma mudança de modelo de dados. Nenhum playbook existente tinha
+  passos na fase "Novo" pra começo de conversa, então nada foi migrado ou perdido.
 - `AlertsListPage.tsx`/`IncidentsListPage.tsx` tinham desenvolvido independentemente a mesma
   máquina de estado de seleção de linhas de ~25 linhas (um `Set` de ids selecionados, selecionar
   tudo com o estado indeterminate do checkbox do cabeçalho, reset ao mudar filtro/página) e o
