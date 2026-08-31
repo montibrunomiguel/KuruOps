@@ -738,7 +738,7 @@ func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID 
 		return nil, err
 	}
 
-	if err := s.incidents.LinkAlert(ctx, tenantID, incident.ID, alert.ID, actorID); err != nil {
+	if err := s.incidents.LinkAlert(ctx, tenantID, incident.ID, alert.ID, actorID, allowedTags); err != nil {
 		return nil, err
 	}
 
@@ -805,10 +805,13 @@ func (s *AlertService) fireManualEscalationStep(ctx context.Context, tenantID, a
 }
 
 // AddComment/Comments back Team Notes on an alert -- same shape as
-// IncidentService.AddComment/Comments. Unlike the mutating methods above,
-// this doesn't repeat the tag-visibility check (see the equivalent note on
-// IncidentService's sub-resource methods) -- relies on tenant RLS alone.
-func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, authorID uuid.UUID, authorName, body string, attachmentURL *string) (*domain.AlertComment, error) {
+// IncidentService.AddComment/Comments, including the tag-visibility
+// re-check both now perform. They used to rely on tenant RLS alone, on the
+// assumption the caller had already loaded the alert via Get; nothing
+// forces an HTTP client to do that, so a tag-restricted analyst could read
+// and post Team Notes on an alert they cannot see. See IncidentService's
+// sub-resource note for the full reasoning.
+func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, authorID uuid.UUID, authorName, body string, attachmentURL *string, allowedTags []string) (*domain.AlertComment, error) {
 	c := &domain.AlertComment{
 		AlertID:       alertID,
 		TenantID:      tenantID,
@@ -818,6 +821,13 @@ func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, author
 		AttachmentURL: attachmentURL,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		alert, err := s.loadVisible(ctx, tx, alertID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if alert == nil {
+			return fmt.Errorf("alert %s not found", alertID)
+		}
 		return s.repo.InsertComment(ctx, tx, c)
 	})
 	if err != nil {
@@ -826,12 +836,18 @@ func (s *AlertService) AddComment(ctx context.Context, tenantID, alertID, author
 	return c, nil
 }
 
-func (s *AlertService) Comments(ctx context.Context, tenantID, alertID uuid.UUID) ([]domain.AlertComment, error) {
+func (s *AlertService) Comments(ctx context.Context, tenantID, alertID uuid.UUID, allowedTags []string) ([]domain.AlertComment, bool, error) {
 	var comments []domain.AlertComment
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		alert, err := s.loadVisible(ctx, tx, alertID, allowedTags)
+		if err != nil || alert == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListComments(ctx, tx, alertID)
 		comments = v
 		return err
 	})
-	return comments, err
+	return comments, found, err
 }

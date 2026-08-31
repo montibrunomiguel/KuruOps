@@ -176,6 +176,25 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   checkpoint. The latter is what makes that function's own "a crash mid-loop leaves a resumable run
   rather than a stuck one" promise true, so a silently failed checkpoint broke a documented
   invariant. Both stay best-effort, both are now logged.
+- **Security**: tag-based visibility (`Role.allowedTags`) was enforced only on the "main" alert and
+  incident routes — every sub-resource route queried by ID under tenant RLS alone. Nothing forces
+  an HTTP client to call `GET /incidents/{id}` before `GET /incidents/{id}/comments`, so an
+  analyst restricted to one set of tags could read the Team Notes, IOCs, timeline, status history
+  and linked alerts of an alert/incident they cannot see, post new comments and IOCs onto it, and
+  approve its paused MCP tool calls — the last of which *executes* a real side-effecting
+  automation. All 42 `{id}`-scoped alert/incident routes now re-check visibility, answering 404
+  exactly like `Get` does (so "no such incident" and "exists but hidden from you" stay
+  indistinguishable). A new `TestSubResourceRoutesRejectTagRestrictedCaller` walks the registered
+  chi routes rather than a hand-written list, so a future sub-resource that forgets its gate fails
+  CI the moment it's registered.
+- **Security**: a failed `RevokeSessions` during user deactivation was discarded silently. Not
+  rolling back the deactivation is still the right call, but with a 30-day refresh-token TTL a
+  swallowed failure could leave a deactivated (possibly compromised) account with a renewable
+  session for a month while the admin saw a clean 204. Now logged.
+- The Slack and Google OAuth callback flows made outbound calls with no timeout at all
+  (`http.DefaultClient` / oauth2's default), on a route mounted outside the API group's request
+  timeout — so a blackholed connection to either provider pinned a goroutine and its connection
+  indefinitely. Both now use a 15s-bounded client.
 - Five reorderable/removable list forms keyed their rows by array index
   (`EscalationEditForm.tsx`'s escalation steps, `ScheduleForm.tsx`'s working-hours intervals,
   `PlaybookDetailPage.tsx`'s playbook steps, `FieldMappingTemplatesPanel.tsx`'s mapping rules,

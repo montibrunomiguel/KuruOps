@@ -94,19 +94,22 @@ func (s *PostmortemService) Generate(ctx context.Context, tenantID, incidentID u
 		return "", false, nil
 	}
 
-	history, err := s.incidents.StatusHistory(ctx, tenantID, incidentID)
+	// found is discarded on each sub-resource load below for the same reason
+	// IncidentReportService.GeneratePDF discards it -- Get above already
+	// established visibility under allowedTags.
+	history, _, err := s.incidents.StatusHistory(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return "", false, fmt.Errorf("load status history: %w", err)
 	}
-	comments, err := s.incidents.Comments(ctx, tenantID, incidentID)
+	comments, _, err := s.incidents.Comments(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return "", false, fmt.Errorf("load comments: %w", err)
 	}
-	linkedAlerts, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID)
+	linkedAlerts, _, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return "", false, fmt.Errorf("load linked alerts: %w", err)
 	}
-	iocs, err := s.incidents.IOCs(ctx, tenantID, incidentID)
+	iocs, _, err := s.incidents.IOCs(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return "", false, fmt.Errorf("load iocs: %w", err)
 	}

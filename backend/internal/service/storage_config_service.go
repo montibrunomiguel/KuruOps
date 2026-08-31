@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -307,6 +308,16 @@ func (s *StorageConfigService) HandleGDriveOAuthCallback(ctx context.Context, te
 	if folderID == "" {
 		return fmt.Errorf("oauth state is missing its folder id")
 	}
+
+	// Bound every outbound Google call in this flow. oauth2 reads its HTTP
+	// client off the context, so this one value covers both Exchange below
+	// and the cfg.Client(...) used for the userinfo lookup -- neither has a
+	// timeout otherwise (oauth2 falls back to http.DefaultClient), and
+	// /auth/oauth/* is mounted outside the api group's chimw.Timeout (see
+	// router.go), so the request context carries no deadline to inherit
+	// either. No httpguard: these are Google's own fixed endpoints, not
+	// tenant-supplied URLs.
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: 15 * time.Second})
 
 	cfg := s.googleDriveOAuthConfig()
 	token, err := cfg.Exchange(ctx, code)

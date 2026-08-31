@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -200,8 +201,17 @@ func (h *UserHandlers) setActive(w http.ResponseWriter, r *http.Request, active 
 	// doesn't roll back the deactivation itself (SetActive already
 	// succeeded), it just means the old refresh tokens linger until they'd
 	// have expired naturally.
+	//
+	// Not rolling back is the right call, but swallowing this silently was
+	// not: deactivating a compromised account is exactly when the revoke
+	// needs to have worked, and refresh tokens live for 30 days
+	// (AuthService.refreshTokenTTL), so a failure here can leave a
+	// deactivated user with a renewable session for a month while the admin
+	// sees a clean 204. Logged so it's at least visible after the fact.
 	if !active {
-		_ = h.auth.RevokeSessions(r.Context(), tenantID, id)
+		if err := h.auth.RevokeSessions(r.Context(), tenantID, id); err != nil {
+			slog.Error("failed to revoke sessions for deactivated user", "user_id", id, "error", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -49,19 +49,24 @@ func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incid
 		return nil, false, nil
 	}
 
-	history, err := s.incidents.StatusHistory(ctx, tenantID, incidentID)
+	// found is discarded on each sub-resource load below: Get above already
+	// established the incident is visible under allowedTags, so these can only
+	// return found=false in the vanishingly unlikely case it was deleted
+	// between the two calls -- in which case an empty section in the PDF is
+	// the right outcome, not an error.
+	history, _, err := s.incidents.StatusHistory(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return nil, false, fmt.Errorf("load status history: %w", err)
 	}
-	comments, err := s.incidents.Comments(ctx, tenantID, incidentID)
+	comments, _, err := s.incidents.Comments(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return nil, false, fmt.Errorf("load comments: %w", err)
 	}
-	linkedAlerts, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID)
+	linkedAlerts, _, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return nil, false, fmt.Errorf("load linked alerts: %w", err)
 	}
-	iocs, err := s.incidents.IOCs(ctx, tenantID, incidentID)
+	iocs, _, err := s.incidents.IOCs(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return nil, false, fmt.Errorf("load iocs: %w", err)
 	}

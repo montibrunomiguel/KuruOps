@@ -195,6 +195,26 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   próprio doc comment da função ("um crash no meio do loop deixa uma execução retomável em vez de
   travada"), então um checkpoint falhando em silêncio quebrava um invariante documentado. Ambos
   continuam best-effort, ambos agora são logados.
+- **Segurança**: a visibilidade por tag (`Role.allowedTags`) era aplicada só nas rotas "principais"
+  de alerta e incidente — toda rota de sub-recurso consultava por ID apenas sob o RLS de tenant.
+  Nada obriga um cliente HTTP a chamar `GET /incidents/{id}` antes de
+  `GET /incidents/{id}/comments`, então um analista restrito a um conjunto de tags conseguia ler as
+  notas da equipe, IOCs, timeline, histórico de status e alertas vinculados de um alerta/incidente
+  que não pode ver, escrever novos comentários e IOCs nele, e aprovar suas tool calls MCP pausadas
+  — esta última *executa* uma automação real com efeito colateral. Todas as 42 rotas de
+  alerta/incidente com `{id}` agora rechecam visibilidade, respondendo 404 igual ao `Get` (então
+  "não existe" e "existe mas está oculto para você" continuam indistinguíveis). Um novo
+  `TestSubResourceRoutesRejectTagRestrictedCaller` percorre as rotas chi registradas em vez de uma
+  lista escrita à mão, então um sub-recurso futuro que esquecer o gate quebra o CI assim que for
+  registrado.
+- **Segurança**: uma falha de `RevokeSessions` ao desativar um usuário era descartada
+  silenciosamente. Não fazer rollback da desativação continua sendo a decisão certa, mas com TTL de
+  30 dias no refresh token uma falha engolida podia deixar uma conta desativada (possivelmente
+  comprometida) com sessão renovável por um mês, enquanto o admin via um 204 limpo. Agora é logado.
+- Os fluxos de callback OAuth do Slack e do Google faziam chamadas de saída sem timeout algum
+  (`http.DefaultClient` / o padrão do oauth2), numa rota montada fora do timeout de request do
+  grupo da API — então uma conexão travada com qualquer um dos provedores prendia uma goroutine e
+  sua conexão indefinidamente. Ambos agora usam um cliente limitado a 15s.
 - Cinco formulários de lista reordenável/removível usavam o índice do array como key
   (os passos de escalonamento do `EscalationEditForm.tsx`, os intervalos de horário de
   funcionamento do `ScheduleForm.tsx`, os passos de playbook do `PlaybookDetailPage.tsx`, as
