@@ -41,12 +41,12 @@ func TestIncidentService_Create(t *testing.T) {
 	assert.Equal(t, []string{"ransomware"}, inc.Tags, "unregistered tags are dropped at creation too")
 
 	t.Run("creation is recorded in status history and the event timeline", func(t *testing.T) {
-		history, err := incSvc.StatusHistory(t.Context(), tenantID, inc.ID)
+		history, _, err := incSvc.StatusHistory(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, history, 1)
 		assert.Equal(t, domain.PhaseNew, history[0].Phase)
 
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, events, 1)
 		assert.Equal(t, domain.IncidentEventCreated, events[0].EventType)
@@ -108,7 +108,7 @@ func TestIncidentService_SetAssignees(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got.Assignees, 2)
 
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.NotEmpty(t, events)
 		assert.Equal(t, domain.IncidentEventAssigneesChanged, events[len(events)-1].EventType)
@@ -166,7 +166,7 @@ func TestIncidentService_SetRole(t *testing.T) {
 		assert.Equal(t, domain.RoleCommander, got.Roles[0].Role)
 		assert.Equal(t, analystA, got.Roles[0].User.ID)
 
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		assert.Equal(t, domain.IncidentEventRoleAssigned, events[len(events)-1].EventType)
 	})
@@ -194,7 +194,7 @@ func TestIncidentService_SetRole(t *testing.T) {
 
 	t.Run("clearing a role records role_unassigned", func(t *testing.T) {
 		require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleIncidentHandler, nil, nil))
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		assert.Equal(t, domain.IncidentEventRoleUnassigned, events[len(events)-1].EventType)
 	})
@@ -222,7 +222,7 @@ func TestIncidentService_ChangePhase(t *testing.T) {
 
 	t.Run("a same-phase call is a no-op, no duplicate event", func(t *testing.T) {
 		require.NoError(t, incSvc.ChangePhase(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, nil))
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		assert.Len(t, events, 1, "still just the 'created' event")
 	})
@@ -230,7 +230,7 @@ func TestIncidentService_ChangePhase(t *testing.T) {
 	t.Run("a direct forward jump logs both phase_changed and phase_skipped", func(t *testing.T) {
 		require.NoError(t, incSvc.ChangePhase(t.Context(), tenantID, inc.ID, actorID, domain.PhaseContainment, nil))
 
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		var sawChanged, sawSkipped bool
 		for _, e := range events {
@@ -270,7 +270,7 @@ func TestIncidentService_ChangePhase(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got.ClosedAt, "the explicit Close action must close it")
 
-		events, err := incSvc.Timeline(t.Context(), tenantID, other.ID)
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, other.ID, nil)
 		require.NoError(t, err)
 		var sawClosed bool
 		for _, e := range events {
@@ -445,13 +445,13 @@ func TestIncidentService_CorrectPhaseTimestamp(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("empty reason is rejected before touching the database", func(t *testing.T) {
-		err := incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt, "")
+		err := incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt, "", nil)
 		assert.ErrorContains(t, err, "reason is required")
 	})
 
 	t.Run("a valid correction is recorded with an event", func(t *testing.T) {
-		require.NoError(t, incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt, "backdated per SOC log"))
-		events, err := incSvc.Timeline(t.Context(), tenantID, inc.ID)
+		require.NoError(t, incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt, "backdated per SOC log", nil))
+		events, _, err := incSvc.Timeline(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		var found bool
 		for _, e := range events {
@@ -473,11 +473,11 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("comments", func(t *testing.T) {
-		c, err := incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst", "investigating now", nil)
+		c, err := incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst", "investigating now", nil, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "investigating now", c.Body)
 
-		comments, err := incSvc.Comments(t.Context(), tenantID, inc.ID)
+		comments, _, err := incSvc.Comments(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, comments, 1)
 	})
@@ -486,14 +486,14 @@ func TestIncidentService_CommentsAndAlertLinks(t *testing.T) {
 		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{Title: "a", Source: "s", Severity: domain.SeverityLow, Payload: testPayload}, nil, 0)
 		require.NoError(t, err)
 
-		require.NoError(t, incSvc.LinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID))
-		linked, err := incSvc.LinkedAlerts(t.Context(), tenantID, inc.ID)
+		require.NoError(t, incSvc.LinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID, nil))
+		linked, _, err := incSvc.LinkedAlerts(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, linked, 1)
 		assert.Equal(t, alert.ID, linked[0].ID)
 
-		require.NoError(t, incSvc.UnlinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID))
-		linked, err = incSvc.LinkedAlerts(t.Context(), tenantID, inc.ID)
+		require.NoError(t, incSvc.UnlinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID, nil))
+		linked, _, err = incSvc.LinkedAlerts(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		assert.Empty(t, linked)
 	})
@@ -508,29 +508,29 @@ func TestIncidentService_IOCs(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("adds and lists an IOC", func(t *testing.T) {
-		ioc, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon", time.Now())
+		ioc, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon", time.Now(), nil)
 		require.NoError(t, err)
 		assert.Equal(t, "203.0.113.42", ioc.Value)
 		assert.Equal(t, "Analyst One", ioc.CreatedByName)
 
-		iocs, err := incSvc.IOCs(t.Context(), tenantID, inc.ID)
+		iocs, _, err := incSvc.IOCs(t.Context(), tenantID, inc.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, iocs, 1)
 		assert.Equal(t, domain.IOCTypeIPAddress, iocs[0].Type)
 	})
 
 	t.Run("rejects an unknown type", func(t *testing.T) {
-		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCType("not_a_real_type"), "x", "", time.Now())
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCType("not_a_real_type"), "x", "", time.Now(), nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("rejects an empty value", func(t *testing.T) {
-		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "", "", time.Now())
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "", "", time.Now(), nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("rejects a zero identifiedAt", func(t *testing.T) {
-		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "http://x", "", time.Time{})
+		_, err := incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeURL, "http://x", "", time.Time{}, nil)
 		assert.Error(t, err)
 	})
 }

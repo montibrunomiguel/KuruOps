@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // oauthAccessURL is Slack's OAuth v2 token exchange endpoint -- not a
@@ -38,6 +39,14 @@ type OAuthResult struct {
 	BotUserID   string
 	Scope       string // comma-separated, as Slack returns it -- display only
 }
+
+// oauthHTTPClient bounds the token exchange, which http.DefaultClient would
+// not: /auth/oauth/* is mounted outside the api group's chimw.Timeout (see
+// router.go), so the request context carries no deadline either -- a
+// blackholed connection to slack.com would otherwise pin this goroutine and
+// its connection indefinitely. No httpguard here (unlike webhook/LLM/MCP
+// destinations): oauthAccessURL is a package constant, never tenant input.
+var oauthHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // ExchangeCode performs Slack's OAuth v2 token exchange -- the bot-scoped
 // counterpart of golang.org/x/oauth2's Config.Exchange, hand-rolled because
@@ -62,7 +71,7 @@ func ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURL
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("call oauth.v2.access: %w", err)
 	}

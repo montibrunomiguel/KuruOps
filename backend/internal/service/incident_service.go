@@ -499,11 +499,18 @@ func (s *IncidentService) UpdateTags(ctx context.Context, tenantID, incidentID, 
 // status_history entry's entered_at (see the schema comment in
 // db/migrations/0001_initial_schema.up.sql). The original entered_at is never
 // touched; this records what it should read as, who changed it, and why.
-func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, phase domain.IncidentPhase, correctedEnteredAt time.Time, reason string) error {
+func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, phase domain.IncidentPhase, correctedEnteredAt time.Time, reason string, allowedTags []string) error {
 	if reason == "" {
 		return fmt.Errorf("a correction reason is required")
 	}
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if inc == nil {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
 		if err := s.repo.CorrectPhaseTimestamp(ctx, tx, incidentID, phase, correctedEnteredAt, actorID, reason); err != nil {
 			return fmt.Errorf("correct phase timestamp: %w", err)
 		}
@@ -523,35 +530,56 @@ func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, i
 	})
 }
 
-// StatusHistory, Timeline, Comments, AddComment, LinkAlert, UnlinkAlert, and
-// LinkedAlerts below are sub-resources of an incident the caller has
-// already loaded via Get (tag-checked there). They rely on tenant RLS alone
-// rather than repeating the tag check — a reasonable v1 boundary, but note
-// that a client which already knows an out-of-scope incident's ID could
-// still reach these endpoints directly without going through Get first.
-// Closing that gap is a natural follow-up, not done here to keep this pass
-// reviewable.
-func (s *IncidentService) StatusHistory(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentStatusHistoryEntry, error) {
+// Every sub-resource method below (StatusHistory, Timeline, Comments,
+// AddComment, IOCs, AddIOC, LinkAlert, UnlinkAlert, LinkedAlerts,
+// CorrectPhaseTimestamp) re-checks tag visibility via loadVisible before
+// touching its own rows, rather than assuming the caller already went
+// through Get. This closes the gap the previous version of this comment
+// flagged and deferred: "a client which already knows an out-of-scope
+// incident's ID could still reach these endpoints directly without going
+// through Get first" -- which was directly exploitable over HTTP, since
+// nothing forces a client to call GET /incidents/{id} before
+// GET /incidents/{id}/comments. A tag-restricted analyst could read (and
+// write) the comments, IOCs, timeline and linked alerts of an incident
+// they cannot see, and approve its side-effecting MCP tool calls.
+//
+// Read methods return found=false (never a bare empty slice) when the
+// incident isn't visible, so the handler can 404 exactly like Get does --
+// an empty 200 would tell the caller the incident exists but has no
+// comments, which is itself more than they should learn.
+func (s *IncidentService) StatusHistory(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.IncidentStatusHistoryEntry, bool, error) {
 	var entries []domain.IncidentStatusHistoryEntry
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListStatusHistory(ctx, tx, incidentID)
 		entries = v
 		return err
 	})
-	return entries, err
+	return entries, found, err
 }
 
-func (s *IncidentService) Timeline(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentEvent, error) {
+func (s *IncidentService) Timeline(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.IncidentEvent, bool, error) {
 	var events []domain.IncidentEvent
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListEvents(ctx, tx, incidentID)
 		events = v
 		return err
 	})
-	return events, err
+	return events, found, err
 }
 
-func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, authorID uuid.UUID, authorName, body string, attachmentURL *string) (*domain.IncidentComment, error) {
+func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, authorID uuid.UUID, authorName, body string, attachmentURL *string, allowedTags []string) (*domain.IncidentComment, error) {
 	c := &domain.IncidentComment{
 		IncidentID:    incidentID,
 		TenantID:      tenantID,
@@ -561,6 +589,13 @@ func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, 
 		AttachmentURL: attachmentURL,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if inc == nil {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
 		return s.repo.InsertComment(ctx, tx, c)
 	})
 	if err != nil {
@@ -569,21 +604,27 @@ func (s *IncidentService) AddComment(ctx context.Context, tenantID, incidentID, 
 	return c, nil
 }
 
-func (s *IncidentService) Comments(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IncidentComment, error) {
+func (s *IncidentService) Comments(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.IncidentComment, bool, error) {
 	var comments []domain.IncidentComment
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListComments(ctx, tx, incidentID)
 		comments = v
 		return err
 	})
-	return comments, err
+	return comments, found, err
 }
 
 // AddIOC records a new Indicator of Compromise against incidentID -- see
 // domain.IOC's doc comment for why this is append-only (no update/delete)
 // and domain.IOCTypeIsValid's for why type validation lives here instead
 // of a DB check constraint.
-func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, actorName string, iocType domain.IOCType, value, description string, identifiedAt time.Time) (*domain.IOC, error) {
+func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, actorName string, iocType domain.IOCType, value, description string, identifiedAt time.Time, allowedTags []string) (*domain.IOC, error) {
 	if !domain.IOCTypeIsValid(iocType) {
 		return nil, fmt.Errorf("invalid IOC type %q", iocType)
 	}
@@ -605,6 +646,13 @@ func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, acto
 		CreatedByName: actorName,
 	}
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if inc == nil {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
 		return s.repo.InsertIOC(ctx, tx, ioc)
 	})
 	if err != nil {
@@ -613,18 +661,31 @@ func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, acto
 	return ioc, nil
 }
 
-func (s *IncidentService) IOCs(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.IOC, error) {
+func (s *IncidentService) IOCs(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.IOC, bool, error) {
 	var iocs []domain.IOC
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListIOCs(ctx, tx, incidentID)
 		iocs = v
 		return err
 	})
-	return iocs, err
+	return iocs, found, err
 }
 
-func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID) error {
+func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if inc == nil {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
 		if err := s.repo.LinkAlert(ctx, tx, incidentID, alertID, tenantID); err != nil {
 			return fmt.Errorf("link alert: %w", err)
 		}
@@ -640,8 +701,15 @@ func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, a
 	})
 }
 
-func (s *IncidentService) UnlinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID) error {
+func (s *IncidentService) UnlinkAlert(ctx context.Context, tenantID, incidentID, alertID, actorID uuid.UUID, allowedTags []string) error {
 	return s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if inc == nil {
+			return fmt.Errorf("incident %s not found", incidentID)
+		}
 		if err := s.repo.UnlinkAlert(ctx, tx, incidentID, alertID); err != nil {
 			return fmt.Errorf("unlink alert: %w", err)
 		}
@@ -657,12 +725,18 @@ func (s *IncidentService) UnlinkAlert(ctx context.Context, tenantID, incidentID,
 	})
 }
 
-func (s *IncidentService) LinkedAlerts(ctx context.Context, tenantID, incidentID uuid.UUID) ([]domain.Alert, error) {
+func (s *IncidentService) LinkedAlerts(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.Alert, bool, error) {
 	var alerts []domain.Alert
+	found := false
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
 		v, err := s.repo.ListLinkedAlerts(ctx, tx, incidentID)
 		alerts = v
 		return err
 	})
-	return alerts, err
+	return alerts, found, err
 }
