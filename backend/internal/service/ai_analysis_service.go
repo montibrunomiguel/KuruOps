@@ -723,7 +723,15 @@ func (s *AIAnalysisService) ResumeAnalysisRun(ctx context.Context, tenantID uuid
 		return // driveAgentLoop already recorded the failure on the run
 	}
 
-	_ = s.recordEvent(ctx, tenantID, run.ActorID, run.ContextType, run.ContextID, result)
+	// Same failure mode finishSimpleRun logs, on the other path that reaches
+	// recordEvent -- the earlier sweep fixed that copy and missed this one.
+	// The run itself is complete and persisted by now; only the timeline
+	// entry that points an analyst at it failed, so this is worth knowing
+	// about but not worth failing the resumed run over.
+	if err := s.recordEvent(ctx, tenantID, run.ActorID, run.ContextType, run.ContextID, result); err != nil {
+		slog.Error("ai analysis: failed to record timeline event for resumed run",
+			"run_id", run.ID, "context_type", run.ContextType, "context_id", run.ContextID, "error", err)
+	}
 }
 
 func toolResultMessage(call *domain.AIToolCall, toolCallID string) llmclient.Message {
@@ -750,10 +758,21 @@ func toolResultMessage(call *domain.AIToolCall, toolCallID string) llmclient.Mes
 // model answers without requesting further tool calls.
 func (s *AIAnalysisService) driveAgentLoop(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, tools []llmclient.Tool, routes map[string]agentToolRoute, messages []llmclient.Message, startTurn int) (string, error) {
 	for turn := startTurn; turn < maxAgenticTurns; turn++ {
-		if messagesJSON, err := json.Marshal(messages); err == nil {
-			_ = s.pool.WithTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
-				return s.runs.SetRunning(ctx, tx, run.ID, messagesJSON)
-			})
+		// This write is what makes the "resumable run" promise in the doc
+		// comment above true -- if it silently fails, a crash mid-loop
+		// leaves a genuinely stuck run instead of a resumable one, and
+		// nothing anywhere says why. Still best-effort (a failed checkpoint
+		// shouldn't abort an analysis that can otherwise finish), but no
+		// longer silent.
+		messagesJSON, err := json.Marshal(messages)
+		if err != nil {
+			slog.Error("ai analysis: failed to marshal conversation for checkpoint -- run will not be resumable from this turn",
+				"run_id", run.ID, "turn", turn, "error", err)
+		} else if err := s.pool.WithTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
+			return s.runs.SetRunning(ctx, tx, run.ID, messagesJSON)
+		}); err != nil {
+			slog.Error("ai analysis: failed to persist conversation checkpoint -- run will not be resumable from this turn",
+				"run_id", run.ID, "turn", turn, "error", err)
 		}
 
 		result, err := client.CompleteWithTools(ctx, analysisSystemPrompt, messages, tools)
