@@ -66,6 +66,7 @@ export function AssigneePicker({
       {!disabled && available.length > 0 && (
         <select
           className="select"
+          aria-label={t("common.addAssigneeOption")}
           value=""
           onChange={(e) => {
             if (e.target.value) onChange([...value, e.target.value]);

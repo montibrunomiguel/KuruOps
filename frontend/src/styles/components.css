@@ -1350,6 +1350,25 @@
   outline-offset: -2px;
 }
 
+/* row-link-stretch's ::after is absolutely positioned, so its container needs
+   a positioning context. `.table tbody tr` already has one; a flex `.row`
+   (Playbooks list, an incident's linked-alert rows) does not, so it opts in
+   via this modifier rather than putting position:relative on every .row --
+   which would silently re-parent any absolutely-positioned descendant a
+   different .row might grow later. */
+.row-linked {
+  position: relative;
+}
+
+/* Same problem .table-select-cell solves for table rows: row-link-stretch's
+   ::after covers the whole .row-linked, so any real control living beside
+   the link (an incident's "Unlink" button) needs its own stacking layer
+   above that overlay or its clicks get swallowed. */
+.row-linked .row-actions {
+  position: relative;
+  z-index: 1;
+}
+
 /* A row-selection checkbox lives in the same <tr> as row-link-stretch's
    ::after overlay (see above), which otherwise covers the entire row and
    would swallow the checkbox's clicks -- position + z-index lifts it into

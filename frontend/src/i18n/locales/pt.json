@@ -476,7 +476,8 @@
       "reasonRequired": "Motivo é obrigatório para corrigir um horário.",
       "originalWas": "original: {{date}} · corrigido por {{by}}",
       "notFound": "Incidente não encontrado.",
-      "warningBadge": "atenção"
+      "warningBadge": "atenção",
+      "descriptionAria": "Descrição do incidente"
     },
     "iocs": {
       "button": "IOCs",
@@ -970,7 +971,10 @@
         "allDay": "Dia inteiro",
         "specificTimes": "Horários específicos",
         "addInterval": "+ Adicionar intervalo",
-        "removeInterval": "Remover intervalo"
+        "removeInterval": "Remover intervalo",
+        "startTimeAria": "Horário de início do intervalo {{num}}",
+        "endTimeAria": "Horário de fim do intervalo {{num}}",
+        "addResponderAria": "Respondente a adicionar"
       },
       "timeline": {
         "title": "Pré-visualização",

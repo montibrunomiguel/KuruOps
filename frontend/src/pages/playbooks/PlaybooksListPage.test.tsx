@@ -74,3 +74,35 @@ describe("PlaybooksListPage", () => {
     expect(screen.getByText("0 phases")).toBeInTheDocument();
   });
 });
+
+describe("PlaybooksListPage keyboard accessibility", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  // Regression guard for a WCAG 2.1.1 (Level A) failure: the row used to be
+  // a `<div onClick={navigate}>` with no tabindex and no role, and it was
+  // the ONLY way to open a playbook -- so a keyboard-only or screen-reader
+  // user could create and search playbooks but never open one.
+  it("exposes each playbook as a real link, reachable by keyboard", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbooks)));
+    render(<PlaybooksListPage />, { wrapper });
+
+    const link = await screen.findByRole("link", { name: "Phishing Response" });
+    expect(link).toHaveAttribute("href", "/playbooks/p1");
+  });
+
+  it("puts the playbook link in the page's tab order", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbooks)));
+    render(<PlaybooksListPage />, { wrapper });
+    await screen.findByRole("link", { name: "Phishing Response" });
+
+    // A <div onClick> renders no element matching this selector at all --
+    // which is exactly how the bug went unnoticed.
+    const focusable = document.querySelectorAll(
+      'a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])',
+    );
+    const hrefs = [...focusable].map((e) => e.getAttribute("href")).filter(Boolean);
+    expect(hrefs).toContain("/playbooks/p1");
+  });
+});
