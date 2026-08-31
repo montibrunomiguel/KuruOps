@@ -162,6 +162,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- `LinkSearchPicker.tsx` (a busca de correlação alerta-a-alerta / incidente-a-alerta, usada no
+  painel Alertas Vinculados do AlertDetailPage e no painel de alertas correlacionados do
+  IncidentDetailPage) renderizava seus resultados como `<div onClick>` simples -- totalmente
+  inacessível por teclado, sem jeito de dar Tab até um resultado ou vincular sem usar o mouse.
+  Reconstruído com o mesmo padrão `role="combobox"`/`aria-activedescendant`/setas do teclado já
+  comprovado em `CommandPalette.tsx`: Seta pra cima/baixo move o resultado ativo (com wrap), Enter
+  vincula, Escape limpa a busca.
+- As barras coloridas de plantão do `OnCallTimeline.tsx` fixavam texto branco -- falha o mínimo de
+  contraste 4,5:1 da WCAG AA pra texto pequeno contra 9 das 10 cores da paleta (chegando a 1,59:1
+  no amarelo). `lib/personColor.ts` ganhou `personTextColor`, que escolhe preto ou branco por
+  amostra (o que realmente atinge 4,5:1 contra aquele fundo específico), em vez de uma cor
+  presumida segura pra todas.
+- Duas ações destrutivas pulavam o próprio padrão de confirmação inline do app (`useConfirm`,
+  escolhido nos outros lugares justamente porque `window.confirm()` some sozinho silenciosamente
+  em alguns contextos de browser embutido) e apagavam de primeira, com um clique só: o botão de
+  desvincular do `LinkedAlertsPanel.tsx` e a remoção de substituição do `OnCallTimeline.tsx`.
+  Ambos agora pedem confirmação antes, igual a toda outra ação destrutiva em Configurações.
 - A migração de banco externo (Configurações → Dados & Auditoria, `internal/dbmigrate`) falhava
   ao copiar qualquer tabela com uma coluna de busca full-text `generated always as (...) stored`
   (`alerts.search_vector`, `incidents.search_vector`) com `"row field count is N, expected N-1"`

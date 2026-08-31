@@ -47,6 +47,7 @@ export function SeverityOverridePanel({ alert, onSaved }: { alert: Alert; onSave
         <select
           className="select"
           style={{ width: "100%" }}
+          aria-label={t("alerts.detail.severityOverrideTitle")}
           value={severity}
           disabled={readOnly}
           onChange={(e) => setSeverity(e.target.value as Severity)}

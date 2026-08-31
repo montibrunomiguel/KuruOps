@@ -67,4 +67,91 @@ describe("LinkSearchPicker", () => {
     expect(onLink).toHaveBeenCalledWith("aaaaaaaa-0000-0000-0000-000000000000");
     expect(input).toHaveValue("");
   });
+
+  describe("keyboard navigation", () => {
+    function threeAlerts() {
+      return [
+        alertFixture({ id: "aaaaaaaa-0000-0000-0000-000000000000", title: "First match" }),
+        alertFixture({ id: "bbbbbbbb-0000-0000-0000-000000000000", title: "Second match" }),
+        alertFixture({ id: "cccccccc-0000-0000-0000-000000000000", title: "Third match" }),
+      ];
+    }
+
+    it("exposes combobox/listbox roles and activedescendant, matching CommandPalette's pattern", async () => {
+      render(<LinkSearchPicker candidates={threeAlerts()} excludeIds={new Set()} onLink={vi.fn()} placeholder="Search..." />);
+      const input = screen.getByPlaceholderText("Search...");
+      await userEvent.type(input, "match");
+
+      expect(input).toHaveAttribute("role", "combobox");
+      expect(input).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      const options = screen.getAllByRole("option");
+      expect(options).toHaveLength(3);
+      // The first option is active by default (activeIndex starts at 0).
+      expect(input).toHaveAttribute("aria-activedescendant", options[0].id);
+      expect(options[0]).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("ArrowDown/ArrowUp move the active option, wrapping at both ends", async () => {
+      render(<LinkSearchPicker candidates={threeAlerts()} excludeIds={new Set()} onLink={vi.fn()} placeholder="Search..." />);
+      const input = screen.getByPlaceholderText("Search...");
+      await userEvent.type(input, "match");
+      const options = screen.getAllByRole("option");
+
+      await userEvent.keyboard("{ArrowDown}");
+      expect(input).toHaveAttribute("aria-activedescendant", options[1].id);
+
+      await userEvent.keyboard("{ArrowDown}");
+      expect(input).toHaveAttribute("aria-activedescendant", options[2].id);
+
+      // wraps back to the first option
+      await userEvent.keyboard("{ArrowDown}");
+      expect(input).toHaveAttribute("aria-activedescendant", options[0].id);
+
+      // wraps to the last option going up from the first
+      await userEvent.keyboard("{ArrowUp}");
+      expect(input).toHaveAttribute("aria-activedescendant", options[2].id);
+    });
+
+    it("Enter links the active option without needing a mouse", async () => {
+      const onLink = vi.fn();
+      render(<LinkSearchPicker candidates={threeAlerts()} excludeIds={new Set()} onLink={onLink} placeholder="Search..." />);
+      const input = screen.getByPlaceholderText("Search...");
+      await userEvent.type(input, "match");
+
+      await userEvent.keyboard("{ArrowDown}{Enter}");
+
+      expect(onLink).toHaveBeenCalledWith("bbbbbbbb-0000-0000-0000-000000000000");
+      expect(input).toHaveValue("");
+    });
+
+    it("Escape clears the query and closes the listbox", async () => {
+      render(<LinkSearchPicker candidates={threeAlerts()} excludeIds={new Set()} onLink={vi.fn()} placeholder="Search..." />);
+      const input = screen.getByPlaceholderText("Search...");
+      await userEvent.type(input, "match");
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+      await userEvent.keyboard("{Escape}");
+
+      expect(input).toHaveValue("");
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    });
+
+    it("editing the query resets the active index back to the first option", async () => {
+      render(<LinkSearchPicker candidates={threeAlerts()} excludeIds={new Set()} onLink={vi.fn()} placeholder="Search..." />);
+      const input = screen.getByPlaceholderText("Search...");
+      await userEvent.type(input, "match");
+      await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+      const optionsBefore = screen.getAllByRole("option");
+      expect(input).toHaveAttribute("aria-activedescendant", optionsBefore[2].id);
+
+      // Re-type the same query (still 3 results) -- proves the reset comes
+      // from onChange firing at all, not from the result set shrinking.
+      await userEvent.clear(input);
+      await userEvent.type(input, "match");
+      const optionsAfter = screen.getAllByRole("option");
+      expect(optionsAfter).toHaveLength(3);
+      expect(input).toHaveAttribute("aria-activedescendant", optionsAfter[0].id);
+    });
+  });
 });

@@ -369,6 +369,7 @@
       "linkSearchPlaceholder": "Search alerts by ID or title to link...",
       "noLinkedAlerts": "No linked alerts yet.",
       "unlinkAlert": "Unlink alert {{id}}",
+      "unlinkConfirm": "Unlink {{id}}?",
       "metadataTitle": "Alert Metadata",
       "ruleId": "Rule ID",
       "asset": "Asset",
@@ -985,7 +986,8 @@
         "title": "Override -- {{date}}",
         "analyst": "Analyst",
         "create": "Assign",
-        "remove": "Remove override"
+        "remove": "Remove override",
+        "removeConfirm": "Remove this override?"
       }
     },
     "incidentSla": {

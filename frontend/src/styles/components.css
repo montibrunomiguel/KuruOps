@@ -1222,7 +1222,8 @@
   border-bottom: none;
 }
 
-.search-result-item:hover {
+.search-result-item:hover,
+.search-result-item.active {
   background: var(--surface-hover);
 }
 
