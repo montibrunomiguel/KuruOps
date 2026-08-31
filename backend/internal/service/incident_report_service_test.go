@@ -56,18 +56,18 @@ func TestIncidentReportService_GeneratePDF_FullRecord(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, incSvc.UpdateTags(t.Context(), tenantID, inc.ID, actorID, []string{"ransomware"}, nil))
 	require.NoError(t, incSvc.SetRole(t.Context(), tenantID, inc.ID, actorID, domain.RoleCommander, []uuid.UUID{actorID}, nil))
-	_, err = incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst One", "Contained the affected shares.", nil)
+	_, err = incSvc.AddComment(t.Context(), tenantID, inc.ID, actorID, "Analyst One", "Contained the affected shares.", nil, nil)
 	require.NoError(t, err)
-	_, err = incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon traffic", time.Now())
+	_, err = incSvc.AddIOC(t.Context(), tenantID, inc.ID, actorID, "Analyst One", domain.IOCTypeIPAddress, "203.0.113.42", "C2 beacon traffic", time.Now(), nil)
 	require.NoError(t, err)
 
 	alert, _, err := alertSvc.Ingest(t.Context(), tenantID, testutil.NewWebhookEndpoint(t, tenantID), domain.Alert{
 		Title: "Suspicious SMB traffic", Source: "test", Severity: domain.SeverityHigh, Payload: testPayload,
 	}, nil, 0)
 	require.NoError(t, err)
-	require.NoError(t, incSvc.LinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID))
+	require.NoError(t, incSvc.LinkAlert(t.Context(), tenantID, inc.ID, alert.ID, actorID, nil))
 
-	require.NoError(t, incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt.Add(-time.Hour), "backdated to when detection actually started"))
+	require.NoError(t, incSvc.CorrectPhaseTimestamp(t.Context(), tenantID, inc.ID, actorID, domain.PhaseNew, inc.OpenedAt.Add(-time.Hour), "backdated to when detection actually started", nil))
 	require.NoError(t, incSvc.Close(t.Context(), tenantID, inc.ID, actorID, nil))
 
 	pdfBytes, found, err := reportSvc.GeneratePDF(t.Context(), tenantID, inc.ID, nil)

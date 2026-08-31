@@ -402,9 +402,13 @@ func (h *IncidentHandlers) statusHistory(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	entries, err := h.svc.StatusHistory(r.Context(), tenantID, id)
+	entries, found, err := h.svc.StatusHistory(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, entries)
@@ -434,7 +438,7 @@ func (h *IncidentHandlers) correctPhaseTimestamp(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if err := h.svc.CorrectPhaseTimestamp(r.Context(), tenantID, id, userID, phase, req.EnteredAt, req.Reason); err != nil {
+	if err := h.svc.CorrectPhaseTimestamp(r.Context(), tenantID, id, userID, phase, req.EnteredAt, req.Reason, middleware.AllowedTags(r.Context())); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -452,9 +456,13 @@ func (h *IncidentHandlers) timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := h.svc.Timeline(r.Context(), tenantID, id)
+	events, found, err := h.svc.Timeline(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
@@ -471,9 +479,13 @@ func (h *IncidentHandlers) listComments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	comments, err := h.svc.Comments(r.Context(), tenantID, id)
+	comments, found, err := h.svc.Comments(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, comments)
@@ -513,7 +525,7 @@ func (h *IncidentHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL)
+	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -532,9 +544,13 @@ func (h *IncidentHandlers) listIOCs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	iocs, err := h.svc.IOCs(r.Context(), tenantID, id)
+	iocs, found, err := h.svc.IOCs(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, iocs)
@@ -572,7 +588,7 @@ func (h *IncidentHandlers) addIOC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ioc, err := h.svc.AddIOC(r.Context(), tenantID, id, userID, actor.Name, req.Type, req.Value, req.Description, req.IdentifiedAt)
+	ioc, err := h.svc.AddIOC(r.Context(), tenantID, id, userID, actor.Name, req.Type, req.Value, req.Description, req.IdentifiedAt, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -591,9 +607,13 @@ func (h *IncidentHandlers) linkedAlerts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	alerts, err := h.svc.LinkedAlerts(r.Context(), tenantID, id)
+	alerts, found, err := h.svc.LinkedAlerts(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "incident not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, alerts)
@@ -616,7 +636,7 @@ func (h *IncidentHandlers) linkAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.LinkAlert(r.Context(), tenantID, id, alertID, userID); err != nil {
+	if err := h.svc.LinkAlert(r.Context(), tenantID, id, alertID, userID, middleware.AllowedTags(r.Context())); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -640,7 +660,7 @@ func (h *IncidentHandlers) unlinkAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.UnlinkAlert(r.Context(), tenantID, id, alertID, userID); err != nil {
+	if err := h.svc.UnlinkAlert(r.Context(), tenantID, id, alertID, userID, middleware.AllowedTags(r.Context())); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -723,11 +743,21 @@ func (h *IncidentHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.R
 }
 
 func (h *IncidentHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", true)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", true, h.incidentVisible(r))
 }
 
 func (h *IncidentHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", false)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "incident", false, h.incidentVisible(r))
+}
+
+// incidentVisible is the visibility gate resolveAnalysisToolCall applies
+// before resolving a tool call -- see its doc comment for why.
+func (h *IncidentHandlers) incidentVisible(r *http.Request) func(uuid.UUID) (bool, error) {
+	return func(id uuid.UUID) (bool, error) {
+		tenantID, _ := middleware.TenantID(r.Context())
+		inc, err := h.svc.Get(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
+		return inc != nil, err
+	}
 }
 
 // postmortemDoc streams a generated Markdown postmortem for the incident --

@@ -439,13 +439,14 @@ func TestAlertService_AddCommentAndComments(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("a fresh alert has no comments", func(t *testing.T) {
-		comments, err := alertSvc.Comments(t.Context(), tenantID, alert.ID)
+		comments, found, err := alertSvc.Comments(t.Context(), tenantID, alert.ID, nil)
 		require.NoError(t, err)
+		assert.True(t, found)
 		assert.Empty(t, comments)
 	})
 
 	attachmentURL := "https://example.com/screenshot.png"
-	created, err := alertSvc.AddComment(t.Context(), tenantID, alert.ID, actorID, "Marina Alves", "confirmed malicious", &attachmentURL)
+	created, err := alertSvc.AddComment(t.Context(), tenantID, alert.ID, actorID, "Marina Alves", "confirmed malicious", &attachmentURL, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "confirmed malicious", created.Body)
 	assert.Equal(t, "Marina Alves", created.AuthorName)
@@ -453,7 +454,7 @@ func TestAlertService_AddCommentAndComments(t *testing.T) {
 	assert.Equal(t, attachmentURL, *created.AttachmentURL)
 
 	t.Run("the comment is returned afterward", func(t *testing.T) {
-		comments, err := alertSvc.Comments(t.Context(), tenantID, alert.ID)
+		comments, _, err := alertSvc.Comments(t.Context(), tenantID, alert.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, comments, 1)
 		assert.Equal(t, "confirmed malicious", comments[0].Body)
@@ -854,7 +855,7 @@ func TestAlertService_Escalate(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, domain.AlertStatusEscalated, got.Status)
 
-		linked, err := incidentSvc.LinkedAlerts(t.Context(), tenantID, incident.ID)
+		linked, _, err := incidentSvc.LinkedAlerts(t.Context(), tenantID, incident.ID, nil)
 		require.NoError(t, err)
 		require.Len(t, linked, 1)
 		assert.Equal(t, alert.ID, linked[0].ID)

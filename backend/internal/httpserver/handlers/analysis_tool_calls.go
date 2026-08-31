@@ -16,12 +16,20 @@ import (
 // Servers -- same underlying MCPToolService calls that panel's
 // PendingApprovalRow already makes (see mcp_servers.go). Shared by
 // AlertHandlers and IncidentHandlers (both call this with contextType
-// "alert"/"incident" from their own approve/reject wrappers) -- gated here
-// by confirming the call actually belongs to the alert/incident named by
-// the request's "id" URL param before touching it, so admin access to one
-// alert/incident's chat can never be used to approve/reject a tool call
-// queued against a different one.
-func resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, mcpTools *service.MCPToolService, contextType string, approve bool) {
+// "alert"/"incident" from their own approve/reject wrappers).
+//
+// Two gates, both required:
+//   - visible() confirms the caller may actually see the alert/incident this
+//     tool call is queued against, under their own allowedTags. Approving a
+//     tool call EXECUTES it (a real side-effecting MCP action, see
+//     MCPToolService.ApproveToolCall), so without this a tag-restricted
+//     analyst who learned an out-of-scope alert's ID could trigger
+//     automation against it -- strictly worse than the read-only leak the
+//     same gap allowed on the comments/IOCs endpoints.
+//   - the call must belong to the alert/incident named by the request's
+//     "id" URL param, so access to one alert's chat can never resolve a
+//     tool call queued against a different one.
+func resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, mcpTools *service.MCPToolService, contextType string, approve bool, visible func(id uuid.UUID) (bool, error)) {
 	tenantID, ok := mustTenantID(w, r)
 	if !ok {
 		return
@@ -35,6 +43,16 @@ func resolveAnalysisToolCall(w http.ResponseWriter, r *http.Request, mcpTools *s
 	callID, err := strconv.ParseInt(chi.URLParam(r, "callId"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tool call id")
+		return
+	}
+
+	ok, err = visible(id)
+	if err != nil {
+		writeInternalError(w, r, err)
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, contextType+" not found")
 		return
 	}
 

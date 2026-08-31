@@ -603,13 +603,25 @@ func TestAlertHandlers_Comments(t *testing.T) {
 	require.Len(t, comments, 1)
 	assert.Equal(t, "confirmed source IP is a known scanner", comments[0].Body)
 
-	t.Run("unknown alert id -- empty list, not an error", func(t *testing.T) {
+	// This used to assert 200 + an empty list, back when listComments
+	// queried by ID under tenant RLS alone and so had no idea whether the
+	// alert existed. Now that it re-checks visibility (see
+	// AlertService.Comments), an unknown ID and a tag-invisible one both
+	// answer 404 -- the same deliberate opacity AlertService.Get's doc
+	// comment describes, so a caller can't distinguish "no such alert" from
+	// "exists but you can't see it" by response shape.
+	t.Run("unknown alert id -- 404, indistinguishable from a hidden one", func(t *testing.T) {
 		req := withClaims(httptest.NewRequest("GET", "/"+uuid.New().String()+"/comments", nil), tenantID, actorID, nil)
 		rec := doRequest(r, req)
-		assert.Equal(t, http.StatusOK, rec.Code)
-		var comments []domain.AlertComment
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &comments))
-		assert.Empty(t, comments)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+
+	t.Run("an alert the caller's tags don't cover -- same 404", func(t *testing.T) {
+		req := withClaims(httptest.NewRequest("GET", "/"+alertID.String()+"/comments", nil), tenantID, actorID, []string{"some-other-team"})
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.NotContains(t, rec.Body.String(), "confirmed source IP is a known scanner",
+			"the comment body must not leak to a caller who cannot see the alert")
 	})
 }
 

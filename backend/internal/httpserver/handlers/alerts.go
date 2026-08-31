@@ -493,11 +493,21 @@ func (h *AlertHandlers) continueAnalysisChat(w http.ResponseWriter, r *http.Requ
 // PendingApprovalRow already makes (see mcp_servers.go), gated here by
 // confirming the call actually belongs to this alert before touching it.
 func (h *AlertHandlers) approveAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", true)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", true, h.alertVisible(r))
 }
 
 func (h *AlertHandlers) rejectAnalysisToolCall(w http.ResponseWriter, r *http.Request) {
-	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", false)
+	resolveAnalysisToolCall(w, r, h.mcpTools, "alert", false, h.alertVisible(r))
+}
+
+// alertVisible is the visibility gate resolveAnalysisToolCall applies before
+// resolving a tool call -- see its doc comment for why.
+func (h *AlertHandlers) alertVisible(r *http.Request) func(uuid.UUID) (bool, error) {
+	return func(id uuid.UUID) (bool, error) {
+		tenantID, _ := middleware.TenantID(r.Context())
+		a, err := h.svc.Get(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
+		return a != nil, err
+	}
 }
 
 func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
@@ -511,9 +521,13 @@ func (h *AlertHandlers) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comments, err := h.svc.Comments(r.Context(), tenantID, id)
+	comments, found, err := h.svc.Comments(r.Context(), tenantID, id, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeInternalError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "alert not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, comments)
@@ -553,7 +567,7 @@ func (h *AlertHandlers) addComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL)
+	comment, err := h.svc.AddComment(r.Context(), tenantID, id, userID, actor.Name, req.Body, req.AttachmentURL, middleware.AllowedTags(r.Context()))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
