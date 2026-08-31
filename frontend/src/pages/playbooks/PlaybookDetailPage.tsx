@@ -7,7 +7,7 @@ import { useList, mutationErrorMessage } from "../../api/hooks";
 import { useConfirm } from "../../hooks/useConfirm";
 import { WEBHOOK_PAYLOAD_PLACEHOLDERS } from "../../types/api";
 import type { IncidentPhase } from "../../types/incidents";
-import { NIST_PHASE_ORDER } from "../../types/incidents";
+import { PLAYBOOK_PHASES } from "../../types/playbooks";
 import type { Playbook } from "../../types/playbooks";
 
 // EditableStep drops PlaybookStep's `id` -- a step being edited (including
@@ -48,7 +48,7 @@ function emptySteps(): StepsState {
 
 function cleanSteps(steps: StepsState): Partial<Record<IncidentPhase, CleanStep[]>> {
   const out: Partial<Record<IncidentPhase, CleanStep[]>> = {};
-  for (const phase of NIST_PHASE_ORDER) {
+  for (const phase of PLAYBOOK_PHASES) {
     const values = (steps[phase] ?? [])
       .map((s) => ({ text: s.text.trim(), webhookUrl: s.webhookUrl.trim(), webhookPayloadTemplate: s.webhookPayloadTemplate }))
       .filter((s) => s.text);
@@ -85,6 +85,12 @@ export function PlaybookDetailPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const { confirming: confirmingDelete, confirm: confirmDelete, cancel: cancelDelete } = useConfirm();
 
+  // Iterates PLAYBOOK_PHASES (excludes "new"), not the full NIST_PHASE_ORDER
+  // -- see that constant's doc comment. Any pre-existing "new"-phase steps
+  // on a playbook (none currently in this tenant's data) simply won't load
+  // into the edit form, and so won't round-trip back on the next save
+  // either -- an accepted consequence of no longer offering that phase at
+  // all, not something this page tries to preserve behind the scenes.
   function loadFromPlaybook(pb: Playbook) {
     setTitle(pb.title);
     setCategory(pb.category);
@@ -93,7 +99,7 @@ export function PlaybookDetailPage() {
     setAlertNamePattern(pb.alertNamePattern ?? "");
     setIsDefault(pb.isDefault ?? false);
     const loaded: StepsState = {};
-    for (const phase of NIST_PHASE_ORDER) {
+    for (const phase of PLAYBOOK_PHASES) {
       const phaseSteps = pb.steps[phase];
       if (phaseSteps) {
         loaded[phase] = phaseSteps.map((s) => ({
@@ -325,7 +331,7 @@ export function PlaybookDetailPage() {
         <h2 className="panel-title" style={{ marginBottom: 12 }}>
           {t("playbooks.detail.stepsByPhaseTitle")}
         </h2>
-        {NIST_PHASE_ORDER.map((phase) => {
+        {PLAYBOOK_PHASES.map((phase) => {
           // Both branches carry a `key` field of the same shape: the
           // editing branch's is a synthetic client-side id (EditableStep.key,
           // see its own doc comment for why), the read-only branch's is the

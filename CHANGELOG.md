@@ -13,6 +13,14 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- Playbooks no longer offer a "New" phase section under "Steps by Phase" — by the time an
+  incident is still in New/Identification, an analyst hasn't triaged it yet, so there was never
+  anything for a response playbook to prescribe there (steps only make sense from Detection &
+  Analysis onward). Applies to both the editor (`PlaybookDetailPage.tsx`) and the read-only
+  trigger popup (`PlaybookViewModal.tsx`); the backend itself is untouched (still generically
+  accepts any NIST phase for a playbook step) — this is a UI-only scoping of what gets offered/
+  displayed, not a data-model change. No existing playbook had any "New"-phase steps to begin
+  with, so nothing was migrated or dropped.
 - `AlertsListPage.tsx`/`IncidentsListPage.tsx` had independently grown the exact same ~25-line
   row-selection state machine (a `Set` of selected ids, select-all with the header checkbox's
   indeterminate state, reset on filter/page change) and the same bulk-action apply/error/summary

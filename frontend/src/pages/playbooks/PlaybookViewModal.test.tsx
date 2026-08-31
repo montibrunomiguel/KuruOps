@@ -51,6 +51,19 @@ describe("PlaybookViewModal", () => {
     expect(screen.getByText("Notify legal")).toBeInTheDocument();
   });
 
+  it("never renders a 'New'-phase steps section, even if the fetched playbook has one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(playbookFixture({ steps: { new: [{ id: "s0", text: "Should never show" }], containment: [{ id: "s1", text: "Isolate host" }] } })),
+      ),
+    );
+    renderModal();
+
+    await screen.findByText("Isolate host");
+    expect(screen.queryByText("Should never show")).not.toBeInTheDocument();
+  });
+
   it("shows an error banner when the playbook fails to load", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "load boom" }, 500)));
     renderModal();

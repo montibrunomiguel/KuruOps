@@ -1,5 +1,16 @@
 // Mirrors backend/internal/domain/playbook.go.
-import type { IncidentPhase } from "./incidents";
+import { NIST_PHASE_ORDER, type IncidentPhase } from "./incidents";
+
+// PLAYBOOK_PHASES: every NIST phase a playbook can have steps for, except
+// "new" -- by the time an incident is in New/Identification, an analyst
+// hasn't triaged it yet, so there's nothing here for a *response* playbook
+// to prescribe (steps only make sense from Detection & Analysis onward).
+// The backend itself doesn't restrict which phase a playbook_phase_steps
+// row can use (matches NIST_PHASE_ORDER's full set, see
+// backend/internal/domain/playbook.go's Steps field) -- this is a
+// UI-only scoping of what PlaybookDetailPage/PlaybookViewModal offer to
+// add to or display, not a data-model restriction.
+export const PLAYBOOK_PHASES: IncidentPhase[] = NIST_PHASE_ORDER.filter((p) => p !== "new");
 
 export interface PlaybookStep {
   id: string;

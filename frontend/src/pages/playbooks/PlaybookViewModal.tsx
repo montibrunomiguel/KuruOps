@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
 import { mutationErrorMessage, useObject } from "../../api/hooks";
-import { NIST_PHASE_ORDER } from "../../types/incidents";
+import { PLAYBOOK_PHASES } from "../../types/playbooks";
 import type { Playbook } from "../../types/playbooks";
 import { Modal } from "../../components/Modal";
 
@@ -67,7 +67,7 @@ export function PlaybookViewModal({ playbookId, alertId, onClose }: { playbookId
             <p style={{ fontSize: 13, whiteSpace: "pre-wrap", marginTop: 8 }}>{playbook.description}</p>
           )}
 
-          {NIST_PHASE_ORDER.map((phase) => {
+          {PLAYBOOK_PHASES.map((phase) => {
             const steps = playbook.steps[phase];
             if (!steps || steps.length === 0) return null;
             return (

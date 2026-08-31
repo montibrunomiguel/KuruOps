@@ -46,6 +46,34 @@ describe("PlaybookDetailPage", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
   });
 
+  it("never offers a 'New' phase section to add steps to -- playbooks only apply from Detection & Analysis onward", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(playbookFixture())));
+    renderDetail("p1");
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    // "New" must not appear as one of the phase headings in the editor,
+    // while its neighbors still do -- confirms this is the New phase
+    // specifically excluded (see PLAYBOOK_PHASES), not every phase heading
+    // failing to render.
+    expect(screen.queryByText("New", { selector: "p" })).not.toBeInTheDocument();
+    expect(screen.getByText("Detection & Analysis")).toBeInTheDocument();
+    expect(screen.getByText("Post-Incident")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "+ Add step" })).toHaveLength(5);
+  });
+
+  it("does not render a 'New'-phase steps section in read-only mode either, even if the fetched playbook has one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(playbookFixture({ steps: { new: [{ id: "s0", text: "Should never show" }], detection_analysis: [{ id: "s1", text: "Check headers" }] } })),
+      ),
+    );
+    renderDetail("p1");
+
+    await screen.findByText("Check headers");
+    expect(screen.queryByText("Should never show")).not.toBeInTheDocument();
+  });
+
   it("shows the empty create form immediately for /playbooks/new", async () => {
     vi.stubGlobal("fetch", vi.fn());
     renderDetail("new");
@@ -293,9 +321,10 @@ describe("PlaybookDetailPage", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
     const addButtons = screen.getAllByRole("button", { name: "+ Add step" });
-    // Phase order is New, Detection & Analysis, Containment, Eradication,
-    // Recovery, Post-Incident -- containment is the third "+ Add step".
-    await userEvent.click(addButtons[2]);
+    // Playbook phase order is Detection & Analysis, Containment,
+    // Eradication, Recovery, Post-Incident ("new" is excluded -- see
+    // PLAYBOOK_PHASES' doc comment) -- containment is the second "+ Add step".
+    await userEvent.click(addButtons[1]);
     await userEvent.type(screen.getByPlaceholderText("Step 1"), "Isolate host");
 
     expect(screen.queryByPlaceholderText("Custom payload (optional)")).not.toBeInTheDocument();
