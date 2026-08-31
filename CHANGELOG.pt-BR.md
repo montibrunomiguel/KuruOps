@@ -187,6 +187,18 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Acessibilidade**: a lista de Playbooks era inalcançável por teclado. Cada linha era um
+  `<div onClick={navigate}>` sem `tabindex` e sem `role`, e a linha era a *única* forma de abrir um
+  playbook — então um usuário só de teclado ou de leitor de tela conseguia criar e buscar
+  playbooks, mas nunca abrir um (WCAG 2.1.1 Teclado, Nível A). A linha agora envolve o título num
+  `<Link>` de verdade, usando o mesmo padrão `row-link-stretch` que as tabelas de
+  Alertas/Incidentes já usam, mantendo a linha inteira clicável. A mesma correção vale para as
+  linhas de alerta vinculado de um incidente, que tinham o padrão idêntico.
+- **Acessibilidade**: quatro controles de formulário não tinham nome acessível nenhum — os campos
+  de início/fim de horário de funcionamento de uma escala de plantão (dois `<input type="time">`
+  adjacentes, indistinguíveis num leitor de tela), o select de adicionar respondente, o select de
+  adicionar responsável, e o textarea de descrição do incidente. Todos os quatro agora têm
+  `aria-label`.
 - **Segurança**: a visibilidade por tag (`Role.allowedTags`) era aplicada só nas rotas "principais"
   de alerta e incidente — toda rota de sub-recurso consultava por ID apenas sob o RLS de tenant.
   Nada obriga um cliente HTTP a chamar `GET /incidents/{id}` antes de

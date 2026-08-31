@@ -47,7 +47,13 @@ export function DescriptionPanel({ incident, onSaved }: { incident: Incident; on
       {error && <div className="error-banner">{error}</div>}
       {editing ? (
         <>
-          <textarea className="textarea" style={{ width: "100%", minHeight: 100 }} value={value} onChange={(e) => setValue(e.target.value)} />
+          <textarea
+            className="textarea"
+            style={{ width: "100%", minHeight: 100 }}
+            aria-label={t("incidents.detail.descriptionAria")}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
           <div className="row-actions" style={{ marginTop: 10 }}>
             <button className="btn btn-primary btn-sm" disabled={submitting} onClick={save}>
               {submitting ? t("common.saving") : t("common.save")}

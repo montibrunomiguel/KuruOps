@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useList } from "../../api/hooks";
@@ -65,9 +65,20 @@ export function PlaybooksListPage() {
           </div>
         )}
         {filtered.map((p) => (
-          <div className="row" key={p.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/playbooks/${p.id}`)}>
+          <div className="row row-linked" key={p.id}>
             <div className="row-main">
-              <p className="row-title">{p.title}</p>
+              {/* A real <Link>, not a `<div onClick>` on the row: the row was
+                  the ONLY way to open a playbook, and a bare onClick div has
+                  no tabindex and no role -- so the whole Playbooks section
+                  was unreachable by keyboard (WCAG 2.1.1). row-link-stretch
+                  keeps the entire row clickable while the focusable element
+                  is the link itself, the same pattern the Alerts/Incidents
+                  tables already use. */}
+              <p className="row-title">
+                <Link to={`/playbooks/${p.id}`} className="row-link-stretch">
+                  {p.title}
+                </Link>
+              </p>
               <p className="row-sub">
                 {p.category}
                 {p.keywords.length > 0 ? ` · ${p.keywords.join(", ")}` : ""}
