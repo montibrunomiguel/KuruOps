@@ -6,6 +6,7 @@ import { useList, mutationErrorMessage } from "../../../api/hooks";
 import type { Alert } from "../../../types/alerts";
 import { shortId } from "../../../lib/format";
 import { LinkSearchPicker } from "../../../components/LinkSearchPicker";
+import { useConfirm } from "../../../hooks/useConfirm";
 
 export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
   const { t } = useTranslation();
@@ -13,6 +14,7 @@ export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
   const { data: linked, reload } = useList<Alert>(["alert-linked-alerts", alertId], (tk) => api.get<Alert[]>(`/api/v1/alerts/${alertId}/alerts`, tk));
   const { data: candidates } = useList<Alert>(["alert-link-candidates"], (tk) => api.get<Alert[]>(`/api/v1/alerts?limit=50`, tk));
   const [error, setError] = useState<string | null>(null);
+  const { confirming, confirm, cancel } = useConfirm<string>();
 
   const excludeIds = new Set([alertId, ...(linked ?? []).map((l) => l.id)]);
 
@@ -27,6 +29,7 @@ export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
   }
 
   async function unlink(otherId: string) {
+    cancel();
     setError(null);
     try {
       await api.del(`/api/v1/alerts/${alertId}/alerts/${otherId}`, token);
@@ -48,9 +51,25 @@ export function LinkedAlertsPanel({ alertId }: { alertId: string }) {
           {linked.map((a) => (
             <span className="linked-chip" key={a.id}>
               <span className="mono">{shortId(a.id)}</span> · {a.title}
-              <button type="button" onClick={() => unlink(a.id)} aria-label={t("alerts.detail.unlinkAlert", { id: shortId(a.id) })}>
-                ×
-              </button>
+              {confirming === a.id ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => unlink(a.id)}
+                    aria-label={t("common.confirm")}
+                    title={t("alerts.detail.unlinkConfirm", { id: shortId(a.id) }) ?? undefined}
+                  >
+                    ✓
+                  </button>
+                  <button type="button" onClick={cancel} aria-label={t("common.cancel")}>
+                    ✗
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={() => confirm(a.id)} aria-label={t("alerts.detail.unlinkAlert", { id: shortId(a.id) })}>
+                  ×
+                </button>
+              )}
             </span>
           ))}
         </div>

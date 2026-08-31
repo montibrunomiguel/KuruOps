@@ -306,13 +306,7 @@ describe("AlertDetailPage", () => {
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
-    const selects = screen.getAllByRole("combobox");
-    // The Manual Severity Override panel's severity <select> has no
-    // associated <label> (only a helper-text line above it, per the
-    // design), so it's targeted positionally -- it's the only unlabeled,
-    // unnamed combobox on the page (the Assignee panel's select has an
-    // aria-label, so it's excluded by the accessible-name check).
-    const severitySelect = selects.find((s) => !s.hasAttribute("id") && !s.hasAttribute("aria-label"))!;
+    const severitySelect = screen.getByLabelText("Manual Severity Override");
     await userEvent.selectOptions(severitySelect, "critical");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -329,9 +323,7 @@ describe("AlertDetailPage", () => {
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
-    const selects = screen.getAllByRole("combobox");
-    const severitySelect = selects.find((s) => !s.hasAttribute("id") && !s.hasAttribute("aria-label"))!;
-    expect(severitySelect).toBeDisabled();
+    expect(screen.getByLabelText("Manual Severity Override")).toBeDisabled();
   });
 
   it("linking an alert from the search results PUTs the link endpoint", async () => {

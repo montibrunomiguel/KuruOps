@@ -147,6 +147,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- `LinkSearchPicker.tsx` (the alert-to-alert / incident-to-alert correlation search, used by
+  AlertDetailPage's Linked Alerts panel and IncidentDetailPage's correlated-alerts panel) rendered
+  its results as plain `<div onClick>` rows — unreachable by keyboard at all, no way to Tab into a
+  result or link one without a mouse. Rebuilt on the same `role="combobox"`/
+  `aria-activedescendant`/arrow-key pattern already proven out in `CommandPalette.tsx`: Arrow
+  Up/Down moves the active result (wrapping), Enter links it, Escape clears the query.
+- `OnCallTimeline.tsx`'s colored on-call bars hardcoded white text — fails WCAG AA's 4.5:1
+  small-text contrast minimum against 9 of the palette's 10 colors (as low as 1.59:1 on the
+  yellow). `lib/personColor.ts` gained `personTextColor`, which picks black or white per swatch
+  (whichever actually clears 4.5:1 against that specific background) instead of a color assumed
+  safe for all of them.
+- Two destructive actions skipped the app's own inline confirm/cancel pattern (`useConfirm`,
+  chosen elsewhere specifically because `window.confirm()` silently auto-dismisses in some
+  embedded browser contexts) and deleted immediately on a single click: `LinkedAlertsPanel.tsx`'s
+  unlink button and `OnCallTimeline.tsx`'s on-call override removal. Both now ask for confirmation
+  first, matching every other destructive action in Settings.
 - External-database migration (Settings → Data & Audit, `internal/dbmigrate`) would fail copying
   any table with a full-text-search `generated always as (...) stored` column
   (`alerts.search_vector`, `incidents.search_vector`) with `"row field count is N, expected N-1"`
