@@ -16,7 +16,15 @@ import type { Playbook } from "../../types/playbooks";
 // generating fresh ids server-side. The edit form never needs to know a
 // step's id; only the read-only PlaybookViewModal's "Run automation"
 // button does, reading it straight off the freshly-fetched Playbook.
+// key is a client-only React list key (crypto.randomUUID(), stable for
+// this step's lifetime in the form) -- this phase's step list is
+// reorderable via addStep/removeStep, so a positional key would
+// misattribute a row's focus/DOM state after a removal shifts every later
+// row's index. Never sent to the backend: cleanSteps below rebuilds a
+// fresh {text, webhookUrl, webhookPayloadTemplate} object rather than
+// spreading this one.
 interface EditableStep {
+  key: string;
   text: string;
   webhookUrl: string;
   webhookPayloadTemplate: string;
@@ -24,12 +32,22 @@ interface EditableStep {
 
 type StepsState = Partial<Record<IncidentPhase, EditableStep[]>>;
 
+// CleanStep is what actually goes in the save payload -- key-less, same
+// reasoning EscalationEditForm's save()/FieldMappingTemplatesPanel's
+// cleanRules give for building this explicitly rather than reusing
+// EditableStep's own (key-bearing) shape.
+interface CleanStep {
+  text: string;
+  webhookUrl: string;
+  webhookPayloadTemplate: string;
+}
+
 function emptySteps(): StepsState {
   return {};
 }
 
-function cleanSteps(steps: StepsState): StepsState {
-  const out: StepsState = {};
+function cleanSteps(steps: StepsState): Partial<Record<IncidentPhase, CleanStep[]>> {
+  const out: Partial<Record<IncidentPhase, CleanStep[]>> = {};
   for (const phase of NIST_PHASE_ORDER) {
     const values = (steps[phase] ?? [])
       .map((s) => ({ text: s.text.trim(), webhookUrl: s.webhookUrl.trim(), webhookPayloadTemplate: s.webhookPayloadTemplate }))
@@ -79,6 +97,7 @@ export function PlaybookDetailPage() {
       const phaseSteps = pb.steps[phase];
       if (phaseSteps) {
         loaded[phase] = phaseSteps.map((s) => ({
+          key: crypto.randomUUID(),
           text: s.text,
           webhookUrl: s.webhookUrl ?? "",
           webhookPayloadTemplate: s.webhookPayloadTemplate ?? "",
@@ -93,7 +112,7 @@ export function PlaybookDetailPage() {
   }, [playbook]);
 
   function addStep(phase: IncidentPhase) {
-    setSteps((s) => ({ ...s, [phase]: [...(s[phase] ?? []), { text: "", webhookUrl: "", webhookPayloadTemplate: "" }] }));
+    setSteps((s) => ({ ...s, [phase]: [...(s[phase] ?? []), { key: crypto.randomUUID(), text: "", webhookUrl: "", webhookPayloadTemplate: "" }] }));
   }
 
   function updateStep(phase: IncidentPhase, idx: number, patch: Partial<EditableStep>) {
@@ -307,7 +326,12 @@ export function PlaybookDetailPage() {
           {t("playbooks.detail.stepsByPhaseTitle")}
         </h2>
         {NIST_PHASE_ORDER.map((phase) => {
-          const phaseSteps = (editing ? steps[phase] : playbook?.steps[phase]?.map((s) => ({ text: s.text, webhookUrl: s.webhookUrl ?? "", webhookPayloadTemplate: s.webhookPayloadTemplate ?? "" }))) ?? [];
+          // Both branches carry a `key` field of the same shape: the
+          // editing branch's is a synthetic client-side id (EditableStep.key,
+          // see its own doc comment for why), the read-only branch's is the
+          // step's real backend id -- either way, list identity survives a
+          // removal shifting later rows' indices.
+          const phaseSteps = (editing ? steps[phase] : playbook?.steps[phase]?.map((s) => ({ key: s.id, text: s.text, webhookUrl: s.webhookUrl ?? "", webhookPayloadTemplate: s.webhookPayloadTemplate ?? "" }))) ?? [];
           if (!editing && phaseSteps.length === 0) return null;
           const isContainment = phase === "containment";
           return (
@@ -318,7 +342,7 @@ export function PlaybookDetailPage() {
               {editing ? (
                 <>
                   {phaseSteps.map((step, idx) => (
-                    <div key={idx} style={{ marginBottom: 10, padding: isContainment ? 10 : 0, borderRadius: 7, border: isContainment ? "1px solid var(--border)" : "none" }}>
+                    <div key={step.key} style={{ marginBottom: 10, padding: isContainment ? 10 : 0, borderRadius: 7, border: isContainment ? "1px solid var(--border)" : "none" }}>
                       <div className="step-editor-row">
                         <input
                           className="input"
@@ -363,8 +387,8 @@ export function PlaybookDetailPage() {
                 </>
               ) : (
                 <ol style={{ margin: 0, paddingLeft: 20, fontSize: 13, display: "flex", flexDirection: "column", gap: 6 }}>
-                  {phaseSteps.map((step, idx) => (
-                    <li key={idx}>
+                  {phaseSteps.map((step) => (
+                    <li key={step.key}>
                       {step.text}
                       {step.webhookUrl && (
                         <span className="badge badge-muted" style={{ marginLeft: 6 }}>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
@@ -6,8 +6,9 @@ import { api } from "../../api/client";
 import { usePagedList, mutationErrorMessage } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useRowSelection } from "../../hooks/useRowSelection";
+import { useBulkAction } from "../../hooks/useBulkAction";
 import type { Severity } from "../../types/alerts";
-import type { BulkResponse } from "../../types/api";
 import type { Incident, IncidentPhase, IncidentPriority } from "../../types/incidents";
 import { NIST_PHASE_ORDER } from "../../types/incidents";
 import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges";
@@ -79,66 +80,21 @@ export function IncidentsListPage() {
   );
 
   // Row selection -- scoped to what's currently on screen, same reasoning
-  // as AlertsListPage's selection state, see its comment.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setSelected(new Set());
-  }, [severity, priority, phase, sla, trimmedQ, range.since, range.until, page, pageSize]);
-
-  function toggleRow(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  const allOnPageSelected = incidents.length > 0 && incidents.every((i) => selected.has(i.id));
-  const someOnPageSelected = incidents.some((i) => selected.has(i.id));
-  const selectAllRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someOnPageSelected && !allOnPageSelected;
-    }
-  }, [someOnPageSelected, allOnPageSelected]);
-
-  function toggleSelectAll() {
-    if (allOnPageSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(incidents.map((i) => i.id)));
-    }
-  }
+  // as AlertsListPage's selection state, see useRowSelection's doc comment.
+  const { selected, toggleRow, toggleSelectAll, allOnPageSelected, selectAllRef, clear } = useRowSelection(
+    incidents,
+    (i) => i.id,
+    [severity, priority, phase, sla, trimmedQ, range.since, range.until, page, pageSize],
+  );
 
   const [bulkPhase, setBulkPhase] = useState<IncidentPhase>(BULK_PHASE_OPTIONS[0]);
-  const [applying, setApplying] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkSummary, setBulkSummary] = useState<{ success: number; failed: number } | null>(null);
+  const { applying, error: bulkError, summary: bulkSummary, apply: applyBulk } = useBulkAction("/api/v1/incidents/bulk/phase", token);
 
-  async function applyBulkPhase() {
-    setApplying(true);
-    setBulkError(null);
-    setBulkSummary(null);
-    try {
-      const resp = await api.post<BulkResponse>(
-        "/api/v1/incidents/bulk/phase",
-        { ids: Array.from(selected), phase: bulkPhase },
-        token,
-      );
-      const success = resp.results.filter((r) => r.success).length;
-      const failed = resp.results.length - success;
-      setBulkSummary({ success, failed });
-      setSelected(new Set());
+  function applyBulkPhase() {
+    void applyBulk(Array.from(selected), { phase: bulkPhase }, () => {
+      clear();
       reload();
-    } catch (err) {
-      setBulkError(mutationErrorMessage(err));
-    } finally {
-      setApplying(false);
-    }
+    });
   }
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -241,10 +197,10 @@ export function IncidentsListPage() {
               </option>
             ))}
           </select>
-          <button className="btn btn-primary btn-sm" onClick={() => void applyBulkPhase()} disabled={applying}>
+          <button className="btn btn-primary btn-sm" onClick={applyBulkPhase} disabled={applying}>
             {applying ? t("incidents.bulk.applying") : t("incidents.bulk.apply")}
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={applying}>
+          <button className="btn btn-ghost btn-sm" onClick={clear} disabled={applying}>
             {t("incidents.bulk.clearSelection")}
           </button>
         </div>

@@ -13,6 +13,20 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- `AlertsListPage.tsx`/`IncidentsListPage.tsx` had independently grown the exact same ~25-line
+  row-selection state machine (a `Set` of selected ids, select-all with the header checkbox's
+  indeterminate state, reset on filter/page change) and the same bulk-action apply/error/summary
+  state. Extracted into shared `useRowSelection`/`useBulkAction` hooks — no behavior change, both
+  pages' existing tests pass unmodified.
+- `useSidebarCounts.ts` (the sidebar's "Alerts"/"Incidents" badge counts) was the one remaining
+  hand-rolled `useEffect`+`fetch`+cancelled-flag data-fetching hook in the app, with no live-update
+  subscription — the counters only changed on a full page navigation, unlike every list page's own
+  counts. Rebuilt on `useList` (react-query) + `useEventStream`, the same pattern every other
+  list/detail page already uses; the counters now update live over SSE the instant another
+  analyst's change arrives, same as the list pages. `useList` gained an `options.enabled` flag
+  (default `true`, every existing call site unaffected) to support this -- skips the fetch entirely
+  for a capability the caller doesn't have, instead of firing a request guaranteed to 403.
+
 - **Project renamed from ArgusOps to KuruOps** — inspired by the Curupira, a figure from Brazilian
   folklore who protects the forest and warns its animals with a distinctive cry. The rename covers
   the entire codebase: the Go module path (`github.com/argusops/argusops` →
@@ -147,6 +161,17 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Five reorderable/removable list forms keyed their rows by array index
+  (`EscalationEditForm.tsx`'s escalation steps, `ScheduleForm.tsx`'s working-hours intervals,
+  `PlaybookDetailPage.tsx`'s playbook steps, `FieldMappingTemplatesPanel.tsx`'s mapping rules,
+  `GroupByFieldsEditor.tsx`'s dedup fields) — removing or reordering a row shifts every later
+  row's index, so React reuses each shifted row's DOM node (and whatever focus/state it was
+  holding) for a *different* logical row than the one it was actually rendering a moment before.
+  Every list now keys by a stable id instead: a `crypto.randomUUID()` generated once per row
+  (stripped again before the save payload, alongside the read-only playbook-step list, which had
+  a real backend id available all along and now uses it) for the four object-array cases, and a
+  small parallel id array for `GroupByFieldsEditor`'s plain `string[]` prop, which has no object to
+  hang an id off.
 - `LinkSearchPicker.tsx` (the alert-to-alert / incident-to-alert correlation search, used by
   AlertDetailPage's Linked Alerts panel and IncidentDetailPage's correlated-alerts panel) rendered
   its results as plain `<div onClick>` rows — unreachable by keyboard at all, no way to Tab into a

@@ -35,6 +35,25 @@ describe("useList", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("options.enabled: false skips the fetch entirely", async () => {
+    const fetcher = vi.fn().mockResolvedValue([{ id: 1 }]);
+    const { result } = renderHook(() => useList(["test-list-enabled"], fetcher, { enabled: false }), { wrapper });
+
+    // Give react-query a tick to have started a fetch if it were going to.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.current.data).toBeNull();
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("options.enabled defaults to true -- every existing call site keeps fetching unchanged", async () => {
+    const fetcher = vi.fn().mockResolvedValue([{ id: 1 }]);
+    const { result } = renderHook(() => useList(["test-list-enabled-default"], fetcher), { wrapper });
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.data).toEqual([{ id: 1 }]));
+  });
+
   it("surfaces an ApiError's message on failure", async () => {
     const fetcher = vi.fn().mockRejectedValue(new ApiError(400, "bad filter"));
     const { result } = renderHook(() => useList(["test-list-2"], fetcher), { wrapper });

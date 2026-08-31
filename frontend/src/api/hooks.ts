@@ -28,12 +28,19 @@ function resolveListError(err: unknown, logout: () => void): string | null {
 // refetches), while the returned shape ({data, loading, error, reload}) is
 // kept identical to the old hand-rolled hook so call sites don't need to
 // change beyond passing a queryKey.
-export function useList<T>(queryKey: QueryKey, fetcher: (token: string | null) => Promise<T[]>) {
+//
+// options.enabled (default true) skips the fetch entirely while false --
+// react-query's own gate, exposed here for callers that only sometimes have
+// something worth fetching (e.g. useSidebarCounts skipping the incidents
+// count entirely for a caller without the incidents capability, rather than
+// firing a request that's guaranteed to 403).
+export function useList<T>(queryKey: QueryKey, fetcher: (token: string | null) => Promise<T[]>, options?: { enabled?: boolean }) {
   const { token, logout } = useAuth();
   const query = useQuery<T[]>({
     queryKey,
     queryFn: () => fetcher(token),
     retry: false,
+    enabled: options?.enabled ?? true,
   });
 
   useEffect(() => {

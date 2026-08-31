@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
-import { usePagedList, mutationErrorMessage } from "../../api/hooks";
+import { usePagedList } from "../../api/hooks";
 import { useEventStream } from "../../api/eventStream";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useRowSelection } from "../../hooks/useRowSelection";
+import { useBulkAction } from "../../hooks/useBulkAction";
 import type { Alert, AlertStatus, Severity } from "../../types/alerts";
-import type { BulkResponse } from "../../types/api";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
@@ -73,67 +74,22 @@ export function AlertsListPage() {
 
   // Row selection -- scoped to what's currently on screen, not persisted
   // across a page/filter change, so the bulk toolbar's count never refers
-  // to rows the analyst can no longer see. Anything that swaps out which
-  // alerts are shown resets it via the effect below.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    setSelected(new Set());
-  }, [severity, status, source, correlated, tag, trimmedQ, range.since, range.until, page, pageSize]);
-
-  function toggleRow(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  const allOnPageSelected = alerts.length > 0 && alerts.every((a) => selected.has(a.id));
-  const someOnPageSelected = alerts.some((a) => selected.has(a.id));
-  const selectAllRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someOnPageSelected && !allOnPageSelected;
-    }
-  }, [someOnPageSelected, allOnPageSelected]);
-
-  function toggleSelectAll() {
-    if (allOnPageSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(alerts.map((a) => a.id)));
-    }
-  }
+  // to rows the analyst can no longer see. See useRowSelection's own doc
+  // comment for why resetDeps is passed through this way.
+  const { selected, toggleRow, toggleSelectAll, allOnPageSelected, selectAllRef, clear } = useRowSelection(
+    alerts,
+    (a) => a.id,
+    [severity, status, source, correlated, tag, trimmedQ, range.since, range.until, page, pageSize],
+  );
 
   const [bulkStatus, setBulkStatus] = useState<AlertStatus>("investigating");
-  const [applying, setApplying] = useState(false);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkSummary, setBulkSummary] = useState<{ success: number; failed: number } | null>(null);
+  const { applying, error: bulkError, summary: bulkSummary, apply: applyBulk } = useBulkAction("/api/v1/alerts/bulk/status", token);
 
-  async function applyBulkStatus() {
-    setApplying(true);
-    setBulkError(null);
-    setBulkSummary(null);
-    try {
-      const resp = await api.post<BulkResponse>(
-        "/api/v1/alerts/bulk/status",
-        { ids: Array.from(selected), status: bulkStatus },
-        token,
-      );
-      const success = resp.results.filter((r) => r.success).length;
-      const failed = resp.results.length - success;
-      setBulkSummary({ success, failed });
-      setSelected(new Set());
+  function applyBulkStatus() {
+    void applyBulk(Array.from(selected), { status: bulkStatus }, () => {
+      clear();
       reload();
-    } catch (err) {
-      setBulkError(mutationErrorMessage(err));
-    } finally {
-      setApplying(false);
-    }
+    });
   }
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -222,10 +178,10 @@ export function AlertsListPage() {
               </option>
             ))}
           </select>
-          <button className="btn btn-primary btn-sm" onClick={() => void applyBulkStatus()} disabled={applying}>
+          <button className="btn btn-primary btn-sm" onClick={applyBulkStatus} disabled={applying}>
             {applying ? t("alerts.bulk.applying") : t("alerts.bulk.apply")}
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={applying}>
+          <button className="btn btn-ghost btn-sm" onClick={clear} disabled={applying}>
             {t("alerts.bulk.clearSelection")}
           </button>
         </div>
