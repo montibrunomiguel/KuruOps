@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -27,7 +27,6 @@ export function IncidentDetailPage() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const { token } = useAuth();
-  const navigate = useNavigate();
 
   const { data: incidentData, loading, error, reload } = useList<Incident>(
     ["incident", id],
@@ -327,14 +326,23 @@ export function IncidentDetailPage() {
             )}
             {linkedAlerts &&
               linkedAlerts.map((a) => (
-                <div className="row" key={a.id}>
-                  <div className="row-main" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }} onClick={() => navigate(`/alerts/${a.id}`)}>
+                <div className="row row-linked" key={a.id}>
+                  {/* row-link-stretch on a real <Link>, not an onClick on the
+                      row-main div: the latter is unreachable by keyboard and
+                      breaks middle-click/ctrl-click to open in a new tab.
+                      Same pattern the Alerts/Incidents tables use. The
+                      "Unlink" button in row-actions below stays clickable
+                      because it sits outside this element and above the
+                      stretched ::after overlay. */}
+                  <div className="row-main" style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <SeverityBadge severity={a.severity} />
                     <span className="mono" style={{ color: "var(--text-muted)", fontSize: 12 }}>
                       {shortId(a.id)}
                     </span>
                     <p className="row-title" style={{ margin: 0 }}>
-                      {a.title}
+                      <Link to={`/alerts/${a.id}`} className="row-link-stretch">
+                        {a.title}
+                      </Link>
                     </p>
                   </div>
                   <div className="row-actions">

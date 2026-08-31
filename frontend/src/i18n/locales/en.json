@@ -476,7 +476,8 @@
       "reasonRequired": "A reason is required to correct a timestamp.",
       "originalWas": "original: {{date}} · corrected by {{by}}",
       "notFound": "Incident not found.",
-      "warningBadge": "attention"
+      "warningBadge": "attention",
+      "descriptionAria": "Incident description"
     },
     "iocs": {
       "button": "IOCs",
@@ -970,7 +971,10 @@
         "allDay": "All day",
         "specificTimes": "Specific times",
         "addInterval": "+ Add interval",
-        "removeInterval": "Remove interval"
+        "removeInterval": "Remove interval",
+        "startTimeAria": "Interval {{num}} start time",
+        "endTimeAria": "Interval {{num}} end time",
+        "addResponderAria": "Responder to add"
       },
       "timeline": {
         "title": "Preview",

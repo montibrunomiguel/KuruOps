@@ -169,13 +169,17 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
-- Two silent-failure sites in `AIAnalysisService` that the earlier logging sweep missed, both the
-  same class it set out to fix: `ResumeAnalysisRun`'s `recordEvent` call (the second copy of the
-  one already fixed in `finishSimpleRun` — a completed analysis that never reaches the
-  alert/incident timeline, with no trace of why), and `driveAgentLoop`'s per-turn conversation
-  checkpoint. The latter is what makes that function's own "a crash mid-loop leaves a resumable run
-  rather than a stuck one" promise true, so a silently failed checkpoint broke a documented
-  invariant. Both stay best-effort, both are now logged.
+- **Accessibility**: the Playbooks list was unreachable by keyboard. Each row was a
+  `<div onClick={navigate}>` with no `tabindex` and no `role`, and the row was the *only* way to
+  open a playbook — so a keyboard-only or screen-reader user could create and search playbooks but
+  never open one (WCAG 2.1.1 Keyboard, Level A). The row now wraps the title in a real `<Link>`
+  using the same `row-link-stretch` pattern the Alerts/Incidents tables already use, keeping the
+  whole row clickable. The same fix is applied to an incident's linked-alert rows, which had the
+  identical pattern.
+- **Accessibility**: four form controls had no accessible name at all — an on-call schedule's
+  working-hours start/end time inputs (two adjacent `<input type="time">`, indistinguishable to a
+  screen reader), its add-responder select, the add-assignee select, and the incident description
+  textarea. All four now carry an `aria-label`.
 - **Security**: tag-based visibility (`Role.allowedTags`) was enforced only on the "main" alert and
   incident routes — every sub-resource route queried by ID under tenant RLS alone. Nothing forces
   an HTTP client to call `GET /incidents/{id}` before `GET /incidents/{id}/comments`, so an

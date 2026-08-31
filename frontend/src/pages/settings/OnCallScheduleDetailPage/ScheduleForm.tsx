@@ -350,7 +350,12 @@ export function ScheduleForm({
         ))}
         {availableToAdd.length > 0 && (
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <select className="select" value={selectedAddUserId} onChange={(e) => setAddUserId(e.target.value)}>
+            <select
+              className="select"
+              aria-label={t("settings.onCallSchedule.form.addResponderAria")}
+              value={selectedAddUserId}
+              onChange={(e) => setAddUserId(e.target.value)}
+            >
               {availableToAdd.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
@@ -409,6 +414,7 @@ export function ScheduleForm({
                   type="time"
                   className="input"
                   style={{ width: 110 }}
+                  aria-label={t("settings.onCallSchedule.form.startTimeAria", { num: idx + 1 })}
                   value={minutesToClock(iv.startMinute)}
                   onChange={(e) => updateWorkingHours(idx, { startMinute: clockToMinutes(e.target.value) })}
                 />
@@ -417,6 +423,7 @@ export function ScheduleForm({
                   type="time"
                   className="input"
                   style={{ width: 110 }}
+                  aria-label={t("settings.onCallSchedule.form.endTimeAria", { num: idx + 1 })}
                   value={minutesToClock(iv.endMinute)}
                   onChange={(e) => updateWorkingHours(idx, { endMinute: clockToMinutes(e.target.value) })}
                 />
