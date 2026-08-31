@@ -6,8 +6,9 @@ import { mutationErrorMessage } from "../api/hooks";
 import type { OnCallParticipant, OnCallSchedule } from "../types/onCallSchedule";
 import type { UserSummary } from "../types/users";
 import { resolveOnCallSet } from "../lib/onCallRotation";
-import { personColor } from "../lib/personColor";
+import { personColor, personTextColor } from "../lib/personColor";
 import { Modal } from "./Modal";
+import { useConfirm } from "../hooks/useConfirm";
 
 const ZOOM_OPTIONS = [1, 2, 4] as const;
 type ZoomWeeks = (typeof ZOOM_OPTIONS)[number];
@@ -203,25 +204,28 @@ export function OnCallTimeline({
           )}
           {slotRuns.map((runs, slot) => (
             <div key={slot} style={{ display: "grid", gridTemplateColumns, gap: 2, marginBottom: 4, minHeight: 22 }}>
-              {runs.map((run, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    gridColumn: `${run.startCol} / ${run.endCol}`,
-                    background: personColor(run.participant.userId),
-                    color: "#fff",
-                    borderRadius: 4,
-                    fontSize: 11,
-                    padding: "2px 6px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={run.participant.userName}
-                >
-                  {run.participant.userName}
-                </div>
-              ))}
+              {runs.map((run, idx) => {
+                const bg = personColor(run.participant.userId);
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      gridColumn: `${run.startCol} / ${run.endCol}`,
+                      background: bg,
+                      color: personTextColor(bg),
+                      borderRadius: 4,
+                      fontSize: 11,
+                      padding: "2px 6px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={run.participant.userName}
+                  >
+                    {run.participant.userName}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -271,6 +275,7 @@ function OverridePopoverForm({
   const [userId, setUserId] = useState(existing?.userId ?? directory[0]?.id ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
   async function save() {
     if (!userId) return;
@@ -317,10 +322,21 @@ function OverridePopoverForm({
         <button type="button" className="btn btn-primary btn-sm" disabled={submitting || !userId} onClick={save}>
           {submitting ? t("common.saving") : t("settings.onCallSchedule.override.create")}
         </button>
-        {existing && (
-          <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={remove}>
+        {existing && confirmingRemove === null && (
+          <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={() => confirmRemove()}>
             {t("settings.onCallSchedule.override.remove")}
           </button>
+        )}
+        {existing && confirmingRemove && (
+          <>
+            <span className="helper-text">{t("settings.onCallSchedule.override.removeConfirm")}</span>
+            <button type="button" className="btn btn-danger btn-sm" disabled={submitting} onClick={remove}>
+              {submitting ? t("common.saving") : t("common.confirm")}
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={cancelRemove}>
+              {t("common.cancel")}
+            </button>
+          </>
         )}
         <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>
           {t("common.cancel")}

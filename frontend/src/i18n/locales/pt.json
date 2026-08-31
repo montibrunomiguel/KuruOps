@@ -369,6 +369,7 @@
       "linkSearchPlaceholder": "Buscar alertas por ID ou título para vincular...",
       "noLinkedAlerts": "Nenhum alerta vinculado ainda.",
       "unlinkAlert": "Desvincular alerta {{id}}",
+      "unlinkConfirm": "Desvincular {{id}}?",
       "metadataTitle": "Metadados do Alerta",
       "ruleId": "ID da Regra",
       "asset": "Ativo",
@@ -985,7 +986,8 @@
         "title": "Substituição -- {{date}}",
         "analyst": "Analista",
         "create": "Atribuir",
-        "remove": "Remover substituição"
+        "remove": "Remover substituição",
+        "removeConfirm": "Remover esta substituição?"
       }
     },
     "incidentSla": {
