@@ -169,6 +169,13 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Two silent-failure sites in `AIAnalysisService` that the earlier logging sweep missed, both the
+  same class it set out to fix: `ResumeAnalysisRun`'s `recordEvent` call (the second copy of the
+  one already fixed in `finishSimpleRun` — a completed analysis that never reaches the
+  alert/incident timeline, with no trace of why), and `driveAgentLoop`'s per-turn conversation
+  checkpoint. The latter is what makes that function's own "a crash mid-loop leaves a resumable run
+  rather than a stuck one" promise true, so a silently failed checkpoint broke a documented
+  invariant. Both stay best-effort, both are now logged.
 - Five reorderable/removable list forms keyed their rows by array index
   (`EscalationEditForm.tsx`'s escalation steps, `ScheduleForm.tsx`'s working-hours intervals,
   `PlaybookDetailPage.tsx`'s playbook steps, `FieldMappingTemplatesPanel.tsx`'s mapping rules,

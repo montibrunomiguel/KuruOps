@@ -187,6 +187,14 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- Dois pontos de falha silenciosa no `AIAnalysisService` que a varredura anterior de logging deixou
+  passar, ambos da mesma classe que ela se propôs a corrigir: a chamada `recordEvent` do
+  `ResumeAnalysisRun` (a segunda cópia da que já foi corrigida no `finishSimpleRun` — uma análise
+  concluída que nunca chega na timeline do alerta/incidente, sem rastro do porquê), e o checkpoint
+  da conversa por turno do `driveAgentLoop`. Este último é o que torna verdadeira a promessa do
+  próprio doc comment da função ("um crash no meio do loop deixa uma execução retomável em vez de
+  travada"), então um checkpoint falhando em silêncio quebrava um invariante documentado. Ambos
+  continuam best-effort, ambos agora são logados.
 - Cinco formulários de lista reordenável/removível usavam o índice do array como key
   (os passos de escalonamento do `EscalationEditForm.tsx`, os intervalos de horário de
   funcionamento do `ScheduleForm.tsx`, os passos de playbook do `PlaybookDetailPage.tsx`, as
