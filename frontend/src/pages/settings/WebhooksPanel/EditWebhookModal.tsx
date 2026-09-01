@@ -102,7 +102,7 @@ export function EditWebhookModal({
   const options = expiryOptions(t);
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} label={endpoint.name}>
       <div className="panel-header">
         <div>
           <h2 className="modal-title" style={{ marginBottom: 6 }}>

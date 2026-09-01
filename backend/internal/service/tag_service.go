@@ -91,11 +91,18 @@ func (s *TagService) Delete(ctx context.Context, tenantID, actorID, id uuid.UUID
 func (s *TagService) FilterKnown(ctx context.Context, tenantID uuid.UUID, names []string) ([]string, error) {
 	var known []string
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		v, err := s.repo.FilterKnown(ctx, tx, names)
+		v, err := s.filterKnownTx(ctx, tx, names)
 		known = v
 		return err
 	})
 	return known, err
+}
+
+// filterKnownTx is FilterKnown's body without the transaction, for callers
+// that already hold one and need this to participate in it rather than
+// commit separately -- see AlertService.Escalate.
+func (s *TagService) filterKnownTx(ctx context.Context, tx pgx.Tx, names []string) ([]string, error) {
+	return s.repo.FilterKnown(ctx, tx, names)
 }
 
 // EnsureExist makes sure every name in names exists in the tenant's tag

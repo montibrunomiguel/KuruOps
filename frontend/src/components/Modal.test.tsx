@@ -7,7 +7,7 @@ import { Modal } from "./Modal";
 describe("Modal", () => {
   it("renders as a dialog with aria-modal", () => {
     render(
-      <Modal onClose={vi.fn()}>
+      <Modal label="Test dialog" onClose={vi.fn()}>
         <button>Only button</button>
       </Modal>,
     );
@@ -18,7 +18,7 @@ describe("Modal", () => {
   it("calls onClose when the overlay (outside the panel) is clicked", async () => {
     const onClose = vi.fn();
     render(
-      <Modal onClose={onClose}>
+      <Modal label="Test dialog" onClose={onClose}>
         <button>Inside</button>
       </Modal>,
     );
@@ -30,7 +30,7 @@ describe("Modal", () => {
   it("does not call onClose when content inside the panel is clicked", async () => {
     const onClose = vi.fn();
     render(
-      <Modal onClose={onClose}>
+      <Modal label="Test dialog" onClose={onClose}>
         <button>Inside</button>
       </Modal>,
     );
@@ -41,7 +41,7 @@ describe("Modal", () => {
   it("calls onClose when Escape is pressed", async () => {
     const onClose = vi.fn();
     render(
-      <Modal onClose={onClose}>
+      <Modal label="Test dialog" onClose={onClose}>
         <button>Inside</button>
       </Modal>,
     );
@@ -51,7 +51,7 @@ describe("Modal", () => {
 
   it("moves initial focus to the first focusable element inside the panel", async () => {
     render(
-      <Modal onClose={vi.fn()}>
+      <Modal label="Test dialog" onClose={vi.fn()}>
         <button>First</button>
         <button>Second</button>
       </Modal>,
@@ -61,7 +61,7 @@ describe("Modal", () => {
 
   it("Tab from the last focusable element cycles back to the first (focus trap)", async () => {
     render(
-      <Modal onClose={vi.fn()}>
+      <Modal label="Test dialog" onClose={vi.fn()}>
         <button>First</button>
         <button>Second</button>
       </Modal>,
@@ -77,7 +77,7 @@ describe("Modal", () => {
 
   it("Shift+Tab from the first focusable element cycles to the last (focus trap)", async () => {
     render(
-      <Modal onClose={vi.fn()}>
+      <Modal label="Test dialog" onClose={vi.fn()}>
         <button>First</button>
         <button>Second</button>
       </Modal>,
@@ -99,7 +99,7 @@ describe("Modal", () => {
             Open
           </button>
           {open && (
-            <Modal onClose={() => setOpen(false)}>
+            <Modal label="Test dialog" onClose={() => setOpen(false)}>
               <button>Inside</button>
             </Modal>
           )}
@@ -124,7 +124,7 @@ describe("Modal", () => {
   it("renders the panel as a <form> and submits it when as=\"form\"", async () => {
     const onSubmit = vi.fn((e: FormEvent) => e.preventDefault());
     render(
-      <Modal onClose={vi.fn()} as="form" onSubmit={onSubmit}>
+      <Modal label="Test dialog" onClose={vi.fn()} as="form" onSubmit={onSubmit}>
         <button type="submit">Submit</button>
       </Modal>,
     );
@@ -135,10 +135,34 @@ describe("Modal", () => {
 
   it("appends a custom className to the base modal class", () => {
     render(
-      <Modal onClose={vi.fn()} className="custom-class">
+      <Modal label="Test dialog" onClose={vi.fn()} className="custom-class">
         <button>Inside</button>
       </Modal>,
     );
     expect(screen.getByRole("dialog")).toHaveClass("modal", "custom-class");
+  });
+});
+
+describe("Modal accessible name", () => {
+  // role="dialog" without an accessible name makes a screen reader announce
+  // just "dialog". Every modal already rendered the right string in its own
+  // .modal-title heading; `label` is a required prop so a new modal can't
+  // ship without wiring it to the dialog element.
+  it("names the dialog from the label prop", () => {
+    render(
+      <Modal label="Close & Classify Alert" onClose={vi.fn()}>
+        <h2 className="modal-title">Close &amp; Classify Alert</h2>
+      </Modal>,
+    );
+    expect(screen.getByRole("dialog", { name: "Close & Classify Alert" })).toBeInTheDocument();
+  });
+
+  it("names the dialog in the form variant too", () => {
+    render(
+      <Modal label="New Incident" onClose={vi.fn()} as="form" onSubmit={vi.fn()}>
+        <h2 className="modal-title">New Incident</h2>
+      </Modal>,
+    );
+    expect(screen.getByRole("dialog", { name: "New Incident" })).toBeInTheDocument();
   });
 });

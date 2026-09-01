@@ -41,35 +41,18 @@ func NewIncidentReportService(incidents *IncidentService) *IncidentReportService
 // allowedTags, mirroring IncidentService.Get's own (nil, nil) not-found
 // contract -- same shape as PostmortemService.Generate.
 func (s *IncidentReportService) GeneratePDF(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (pdfBytes []byte, found bool, err error) {
-	inc, err := s.incidents.Get(ctx, tenantID, incidentID, allowedTags)
+	// One transaction for the incident and all four sub-resources, so
+	// every section of this document is rendered from the same consistent
+	// snapshot (see IncidentService.FullRecord).
+	rec, found, err := s.incidents.FullRecord(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return nil, false, fmt.Errorf("load incident: %w", err)
 	}
-	if inc == nil {
+	if !found {
 		return nil, false, nil
 	}
-
-	// found is discarded on each sub-resource load below: Get above already
-	// established the incident is visible under allowedTags, so these can only
-	// return found=false in the vanishingly unlikely case it was deleted
-	// between the two calls -- in which case an empty section in the PDF is
-	// the right outcome, not an error.
-	history, _, err := s.incidents.StatusHistory(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return nil, false, fmt.Errorf("load status history: %w", err)
-	}
-	comments, _, err := s.incidents.Comments(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return nil, false, fmt.Errorf("load comments: %w", err)
-	}
-	linkedAlerts, _, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return nil, false, fmt.Errorf("load linked alerts: %w", err)
-	}
-	iocs, _, err := s.incidents.IOCs(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return nil, false, fmt.Errorf("load iocs: %w", err)
-	}
+	inc := rec.Incident
+	history, comments, linkedAlerts, iocs := rec.History, rec.Comments, rec.LinkedAlerts, rec.IOCs
 
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	// isUTF8=true: inc.Title is a real UTF-8 Go string (unlike the content-

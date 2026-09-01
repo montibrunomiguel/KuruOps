@@ -82,7 +82,7 @@ export function IOCsModal({ incidentId, onClose }: { incidentId: string; onClose
   }
 
   return (
-    <Modal onClose={onClose} style={{ maxWidth: 620, display: "flex", flexDirection: "column", height: "min(680px, 85vh)" }}>
+    <Modal onClose={onClose} label={t("incidents.iocs.title")} style={{ maxWidth: 620, display: "flex", flexDirection: "column", height: "min(680px, 85vh)" }}>
       <div className="panel-header">
         <h2 className="modal-title" style={{ marginBottom: 0 }}>
           {t("incidents.iocs.title")}

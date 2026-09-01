@@ -864,4 +864,56 @@ func TestAlertService_Escalate(t *testing.T) {
 			return atomic.LoadInt32(&hits) == 1
 		}, 2*time.Second, 20*time.Millisecond, "fireManualEscalationStep must fire the chain's step exactly once, in the background")
 	})
+
+	t.Run("escalating twice returns ErrAlreadyEscalated instead of minting a second incident", func(t *testing.T) {
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Only escalate me once", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+
+		first, err := alertSvc.Escalate(t.Context(), tenantID, actorID, alert.ID, nil)
+		require.NoError(t, err)
+		require.NotNil(t, first)
+
+		second, err := alertSvc.Escalate(t.Context(), tenantID, actorID, alert.ID, nil)
+		assert.ErrorIs(t, err, service.ErrAlreadyEscalated)
+		assert.Nil(t, second)
+
+		// The point of the guard: a retry must not leave the tenant with two
+		// incidents for one alert.
+		incidents, err := incidentSvc.List(t.Context(), tenantID, repository.ListIncidentsFilter{})
+		require.NoError(t, err)
+		var matching int
+		for _, inc := range incidents {
+			if inc.Title == alert.Title {
+				matching++
+			}
+		}
+		assert.Equal(t, 1, matching, "the second escalate attempt must not have created another incident")
+	})
+
+	t.Run("a failure partway through rolls the whole escalation back", func(t *testing.T) {
+		// A closed alert's status is read-only, and the status flip is the
+		// LAST of the three writes -- so this fails only after the incident
+		// has already been created and linked inside the transaction. All of
+		// it must roll back together; before Escalate ran in a single
+		// transaction, this left a stranded, unlinked incident behind.
+		alert, _, err := alertSvc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "Closed before escalation", Source: "s", Severity: domain.SeverityHigh, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		require.NoError(t, alertSvc.Close(t.Context(), tenantID, alert.ID, actorID, domain.CloseAlertInput{
+			Classification: domain.ClassificationFalsePositive, Comment: "closed first",
+		}, nil))
+
+		incident, err := alertSvc.Escalate(t.Context(), tenantID, actorID, alert.ID, nil)
+		require.Error(t, err)
+		assert.Nil(t, incident)
+
+		incidents, err := incidentSvc.List(t.Context(), tenantID, repository.ListIncidentsFilter{})
+		require.NoError(t, err)
+		for _, inc := range incidents {
+			assert.NotEqual(t, alert.Title, inc.Title, "the incident created before the failing status write must have been rolled back")
+		}
+	})
 }

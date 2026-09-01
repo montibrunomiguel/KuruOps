@@ -169,6 +169,26 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Data integrity**: escalating an alert to an incident was three independent transactions
+  (create the incident, link the alert to it, flip the alert to `escalated`). Any failure after
+  the first one left a real partial state behind — a link failure stranded an incident that was
+  created but attached to nothing, a status failure left the alert looking un-escalated while
+  already carrying an incident — and because the create ran unconditionally, the retry that
+  naturally follows a failed request minted *another* incident for the same alert. Double-clicking
+  the button did the same. Escalation now runs entirely in one transaction (all three writes
+  commit or none do), and a second attempt on an already-escalated alert returns
+  `409 Conflict` instead of a duplicate incident. The alert's existing incident link is the
+  source of truth for that check, so it holds regardless of how the request arrived — the UI
+  hiding the button was only ever a client-side guard, never enforced by the API.
+- Incident PDF exports and postmortems read the incident and its four sub-resources (status
+  history, comments, linked alerts, IOCs) in five separate transactions — five snapshots, so a
+  comment posted mid-generation could land in a document whose status history predated it, plus
+  five redundant permission checks for the same row. All five loads now share one transaction.
+- **Accessibility**: dialogs had no accessible name. `Modal` rendered a bare `role="dialog"`, so a
+  screen reader announced every one of them as just "dialog" with no indication of what had
+  opened. `Modal` now *requires* a `label` prop and applies it as `aria-label` — required rather
+  than optional on purpose, so the compiler catches the next unlabeled dialog instead of it
+  shipping silently.
 - **Accessibility**: the Playbooks list was unreachable by keyboard. Each row was a
   `<div onClick={navigate}>` with no `tabindex` and no `role`, and the row was the *only* way to
   open a playbook — so a keyboard-only or screen-reader user could create and search playbooks but

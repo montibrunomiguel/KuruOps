@@ -86,33 +86,18 @@ func NewPostmortemService(incidents *IncidentService, ai *AIAnalysisService) *Po
 // under allowedTags, mirroring IncidentService.Get's own (nil, nil)
 // not-found contract.
 func (s *PostmortemService) Generate(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (doc string, found bool, err error) {
-	inc, err := s.incidents.Get(ctx, tenantID, incidentID, allowedTags)
+	// One transaction for the incident and all four sub-resources, so
+	// every section of this document is rendered from the same consistent
+	// snapshot (see IncidentService.FullRecord).
+	rec, found, err := s.incidents.FullRecord(ctx, tenantID, incidentID, allowedTags)
 	if err != nil {
 		return "", false, fmt.Errorf("load incident: %w", err)
 	}
-	if inc == nil {
+	if !found {
 		return "", false, nil
 	}
-
-	// found is discarded on each sub-resource load below for the same reason
-	// IncidentReportService.GeneratePDF discards it -- Get above already
-	// established visibility under allowedTags.
-	history, _, err := s.incidents.StatusHistory(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return "", false, fmt.Errorf("load status history: %w", err)
-	}
-	comments, _, err := s.incidents.Comments(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return "", false, fmt.Errorf("load comments: %w", err)
-	}
-	linkedAlerts, _, err := s.incidents.LinkedAlerts(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return "", false, fmt.Errorf("load linked alerts: %w", err)
-	}
-	iocs, _, err := s.incidents.IOCs(ctx, tenantID, incidentID, allowedTags)
-	if err != nil {
-		return "", false, fmt.Errorf("load iocs: %w", err)
-	}
+	inc := rec.Incident
+	history, comments, linkedAlerts, iocs := rec.History, rec.Comments, rec.LinkedAlerts, rec.IOCs
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Postmortem: %s\n\n", inc.Title)

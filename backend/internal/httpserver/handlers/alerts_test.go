@@ -535,6 +535,14 @@ func TestAlertHandlers_Escalate(t *testing.T) {
 		rec := doRequest(r, req)
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+
+	t.Run("escalating the same alert again -- 409, not a second incident", func(t *testing.T) {
+		// The alert was escalated at the top of this test, so this is the
+		// double-click/retry path.
+		req := withClaims(httptest.NewRequest("POST", "/"+alertID.String()+"/escalate", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
 }
 
 func TestAlertHandlers_List_MissingTenantContext(t *testing.T) {

@@ -146,6 +146,29 @@ func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUI
 		return nil, fmt.Errorf("validate tags: %w", err)
 	}
 
+	var inc *domain.Incident
+	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		v, err := s.createTx(ctx, tx, tenantID, actorID, in, knownTags)
+		inc = v
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Published after the commit, not inside createTx -- an SSE "created"
+	// event for a row that then got rolled back would make every connected
+	// client refetch an incident that never existed.
+	s.publishEvent(tenantID, inc.ID, "created")
+	return inc, nil
+}
+
+// createTx is Create's body without the transaction, so a caller that
+// already holds one (AlertService.Escalate, which must create + link +
+// flip the alert's status atomically) can make this part of it instead of
+// committing separately. knownTags is passed in rather than resolved here
+// because the caller may have filtered it inside its own transaction --
+// see TagService.filterKnownTx.
+func (s *IncidentService) createTx(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, in domain.CreateIncidentInput, knownTags []string) (*domain.Incident, error) {
 	inc := &domain.Incident{
 		TenantID:    tenantID,
 		Title:       in.Title,
@@ -156,40 +179,36 @@ func (s *IncidentService) Create(ctx context.Context, tenantID, actorID uuid.UUI
 		Tags:        orEmptySlice(knownTags), // incidents.tags is NOT NULL — see orEmptySlice
 	}
 
-	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		assignees, err := s.resolveAssignees(ctx, tx, tenantID, in.AssigneeIDs)
-		if err != nil {
-			return err
-		}
-		dueAt, err := s.sla.DueAt(ctx, tx, inc.Severity, inc.Priority)
-		if err != nil {
-			return err
-		}
-		inc.SLADueAt = dueAt
-		if err := s.repo.Insert(ctx, tx, inc); err != nil {
-			return fmt.Errorf("insert incident: %w", err)
-		}
-		if err := s.repo.SetAssignees(ctx, tx, inc.ID, tenantID, in.AssigneeIDs); err != nil {
-			return fmt.Errorf("set assignees: %w", err)
-		}
-		inc.Assignees = assignees
-		if _, err := s.repo.RecordPhaseEntered(ctx, tx, inc.ID, tenantID, domain.PhaseNew); err != nil {
-			return err
-		}
-		data, _ := json.Marshal(map[string]string{"title": inc.Title})
-		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
-			IncidentID: inc.ID,
-			TenantID:   tenantID,
-			EventType:  domain.IncidentEventCreated,
-			ActorType:  domain.ActorUser,
-			ActorID:    &actorID,
-			Data:       data,
-		})
-	})
+	assignees, err := s.resolveAssignees(ctx, tx, tenantID, in.AssigneeIDs)
 	if err != nil {
 		return nil, err
 	}
-	s.publishEvent(tenantID, inc.ID, "created")
+	dueAt, err := s.sla.DueAt(ctx, tx, inc.Severity, inc.Priority)
+	if err != nil {
+		return nil, err
+	}
+	inc.SLADueAt = dueAt
+	if err := s.repo.Insert(ctx, tx, inc); err != nil {
+		return nil, fmt.Errorf("insert incident: %w", err)
+	}
+	if err := s.repo.SetAssignees(ctx, tx, inc.ID, tenantID, in.AssigneeIDs); err != nil {
+		return nil, fmt.Errorf("set assignees: %w", err)
+	}
+	inc.Assignees = assignees
+	if _, err := s.repo.RecordPhaseEntered(ctx, tx, inc.ID, tenantID, domain.PhaseNew); err != nil {
+		return nil, err
+	}
+	data, _ := json.Marshal(map[string]string{"title": inc.Title})
+	if err := s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+		IncidentID: inc.ID,
+		TenantID:   tenantID,
+		EventType:  domain.IncidentEventCreated,
+		ActorType:  domain.ActorUser,
+		ActorID:    &actorID,
+		Data:       data,
+	}); err != nil {
+		return nil, err
+	}
 	return inc, nil
 }
 
@@ -547,6 +566,57 @@ func (s *IncidentService) CorrectPhaseTimestamp(ctx context.Context, tenantID, i
 // incident isn't visible, so the handler can 404 exactly like Get does --
 // an empty 200 would tell the caller the incident exists but has no
 // comments, which is itself more than they should learn.
+// IncidentRecord is an incident plus every sub-resource a whole-incident
+// document needs. See FullRecord.
+type IncidentRecord struct {
+	Incident     *domain.Incident
+	History      []domain.IncidentStatusHistoryEntry
+	Comments     []domain.IncidentComment
+	LinkedAlerts []domain.Alert
+	IOCs         []domain.IOC
+}
+
+// FullRecord loads the incident and all four of its sub-resources in ONE
+// transaction, gated by a single loadVisible. found is false if the
+// incident doesn't exist or isn't visible under allowedTags -- same
+// not-found contract as Get.
+//
+// The document generators (IncidentReportService.GeneratePDF,
+// PostmortemService.Generate) used to call Get + StatusHistory + Comments +
+// LinkedAlerts + IOCs one after another: five separate transactions, five
+// redundant loadVisible round-trips for the same row, and -- worse -- five
+// separate snapshots, so a comment posted mid-generation could land in a
+// PDF whose status history predates it. One transaction fixes both.
+func (s *IncidentService) FullRecord(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) (*IncidentRecord, bool, error) {
+	var rec IncidentRecord
+	found := false
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		inc, err := s.loadVisible(ctx, tx, incidentID, allowedTags)
+		if err != nil || inc == nil {
+			return err
+		}
+		found = true
+		rec.Incident = inc
+		if rec.History, err = s.repo.ListStatusHistory(ctx, tx, incidentID); err != nil {
+			return fmt.Errorf("load status history: %w", err)
+		}
+		if rec.Comments, err = s.repo.ListComments(ctx, tx, incidentID); err != nil {
+			return fmt.Errorf("load comments: %w", err)
+		}
+		if rec.LinkedAlerts, err = s.repo.ListLinkedAlerts(ctx, tx, incidentID); err != nil {
+			return fmt.Errorf("load linked alerts: %w", err)
+		}
+		if rec.IOCs, err = s.repo.ListIOCs(ctx, tx, incidentID); err != nil {
+			return fmt.Errorf("load iocs: %w", err)
+		}
+		return nil
+	})
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return &rec, true, nil
+}
+
 func (s *IncidentService) StatusHistory(ctx context.Context, tenantID, incidentID uuid.UUID, allowedTags []string) ([]domain.IncidentStatusHistoryEntry, bool, error) {
 	var entries []domain.IncidentStatusHistoryEntry
 	found := false
@@ -686,18 +756,28 @@ func (s *IncidentService) LinkAlert(ctx context.Context, tenantID, incidentID, a
 		if inc == nil {
 			return fmt.Errorf("incident %s not found", incidentID)
 		}
-		if err := s.repo.LinkAlert(ctx, tx, incidentID, alertID, tenantID); err != nil {
-			return fmt.Errorf("link alert: %w", err)
-		}
-		data, _ := json.Marshal(map[string]string{"alertId": alertID.String()})
-		return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
-			IncidentID: incidentID,
-			TenantID:   tenantID,
-			EventType:  domain.IncidentEventAlertLinked,
-			ActorType:  domain.ActorUser,
-			ActorID:    &actorID,
-			Data:       data,
-		})
+		return s.linkAlertTx(ctx, tx, tenantID, incidentID, alertID, actorID)
+	})
+}
+
+// linkAlertTx is LinkAlert's body without the transaction or the visibility
+// gate -- for a caller that already holds a transaction AND has already
+// established the incident is reachable. AlertService.Escalate is the only
+// such caller: it created the incident microseconds earlier inside the same
+// transaction, so re-loading it to check tags would be checking the tags it
+// just copied off an alert it already gated on.
+func (s *IncidentService) linkAlertTx(ctx context.Context, tx pgx.Tx, tenantID, incidentID, alertID, actorID uuid.UUID) error {
+	if err := s.repo.LinkAlert(ctx, tx, incidentID, alertID, tenantID); err != nil {
+		return fmt.Errorf("link alert: %w", err)
+	}
+	data, _ := json.Marshal(map[string]string{"alertId": alertID.String()})
+	return s.repo.InsertEvent(ctx, tx, &domain.IncidentEvent{
+		IncidentID: incidentID,
+		TenantID:   tenantID,
+		EventType:  domain.IncidentEventAlertLinked,
+		ActorType:  domain.ActorUser,
+		ActorID:    &actorID,
+		Data:       data,
 	})
 }
 
