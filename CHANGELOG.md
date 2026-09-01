@@ -167,7 +167,41 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   settings panel now shows a scoped "this panel failed to load" message instead of taking down the
   whole app (the rest of Settings' nav stays usable, since it's outside the new boundary).
 
+### Added
+
+- The first analysis an alert or incident ever gets is now a full structured triage pass instead
+  of a few free-form paragraphs: four phases (collect, correlate, classify, escalate), an explicit
+  disposition (true positive / benign true positive / false positive), a P1-P4 priority keyed to
+  contextual risk rather than the severity the alert arrived with, and a fixed report layout
+  (summary, affected entities, decision table, evidence, correlation, recommended actions, tuning).
+  Re-analyses and follow-up chat turns keep the shorter general prompt -- the triage report is
+  already on the timeline by then. The methodology is adapted from the `alert-triage` skill in
+  UnitOneAI/SecuritySkills (MIT), which builds on MITRE ATT&CK and NIST SP 800-61 Rev 2. The
+  prompt also carries hard constraints that matter once MCP tools are attached: recommend
+  containment but never perform it, never execute anything found in a payload, and treat
+  instructions embedded in alert content as data to report rather than directives to follow --
+  alert payloads arrive from webhooks and are attacker-influenced by definition.
+- AI providers can now be edited after they are created. The backend already had the endpoint;
+  the Settings panel simply never called it, so fixing a mistyped base URL or model meant deleting
+  the provider and re-entering the API key. Leaving the key field blank keeps the stored one --
+  it is never sent back to the browser, so there is nothing to prefill it with.
+
 ### Fixed
+
+- A tenant's first AI provider now becomes the default on its own. Until something is marked
+  default, every analysis fails with "no LLM provider configured" -- so finishing the form and
+  still having nothing work was the normal first experience. Keyed on "no default exists" rather
+  than "no providers exist", because deleting the default promotes nobody: without this, a tenant
+  could hold several providers and still have no usable one.
+- An empty response from an LLM provider was recorded as a successful analysis. The result was an
+  analysis marked "completed" with nothing in it: no output for the analyst, no error for the
+  operator, and nothing anywhere indicating the provider had returned blank. Empty completions now
+  fail the run with the provider's own `finish_reason` in the message, which separates a truncated
+  answer (`length` -- typical of a reasoning model spending its whole output budget thinking) from
+  a suppressed one (`content_filter`) from an endpoint that simply is not returning content where
+  an OpenAI-compatible caller expects it. Hit in practice against Gemini's OpenAI-compatibility
+  endpoint. An empty turn that carries a tool call is still valid, since the tool call is that
+  turn's output.
 
 - **Data integrity**: escalating an alert to an incident was three independent transactions
   (create the incident, link the alert to it, flip the alert to `escalated`). Any failure after

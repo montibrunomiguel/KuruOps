@@ -107,6 +107,29 @@ func (s *LLMProviderService) Create(ctx context.Context, tenantID, actorID uuid.
 	}
 
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		// A tenant's first provider becomes the default by itself. Without
+		// this it sits configured but dead: AIAnalysisService.buildClient
+		// only ever resolves GetDefault, so until someone clicks "Set
+		// default" every analysis still fails with "no LLM provider
+		// configured" -- a confusing state right after you finished setting
+		// one up. OnCallScheduleService.Create applies the same rule to a
+		// tenant's first schedule.
+		//
+		// Keyed on "no default exists" rather than "no rows exist" on
+		// purpose: Delete promotes nobody, so deleting the default
+		// otherwise leaves a tenant holding providers with no usable one,
+		// and adding another wouldn't rescue it either.
+		existing, err := s.repo.List(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("check existing providers: %w", err)
+		}
+		p.IsDefault = true
+		for i := range existing {
+			if existing[i].IsDefault {
+				p.IsDefault = false
+				break
+			}
+		}
 		if err := s.repo.Insert(ctx, tx, p); err != nil {
 			return err
 		}

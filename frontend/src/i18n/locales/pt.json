@@ -657,7 +657,9 @@
         "show": "Mostrar",
         "hide": "Ocultar",
         "autoAnalyzeAllAlerts": "Analisar automaticamente todos os alertas recebidos",
-        "autoAnalyzeAllAlertsHint": "Desligado por padrão: a análise só roda quando um analista clica em \"Analisar com IA\". Ativar isso roda a análise para todo alerta de webhook assim que ele chega -- só tem efeito quando este provedor for o padrão."
+        "autoAnalyzeAllAlertsHint": "Desligado por padrão: a análise só roda quando um analista clica em \"Analisar com IA\". Ativar isso roda a análise para todo alerta de webhook assim que ele chega -- só tem efeito quando este provedor for o padrão.",
+        "apiKeyKeepPlaceholder": "Deixe em branco para manter a chave atual",
+        "apiKeyKeepHint": "A chave guardada nunca volta para o navegador. Deixe em branco para mantê-la, ou digite uma nova para rotacioná-la."
       },
       "kind": {
         "anthropic": "Anthropic",

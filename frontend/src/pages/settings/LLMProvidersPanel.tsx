@@ -24,12 +24,21 @@ export function LLMProvidersPanel() {
     deleteError,
     remove,
   } = useAdminCrud<LLMProvider>("/api/v1/settings/llm-providers");
+  // Only one form is ever open: opening either closes the other, so the
+  // panel can't show a create form and an edit form at the same time.
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
     <div className="panel">
       <div className="panel-header">
         <h2 className="panel-title">{t("settings.llm.title")}</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => {
+            setEditingId(null);
+            setShowCreate(true);
+          }}
+        >
           {t("settings.llm.newProvider")}
         </button>
       </div>
@@ -58,32 +67,63 @@ export function LLMProvidersPanel() {
       )}
       {!loading &&
         providers &&
-        providers.map((p) => (
-          <ProviderRow
-            key={p.id}
-            provider={p}
-            onChanged={reload}
-            confirming={confirming === p.id}
-            deleting={deletingId === p.id}
-            onConfirm={() => confirm(p.id)}
-            onCancel={cancel}
-            onRemove={() => remove(p.id)}
-          />
-        ))}
+        providers.map((p) =>
+          editingId === p.id ? (
+            // Keyed on the provider id so switching directly from editing
+            // one provider to another remounts the form -- its fields are
+            // seeded from props in useState, which only runs on mount.
+            <ProviderForm
+              key={p.id}
+              provider={p}
+              onCancel={() => setEditingId(null)}
+              onSaved={() => {
+                setEditingId(null);
+                reload();
+              }}
+            />
+          ) : (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              onChanged={reload}
+              onEdit={() => {
+                setShowCreate(false);
+                setEditingId(p.id);
+              }}
+              confirming={confirming === p.id}
+              deleting={deletingId === p.id}
+              onConfirm={() => confirm(p.id)}
+              onCancel={cancel}
+              onRemove={() => remove(p.id)}
+            />
+          ),
+        )}
     </div>
   );
 }
 
-function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: () => void }) {
+// ProviderForm doubles as the create and the edit form -- same fields,
+// same validation. `provider` present means edit: the fields start seeded
+// from it and the submit goes to PUT /{id} instead of POST.
+function ProviderForm({
+  provider,
+  onCancel,
+  onSaved,
+}: {
+  provider?: LLMProvider;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<LLMProviderKind>("anthropic");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState("");
+  const editing = provider !== undefined;
+  const [name, setName] = useState(provider?.name ?? "");
+  const [kind, setKind] = useState<LLMProviderKind>(provider?.kind ?? "anthropic");
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
+  const [model, setModel] = useState(provider?.model ?? "");
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
-  const [autoAnalyzeAllAlerts, setAutoAnalyzeAllAlerts] = useState(false);
+  const [autoAnalyzeAllAlerts, setAutoAnalyzeAllAlerts] = useState(provider?.autoAnalyzeAllAlerts ?? false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,11 +135,17 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
     setSubmitting(true);
     setError(null);
     try {
-      await api.post(
-        "/api/v1/settings/llm-providers",
-        { name, kind, baseUrl: needsBaseUrl ? baseUrl : undefined, model, apiKey, autoAnalyzeAllAlerts },
-        token,
-      );
+      // apiKey is sent as typed: on edit an empty string means "keep the
+      // stored key" (LLMProviderService.Update only rotates it when a
+      // non-empty one arrives), which is why the field isn't required
+      // below when editing -- the real key is never sent back to the
+      // client to prefill it.
+      const payload = { name, kind, baseUrl: needsBaseUrl ? baseUrl : undefined, model, apiKey, autoAnalyzeAllAlerts };
+      if (provider) {
+        await api.put(`/api/v1/settings/llm-providers/${provider.id}`, payload, token);
+      } else {
+        await api.post("/api/v1/settings/llm-providers", payload, token);
+      }
       onSaved();
     } catch (err) {
       setError(mutationErrorMessage(err));
@@ -169,12 +215,14 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
               style={{ flex: 1 }}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              required
+              placeholder={editing ? t("settings.llm.form.apiKeyKeepPlaceholder") : undefined}
+              required={!editing}
             />
             <button type="button" className="btn btn-sm" onClick={() => setShowKey((s) => !s)}>
               {showKey ? t("settings.llm.form.hide") : t("settings.llm.form.show")}
             </button>
           </div>
+          {editing && <span className="field-hint">{t("settings.llm.form.apiKeyKeepHint")}</span>}
         </div>
         <div className="field field-full">
           <label className="checkbox-label">
@@ -204,6 +252,7 @@ function ProviderForm({ onCancel, onSaved }: { onCancel: () => void; onSaved: ()
 function ProviderRow({
   provider,
   onChanged,
+  onEdit,
   confirming,
   deleting,
   onConfirm,
@@ -212,6 +261,7 @@ function ProviderRow({
 }: {
   provider: LLMProvider;
   onChanged: () => void;
+  onEdit: () => void;
   confirming: boolean;
   deleting: boolean;
   onConfirm: () => void;
@@ -258,6 +308,9 @@ function ProviderRow({
             {t("settings.llm.setDefault")}
           </button>
         )}
+        <button className="btn btn-sm" onClick={onEdit} disabled={busy}>
+          {t("common.edit")}
+        </button>
         {confirming ? (
           <>
             <span className="helper-text" style={{ flexBasis: "100%" }}>
