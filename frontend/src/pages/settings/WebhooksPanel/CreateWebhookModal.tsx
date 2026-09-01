@@ -61,7 +61,7 @@ export function CreateWebhookModal({
   const options = expiryOptions(t);
 
   return (
-    <Modal onClose={onCancel} as="form" onSubmit={handleSubmit}>
+    <Modal onClose={onCancel} label={t("settings.webhooks.newEndpointTitle")} as="form" onSubmit={handleSubmit}>
       <div className="panel-header">
         <h2 className="modal-title" style={{ marginBottom: 0 }}>
           {t("settings.webhooks.newEndpointTitle")}

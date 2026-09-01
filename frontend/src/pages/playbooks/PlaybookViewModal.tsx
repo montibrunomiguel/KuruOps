@@ -45,7 +45,7 @@ export function PlaybookViewModal({ playbookId, alertId, onClose }: { playbookId
   }
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} label={playbook?.title ?? t("playbooks.view.close")}>
       <div className="panel-header">
         <h2 className="modal-title" style={{ marginBottom: 0 }}>
           {playbook?.title ?? "…"}

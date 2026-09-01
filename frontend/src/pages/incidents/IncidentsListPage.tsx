@@ -356,7 +356,7 @@ function CreateIncidentForm({
   }
 
   return (
-    <Modal onClose={onCancel} as="form" onSubmit={handleSubmit}>
+    <Modal onClose={onCancel} label={t("incidents.createForm.title")} as="form" onSubmit={handleSubmit}>
       <div className="panel-header">
         <h2 className="modal-title" style={{ marginBottom: 0 }}>
           {t("incidents.createForm.title")}

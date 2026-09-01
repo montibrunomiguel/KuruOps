@@ -383,6 +383,13 @@ func (h *AlertHandlers) escalate(w http.ResponseWriter, r *http.Request) {
 
 	incident, err := h.svc.Escalate(r.Context(), tenantID, userID, id, allowedTags)
 	if err != nil {
+		// 409 rather than 400: the alert is fine, the request just lost a
+		// race with an earlier escalation (double-click, retry after a
+		// timeout). Same treatment ErrAnalysisInProgress gets below.
+		if errors.Is(err, service.ErrAlreadyEscalated) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -232,7 +232,11 @@ export function OnCallTimeline({
       </div>
 
       {popoverDate && (
-        <Modal onClose={() => setPopoverDate(null)} style={{ maxWidth: 360 }}>
+        <Modal
+          onClose={() => setPopoverDate(null)}
+          label={t("settings.onCallSchedule.override.title", { date: popoverDate })}
+          style={{ maxWidth: 360 }}
+        >
           <h3 className="modal-title">
             {t("settings.onCallSchedule.override.title", { date: popoverDate })}
           </h3>

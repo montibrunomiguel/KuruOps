@@ -35,7 +35,7 @@ export function CloseAlertModal({ alert, onClose, onSaved }: { alert: Alert; onC
   }
 
   return (
-    <Modal onClose={onClose} as="form" onSubmit={handleSubmit}>
+    <Modal onClose={onClose} label={t("alerts.detail.closeAndClassify")} as="form" onSubmit={handleSubmit}>
       <div className="panel-header">
         <h2 className="modal-title" style={{ marginBottom: 0 }}>
           {t("alerts.detail.closeAndClassify")}

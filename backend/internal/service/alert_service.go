@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -32,6 +33,11 @@ import (
 // correctness one (nothing here changes what gets analyzed, only how many
 // analyses run at the same instant).
 const maxConcurrentAutoAnalysis = 5
+
+// errAlertNotVisible is an internal signal, never returned to a caller: it
+// lets a transaction body abort (rolling back) while letting the wrapper
+// translate it back into this package's (nil, nil) not-found contract.
+var errAlertNotVisible = errors.New("alert not visible")
 
 // OnCallResolver resolves who's on shift right now -- satisfied by
 // *OnCallScheduleService. Defined as an interface here (rather than AlertService
@@ -214,35 +220,45 @@ func (s *AlertService) ChangeStatus(ctx context.Context, tenantID, alertID, acto
 		if current == nil {
 			return fmt.Errorf("alert %s not found", alertID)
 		}
-		if current.Status == domain.AlertStatusClosed {
-			return fmt.Errorf("alert %s is closed and its status is read-only", alertID)
-		}
-
-		// MTTA stamps the first time the alert leaves 'open', per the
-		// design handoff's metric definition — never re-stamped afterward.
-		stampAcknowledged := current.Status == domain.AlertStatusOpen
-
-		if err := s.repo.UpdateStatus(ctx, tx, alertID, newStatus, stampAcknowledged); err != nil {
-			return fmt.Errorf("update status: %w", err)
-		}
-
-		data, _ := json.Marshal(map[string]string{
-			"from": string(current.Status),
-			"to":   string(newStatus),
-		})
-		return s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
-			AlertID:   alertID,
-			TenantID:  tenantID,
-			EventType: domain.AlertEventStatusChanged,
-			ActorType: domain.ActorUser,
-			ActorID:   &actorID,
-			Data:      data,
-		})
+		return s.changeStatusTx(ctx, tx, tenantID, actorID, current, newStatus)
 	})
 	if err == nil {
 		s.publishEvent(tenantID, alertID, "status_changed")
 	}
 	return err
+}
+
+// changeStatusTx is ChangeStatus's body without the transaction or the
+// visibility load -- current is the already-loaded, already-gated alert.
+// Split out so Escalate can run the status flip inside the same transaction
+// that creates and links the incident (see its doc comment). Does not
+// publish: the caller does that after its own commit, so an SSE event never
+// announces a change that then rolls back.
+func (s *AlertService) changeStatusTx(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, current *domain.Alert, newStatus domain.AlertStatus) error {
+	if current.Status == domain.AlertStatusClosed {
+		return fmt.Errorf("alert %s is closed and its status is read-only", current.ID)
+	}
+
+	// MTTA stamps the first time the alert leaves 'open', per the
+	// design handoff's metric definition — never re-stamped afterward.
+	stampAcknowledged := current.Status == domain.AlertStatusOpen
+
+	if err := s.repo.UpdateStatus(ctx, tx, current.ID, newStatus, stampAcknowledged); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+
+	data, _ := json.Marshal(map[string]string{
+		"from": string(current.Status),
+		"to":   string(newStatus),
+	})
+	return s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
+		AlertID:   current.ID,
+		TenantID:  tenantID,
+		EventType: domain.AlertEventStatusChanged,
+		ActorType: domain.ActorUser,
+		ActorID:   &actorID,
+		Data:      data,
+	})
 }
 
 // BulkChangeStatus applies ChangeStatus to each of ids in turn, one
@@ -706,6 +722,15 @@ func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uui
 	})
 }
 
+// ErrAlreadyEscalated is what Escalate returns when the alert already has a
+// linked incident -- the handler turns it into 409 Conflict. Escalating
+// twice would create a second incident for the same alert, which is never
+// what the analyst meant: the UI hides the button once the alert is
+// escalated, but that's a client-side guard, and a retry (the natural
+// response to a failed request), a double-click, or a direct API call all
+// reach here regardless.
+var ErrAlreadyEscalated = errors.New("this alert has already been escalated to an incident")
+
 // Escalate creates a new incident from the alert (title/severity/tags
 // copied over, priority seeded from the alert's severity via
 // domain.DefaultPriorityForSeverity -- an analyst can still override it on
@@ -715,42 +740,87 @@ func (s *AlertService) Close(ctx context.Context, tenantID, alertID, actorID uui
 // doc comment); returns an error otherwise, since a caller reaching this
 // without wiring it is a construction bug, not a runtime condition to
 // handle gracefully.
+//
+// All three writes share ONE transaction. They used to be three separate
+// ones (incidents.Create, incidents.LinkAlert, then ChangeStatus), which
+// left real partial states on any mid-sequence failure: a link failure
+// stranded an incident that was created but never attached to anything,
+// and a status failure left the alert looking un-escalated while already
+// carrying an incident. Both then invited a retry, and because the create
+// ran unconditionally, each retry minted another incident for the same
+// alert. The ErrAlreadyEscalated guard below closes that second half.
 func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID uuid.UUID, allowedTags []string) (*domain.Incident, error) {
 	if s.incidents == nil {
 		return nil, fmt.Errorf("escalation is not enabled on this AlertService instance")
 	}
 
-	alert, err := s.Get(ctx, tenantID, alertID, allowedTags)
-	if err != nil {
-		return nil, err
-	}
-	if alert == nil {
-		return nil, nil
-	}
+	var (
+		incident *domain.Incident
+		// Captured inside the tx for the post-commit background step
+		// below -- the loaded alert itself doesn't outlive the closure.
+		severity domain.Severity
+		title    string
+	)
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		alert, err := s.loadVisible(ctx, tx, alertID, allowedTags)
+		if err != nil {
+			return err
+		}
+		if alert == nil {
+			return errAlertNotVisible
+		}
+		// Alert.IncidentID is derived from incident_alert_links (see
+		// AlertRepository's column comment), so this is the real "is there
+		// already an incident for this alert" answer, not a denormalized
+		// flag that could drift.
+		if alert.IncidentID != nil {
+			return ErrAlreadyEscalated
+		}
 
-	incident, err := s.incidents.Create(ctx, tenantID, actorID, domain.CreateIncidentInput{
-		Title:    alert.Title,
-		Severity: alert.Severity,
-		Priority: domain.DefaultPriorityForSeverity(alert.Severity),
-		Tags:     alert.Tags,
+		knownTags, err := s.tags.filterKnownTx(ctx, tx, alert.Tags)
+		if err != nil {
+			return fmt.Errorf("validate tags: %w", err)
+		}
+
+		inc, err := s.incidents.createTx(ctx, tx, tenantID, actorID, domain.CreateIncidentInput{
+			Title:    alert.Title,
+			Severity: alert.Severity,
+			Priority: domain.DefaultPriorityForSeverity(alert.Severity),
+			Tags:     alert.Tags,
+		}, knownTags)
+		if err != nil {
+			return err
+		}
+		if err := s.incidents.linkAlertTx(ctx, tx, tenantID, inc.ID, alert.ID, actorID); err != nil {
+			return err
+		}
+		if err := s.changeStatusTx(ctx, tx, tenantID, actorID, alert, domain.AlertStatusEscalated); err != nil {
+			return err
+		}
+		incident = inc
+		severity = alert.Severity
+		title = alert.Title
+		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errAlertNotVisible) {
+			// Same (nil, nil) not-found contract this method always had --
+			// the handler turns it into 404.
+			return nil, nil
+		}
 		return nil, err
 	}
 
-	if err := s.incidents.LinkAlert(ctx, tenantID, incident.ID, alert.ID, actorID, allowedTags); err != nil {
-		return nil, err
-	}
-
-	if err := s.ChangeStatus(ctx, tenantID, alertID, actorID, domain.AlertStatusEscalated, allowedTags); err != nil {
-		return nil, err
-	}
+	// Published only after the commit, so neither event can announce work
+	// that rolled back.
+	s.incidents.publishEvent(tenantID, incident.ID, "created")
+	s.publishEvent(tenantID, alertID, "status_changed")
 
 	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
 	// Ingest uses) so a slow/unreachable escalation-chain destination never
 	// delays this response -- see fireManualEscalationStep.
 	safego.Go("alert.fireManualEscalationStep", func() {
-		s.fireManualEscalationStep(context.Background(), tenantID, alert.ID, alert.Severity, alert.Title)
+		s.fireManualEscalationStep(context.Background(), tenantID, alertID, severity, title)
 	})
 
 	return incident, nil

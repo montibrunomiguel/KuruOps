@@ -187,6 +187,32 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Integridade de dados**: escalar um alerta para incidente eram três transações independentes
+  (criar o incidente, vincular o alerta a ele, mudar o alerta para `escalated`). Qualquer falha
+  depois da primeira deixava um estado parcial real — falha no vínculo deixava um incidente
+  criado e preso a nada, falha no status deixava o alerta parecendo não-escalado já carregando um
+  incidente — e, como a criação rodava incondicionalmente, o retry que naturalmente segue uma
+  requisição que falhou criava *outro* incidente para o mesmo alerta. Duplo clique no botão fazia
+  o mesmo. A escalação agora roda inteira em uma única transação (as três escritas commitam ou
+  nenhuma), e uma segunda tentativa num alerta já escalado retorna `409 Conflict` em vez de um
+  incidente duplicado. A checagem usa o vínculo de incidente que o próprio alerta já tem como
+  fonte da verdade, então vale independente de como a requisição chegou — a UI esconder o botão
+  sempre foi só uma proteção de cliente, nunca imposta pela API.
+- Export de PDF de incidente e postmortem liam o incidente e seus quatro sub-recursos (histórico
+  de status, comentários, alertas vinculados, IOCs) em cinco transações separadas — cinco
+  snapshots, então um comentário postado no meio da geração podia entrar num documento cujo
+  histórico de status era anterior a ele, além de cinco checagens de permissão redundantes pra
+  mesma linha. As cinco leituras agora compartilham uma transação.
+- **Acessibilidade**: diálogos não tinham nome acessível. O `Modal` renderizava um `role="dialog"`
+  pelado, então o leitor de tela anunciava qualquer um deles como só "diálogo", sem indicar o que
+  tinha aberto. O `Modal` agora *exige* uma prop `label` e a aplica como `aria-label` —
+  obrigatória em vez de opcional de propósito, pra que o compilador pegue o próximo diálogo sem
+  rótulo em vez de ele passar em silêncio.
+- `golang.org/x/crypto` atualizado de 0.54.0 para 0.55.0 por conta da CVE-2026-56854 (bypass de
+  autenticação no `x/crypto/ssh` por restrições de endereço de origem não aplicadas), marcada como
+  CRITICAL pelo scan de imagem nas três imagens Go. O KuruOps não usa `x/crypto/ssh` em lugar
+  nenhum -- só argon2id pra hash de senha -- então nada aqui era explorável, mas o módulo estava
+  no grafo de dependências e ia junto nas imagens.
 - **Acessibilidade**: a lista de Playbooks era inalcançável por teclado. Cada linha era um
   `<div onClick={navigate}>` sem `tabindex` e sem `role`, e a linha era a *única* forma de abrir um
   playbook — então um usuário só de teclado ou de leitor de tela conseguia criar e buscar

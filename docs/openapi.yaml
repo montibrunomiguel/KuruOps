@@ -1047,9 +1047,11 @@ paths:
       summary: Escalate an alert into a new incident
       description: >
         Creates a new incident (title/severity/tags copied from the alert,
-        priority defaults to p3), links the alert to it, and marks the alert
-        'escalated'. The one endpoint that touches both the Alerts and
-        Incidents aggregates.
+        priority seeded from the alert's severity), links the alert to it,
+        and marks the alert 'escalated'. The one endpoint that touches both
+        the Alerts and Incidents aggregates. All three writes share a single
+        transaction, and an alert can only be escalated once -- a repeat call
+        returns 409 rather than creating a second incident.
       parameters:
         - $ref: '#/components/parameters/AlertId'
       responses:
@@ -1071,6 +1073,11 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          description: This alert has already been escalated to an incident
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         "500":
           $ref: '#/components/responses/InternalError'
 

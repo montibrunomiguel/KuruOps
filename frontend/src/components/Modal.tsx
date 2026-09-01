@@ -16,6 +16,15 @@ const FOCUSABLE_SELECTOR =
 interface ModalProps {
   onClose: () => void;
   children: ReactNode;
+  // The dialog's accessible name. role="dialog" without one makes a screen
+  // reader announce just "dialog" with no idea which one -- and every modal
+  // in this app already renders the exact string it needs in its own
+  // .modal-title heading, so the name always exists, it just wasn't wired
+  // to the dialog element. Required (not optional) on purpose: it's the
+  // only thing stopping a future modal from silently shipping unnamed
+  // again, the same reason the tag-scoping route walk asserts over
+  // registered routes instead of a hand-kept list.
+  label: string;
   // Most callers just need "modal" (see components.css); a few add their own
   // sizing/layout on top (AnalysisChat's taller flex column, OnCallTimeline's
   // narrower popover) -- appended alongside "modal" rather than replacing it.
@@ -30,7 +39,7 @@ interface ModalProps {
   onSubmit?: (e: FormEvent) => void;
 }
 
-export function Modal({ onClose, children, className, style, as = "div", onSubmit }: ModalProps) {
+export function Modal({ onClose, children, label, className, style, as = "div", onSubmit }: ModalProps) {
   const panelRef = useRef<HTMLElement | null>(null);
 
   function setPanelRef(el: HTMLElement | null) {
@@ -89,6 +98,7 @@ export function Modal({ onClose, children, className, style, as = "div", onSubmi
           ref={setPanelRef}
           role="dialog"
           aria-modal="true"
+          aria-label={label}
           className={panelClassName}
           style={style}
           onClick={(e) => e.stopPropagation()}
@@ -101,6 +111,7 @@ export function Modal({ onClose, children, className, style, as = "div", onSubmi
           ref={setPanelRef}
           role="dialog"
           aria-modal="true"
+          aria-label={label}
           className={panelClassName}
           style={style}
           onClick={(e) => e.stopPropagation()}
