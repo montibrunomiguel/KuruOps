@@ -208,6 +208,11 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   tinha aberto. O `Modal` agora *exige* uma prop `label` e a aplica como `aria-label` —
   obrigatória em vez de opcional de propósito, pra que o compilador pegue o próximo diálogo sem
   rótulo em vez de ele passar em silêncio.
+- `golang.org/x/crypto` atualizado de 0.54.0 para 0.55.0 por conta da CVE-2026-56854 (bypass de
+  autenticação no `x/crypto/ssh` por restrições de endereço de origem não aplicadas), marcada como
+  CRITICAL pelo scan de imagem nas três imagens Go. O KuruOps não usa `x/crypto/ssh` em lugar
+  nenhum -- só argon2id pra hash de senha -- então nada aqui era explorável, mas o módulo estava
+  no grafo de dependências e ia junto nas imagens.
 - **Acessibilidade**: a lista de Playbooks era inalcançável por teclado. Cada linha era um
   `<div onClick={navigate}>` sem `tabindex` e sem `role`, e a linha era a *única* forma de abrir um
   playbook — então um usuário só de teclado ou de leitor de tela conseguia criar e buscar

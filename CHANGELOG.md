@@ -189,6 +189,11 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   opened. `Modal` now *requires* a `label` prop and applies it as `aria-label` — required rather
   than optional on purpose, so the compiler catches the next unlabeled dialog instead of it
   shipping silently.
+- Bumped `golang.org/x/crypto` 0.54.0 -> 0.55.0 for CVE-2026-56854 (an authentication bypass in
+  `x/crypto/ssh` from unenforced source-address restrictions), flagged CRITICAL by the container
+  image scan on all three Go images. KuruOps doesn't use `x/crypto/ssh` at all -- only argon2id
+  for password hashing -- so nothing here was exploitable, but the module was in the dependency
+  graph and shipped in the images.
 - **Accessibility**: the Playbooks list was unreachable by keyboard. Each row was a
   `<div onClick={navigate}>` with no `tabindex` and no `role`, and the row was the *only* way to
   open a playbook — so a keyboard-only or screen-reader user could create and search playbooks but
