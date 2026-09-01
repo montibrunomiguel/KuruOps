@@ -994,7 +994,8 @@
         "create": "Assign",
         "remove": "Remove override",
         "removeConfirm": "Remove this override?"
-      }
+      },
+      "noParticipantsBadge": "nobody on call"
     },
     "incidentSla": {
       "title": "Incident SLAs",

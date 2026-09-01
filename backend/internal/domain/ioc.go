@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -99,4 +100,14 @@ type IOC struct {
 	// IncidentComment.AuthorName -- see that field's doc comment.
 	CreatedByName string    `json:"createdByName"`
 	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// IOCTypeNames renders the valid IOC types as a comma-separated list, for
+// error messages that would otherwise leave the caller guessing.
+func IOCTypeNames() string {
+	names := make([]string, 0, len(ValidIOCTypes))
+	for _, t := range ValidIOCTypes {
+		names = append(names, string(t))
+	}
+	return strings.Join(names, ", ")
 }

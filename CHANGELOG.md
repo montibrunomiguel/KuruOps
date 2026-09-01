@@ -188,6 +188,53 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Access control**: the dashboard's alert/incident trend charts and its MTTA/MTTR averages
+  ignored tag scoping. Every card beside them was scoped correctly, but the time-series was not:
+  two analysts restricted to different, non-overlapping tags received byte-identical trends and
+  response-time averages covering the entire tenant. The trends read materialized views keyed on
+  `tenant_id` alone, with no tag dimension to filter on, so a tag-restricted caller now takes a
+  live path over the base tables that reproduces each view's definition exactly. An unrestricted
+  caller keeps the pre-aggregated fast path. What leaked was aggregate metadata rather than
+  content -- counts and averages, never a title or a payload -- but for a tenant using tags to
+  separate clients or business units, that is precisely what tag separation is bought to prevent.
+- Alerts arriving from a webhook with no tags were invisible to every tag-restricted analyst. Tag
+  visibility is an intersection, so a record with no tags overlaps with nothing: stand up a SOC
+  where Tier 1 is tag-restricted and freshly ingested alerts were visible to nobody who was
+  supposed to triage them, with no error and no empty-queue indicator anywhere. An alert whose
+  source sends no tags is now tagged with the endpoint's own name, which keeps the fail-closed
+  rule intact while making the tag meaningful (it identifies the source) and grantable to a role.
+- Playbook keywords were collected in the editor, stored, and never consulted. Matching tested
+  only `alert_name_pattern` and `is_default`, so a playbook could list every keyword an analyst
+  could think of and still match nothing -- a feature that read as working and silently was not.
+  Keywords now take part, matched case-insensitively as substrings, ranked below an explicit
+  pattern (the more specific statement of intent) and above the default playbook.
+- The generic webhook normalizer matched severity exactly and case-sensitively, so a source
+  sending `High` -- which most SIEM and EDR products do -- had every alert rejected with a 400 at
+  the door. Severity is now matched case- and whitespace-insensitively, with the spellings other
+  products actually emit mapped onto this one's vocabulary (`info`, `warn`, `error`, `crit`,
+  `sev1`-`sev4` and friends). An unrecognised value is still rejected rather than guessed at, and
+  the error now names the accepted ones.
+- The API accepted playbook steps in the `new` phase, which the UI stopped rendering. Such a step
+  was stored, counted, and displayed nowhere -- invisible and uneditable in the product. Both
+  create and update now refuse it.
+- An escalation destination that could never work saved cleanly and only failed when fired, so
+  the operator found out during the incident it was configured for. Webhook destinations are now
+  checked when saved. The check is advisory by design -- `httpguard`'s dial-time guard remains
+  the actual control, since only that one resolves the name at the instant of the request and so
+  cannot be defeated by DNS rebinding -- and it honours `ALLOW_PRIVATE_NETWORK_TARGETS`, so a
+  genuine on-prem deployment can still point a step at a private address.
+- An invalid IOC type was rejected with a message that echoed the bad value and nothing else.
+  There are fifteen valid types and no way to discover them from the error; it now names them.
+- An on-call schedule with no participants is flagged in the schedule list. It stays a valid
+  configuration -- webhook, PagerDuty and Slack steps all fire to a destination regardless of who
+  is on call -- but it puts nobody on call and leaves the analyst name/email/phone blank in every
+  notification it feeds, which is worth saying out loud rather than leaving to be inferred from a
+  responder count of zero.
+- The dashboard's MTTA/MTTR card could print an average above a caption saying it was computed
+  from nothing ("32h / 4m" over "based on 0 acknowledged, 0 closed"), because the figure and its
+  own denominator came from different queries. It shows a dash when the sample is empty.
+
+
 - A tenant's first AI provider now becomes the default on its own. Until something is marked
   default, every analysis fails with "no LLM provider configured" -- so finishing the form and
   still having nothing work was the normal first experience. Keyed on "no default exists" rather

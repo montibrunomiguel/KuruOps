@@ -8,6 +8,7 @@ package ingest
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kuruops/kuruops/internal/domain"
 )
@@ -63,12 +64,11 @@ func (genericNormalizer) Normalize(raw []byte) (NormalizedAlert, error) {
 		return NormalizedAlert{}, fmt.Errorf("webhook body missing required field: title")
 	}
 
-	severity := domain.Severity(env.Severity)
-	switch severity {
-	case domain.SeverityCritical, domain.SeverityHigh, domain.SeverityMedium,
-		domain.SeverityLow, domain.SeverityInformational:
-	default:
-		return NormalizedAlert{}, fmt.Errorf("webhook body has invalid severity: %q", env.Severity)
+	severity, ok := parseSeverity(env.Severity)
+	if !ok {
+		return NormalizedAlert{}, fmt.Errorf(
+			"webhook body has invalid severity: %q (accepted: critical, high, medium, low, informational)",
+			env.Severity)
 	}
 
 	return NormalizedAlert{
@@ -80,4 +80,44 @@ func (genericNormalizer) Normalize(raw []byte) (NormalizedAlert, error) {
 		SrcIP:      env.SrcIP,
 		Tags:       env.Tags,
 	}, nil
+}
+
+// severityAliases maps the spellings other products actually emit onto this
+// one's vocabulary. Matching was previously exact and case-sensitive, so a
+// source sending "High" -- which most SIEM and EDR products do -- had every
+// alert rejected with a 400 at the door. The dedicated Wazuh/CrowdStrike/
+// GuardDuty normalizers translate their own vendor scales; this is the
+// generic path, which is what every customer-built integration hits.
+var severityAliases = map[string]domain.Severity{
+	"critical": domain.SeverityCritical,
+	"crit":     domain.SeverityCritical,
+	"fatal":    domain.SeverityCritical,
+	"sev1":     domain.SeverityCritical,
+	"high":     domain.SeverityHigh,
+	"error":    domain.SeverityHigh,
+	"err":      domain.SeverityHigh,
+	"sev2":     domain.SeverityHigh,
+	"medium":   domain.SeverityMedium,
+	"moderate": domain.SeverityMedium,
+	"warning":  domain.SeverityMedium,
+	"warn":     domain.SeverityMedium,
+	"sev3":     domain.SeverityMedium,
+	"low":      domain.SeverityLow,
+	"minor":    domain.SeverityLow,
+	"sev4":     domain.SeverityLow,
+
+	"informational": domain.SeverityInformational,
+	"info":          domain.SeverityInformational,
+	"information":   domain.SeverityInformational,
+	"notice":        domain.SeverityInformational,
+	"debug":         domain.SeverityInformational,
+}
+
+// parseSeverity resolves a source's severity string, tolerating case and
+// surrounding whitespace. An unrecognised value is still rejected rather
+// than silently bucketed -- guessing a severity would be worse than telling
+// the sender its value is not understood.
+func parseSeverity(raw string) (domain.Severity, bool) {
+	sev, ok := severityAliases[strings.ToLower(strings.TrimSpace(raw))]
+	return sev, ok
 }

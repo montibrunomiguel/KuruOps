@@ -75,6 +75,17 @@ export function OnCallSchedulesListPage() {
                   {t("settings.onCallSchedule.default")}
                 </span>
               )}
+              {/* A schedule with nobody on it is a valid configuration --
+                  webhook, PagerDuty and Slack steps all fire to a destination
+                  regardless of who is on call -- but it puts nobody on call
+                  and leaves the analyst name/email/phone blank in every
+                  notification it feeds. Worth saying out loud in the list
+                  rather than leaving it to be inferred from "0 responders". */}
+              {s.participants.length === 0 && (
+                <span className="badge badge-critical" style={{ marginLeft: 8 }}>
+                  {t("settings.onCallSchedule.noParticipantsBadge")}
+                </span>
+              )}
             </p>
             <p className="row-sub">{t("settings.onCallSchedule.respondersCount", { count: s.participants.length })}</p>
           </div>

@@ -130,11 +130,33 @@ func (r *PlaybookRepository) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID
 // Steps is never populated here (callers only need id/title for the
 // denormalized Alert.PlaybookID/PlaybookTitle, not the full step list).
 func (r *PlaybookRepository) MatchForAlertTitle(ctx context.Context, tx pgx.Tx, title string) (*domain.Playbook, error) {
+	// Three ways to match, in strict precedence: an explicit
+	// alert_name_pattern (most specific -- an admin wrote a pattern meaning
+	// exactly this), then any keyword appearing in the title, then the
+	// tenant's default playbook as a catch-all.
+	//
+	// Keywords used to be collected in the editor, stored, and then never
+	// consulted here at all -- a playbook could list every keyword an
+	// analyst could think of and still match nothing, which read as a
+	// working feature that silently was not one. The keyword test is
+	// substring and case-insensitive (position() over lower(), not ILIKE)
+	// so a keyword never has to be written as a wildcard pattern to work.
 	row := tx.QueryRow(ctx, `
 		select id, tenant_id, title, category, description, keywords, alert_name_pattern, is_default, created_by, created_at, updated_at
 		from playbooks
-		where (alert_name_pattern <> '' and $1 ilike alert_name_pattern) or is_default
-		order by (alert_name_pattern <> '' and $1 ilike alert_name_pattern) desc, length(alert_name_pattern) desc
+		where (alert_name_pattern <> '' and $1 ilike alert_name_pattern)
+		   or exists (
+		        select 1 from unnest(keywords) k
+		        where k <> '' and position(lower(k) in lower($1)) > 0
+		      )
+		   or is_default
+		order by
+			(alert_name_pattern <> '' and $1 ilike alert_name_pattern) desc,
+			exists (
+				select 1 from unnest(keywords) k
+				where k <> '' and position(lower(k) in lower($1)) > 0
+			) desc,
+			length(alert_name_pattern) desc
 		limit 1`, title)
 	return scanPlaybook(row)
 }

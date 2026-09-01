@@ -994,7 +994,8 @@
         "create": "Atribuir",
         "remove": "Remover substituição",
         "removeConfirm": "Remover esta substituição?"
-      }
+      },
+      "noParticipantsBadge": "ninguém de plantão"
     },
     "incidentSla": {
       "title": "SLAs de Incidentes",

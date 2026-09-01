@@ -83,6 +83,12 @@ export function AlertsTabPanel() {
   const maxSeverity = Math.max(1, ...SEVERITY_ORDER.map((s) => bySeverity[s] ?? 0));
   const byStatus = stats?.alertStatusDistribution ?? {};
   const acknowledgedApprox = Object.entries(byStatus).reduce((sum, [k, v]) => (k === "open" ? sum : sum + v), 0);
+  // The card used to be able to print an average above a caption saying it
+  // was computed from nothing ("32h / 4m" over "based on 0 acknowledged, 0
+  // closed"), because the figure and its own denominator came from different
+  // queries. Show a dash whenever the sample the caption reports is empty --
+  // an average of nothing is not a number worth printing.
+  const mttSampleEmpty = acknowledgedApprox === 0 && (byStatus.closed ?? 0) === 0;
 
   return (
     <div>
@@ -165,7 +171,9 @@ export function AlertsTabPanel() {
             </span>
           </div>
           <div className="stat-value">
-            {statsLoading ? "—" : `${formatDuration(stats?.alertAvgMttaSeconds)} / ${formatDuration(stats?.alertAvgMttrSeconds)}`}
+            {statsLoading || mttSampleEmpty
+              ? "—"
+              : `${formatDuration(stats?.alertAvgMttaSeconds)} / ${formatDuration(stats?.alertAvgMttrSeconds)}`}
           </div>
           <div className="stat-sub">
             {t("dashboard.alertsTab.avgMttaMttrSub", { acked: acknowledgedApprox, closed: byStatus.closed ?? 0 })}

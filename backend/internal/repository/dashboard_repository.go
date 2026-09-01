@@ -54,9 +54,14 @@ type StatsFilter struct {
 	// filter, either endpoint optional. Applied to the same alert/incident-
 	// derived figures AllowedTags scopes; AlertTrend/IncidentTrend/the 30-day
 	// MTTA-MTTR average stay on their own fixed lookback windows regardless
-	// (see alertTrend's doc comment -- the materialized views they read from
-	// have no per-request-filterable dimension without restructuring the
-	// view itself).
+	// (the materialized views they read from have no per-request-filterable
+	// time dimension without restructuring the view itself).
+	//
+	// AllowedTags is the exception to that: it DOES reach those figures, via
+	// a live query over the base tables whenever it is non-empty (see
+	// alertTrend). It has to -- unlike the time range, a tag scope is an
+	// authorization boundary, and leaving it unapplied handed every
+	// restricted analyst the whole tenant's volume and response times.
 	Since *time.Time
 	Until *time.Time
 
@@ -115,35 +120,65 @@ func (r *DashboardRepository) Stats(ctx context.Context, tx pgx.Tx, tenantID uui
 	// tenant with zero incidents (it's a plain `group by tenant_id` over
 	// `incidents`, which produces no row when there's nothing to group).
 	// Absence just means "no average yet", not an error.
-	err := tx.QueryRow(ctx, `
+	// Same split as alertTrend: the view for an unrestricted caller, a live
+	// query reproducing its definition for a tag-restricted one. Without
+	// this, two analysts with non-overlapping tag scopes were handed
+	// byte-identical response-time averages covering the whole tenant.
+	incidentKPIQuery := `
 		select avg_mtta_seconds, avg_mttr_seconds
 		from mv_incident_kpis
-		where tenant_id = $1`,
-		tenantID,
-	).Scan(&stats.IncidentAvgMTTASeconds, &stats.IncidentAvgMTTRSeconds)
+		where tenant_id = $1`
+	incidentKPIArgs := []any{tenantID}
+	if len(filter.AllowedTags) > 0 {
+		incidentKPIQuery = `
+			select
+				avg(extract(epoch from ((select min(coalesce(h.corrected_entered_at, h.entered_at))
+					from incident_status_history h
+					where h.incident_id = i.id and h.phase = 'detection_analysis') - i.opened_at))),
+				avg(extract(epoch from ((select min(coalesce(h.corrected_entered_at, h.entered_at))
+					from incident_status_history h
+					where h.incident_id = i.id and h.phase = 'post_incident') - i.opened_at)))
+			from incidents i
+			where i.tenant_id = $1 and i.tags && $2`
+		incidentKPIArgs = append(incidentKPIArgs, filter.AllowedTags)
+	}
+	err := tx.QueryRow(ctx, incidentKPIQuery, incidentKPIArgs...).
+		Scan(&stats.IncidentAvgMTTASeconds, &stats.IncidentAvgMTTRSeconds)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("incident kpis: %w", err)
 	}
 
 	// mv_alert_daily_stats is one row per (tenant, day); roll the last 30
 	// days up into a single trend figure for the dashboard card.
-	err = tx.QueryRow(ctx, `
+	alertKPIQuery := `
 		select avg(avg_mtta_seconds), avg(avg_mttr_seconds)
 		from mv_alert_daily_stats
-		where tenant_id = $1 and day >= now() - interval '30 days'`,
-		tenantID,
-	).Scan(&stats.AlertAvgMTTASeconds, &stats.AlertAvgMTTRSeconds)
+		where tenant_id = $1 and day >= now() - interval '30 days'`
+	alertKPIArgs := []any{tenantID}
+	if len(filter.AllowedTags) > 0 {
+		alertKPIQuery = `
+			select
+				avg(extract(epoch from (acknowledged_at - received_at))) filter (where acknowledged_at is not null),
+				avg(extract(epoch from (closed_at - received_at))) filter (where closed_at is not null)
+			from alerts
+			where tenant_id = $1
+			  and received_at >= now() - interval '30 days'
+			  and tags && $2`
+		alertKPIArgs = append(alertKPIArgs, filter.AllowedTags)
+	}
+	err = tx.QueryRow(ctx, alertKPIQuery, alertKPIArgs...).
+		Scan(&stats.AlertAvgMTTASeconds, &stats.AlertAvgMTTRSeconds)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("alert daily stats: %w", err)
 	}
 
-	trend, err := r.alertTrend(ctx, tx, tenantID)
+	trend, err := r.alertTrend(ctx, tx, tenantID, filter.AllowedTags)
 	if err != nil {
 		return nil, err
 	}
 	stats.AlertTrend = trend
 
-	incidentTrend, err := r.incidentTrend(ctx, tx, tenantID)
+	incidentTrend, err := r.incidentTrend(ctx, tx, tenantID, filter.AllowedTags)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +372,43 @@ func whereClause(clauses []string) string {
 // without restructuring the materialized view -- out of scope here. The
 // trend chart's day counts/MTTR figures stay tenant-wide; the KPI cards,
 // breakdown charts, and activity feed (the actual reported leak) are scoped.
-func (r *DashboardRepository) alertTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]domain.AlertTrendPoint, error) {
+// alertTrend reads the pre-aggregated view for an unrestricted caller and
+// falls back to a live aggregate over `alerts` for a tag-restricted one.
+//
+// mv_alert_daily_stats groups on (tenant_id, day) only -- there is no tag
+// dimension to filter, and adding one is not a simple grouping change
+// because tags are an array per row, so a tag-aware view would have to
+// unnest and would then double-count multi-tagged alerts in the totals.
+// Until that is worth doing, a restricted caller pays for a live scan and
+// gets a correct answer; the unrestricted case (the common one, and the one
+// the view exists to make fast) is untouched.
+//
+// The live branch reproduces the view's own definition exactly -- same
+// date_trunc, same avg(epoch(closed_at - received_at)) filtered to closed
+// rows -- so the two paths cannot drift into reporting different numbers
+// for the same data.
+func (r *DashboardRepository) alertTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, allowedTags []string) ([]domain.AlertTrendPoint, error) {
+	if len(allowedTags) > 0 {
+		return queryList(ctx, tx, `
+			select to_char(date_trunc('day', received_at), 'YYYY-MM-DD'),
+			       count(*),
+			       avg(extract(epoch from (closed_at - received_at))) filter (where closed_at is not null)
+			from alerts
+			where tenant_id = $1
+			  and received_at >= now() - interval '14 days'
+			  and tags && $2
+			group by date_trunc('day', received_at)
+			order by date_trunc('day', received_at) asc`,
+			func(row pgx.Row) (*domain.AlertTrendPoint, error) {
+				var p domain.AlertTrendPoint
+				if err := row.Scan(&p.Day, &p.AlertCount, &p.AvgMTTRSeconds); err != nil {
+					return nil, fmt.Errorf("scan alert trend point: %w", err)
+				}
+				return &p, nil
+			},
+			tenantID, allowedTags,
+		)
+	}
 	return queryList(ctx, tx, `
 		select to_char(day, 'YYYY-MM-DD'), alert_count, avg_mttr_seconds
 		from mv_alert_daily_stats
@@ -357,7 +428,26 @@ func (r *DashboardRepository) alertTrend(ctx context.Context, tx pgx.Tx, tenantI
 // incidentTrend is alertTrend's incident-side counterpart, reading from
 // mv_incident_daily_stats instead -- see IncidentTrendPoint's doc comment
 // for why there's no MTTR figure alongside the count.
-func (r *DashboardRepository) incidentTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]domain.IncidentTrendPoint, error) {
+func (r *DashboardRepository) incidentTrend(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, allowedTags []string) ([]domain.IncidentTrendPoint, error) {
+	if len(allowedTags) > 0 {
+		return queryList(ctx, tx, `
+			select to_char(date_trunc('day', opened_at), 'YYYY-MM-DD'), count(*)
+			from incidents
+			where tenant_id = $1
+			  and opened_at >= now() - interval '14 days'
+			  and tags && $2
+			group by date_trunc('day', opened_at)
+			order by date_trunc('day', opened_at) asc`,
+			func(row pgx.Row) (*domain.IncidentTrendPoint, error) {
+				var p domain.IncidentTrendPoint
+				if err := row.Scan(&p.Day, &p.IncidentCount); err != nil {
+					return nil, fmt.Errorf("scan incident trend point: %w", err)
+				}
+				return &p, nil
+			},
+			tenantID, allowedTags,
+		)
+	}
 	return queryList(ctx, tx, `
 		select to_char(day, 'YYYY-MM-DD'), incident_count
 		from mv_incident_daily_stats
