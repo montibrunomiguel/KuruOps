@@ -27,6 +27,9 @@ func NewOnCallScheduleHandlers(svc *service.OnCallScheduleService) *OnCallSchedu
 func (h *OnCallScheduleHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
+	// Registered before "/{id}" for readability; chi matches the static
+	// segment first regardless, so "current" is never taken for an id.
+	r.Get("/current", h.currentOnCall)
 	r.Get("/{id}", h.get)
 	r.Put("/{id}", h.update)
 	r.Delete("/{id}", h.delete)
@@ -280,4 +283,20 @@ func (h *OnCallScheduleHandlers) deleteOverride(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// currentOnCall answers "who is on call right now" for every schedule --
+// see OnCallScheduleService.CurrentOnCall for why this did not exist
+// before.
+func (h *OnCallScheduleHandlers) currentOnCall(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	entries, err := h.svc.CurrentOnCall(r.Context(), tenantID, time.Now())
+	if err != nil {
+		writeInternalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entries)
 }

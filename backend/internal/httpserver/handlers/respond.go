@@ -80,11 +80,18 @@ func decodeAndParseID[T any](w http.ResponseWriter, r *http.Request, entity stri
 const maxPageLimit = 200
 
 // parsePaging reads limit/offset query params for a list endpoint. Both are
-// optional; an invalid or out-of-range limit falls back to 0 (the
-// repository's own default of 50 applies), never to maxPageLimit, so a
-// bogus limit can't silently request more rows than the caller asked for.
+// optional. A limit above maxPageLimit is clamped down to it rather than
+// discarded: asking for 500 used to fall through to the repository's
+// default of 50, so a caller who asked for MORE than the maximum got fewer
+// rows than one who asked for exactly the maximum -- and nothing in the
+// response said a cap had been applied. A non-numeric or non-positive
+// limit still falls back to 0 (the repository default), since there is no
+// sensible number to infer from garbage.
 func parsePaging(r *http.Request) (limit, offset int) {
-	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= maxPageLimit {
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		if v > maxPageLimit {
+			v = maxPageLimit
+		}
 		limit = v
 	}
 	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {

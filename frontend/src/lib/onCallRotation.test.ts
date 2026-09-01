@@ -78,7 +78,9 @@ describe("resolveOnCallSet", () => {
     ]);
   });
 
-  it("leaves the last group smaller when concurrency doesn't divide evenly", () => {
+  it("wraps the last group back to the start when concurrency doesn't divide evenly", () => {
+    // Mirrors the Go test of the same name: every period stays fully
+    // staffed, at the cost of one person serving two in a row per cycle.
     const alice = participant("Alice");
     const bob = participant("Bob");
     const carol = participant("Carol");
@@ -87,7 +89,7 @@ describe("resolveOnCallSet", () => {
     const addDays = (n: number) => new Date(handover.getTime() + n * 24 * 3600_000);
 
     expect(names(resolveOnCallSet(participants, handover, 7, 2, "all_day", [], null, handover))).toEqual(["Alice", "Bob"]);
-    expect(names(resolveOnCallSet(participants, handover, 7, 2, "all_day", [], null, addDays(7)))).toEqual(["Carol"]);
+    expect(names(resolveOnCallSet(participants, handover, 7, 2, "all_day", [], null, addDays(7)))).toEqual(["Carol", "Alice"]);
     expect(names(resolveOnCallSet(participants, handover, 7, 2, "all_day", [], null, addDays(14)))).toEqual([
       "Alice",
       "Bob",

@@ -29,9 +29,16 @@ export function resolveOnCallSet(
   let groupIndex = periodsElapsed % numGroups;
   if (groupIndex < 0) groupIndex += numGroups;
 
-  const start = groupIndex * groupSize;
-  const end = Math.min(start + groupSize, participants.length);
-  return participants.slice(start, end);
+  // Wraps around the end of the roster rather than truncating the last
+  // group, so every period is fully staffed -- mirrors the Go original
+  // exactly (see its comment for why, and for the back-to-back cost when
+  // the roster does not divide evenly). Kept in step by the shared
+  // fixtures in docs/oncall-rotation-fixtures.json.
+  const out: OnCallParticipant[] = [];
+  for (let i = 0; i < groupSize; i++) {
+    out.push(participants[(groupIndex * groupSize + i) % participants.length]);
+  }
+  return out;
 }
 
 function withinWorkingHours(intervals: OnCallWorkingHoursInterval[], localNow: Date): boolean {

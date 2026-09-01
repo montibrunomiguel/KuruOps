@@ -976,7 +976,8 @@
         "removeInterval": "Remove interval",
         "startTimeAria": "Interval {{num}} start time",
         "endTimeAria": "Interval {{num}} end time",
-        "addResponderAria": "Responder to add"
+        "addResponderAria": "Responder to add",
+        "unevenRoster": "{{responders}} responders across {{slots}} concurrent slots doesn't divide evenly: the rotation takes {{groups}} periods to complete and {{doubled}} responder(s) cover two periods back to back each cycle. Every period stays fully staffed."
       },
       "timeline": {
         "title": "Preview",

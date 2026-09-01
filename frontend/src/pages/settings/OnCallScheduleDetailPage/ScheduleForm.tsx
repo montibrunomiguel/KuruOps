@@ -104,6 +104,18 @@ export function ScheduleForm({
   const { confirming: confirmingDelete, confirm: confirmDelete, cancel: cancelDelete } = useConfirm();
 
   const participantsById = new Map(directory.map((u) => [u.id, u]));
+
+  // Mirrors domain.RotationShortfall. When the roster does not divide into
+  // the concurrent-shift count, the rotation wraps the last group back to
+  // the start so every period stays fully staffed -- which means somebody
+  // covers two periods in a row. That is a real scheduling consequence, so
+  // it is said here while the roster is being edited rather than discovered
+  // from the calendar. Computed client-side because the warning has to track
+  // the form as it changes, not the saved schedule.
+  const rosterSize = participantIds.length;
+  const slots = Math.max(1, Math.min(concurrentShifts, rosterSize || 1));
+  const groups = rosterSize > 0 ? Math.ceil(rosterSize / slots) : 0;
+  const doubledUp = rosterSize > 0 ? groups * slots - rosterSize : 0;
   const availableToAdd = directory.filter((u) => !participantIds.includes(u.id));
   // addUserId only tracks an explicit selection -- once it stops being a
   // valid choice (added, or the very first render), fall back to the first
@@ -303,6 +315,16 @@ export function ScheduleForm({
         <p className="helper-text" style={{ marginTop: -2, marginBottom: 6 }}>
           {t("settings.onCallSchedule.form.respondersHelp")}
         </p>
+        {doubledUp > 0 && (
+          <p className="helper-text" style={{ marginTop: -2, marginBottom: 6, color: "var(--warning, #8a5c12)" }}>
+            {t("settings.onCallSchedule.form.unevenRoster", {
+              responders: rosterSize,
+              slots,
+              groups,
+              doubled: doubledUp,
+            })}
+          </p>
+        )}
         {participantIds.map((userId, idx) => (
           <div key={userId} className="row" style={{ padding: "6px 10px", marginBottom: 4 }}>
             <div className="row-main" style={{ display: "flex", alignItems: "center", gap: 8 }}>

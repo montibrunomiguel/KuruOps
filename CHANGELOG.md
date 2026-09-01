@@ -188,6 +188,59 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Field Mapping Template rules could not address an array element. A path like
+  `detect.behaviors.0.tactic` -- the shape CrowdStrike, CloudTrail and Wazuh payloads all use --
+  resolved to nothing and was skipped silently, indistinguishable from a field the payload never
+  carried, so an admin building a template had no way to tell which had happened. An all-digit
+  segment now indexes into an array. A digit against an object is still read as a key first, so a
+  payload with a literal `"0"` field keeps working; out-of-range and negative indices resolve to
+  nothing rather than wrapping. Alert dedup grouping shares the same resolver and gains this too.
+- An on-call roster that did not divide evenly into the concurrent-shift count left periods
+  half-staffed. With five responders and two concurrent slots the rotation produced groups of
+  `[2, 2, 1]`: one period in every three ran with a single analyst, on a schedule configured for
+  two, and nothing said so. The last group now wraps back to the start of the roster, so every
+  period is fully staffed. The cost -- somebody covers two periods back to back each cycle -- is
+  now stated in the schedule editor whenever the roster does not divide evenly, rather than left
+  to be discovered from the calendar. The TypeScript rotation used by the timeline preview was
+  changed in step, and the shared fixtures in `docs/oncall-rotation-fixtures.json` keep the two
+  honest.
+- `ALLOW_PRIVATE_NETWORK_TARGETS` could not be set on a shipped deployment. `httpguard`'s own
+  refusal message tells the operator to set it, and both `.env.example` files and
+  `docs/THREAT_MODEL.md` document it -- but `docker-compose.yml` never referenced it, no service
+  declared it, and there is no `env_file:`, so a value in `.env` never reached a container. Same
+  for the Kubernetes manifests. It is now declared by the api, ingest and worker services and in
+  the ConfigMap, empty by default.
+- A failing webhook destination's entire response body was read into an error string with an
+  unbounded `io.ReadAll` and echoed into the API response and the logs. The destination is
+  admin-configurable and its response is controlled by whoever owns it, so one failed step could
+  produce an arbitrarily large error. The body is now capped at 4 KiB and marked truncated.
+- An over-maximum page limit returned fewer rows than the maximum. `limit=500` fell through to the
+  repository default of 50 rather than clamping to the 200 cap, so asking for more got you less,
+  with nothing in the response indicating a cap had been applied. Values above the cap are now
+  clamped to it; a non-numeric limit still falls back to the default, since there is no sensible
+  number to infer from garbage.
+
+### Added
+
+- `GET /api/v1/settings/on-call-schedules/current` answers "who is on call right now" for every
+  schedule, in the tenant's timezone. This was previously unanswerable: on-call resolution existed
+  only inside escalation delivery, where it picks one analyst at random to notify, so no analyst,
+  status page or paging integration could simply ask -- and the Settings timeline had to
+  re-implement the rotation in TypeScript to draw its calendar. Returns the full set rather than a
+  single pick, since with concurrent shifts there genuinely are several people on call, and it
+  keeps schedules where nobody is on call rather than dropping them: "nobody" is exactly what a
+  caller needs to be able to see.
+
+### Changed
+
+- The ingest rate limit's default is raised from 60 to 600 requests per minute, and its keying is
+  now documented where it is configured. It is keyed on the **source IP**, not the endpoint or the
+  token, so every integration arriving from one address shares one budget -- at 60, a customer
+  whose SIEM forwarder or NAT fronts five sources started getting `429` at twelve alerts per
+  source per minute. The new default still bounds a flood; lower it if ingest sits on an untrusted
+  network.
+
+
 - **Access control**: the dashboard's alert/incident trend charts and its MTTA/MTTR averages
   ignored tag scoping. Every card beside them was scoped correctly, but the time-series was not:
   two analysts restricted to different, non-overlapping tags received byte-identical trends and
