@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -69,4 +71,55 @@ func NewClient(timeout time.Duration) *http.Client {
 
 func isDisallowed(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() || ip.IsUnspecified()
+}
+
+// PreflightURL is an ADVISORY check, for validating an operator-entered URL
+// at the moment they save it rather than the first time something tries to
+// send to it. It is deliberately not a security control: NewClient's
+// dial-time check is, because only that one resolves the name at the instant
+// of the request and so cannot be defeated by DNS rebinding. This exists so
+// that typing a destination the guard will always refuse fails in the
+// settings form, instead of silently during the incident it was configured
+// for.
+//
+// Returns nil for anything it cannot decide -- an unresolvable name, for
+// instance, may simply be internal DNS that resolves fine from the server.
+// Refusing to save on a failed lookup would block legitimate configuration;
+// the dial-time guard still has the last word either way.
+func PreflightURL(rawURL string) error {
+	if os.Getenv("ALLOW_PRIVATE_NETWORK_TARGETS") == "true" {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("must be an http:// or https:// URL, got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL has no host")
+	}
+
+	// A literal address can be judged outright; a name is resolved
+	// best-effort, and only a resolution where EVERY answer is blocked is
+	// treated as a definite failure.
+	if ip := net.ParseIP(host); ip != nil {
+		if isDisallowed(ip) {
+			return fmt.Errorf("%s is a loopback/link-local/private address, which is blocked to prevent SSRF; set ALLOW_PRIVATE_NETWORK_TARGETS=true if this is a genuine on-prem deployment", ip)
+		}
+		return nil
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return nil
+	}
+	for _, ip := range ips {
+		if !isDisallowed(ip) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s resolves only to loopback/link-local/private addresses, which are blocked to prevent SSRF; set ALLOW_PRIVATE_NETWORK_TARGETS=true if this is a genuine on-prem deployment", host)
 }

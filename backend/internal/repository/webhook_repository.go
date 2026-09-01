@@ -38,13 +38,13 @@ func (r *WebhookRepository) ResolveToken(ctx context.Context, pool *db.Pool, tok
 
 	var ep domain.WebhookEndpoint
 	err = tx.QueryRow(ctx, `
-		select id, tenant_id, source, status, expires_at, field_mapping_template_id,
+		select id, tenant_id, name, source, status, expires_at, field_mapping_template_id,
 		       group_by_fields, dedup_window_minutes
 		from webhook_endpoints
 		where token_hash = $1`,
 		tokenHash,
 	).Scan(
-		&ep.ID, &ep.TenantID, &ep.Source, &ep.Status, &ep.ExpiresAt, &ep.FieldMappingTemplateID,
+		&ep.ID, &ep.TenantID, &ep.Name, &ep.Source, &ep.Status, &ep.ExpiresAt, &ep.FieldMappingTemplateID,
 		&ep.GroupByFields, &ep.DedupWindowMinutes,
 	)
 	if err != nil {

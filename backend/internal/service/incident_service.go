@@ -696,7 +696,10 @@ func (s *IncidentService) Comments(ctx context.Context, tenantID, incidentID uui
 // of a DB check constraint.
 func (s *IncidentService) AddIOC(ctx context.Context, tenantID, incidentID, actorID uuid.UUID, actorName string, iocType domain.IOCType, value, description string, identifiedAt time.Time, allowedTags []string) (*domain.IOC, error) {
 	if !domain.IOCTypeIsValid(iocType) {
-		return nil, fmt.Errorf("invalid IOC type %q", iocType)
+		// Naming the accepted values matters here: there are fifteen of
+		// them and no way to discover the list from a rejection that only
+		// echoes what was sent.
+		return nil, fmt.Errorf("invalid IOC type %q (accepted: %s)", iocType, domain.IOCTypeNames())
 	}
 	if value == "" {
 		return nil, fmt.Errorf("value is required")

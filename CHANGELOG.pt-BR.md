@@ -207,6 +207,58 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Controle de acesso**: os gráficos de tendência de alertas/incidentes do dashboard e as médias
+  de MTTA/MTTR ignoravam o escopo por tags. Todos os cards ao lado deles estavam corretamente
+  escopados, mas a série temporal não: dois analistas restritos a tags diferentes e sem
+  interseção recebiam tendências e médias byte a byte idênticas, cobrindo o tenant inteiro. As
+  tendências liam materialized views chaveadas só por `tenant_id`, sem dimensão de tag para
+  filtrar, então um chamador restrito agora segue um caminho ao vivo sobre as tabelas base que
+  reproduz exatamente a definição de cada view. Um chamador irrestrito mantém o caminho rápido
+  pré-agregado. O que vazava era metadado agregado, não conteúdo -- contagens e médias, nunca um
+  título ou payload -- mas para um tenant que usa tags para separar clientes ou unidades, é
+  exatamente o que a segregação por tags existe para impedir.
+- Alertas que chegavam por webhook sem nenhuma tag eram invisíveis para todo analista restrito
+  por tag. A visibilidade por tag é uma interseção, então um registro sem tags não intersecta com
+  nada: monte um SOC com o Tier 1 restrito e os alertas recém-ingeridos ficavam visíveis para
+  ninguém que devesse triá-los, sem erro e sem nenhum indicador de fila vazia. Um alerta cuja
+  origem não envia tags agora recebe o nome do próprio endpoint como tag, o que preserva a regra
+  fail-closed e ao mesmo tempo dá significado à tag (ela identifica a origem) e permite concedê-la
+  a um papel.
+- As keywords de playbook eram coletadas no editor, guardadas e nunca consultadas. O match testava
+  só `alert_name_pattern` e `is_default`, então um playbook podia listar todas as keywords
+  imagináveis e ainda assim não casar com nada -- uma funcionalidade que parecia funcionar e
+  silenciosamente não funcionava. Keywords agora participam, casadas como substring sem diferenciar
+  maiúsculas, ranqueadas abaixo de um pattern explícito (a declaração de intenção mais específica)
+  e acima do playbook padrão.
+- O normalizador genérico de webhook comparava a severidade de forma exata e sensível a
+  maiúsculas, então uma origem enviando `High` -- o que a maioria dos SIEM e EDR faz -- tinha
+  todo alerta rejeitado com 400 logo na porta. A severidade agora é reconhecida sem diferenciar
+  maiúsculas nem espaços, com as grafias que outros produtos realmente emitem mapeadas para o
+  vocabulário daqui (`info`, `warn`, `error`, `crit`, `sev1`-`sev4` e companhia). Um valor
+  desconhecido continua sendo rejeitado em vez de adivinhado, e o erro agora diz quais são aceitos.
+- A API aceitava passos de playbook na fase `new`, que a UI deixou de renderizar. Um passo assim
+  era guardado, contado e exibido em lugar nenhum -- invisível e não editável no produto. Criação
+  e edição agora recusam.
+- Um destino de escalação que nunca poderia funcionar salvava normalmente e só falhava ao ser
+  disparado, ou seja, o operador descobria durante o incidente para o qual ele fora configurado.
+  Destinos de webhook agora são checados no salvamento. A checagem é consultiva por design -- a
+  guarda em tempo de conexão do `httpguard` continua sendo o controle de verdade, já que só ela
+  resolve o nome no instante da requisição e portanto não pode ser burlada por DNS rebinding -- e
+  respeita `ALLOW_PRIVATE_NETWORK_TARGETS`, então um deploy on-prem legítimo ainda pode apontar um
+  passo para um endereço privado.
+- Um tipo de IOC inválido era rejeitado com uma mensagem que só ecoava o valor errado. São quinze
+  tipos válidos e não havia como descobri-los pelo erro; agora ele os nomeia.
+- Uma escala de plantão sem participantes passa a ser sinalizada na lista. Continua sendo uma
+  configuração válida -- passos de webhook, PagerDuty e Slack disparam para um destino
+  independentemente de quem está de plantão -- mas ela não coloca ninguém de plantão e deixa
+  nome/e-mail/telefone do analista em branco em toda notificação que alimenta, o que merece ser
+  dito em vez de deduzido de uma contagem de zero.
+- O card de MTTA/MTTR do dashboard podia exibir uma média acima de uma legenda dizendo que ela
+  fora calculada a partir de nada ("32h / 4m" sobre "baseado em 0 reconhecidos, 0 fechados"),
+  porque o número e o próprio denominador vinham de consultas diferentes. Agora mostra um traço
+  quando a amostra está vazia.
+
+
 - O primeiro provedor de IA de um tenant agora vira padrão sozinho. Enquanto nada estiver marcado
   como padrão, toda análise falha com "no LLM provider configured" -- ou seja, terminar o cadastro
   e mesmo assim nada funcionar era a experiência normal de primeira vez. A regra usa "não existe

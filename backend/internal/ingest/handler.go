@@ -125,14 +125,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// as a hard requirement would just silently lose it. See
 	// TagService.EnsureExist's doc comment for why this can't over-expose
 	// data to a tag-restricted analyst.
-	var tags []string
-	if len(normalized.Tags) > 0 {
-		tags, err = h.tags.EnsureExist(r.Context(), endpoint.TenantID, normalized.Tags)
-		if err != nil {
-			logger.Error("ensure tags exist failed", "error", err, "tenant_id", endpoint.TenantID)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+	//
+	// When the source sends no tags at all, the endpoint's own name is used
+	// as one. That is not cosmetic: tag visibility is an intersection, so a
+	// record with no tags overlaps with nothing and is invisible to every
+	// tag-restricted role -- freshly ingested alerts would be visible to
+	// nobody who is supposed to triage them, with no error and no empty-queue
+	// indicator anywhere. Naming the tag after the endpoint keeps the
+	// fail-closed rule intact while making the resulting tag meaningful (it
+	// identifies where the alert came from) and grantable to a role.
+	wanted := normalized.Tags
+	if len(wanted) == 0 {
+		wanted = []string{endpoint.Name}
+	}
+	tags, err := h.tags.EnsureExist(r.Context(), endpoint.TenantID, wanted)
+	if err != nil {
+		logger.Error("ensure tags exist failed", "error", err, "tenant_id", endpoint.TenantID)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
 	metadata := extractMetadata(body)

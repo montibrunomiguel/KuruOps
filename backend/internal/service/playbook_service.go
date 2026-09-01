@@ -61,7 +61,25 @@ func toDomainSteps(in map[domain.IncidentPhase][]domain.SavePlaybookStepInput) m
 	return out
 }
 
+// validatePlaybookSteps rejects steps in the "new" phase. The product stopped
+// offering that phase under "Steps by Phase" -- an incident still in New has
+// not been triaged, so there is nothing for a response playbook to prescribe
+// there -- but the API kept accepting it. A step written through the API (or
+// surviving from before the change) is then stored, counted, and rendered
+// nowhere: invisible and uneditable in the UI it belongs to. Rejecting it
+// here keeps the two ends telling the same story.
+func validatePlaybookSteps(steps map[domain.IncidentPhase][]domain.SavePlaybookStepInput) error {
+	if len(steps[domain.PhaseNew]) > 0 {
+		return fmt.Errorf("playbook steps cannot be attached to the %q phase; the first phase a playbook can prescribe is %q",
+			domain.PhaseNew, domain.PhaseDetectionAnalysis)
+	}
+	return nil
+}
+
 func (s *PlaybookService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in domain.SavePlaybookInput) (*domain.Playbook, error) {
+	if err := validatePlaybookSteps(in.Steps); err != nil {
+		return nil, err
+	}
 	pb := &domain.Playbook{
 		TenantID:         tenantID,
 		Title:            in.Title,
@@ -83,6 +101,9 @@ func (s *PlaybookService) Create(ctx context.Context, tenantID, actorID uuid.UUI
 }
 
 func (s *PlaybookService) Update(ctx context.Context, tenantID, id uuid.UUID, in domain.SavePlaybookInput) (*domain.Playbook, error) {
+	if err := validatePlaybookSteps(in.Steps); err != nil {
+		return nil, err
+	}
 	pb := &domain.Playbook{
 		ID:               id,
 		TenantID:         tenantID,

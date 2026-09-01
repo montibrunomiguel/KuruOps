@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kuruops/kuruops/internal/httpguard"
 	"time"
 
 	"github.com/google/uuid"
@@ -113,6 +114,16 @@ func (s *EscalationPolicyService) Save(ctx context.Context, tenantID, actorID uu
 		}
 		if !validEscalationChannel(st.ChannelType) {
 			return nil, fmt.Errorf("step %d: unknown channel type %q", i+1, st.ChannelType)
+		}
+		if st.ChannelType == domain.EscalationChannelWebhook && st.Destination != "" {
+			// Same "catch it at save time" reasoning as the template check
+			// below. Advisory only -- httpguard's dial-time check is the
+			// actual control (see PreflightURL) -- but it turns a
+			// destination that could never work into a form error instead
+			// of a failed step discovered mid-incident.
+			if err := httpguard.PreflightURL(st.Destination); err != nil {
+				return nil, fmt.Errorf("step %d: destination %v", i+1, err)
+			}
 		}
 		if st.ChannelType == domain.EscalationChannelWebhook && st.WebhookPayloadTemplate != "" {
 			// Catch a malformed template at save time (e.g. a stray brace)
