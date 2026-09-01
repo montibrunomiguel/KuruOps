@@ -3791,6 +3791,45 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/settings/on-call-schedules/current:
+    get:
+      tags: [Settings - On-Call Schedules]
+      summary: Who is on call right now, per schedule
+      description: >
+        Resolves the current on-call set for every schedule in the tenant's
+        configured timezone. Returns the full set rather than a single pick:
+        with concurrentShifts > 1 there genuinely are several people on call,
+        and collapsing that to one is a delivery decision, not a fact about
+        the schedule. Schedules where nobody is currently on call -- a
+        working-hours gap, or a schedule with no responders -- are returned
+        with an empty onCall array rather than omitted.
+      responses:
+        "200":
+          description: One entry per schedule
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    scheduleId: { type: string, format: uuid }
+                    scheduleName: { type: string }
+                    isDefault: { type: boolean }
+                    onCall:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          userId: { type: string, format: uuid }
+                          userName: { type: string }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/settings/on-call-schedules/{id}:
     get:
       tags: [Settings - On-Call Schedules]

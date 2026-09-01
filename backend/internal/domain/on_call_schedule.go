@@ -142,12 +142,56 @@ func ResolveOnCallSet(
 		groupIndex += numGroups
 	}
 
-	start := groupIndex * groupSize
-	end := start + groupSize
-	if end > len(participants) {
-		end = len(participants)
+	// Wrap around the end of the roster rather than truncating the last
+	// group. With 5 responders and 2 concurrent shifts the groups are
+	// [0,1] [2,3] [4,0] -- every period is fully staffed. Truncating
+	// instead produced a final group of one, so a schedule configured for
+	// two analysts quietly ran one-analyst periods forever after, at a
+	// frequency nothing surfaced.
+	//
+	// The cost is that when the roster does not divide evenly, somebody
+	// serves two periods back to back (here, participant 0 in the last
+	// group and again in the first). That is a real scheduling
+	// consequence, so ScheduleShortfall reports it and the editor shows a
+	// warning -- being short-staffed silently is worse than being told
+	// who doubles up.
+	out := make([]OnCallParticipant, 0, groupSize)
+	for i := 0; i < groupSize; i++ {
+		out = append(out, participants[(groupIndex*groupSize+i)%len(participants)])
 	}
-	return participants[start:end]
+	return out
+}
+
+// ScheduleShortfall describes what an unevenly divided roster costs, for
+// the schedule editor to surface. Zero value (Uneven false) means the
+// roster divides cleanly and every period is staffed without repeats.
+type ScheduleShortfall struct {
+	Uneven bool `json:"uneven"`
+	// Doubled is how many responders serve two consecutive periods per
+	// full cycle -- the remainder the wrap has to cover.
+	Doubled int `json:"doubled"`
+	// Groups is how many periods a full rotation takes.
+	Groups int `json:"groups"`
+}
+
+// RotationShortfall reports whether participantCount responders divide
+// evenly into concurrentShifts slots, and if not, how many people end up
+// covering two periods in a row once the rotation wraps (see
+// ResolveOnCallSet).
+func RotationShortfall(participantCount, concurrentShifts int) ScheduleShortfall {
+	if participantCount <= 0 {
+		return ScheduleShortfall{}
+	}
+	groupSize := concurrentShifts
+	if groupSize < 1 {
+		groupSize = 1
+	}
+	if groupSize > participantCount {
+		groupSize = participantCount
+	}
+	groups := (participantCount + groupSize - 1) / groupSize
+	remainder := (groups * groupSize) - participantCount
+	return ScheduleShortfall{Uneven: remainder > 0, Doubled: remainder, Groups: groups}
 }
 
 // withinWorkingHours does not carry a wrapping interval (e.g. 22:00-06:00)

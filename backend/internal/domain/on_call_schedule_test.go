@@ -108,14 +108,56 @@ func TestResolveOnCallSet_ConcurrentShiftsEvenSplit(t *testing.T) {
 }
 
 func TestResolveOnCallSet_ConcurrentShiftsUnevenSplit(t *testing.T) {
-	// 3 participants, concurrency 2 -- groups are [0:2] and [2:3] (last group smaller).
+	// 3 participants, concurrency 2. The last group wraps back to the start
+	// -- [Alice Bob] then [Carol Alice] -- so every period is staffed by the
+	// two the schedule promises. Truncating instead (the old behaviour) left
+	// Carol on call alone every third period, which a schedule configured
+	// for two analysts never advertised.
 	alice, bob, carol := participant("Alice"), participant("Bob"), participant("Carol")
 	participants := []domain.OnCallParticipant{alice, bob, carol}
 	handover := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
 
-	assert.Equal(t, []string{"Alice", "Bob"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover)))
-	assert.Equal(t, []string{"Carol"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 7))))
-	assert.Equal(t, []string{"Alice", "Bob"}, names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, 14))))
+	at := func(days int) []string {
+		return names(domain.ResolveOnCallSet(participants, handover, 7, 2, domain.OnCallWorkingHoursAllDay, nil, nil, handover.AddDate(0, 0, days)))
+	}
+	assert.Equal(t, []string{"Alice", "Bob"}, at(0))
+	assert.Equal(t, []string{"Carol", "Alice"}, at(7), "the wrap keeps the period at full strength")
+	assert.Equal(t, []string{"Alice", "Bob"}, at(14), "and the cycle repeats")
+
+	// Every period is fully staffed, which is the whole point.
+	for _, days := range []int{0, 7, 14, 21, 28} {
+		assert.Len(t, at(days), 2, "period at day %d must have both slots filled", days)
+	}
+}
+
+func TestRotationShortfall(t *testing.T) {
+	t.Run("an evenly divided roster reports no shortfall", func(t *testing.T) {
+		got := domain.RotationShortfall(4, 2)
+		assert.False(t, got.Uneven)
+		assert.Equal(t, 0, got.Doubled)
+		assert.Equal(t, 2, got.Groups)
+	})
+
+	t.Run("an uneven roster reports how many double up", func(t *testing.T) {
+		// 5 responders, 2 slots -> groups [0,1] [2,3] [4,0]: one person
+		// (participant 0) serves two periods back to back per cycle.
+		got := domain.RotationShortfall(5, 2)
+		assert.True(t, got.Uneven)
+		assert.Equal(t, 1, got.Doubled)
+		assert.Equal(t, 3, got.Groups)
+	})
+
+	t.Run("a single responder is never uneven", func(t *testing.T) {
+		assert.False(t, domain.RotationShortfall(1, 1).Uneven)
+	})
+
+	t.Run("more slots than people is clamped, not uneven", func(t *testing.T) {
+		assert.False(t, domain.RotationShortfall(2, 5).Uneven)
+	})
+
+	t.Run("an empty roster is not a shortfall, just empty", func(t *testing.T) {
+		assert.False(t, domain.RotationShortfall(0, 2).Uneven)
+	})
 }
 
 func TestResolveOnCallSet_ConcurrencyClampedToParticipantCount(t *testing.T) {

@@ -976,7 +976,8 @@
         "removeInterval": "Remover intervalo",
         "startTimeAria": "Horário de início do intervalo {{num}}",
         "endTimeAria": "Horário de fim do intervalo {{num}}",
-        "addResponderAria": "Respondente a adicionar"
+        "addResponderAria": "Respondente a adicionar",
+        "unevenRoster": "{{responders}} respondentes em {{slots}} vagas simultâneas não divide exato: a rotação leva {{groups}} períodos para completar e {{doubled}} respondente(s) cobrem dois períodos seguidos a cada ciclo. Todo período continua com a equipe completa."
       },
       "timeline": {
         "title": "Pré-visualização",

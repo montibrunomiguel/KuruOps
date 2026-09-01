@@ -462,6 +462,79 @@ func (s *OnCallScheduleService) ResolveAnalystForSchedule(ctx context.Context, t
 	})
 }
 
+// CurrentOnCallEntry is one schedule's answer to "who is on call right now".
+type CurrentOnCallEntry struct {
+	ScheduleID   uuid.UUID                  `json:"scheduleId"`
+	ScheduleName string                     `json:"scheduleName"`
+	IsDefault    bool                       `json:"isDefault"`
+	OnCall       []domain.OnCallParticipant `json:"onCall"`
+}
+
+// CurrentOnCall answers "who is on call right now", for every schedule the
+// tenant has, in the tenant's own timezone.
+//
+// This existed nowhere before: on-call resolution only ever happened inside
+// escalation delivery, where it picks ONE analyst at random to notify, so
+// there was no way for anyone -- an analyst, a status page, a paging
+// integration -- to simply ask. The Settings timeline had to re-implement
+// the rotation in TypeScript to draw its calendar, which is why
+// docs/oncall-rotation-fixtures.json exists to stop the two copies drifting.
+//
+// Returns the full set rather than a single pick: with ConcurrentShifts > 1
+// there genuinely are several people on call, and collapsing that to one is
+// a delivery decision, not a fact about the schedule.
+func (s *OnCallScheduleService) CurrentOnCall(ctx context.Context, tenantID uuid.UUID, now time.Time) ([]CurrentOnCallEntry, error) {
+	tz, err := s.GetTimezone(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, fmt.Errorf("load tenant timezone %q: %w", tz, err)
+	}
+	local := now.In(loc)
+	localDate := local.Format("2006-01-02")
+
+	schedules, err := s.List(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]CurrentOnCallEntry, 0, len(schedules))
+	for _, sched := range schedules {
+		var onCall []domain.OnCallParticipant
+		err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+			participants, handoverAt, periodDays, concurrentShifts, mode, workingHours, override, found, err := s.repo.GetByIDForResolution(ctx, tx, tenantID, sched.ID, localDate)
+			if err != nil || !found {
+				return err
+			}
+			onCall = domain.ResolveOnCallSet(participants, handoverAt.In(loc), periodDays, concurrentShifts, mode, workingHours, override, local)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("resolve schedule %s: %w", sched.ID, err)
+		}
+		// An empty set is a real answer -- a working-hours gap, or a
+		// schedule with nobody on it -- so the entry is kept rather than
+		// dropped. "Nobody is on call" is exactly what a caller needs to
+		// be able to see.
+		entries = append(entries, CurrentOnCallEntry{
+			ScheduleID: sched.ID, ScheduleName: sched.Name,
+			IsDefault: sched.IsDefault, OnCall: orEmptyParticipants(onCall),
+		})
+	}
+	return entries, nil
+}
+
+// orEmptyParticipants keeps the JSON field an empty array rather than null,
+// so a client can iterate it without a nil check.
+func orEmptyParticipants(in []domain.OnCallParticipant) []domain.OnCallParticipant {
+	if in == nil {
+		return []domain.OnCallParticipant{}
+	}
+	return in
+}
+
 // resolveAnalyst is ResolveCurrentAnalyst/ResolveAnalystForSchedule's shared
 // implementation -- converts now into the tenant's configured timezone and
 // resolves who's on call at that moment via domain.ResolveOnCallSet,

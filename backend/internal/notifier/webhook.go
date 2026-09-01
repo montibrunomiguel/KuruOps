@@ -22,6 +22,11 @@ import (
 // is safe to leave on the plain shared client.
 var guardedHTTPClient = httpguard.NewClient(10 * time.Second)
 
+// maxWebhookErrorBody caps how much of a failing destination's response is
+// quoted back in the error -- enough to identify the problem, not enough
+// for the destination to decide how big this process's error strings get.
+const maxWebhookErrorBody = 4 << 10
+
 // WebhookSender POSTs the notification as JSON to an arbitrary destination
 // URL -- the escape hatch for any receiver that isn't PagerDuty or Slack (a
 // custom on-call tool, an internal relay, etc). Template, if non-empty, is
@@ -100,8 +105,18 @@ func (s WebhookSender) Send(ctx context.Context, destination string, n Notificat
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("webhook returned %d: %s", resp.StatusCode, string(respBody))
+		// Bounded on purpose. The destination is admin-configurable and its
+		// response is entirely controlled by whoever owns it, so an
+		// unbounded ReadAll here pulled an arbitrary body into an error
+		// string that then reaches the API response and the logs -- a
+		// destination answering with a large page (or deliberately with a
+		// large body) turned one failed step into an outsized error.
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxWebhookErrorBody))
+		body := string(respBody)
+		if len(respBody) == maxWebhookErrorBody {
+			body += " ... (truncated)"
+		}
+		return fmt.Errorf("webhook returned %d: %s", resp.StatusCode, body)
 	}
 	return nil
 }

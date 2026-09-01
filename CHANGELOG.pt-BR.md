@@ -207,6 +207,59 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- Regras de Template de Mapeamento de Campos não conseguiam endereçar um elemento de array. Um
+  caminho como `detect.behaviors.0.tactic` -- o formato que payloads de CrowdStrike, CloudTrail e
+  Wazuh usam -- não resolvia nada e era ignorado em silêncio, indistinguível de um campo que o
+  payload nunca trouxe, então o admin que montava o template não tinha como saber qual dos dois
+  aconteceu. Um segmento composto só de dígitos agora indexa um array. Um dígito contra um objeto
+  continua sendo lido como chave primeiro, então um payload com um campo literal `"0"` segue
+  funcionando; índices fora de faixa e negativos não resolvem nada em vez de dar a volta. O
+  agrupamento de deduplicação de alertas compartilha o mesmo resolver e ganha isso também.
+- Um roster de plantão que não dividia exato pela quantidade de vagas simultâneas deixava períodos
+  com metade da equipe. Com cinco respondentes e duas vagas, a rotação produzia grupos de
+  `[2, 2, 1]`: um período em cada três rodava com um único analista, numa escala configurada para
+  dois, e nada avisava. O último grupo agora dá a volta ao início do roster, então todo período
+  fica com a equipe completa. O custo -- alguém cobre dois períodos seguidos a cada ciclo -- passa
+  a ser dito no editor da escala sempre que o roster não divide exato, em vez de ser descoberto
+  pelo calendário. A rotação em TypeScript usada na pré-visualização foi alterada junto, e as
+  fixtures compartilhadas em `docs/oncall-rotation-fixtures.json` mantêm as duas honestas.
+- `ALLOW_PRIVATE_NETWORK_TARGETS` não podia ser definida num deploy real. A própria mensagem de
+  recusa do `httpguard` manda o operador defini-la, e os dois `.env.example` e o
+  `docs/THREAT_MODEL.md` a documentam -- mas o `docker-compose.yml` nunca a referenciava, nenhum
+  serviço a declarava e não existe `env_file:`, então um valor no `.env` jamais chegava a um
+  container. O mesmo nos manifestos do Kubernetes. Agora é declarada pelos serviços api, ingest e
+  worker e no ConfigMap, vazia por padrão.
+- O corpo inteiro da resposta de um destino de webhook que falha era lido com um `io.ReadAll` sem
+  limite e ecoado na resposta da API e nos logs. O destino é configurável pelo admin e a resposta é
+  controlada por quem o opera, então um único passo com falha podia gerar um erro arbitrariamente
+  grande. O corpo agora é limitado a 4 KiB e marcado como truncado.
+- Um limite de página acima do máximo devolvia menos linhas que o máximo. `limit=500` caía no
+  default de 50 do repositório em vez de ser limitado ao teto de 200, então pedir mais entregava
+  menos, sem nada na resposta indicando que um teto fora aplicado. Valores acima do teto agora são
+  limitados a ele; um limite não numérico continua caindo no default, já que não há número
+  sensato a inferir de lixo.
+
+### Added
+
+- `GET /api/v1/settings/on-call-schedules/current` responde "quem está de plantão agora" para cada
+  escala, no fuso do tenant. Isso antes não tinha resposta possível: a resolução de plantão só
+  existia dentro da entrega de acionamento, onde ela sorteia um analista para notificar, então
+  nenhum analista, página de status ou integração de paging conseguia simplesmente perguntar -- e o
+  timeline em Configurações precisava reimplementar a rotação em TypeScript para desenhar o
+  calendário. Devolve o conjunto completo em vez de um sorteio, já que com vagas simultâneas há de
+  fato várias pessoas de plantão, e mantém escalas em que ninguém está de plantão em vez de
+  descartá-las: "ninguém" é exatamente o que um chamador precisa poder ver.
+
+### Changed
+
+- O default do rate limit de ingestão sobe de 60 para 600 requisições por minuto, e a chave dele
+  passa a ser documentada onde é configurado. Ele é chaveado pelo **IP de origem**, não pelo
+  endpoint nem pelo token, então toda integração vinda de um mesmo endereço divide um único
+  orçamento -- com 60, um cliente cujo forwarder de SIEM ou NAT concentra cinco fontes começava a
+  receber `429` a doze alertas por fonte por minuto. O novo default ainda limita um flood; reduza-o
+  se a ingestão ficar numa rede não confiável.
+
+
 - **Controle de acesso**: os gráficos de tendência de alertas/incidentes do dashboard e as médias
   de MTTA/MTTR ignoravam o escopo por tags. Todos os cards ao lado deles estavam corretamente
   escopados, mas a série temporal não: dois analistas restritos a tags diferentes e sem

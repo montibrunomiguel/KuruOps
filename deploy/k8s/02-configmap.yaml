@@ -33,6 +33,17 @@ data:
   DB_POOL_MAX_CONNS: "10"
   DB_POOL_MIN_CONNS: "0"
   MIGRATIONS_PATH: "/app/db/migrations"
+  # httpguard refuses to dial an admin-configured outbound URL (escalation
+  # webhook destination, MCP endpoint, LLM base_url) resolving to a
+  # loopback/link-local/private address, closing an SSRF pivot from "can
+  # edit Settings" to "can reach the cluster network". Leave empty unless
+  # this deployment genuinely needs to reach private destinations -- an
+  # in-cluster webhook receiver, say -- in which case set "true" and
+  # understand you are opting the whole process out. See docs/THREAT_MODEL.md.
+  ALLOW_PRIVATE_NETWORK_TARGETS: ""
+  # Keyed on source IP, not per endpoint or token -- several integrations
+  # behind one egress address share this budget. See docker-compose.yml.
+  WEBHOOK_RATE_LIMIT_PER_MINUTE: "600"
   # Used only by 08-backup-cronjob.yaml -- the bucket/region the daily
   # pg_dump gets uploaded to. Not sensitive on its own (the credentials that
   # can actually write there live in the Secret), but the bucket name is

@@ -131,6 +131,16 @@ services:
       # inert (see internal/telemetry.Setup's doc comment).
       LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-20}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # httpguard refuses to dial any admin-configured outbound URL (an
+      # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
+      # base_url) that resolves to a loopback/link-local/private address, to
+      # close an SSRF pivot from "can edit Settings" to "can reach the
+      # internal network". A genuine on-prem deployment whose destinations
+      # ARE private sets this to "true". It has to be declared here to have
+      # any effect: compose reads .env only for ${...} substitution, so a
+      # value sitting in .env that no service references never reaches a
+      # container. See docs/THREAT_MODEL.md.
+      ALLOW_PRIVATE_NETWORK_TARGETS: ${ALLOW_PRIVATE_NETWORK_TARGETS:-}
       # Settings -> Storage Integration -> Google Drive's "Connect your
       # Google account" OAuth path -- both empty (the default) disables it
       # entirely, leaving the service-account alternative unaffected. See
@@ -192,8 +202,26 @@ services:
       # either service (webhook/AI-analysis secrets can be set from either
       # side). See the api service's own comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
-      WEBHOOK_RATE_LIMIT_PER_MINUTE: ${WEBHOOK_RATE_LIMIT_PER_MINUTE:-60}
+      # Keyed on the SOURCE IP, not the endpoint or the token: every source
+      # arriving from one address shares this budget. That is the right
+      # shape for a flood defence, but it means a customer whose SIEM
+      # forwarder or NAT fronts several integrations gets ONE budget for the
+      # whole SOC -- at the old default of 60 a five-source setup started
+      # returning 429 at 12 alerts per source per minute. Raised to a
+      # figure a real alert volume fits inside while still bounding a
+      # flood; lower it if your ingest sits on an untrusted network.
+      WEBHOOK_RATE_LIMIT_PER_MINUTE: ${WEBHOOK_RATE_LIMIT_PER_MINUTE:-600}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # httpguard refuses to dial any admin-configured outbound URL (an
+      # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
+      # base_url) that resolves to a loopback/link-local/private address, to
+      # close an SSRF pivot from "can edit Settings" to "can reach the
+      # internal network". A genuine on-prem deployment whose destinations
+      # ARE private sets this to "true". It has to be declared here to have
+      # any effect: compose reads .env only for ${...} substitution, so a
+      # value sitting in .env that no service references never reaches a
+      # container. See docs/THREAT_MODEL.md.
+      ALLOW_PRIVATE_NETWORK_TARGETS: ${ALLOW_PRIVATE_NETWORK_TARGETS:-}
     ports:
       - "8081:8081"
     depends_on:
@@ -227,6 +255,16 @@ services:
       # Must match the api service's key -- see its comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # httpguard refuses to dial any admin-configured outbound URL (an
+      # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
+      # base_url) that resolves to a loopback/link-local/private address, to
+      # close an SSRF pivot from "can edit Settings" to "can reach the
+      # internal network". A genuine on-prem deployment whose destinations
+      # ARE private sets this to "true". It has to be declared here to have
+      # any effect: compose reads .env only for ${...} substitution, so a
+      # value sitting in .env that no service references never reaches a
+      # container. See docs/THREAT_MODEL.md.
+      ALLOW_PRIVATE_NETWORK_TARGETS: ${ALLOW_PRIVATE_NETWORK_TARGETS:-}
     depends_on:
       postgres:
         condition: service_healthy
