@@ -657,7 +657,9 @@
         "show": "Show",
         "hide": "Hide",
         "autoAnalyzeAllAlerts": "Automatically analyze every incoming alert",
-        "autoAnalyzeAllAlertsHint": "Off by default: analysis only runs when an analyst clicks \"Analyze with AI\". Turning this on runs analysis for every webhook alert the moment it arrives -- only takes effect once this provider is the default."
+        "autoAnalyzeAllAlertsHint": "Off by default: analysis only runs when an analyst clicks \"Analyze with AI\". Turning this on runs analysis for every webhook alert the moment it arrives -- only takes effect once this provider is the default.",
+        "apiKeyKeepPlaceholder": "Leave blank to keep the current key",
+        "apiKeyKeepHint": "The stored key is never sent back to the browser. Leave this blank to keep it, or type a new one to rotate it."
       },
       "kind": {
         "anthropic": "Anthropic",

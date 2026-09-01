@@ -93,6 +93,67 @@ func TestLLMProviderService_Create(t *testing.T) {
 	})
 }
 
+// TestLLMProviderService_CreateDefaulting covers the "first one is
+// automatically the default" rule -- a fresh tenant per sub-test, since the
+// rule is about what a tenant already has.
+func TestLLMProviderService_CreateDefaulting(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	newSvc := func() *service.LLMProviderService {
+		return service.NewLLMProviderService(pool, repository.NewLLMProviderRepository(), secrets.NewEnvStore(), repository.NewAdminAuditEventRepository())
+	}
+
+	t.Run("the first provider a tenant registers becomes the default", func(t *testing.T) {
+		tenantID := testutil.NewTenant(t)
+		actorID := testutil.NewUser(t, tenantID, "admin", nil)
+		svc := newSvc()
+
+		first, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "First", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-1",
+		})
+		require.NoError(t, err)
+		assert.True(t, first.IsDefault, "nothing else exists, so this one has to be usable without a second click")
+	})
+
+	t.Run("a second provider does not steal the default", func(t *testing.T) {
+		tenantID := testutil.NewTenant(t)
+		actorID := testutil.NewUser(t, tenantID, "admin", nil)
+		svc := newSvc()
+
+		_, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "First", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-1",
+		})
+		require.NoError(t, err)
+
+		second, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "Second", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-2",
+		})
+		require.NoError(t, err)
+		assert.False(t, second.IsDefault, "an existing default must not be silently reassigned")
+	})
+
+	t.Run("deleting the default leaves the next created provider to take it", func(t *testing.T) {
+		// Delete promotes nobody, so without this rule a tenant can end up
+		// holding providers with no default at all -- and every analysis
+		// keeps failing with "no LLM provider configured".
+		tenantID := testutil.NewTenant(t)
+		actorID := testutil.NewUser(t, tenantID, "admin", nil)
+		svc := newSvc()
+
+		first, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "First", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-1",
+		})
+		require.NoError(t, err)
+		require.True(t, first.IsDefault)
+		require.NoError(t, svc.Delete(t.Context(), tenantID, actorID, first.ID))
+
+		replacement, err := svc.Create(t.Context(), tenantID, actorID, service.LLMProviderSaveInput{
+			Name: "Replacement", Kind: "openai_compatible", Model: "gpt-4o", APIKey: "sk-2",
+		})
+		require.NoError(t, err)
+		assert.True(t, replacement.IsDefault, "no default existed, so the new provider must become one")
+	})
+}
+
 func TestLLMProviderService_Update(t *testing.T) {
 	pool := testutil.RequireTestDB(t)
 	tenantID := testutil.NewTenant(t)

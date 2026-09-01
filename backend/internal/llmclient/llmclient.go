@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -174,6 +175,13 @@ type openAIToolFunctionDef struct {
 type openAIResponse struct {
 	Choices []struct {
 		Message openAIMessage `json:"message"`
+		// Carried purely so an empty completion can report why it was
+		// empty -- "length" (the answer was truncated to nothing, typical
+		// of a reasoning model that spent its whole budget thinking) and
+		// "content_filter" are very different problems from a provider
+		// that simply returned nothing, and the operator can't tell them
+		// apart from a blank analysis.
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -214,7 +222,32 @@ func (c *openAIClient) Complete(ctx context.Context, systemPrompt, userPrompt st
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("llm provider returned no choices")
 	}
+	// An empty completion used to be returned as if it were an answer,
+	// which surfaced as an analysis marked "completed" with nothing in it
+	// -- no result for the analyst, no error for the operator, and nothing
+	// anywhere saying the provider had come back blank.
+	if strings.TrimSpace(resp.Choices[0].Message.Content) == "" {
+		return "", emptyCompletionError(resp.Choices[0].FinishReason)
+	}
 	return resp.Choices[0].Message.Content, nil
+}
+
+// emptyCompletionError explains a blank answer in terms of the provider's
+// own finish_reason, since the fix differs per cause: a truncated answer
+// needs a bigger budget or a smaller prompt, a filtered one needs different
+// input, and a bare "stop" with no text usually means the model or endpoint
+// is not returning text where an OpenAI-compatible caller expects it.
+func emptyCompletionError(finishReason string) error {
+	switch finishReason {
+	case "length":
+		return fmt.Errorf("llm provider returned an empty completion (finish_reason=length): the answer was cut off before any text was produced -- the model's output budget is being consumed before it writes anything")
+	case "content_filter":
+		return fmt.Errorf("llm provider returned an empty completion (finish_reason=content_filter): the provider suppressed the answer")
+	case "":
+		return fmt.Errorf("llm provider returned an empty completion with no finish_reason -- the endpoint may not be returning message content where an OpenAI-compatible response is expected")
+	default:
+		return fmt.Errorf("llm provider returned an empty completion (finish_reason=%s)", finishReason)
+	}
 }
 
 func (c *openAIClient) CompleteWithTools(ctx context.Context, systemPrompt string, messages []Message, tools []Tool) (CompletionResult, error) {
@@ -266,6 +299,13 @@ func (c *openAIClient) CompleteWithTools(ctx context.Context, systemPrompt strin
 			}
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Args: args})
+	}
+	// Empty text is perfectly normal here as long as the model called a
+	// tool -- that turn's output IS the tool call, and the agent loop feeds
+	// the result back for the next turn. Empty text with no tool call is
+	// the same dead end Complete guards against.
+	if strings.TrimSpace(result.Text) == "" && len(result.ToolCalls) == 0 {
+		return CompletionResult{}, emptyCompletionError(resp.Choices[0].FinishReason)
 	}
 	return result, nil
 }

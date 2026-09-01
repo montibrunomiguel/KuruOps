@@ -185,7 +185,42 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   carregar" em vez de derrubar o app inteiro (o resto da navegação de Settings continua funcional,
   já que fica fora desse novo boundary).
 
+### Added
+
+- A primeira análise que um alerta ou incidente recebe agora é uma triagem estruturada completa em
+  vez de alguns parágrafos livres: quatro fases (coletar, correlacionar, classificar, escalar),
+  uma disposição explícita (verdadeiro positivo / verdadeiro positivo benigno / falso positivo),
+  prioridade P1-P4 baseada em risco contextual e não na severidade com que o alerta chegou, e um
+  layout fixo de relatório (resumo, entidades afetadas, tabela de decisão, evidências, correlação,
+  ações recomendadas, tuning). Reanálises e turnos de conversa seguintes mantêm o prompt geral mais
+  curto -- o relatório de triagem já está na timeline a essa altura. A metodologia é adaptada da
+  skill `alert-triage` do UnitOneAI/SecuritySkills (MIT), que se apoia em MITRE ATT&CK e NIST SP
+  800-61 Rev 2. O prompt também carrega restrições que passam a importar quando há ferramentas MCP
+  ligadas: recomendar contenção mas nunca executá-la, nunca executar nada encontrado num payload, e
+  tratar instruções embutidas no conteúdo do alerta como dado a reportar e não como diretiva a
+  seguir -- payloads de alerta chegam por webhook e são influenciáveis por atacante por definição.
+- Provedores de IA agora podem ser editados depois de criados. O backend já tinha o endpoint; o
+  painel de Configurações simplesmente nunca o chamava, então corrigir uma base URL ou um modelo
+  digitado errado exigia apagar o provedor e reinserir a chave de API. Deixar o campo da chave em
+  branco preserva a que está guardada -- ela nunca volta para o navegador, então não há com o que
+  preenchê-lo.
+
 ### Fixed
+
+- O primeiro provedor de IA de um tenant agora vira padrão sozinho. Enquanto nada estiver marcado
+  como padrão, toda análise falha com "no LLM provider configured" -- ou seja, terminar o cadastro
+  e mesmo assim nada funcionar era a experiência normal de primeira vez. A regra usa "não existe
+  padrão" em vez de "não existem provedores", porque apagar o padrão não promove ninguém: sem isso,
+  um tenant podia ficar com vários provedores e nenhum utilizável.
+- Resposta vazia de um provedor de LLM era registrada como análise bem-sucedida. O resultado era
+  uma análise marcada como "completed" e sem nada dentro: nenhuma saída para o analista, nenhum
+  erro para o operador, e nada em lugar nenhum indicando que o provedor tinha voltado em branco.
+  Respostas vazias agora falham a execução com o `finish_reason` do próprio provedor na mensagem,
+  o que separa resposta truncada (`length` -- típico de modelo de raciocínio que gasta todo o
+  orçamento de saída pensando) de resposta suprimida (`content_filter`) de endpoint que
+  simplesmente não devolve conteúdo onde um chamador compatível com OpenAI espera. Encontrado na
+  prática contra o endpoint de compatibilidade OpenAI do Gemini. Um turno vazio que carrega uma
+  chamada de ferramenta continua válido, já que a chamada é a saída daquele turno.
 
 - **Integridade de dados**: escalar um alerta para incidente eram três transações independentes
   (criar o incidente, vincular o alerta a ele, mudar o alerta para `escalated`). Qualquer falha

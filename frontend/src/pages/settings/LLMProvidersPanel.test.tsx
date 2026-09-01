@@ -300,4 +300,65 @@ describe("LLMProvidersPanel", () => {
     expect(row).not.toHaveTextContent("·  ·");
     expect(row.textContent).not.toContain("https://");
   });
+
+  it("Edit seeds the form from the provider and saves it with PUT", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(providerFixture()));
+      return Promise.resolve(jsonResponse([providerFixture({ name: "OpenAI", model: "gpt-4o" })]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+
+    // Seeded from the row, not blank -- the whole point of edit.
+    expect(screen.getByLabelText("Name")).toHaveValue("OpenAI");
+    expect(screen.getByLabelText("Model")).toHaveValue("gpt-4o");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("https://api.openai.com/v1");
+
+    await userEvent.clear(screen.getByLabelText("Model"));
+    await userEvent.type(screen.getByLabelText("Model"), "gpt-4o-mini");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(put).toBeDefined();
+      expect(put![0]).toContain("/api/v1/settings/llm-providers/p1");
+      expect(JSON.parse((put![1] as RequestInit).body as string).model).toBe("gpt-4o-mini");
+    });
+  });
+
+  it("the API key is optional when editing, so an untouched key is kept", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") return Promise.resolve(jsonResponse(providerFixture()));
+      return Promise.resolve(jsonResponse([providerFixture()]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    // Required on create, deliberately not on edit -- the stored key never
+    // round-trips to the browser, so there is nothing to prefill it with.
+    expect(screen.getByLabelText("API Key")).not.toBeRequired();
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      expect(put).toBeDefined();
+      expect(JSON.parse((put![1] as RequestInit).body as string).apiKey).toBe("");
+    });
+  });
+
+  it("editing replaces that row and Cancel brings it back", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([providerFixture()])));
+    renderPanel();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+  });
+
 });
