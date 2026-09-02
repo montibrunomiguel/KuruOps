@@ -9,7 +9,7 @@
 # its cross-language source of truth (see that file's own doc comment), and
 # `tsc`'s src-wide typecheck in `npm run build` fails if it can't resolve
 # that import, so docs/ has to be reachable from inside the build.
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
