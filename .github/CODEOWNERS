@@ -1,0 +1,19 @@
+# Every pull request requests a review from the owner listed here. On its own
+# this only REQUESTS a review -- it does not block a merge. Pair it with
+# branch protection on `main` ("Require a pull request before merging" plus
+# "Require review from Code Owners") for that, which a public repository gets
+# for free.
+#
+# Without that pairing, a dependency bot can merge a breaking major change
+# with nobody having read it, which is what happened here once already.
+* @montibrunomiguel
+
+# Called out separately because these are the files where an unreviewed
+# change is least visible and most damaging: CI definitions, the dependency
+# automation itself, deployment manifests, and anything touching secrets
+# handling or the tag-based access boundary.
+/.github/                                @montibrunomiguel
+/deploy/                                 @montibrunomiguel
+/docker-compose.yml                      @montibrunomiguel
+/backend/internal/secrets/               @montibrunomiguel
+/backend/internal/httpguard/             @montibrunomiguel

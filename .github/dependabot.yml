@@ -1,6 +1,22 @@
 # Nothing watched dependencies before this, which is how golang.org/x/crypto
 # sat twenty days behind a published fix until a container scan caught it.
 # It matters more now the project is public and other people deploy it.
+#
+# POLICY: a major bump is never merged without review.
+#
+# This is not theoretical. Fifteen PRs from this file were once merged in one
+# sitting and broke the build six different ways -- react moved to 19 while
+# react-dom stayed on 18, ESLint 10 dropped a transitive dependency and
+# orphaned a plugin's peer range, a lint action moved to a line that drives a
+# config schema this repo does not use. Every one of those was a major, and
+# every one was individually reviewable.
+#
+# The grouping below is the first half of the policy: patch and minor travel
+# together because they are routinely safe, so majors are the PRs that arrive
+# alone and are meant to be read. The second half is enforcement -- branch
+# protection requiring a review before merge. That setting needs a public
+# repository or a paid plan; on a private free repo the API refuses it
+# outright, which is exactly how fifteen PRs merged unreviewed.
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -36,6 +52,15 @@ updates:
       interval: weekly
     commit-message:
       prefix: "deps(actions)"
+    ignore:
+      # golangci-lint-action v7+ drives golangci-lint v2, whose config schema
+      # is a rewrite; backend/.golangci.yml is a v1 config. Merging this bump
+      # makes the lint job fail outright trying to fetch a v2 module path at
+      # a v1 version. Migrating the config is real work with its own PR --
+      # until then there is no point reopening this every week for someone to
+      # merge again. Remove this entry as part of that migration.
+      - dependency-name: golangci/golangci-lint-action
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directory: /backend

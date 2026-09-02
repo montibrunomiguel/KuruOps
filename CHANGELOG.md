@@ -13,6 +13,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- Major dependency bumps now require review, in three layers. `.github/dependabot.yml` states the
+  policy and stops re-proposing `golangci-lint-action`'s major, which is blocked on migrating
+  `.golangci.yml` to the v2 schema -- with a note saying what unblocks it, so it is deferred rather
+  than closed-and-forgotten. `.github/CODEOWNERS` makes every PR request a review, and calls out
+  the paths where an unreviewed change is least visible and most damaging: CI definitions, the
+  dependency automation itself, deployment manifests, and the secrets and SSRF-guard packages.
+  `CONTRIBUTING.md` writes the policy down along with the questions worth asking of a major -- does
+  this package have a paired one that must move together, does it drop something it provided
+  transitively, does it change a config format this repository has a file for.
+
+  Neither layer *blocks* a merge on its own. The enforcement is branch protection requiring a
+  review, which needs a public repository or a paid plan -- on a private free repo the API refuses
+  it outright, which is precisely how fifteen PRs merged unreviewed. Enabling it is a step to take
+  when the repository is made public.
+
+
 - Playbooks no longer offer a "New" phase section under "Steps by Phase" — by the time an
   incident is still in New/Identification, an analyst hasn't triaged it yet, so there was never
   anything for a response playbook to prescribe there (steps only make sense from Detection &

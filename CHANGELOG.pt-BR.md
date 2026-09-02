@@ -14,6 +14,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- Bumps de dependência major agora exigem revisão, em três camadas. O `.github/dependabot.yml`
+  declara a política e para de repropor o major do `golangci-lint-action`, que está travado na
+  migração do `.golangci.yml` para o schema v2 -- com uma nota dizendo o que o destrava, de modo
+  que fica adiado em vez de fechado-e-esquecido. O `.github/CODEOWNERS` faz toda PR solicitar
+  revisão e destaca os caminhos onde uma mudança não revisada é menos visível e mais danosa:
+  definições de CI, a própria automação de dependências, manifestos de deploy e os pacotes de
+  segredos e de proteção contra SSRF. O `CONTRIBUTING.md` registra a política junto com as
+  perguntas que valem para um major -- esse pacote tem um par que precisa andar junto, ele deixa de
+  fornecer algo que fornecia transitivamente, ele muda um formato de configuração do qual este
+  repositório tem um arquivo.
+
+  Nenhuma das camadas *bloqueia* um merge sozinha. A imposição é branch protection exigindo
+  revisão, que precisa de repositório público ou plano pago -- num repo privado gratuito a API a
+  recusa de saída, que é exatamente como quinze PRs foram mergeadas sem revisão. Habilitá-la é um
+  passo a dar quando o repositório for tornado público.
+
+
 - Playbooks não oferecem mais uma seção de fase "Novo" em "Passos por Fase" -- quando um incidente
   ainda está em Novo/Identificação, o analista ainda não triou o alerta, então nunca havia nada
   pra um playbook de resposta prescrever ali (passos só fazem sentido a partir de Detecção &
