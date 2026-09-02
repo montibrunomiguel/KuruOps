@@ -57,6 +57,25 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- Alerts can be closed in bulk. Closing deliberately cannot ride on the existing bulk status
+  change -- the repository refuses a direct transition to `closed` so a classification is always
+  captured -- which left triaging a burst of near-identical false positives as a one-dialog-at-a-
+  time job. Selecting "Closed" in the alert list's bulk toolbar now reveals a classification
+  picker and an optional shared note, and `POST /api/v1/alerts/bulk/close` applies them to every
+  selected alert. Per-alert outcomes are reported the same way the bulk status change reports
+  them, so one already-closed or tag-hidden alert does not stop the rest; an unusable
+  classification is rejected once as a bad request rather than failing every alert in the batch
+  with the same error. Attachments are deliberately not accepted in bulk -- an attachment is
+  evidence about one specific alert, and stapling the same file to fifty of them would make the
+  record say something nobody meant.
+- `.gitleaks.toml` and a `secret-scan` CI job, so the pre-publication secret audit is repeatable
+  by anyone rather than a one-off. The scan reads full history, not just the working tree, since a
+  secret that was committed and later removed is still a secret. Its allowlist names each
+  known-benign match individually -- the documented dev encryption key, Vault's dev-mode root
+  token, PEM placeholders reading `CHANGEME`, and test fixtures containing the literal word
+  `fake` -- so a NEW secret in one of those same files still fails the scan.
+
+
 - Indicators of Compromise (IOCs) on incidents: an "IOCs" button on the incident detail page opens
   a popup listing every IOC recorded so far, with an inline form to add a new one — type (a list
   covering NIST SP 800-61r3's own IOC examples — IP address, domain name, URL, file hash, email

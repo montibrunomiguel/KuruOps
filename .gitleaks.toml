@@ -1,0 +1,52 @@
+# Secret scanning config, used by the secret-scan job in
+# .github/workflows/security.yml and runnable locally with:
+#
+#   docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+#     detect --source=/repo --redact
+#
+# The allowlist below covers the handful of matches that are deliberately in
+# the repository. Each one is listed individually rather than silencing a
+# whole rule, so a NEW secret in one of these files still fails the scan.
+[extend]
+useDefault = true
+
+[[rules]]
+  # Placeholder, kept so the file parses as a rules table alongside the
+  # extended defaults; the real work is in the allowlist.
+  id = "kuruops-noop"
+  description = "never matches -- see the allowlist below"
+  regex = '''\$\^kuruops-never-matches\$\^'''
+
+[allowlist]
+  description = "Known-benign matches: the documented dev key, and test/placeholder material."
+
+  paths = [
+    # PEM markers wrapping the literal word CHANGEME -- the operator is meant
+    # to replace it, and there is no key here to leak.
+    '''deploy/k8s/01-secret\.example\.yaml''',
+    # Test fixtures: a truncated fake service-account blob, and the literal
+    # string "fake" between PEM markers. Both exist to exercise parsing.
+    '''backend/internal/blobstore/gdrive_test\.go''',
+    '''backend/internal/secrets/persistent_store_test\.go''',
+    '''backend/internal/secrets/persistent_store_internal_test\.go''',
+    '''backend/internal/secrets/factory_test\.go''',
+    '''backend/internal/service/storage_config_service_test\.go''',
+  ]
+
+  regexes = [
+    # The example SECRETS_ENCRYPTION_KEY committed in .env.example and named
+    # as a constant in secrets/factory.go. It is a real, working key on
+    # purpose, so `docker compose up` needs no setup -- and it cannot be used
+    # by a real deployment: NewFromConfig refuses it whenever AUTH_MODE is
+    # anything but dev/dev-headers, which
+    # TestNewFromConfig_RejectsExampleEncryptionKeyOutsideDevMode covers.
+    '''k83Yh5rQGCdVDMbUtJywr5J6ScE6\+\+Bp4m936YZDecw=''',
+    # Vault's dev-mode root token, fixed and public by design -- dev-mode
+    # Vault is in-memory and thrown away on stop (see docker-compose.yml).
+    '''dev-root-token''',
+    # False positive: VAULT_TOKEN in the .env.example files is EMPTY, so the
+    # generic rule runs past the newline and reports the NEXT line as the
+    # secret -- the value it extracts is the literal string below, a config
+    # key name, not a credential.
+    '''^VAULT_MOUNT=secret$''',
+  ]

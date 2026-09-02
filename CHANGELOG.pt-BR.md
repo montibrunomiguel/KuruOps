@@ -63,6 +63,26 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- Alertas podem ser fechados em lote. Fechar deliberadamente não podia usar a mudança de status em
+  lote existente -- o repositório recusa transição direta para `closed` para que uma classificação
+  seja sempre registrada -- o que deixava triar uma rajada de falsos positivos quase idênticos como
+  um trabalho de um diálogo por vez. Escolher "Fechado" na barra de ações em lote da lista de
+  alertas agora revela um seletor de classificação e uma nota opcional compartilhada, e
+  `POST /api/v1/alerts/bulk/close` os aplica a todos os alertas selecionados. Os resultados por
+  alerta são reportados do mesmo jeito que a mudança de status em lote reporta, então um alerta já
+  fechado ou oculto por tag não interrompe os demais; uma classificação inválida é recusada uma vez
+  como requisição inválida em vez de falhar todos os alertas do lote com o mesmo erro. Anexos
+  deliberadamente não são aceitos em lote -- um anexo é evidência sobre um alerta específico, e
+  grampear o mesmo arquivo em cinquenta deles faria o registro dizer algo que ninguém quis dizer.
+- `.gitleaks.toml` e um job `secret-scan` no CI, para que a auditoria de segredos anterior à
+  publicação seja repetível por qualquer pessoa em vez de um teste avulso. A varredura lê o
+  histórico completo, não apenas a árvore de trabalho, já que um segredo commitado e removido
+  depois continua sendo um segredo. A allowlist nomeia cada correspondência sabidamente inofensiva
+  individualmente -- a chave de cifragem de dev documentada, o token root do Vault em modo dev,
+  placeholders PEM escritos como `CHANGEME` e fixtures de teste contendo a palavra literal `fake`
+  -- de modo que um segredo NOVO nesses mesmos arquivos ainda reprova a varredura.
+
+
 - Indicadores de Comprometimento (IOCs) em incidentes: um botão "IOCs" na página de detalhe do
   incidente abre um popup listando todo IOC já cadastrado, com um formulário inline pra adicionar
   um novo -- tipo (uma lista cobrindo os próprios exemplos de IOC da NIST SP 800-61r3 -- endereço

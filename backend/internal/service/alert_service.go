@@ -271,6 +271,34 @@ func (s *AlertService) changeStatusTx(ctx context.Context, tx pgx.Tx, tenantID, 
 // single alert -- no separate whole-request check needed here for that
 // case. One alert failing (not found, no longer visible, already closed)
 // doesn't stop the rest from being attempted.
+// BulkClose closes every alert in ids with the same classification and
+// comment, and reports per-alert outcomes exactly like BulkChangeStatus --
+// one alert already closed, or hidden by the caller's tags, must not stop
+// the rest.
+//
+// Closing is deliberately not reachable through BulkChangeStatus: the
+// repository refuses a direct transition to 'closed' so that a
+// classification is always captured (see AlertRepository.UpdateStatus).
+// Triaging a burst of near-identical false positives one dialog at a time
+// was the cost of that rule; this keeps the rule and removes the cost.
+//
+// CloseAlertInput.AttachmentURL is deliberately not exposed here. An
+// attachment is evidence about one specific alert, and silently stapling
+// the same file to fifty of them would make the record say something
+// nobody meant.
+func (s *AlertService) BulkClose(ctx context.Context, tenantID, actorID uuid.UUID, ids []uuid.UUID, in domain.CloseAlertInput, allowedTags []string) []BulkResult {
+	in.AttachmentURL = nil
+	results := make([]BulkResult, 0, len(ids))
+	for _, id := range ids {
+		if err := s.Close(ctx, tenantID, id, actorID, in, allowedTags); err != nil {
+			results = append(results, BulkResult{ID: id, Success: false, Error: err.Error()})
+		} else {
+			results = append(results, BulkResult{ID: id, Success: true})
+		}
+	}
+	return results
+}
+
 func (s *AlertService) BulkChangeStatus(ctx context.Context, tenantID, actorID uuid.UUID, ids []uuid.UUID, newStatus domain.AlertStatus, allowedTags []string) []BulkResult {
 	results := make([]BulkResult, 0, len(ids))
 	for _, id := range ids {

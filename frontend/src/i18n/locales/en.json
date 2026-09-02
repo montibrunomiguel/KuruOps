@@ -398,7 +398,11 @@
       "clearSelection": "Clear",
       "resultSummary": "{{success}} updated, {{failed}} failed.",
       "allSucceeded_one": "{{count}} alert updated.",
-      "allSucceeded_other": "{{count}} alerts updated."
+      "allSucceeded_other": "{{count}} alerts updated.",
+      "classificationLabel": "Classification",
+      "commentLabel": "Closing note",
+      "commentPlaceholder": "Optional note applied to every selected alert",
+      "applyClose": "Close alerts"
     }
   },
   "incidents": {

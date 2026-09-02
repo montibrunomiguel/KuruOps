@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,35 @@ const (
 	ClassificationTruePositive    Classification = "true_positive"
 	ClassificationAuthorizedEvent Classification = "authorized_event"
 )
+
+// ValidClassifications is the closed set a close must pick from. A DB check
+// constraint enforces the same list; this exists so a caller can be told
+// which values are accepted instead of receiving a constraint violation --
+// and so a bulk close can reject one bad value once rather than failing
+// every alert in the batch with the same error.
+var ValidClassifications = []Classification{
+	ClassificationFalsePositive,
+	ClassificationTruePositive,
+	ClassificationAuthorizedEvent,
+}
+
+func ClassificationIsValid(c Classification) bool {
+	for _, v := range ValidClassifications {
+		if v == c {
+			return true
+		}
+	}
+	return false
+}
+
+// ClassificationNames renders the accepted values for an error message.
+func ClassificationNames() string {
+	names := make([]string, 0, len(ValidClassifications))
+	for _, c := range ValidClassifications {
+		names = append(names, string(c))
+	}
+	return strings.Join(names, ", ")
+}
 
 // Alert mirrors the `alerts` table. Severity/status/classification transitions
 // are only ever applied through AlertService, never by writing this struct

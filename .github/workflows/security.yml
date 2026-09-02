@@ -61,6 +61,30 @@ jobs:
           cd frontend
           npm audit --audit-level=high
 
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          # gitleaks scans history, not just the working tree -- a secret
+          # that was committed and later removed is still a secret. The
+          # default shallow clone would hide exactly that.
+          fetch-depth: 0
+
+      # Pinned by digest-bearing tag rather than @latest for the same reason
+      # trivy-action is pinned below: a scanner should not change behaviour
+      # from under a build without anyone reviewing it.
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # The action nags for a licence key on org-owned repos; it is not
+          # required for public ones. Set GITLEAKS_LICENSE as a repository
+          # secret if this ever moves under an organisation.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   container-scan:
     name: Container Image Vulnerability Scan
     runs-on: ubuntu-latest
