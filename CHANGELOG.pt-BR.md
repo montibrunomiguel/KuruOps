@@ -227,6 +227,35 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- `main` reparada depois que quinze pull requests do Dependabot foram mergeadas de uma vez, várias
+  delas de major. A automação de dependências adicionada na mudança anterior funcionou como
+  projetada -- majors chegaram como PRs separadas em vez de agrupadas -- mas mergeá-las sem revisão
+  quebrou o build de seis formas distintas, cada uma com causa própria: `react` foi para 19 e
+  `react-dom` ficou em 18, partindo o par do runtime num major; `@types/react` e `@types/react-dom`
+  se partiram do mesmo jeito; o ESLint 10 deixou de trazer `@eslint/js` transitivamente e deixou o
+  `eslint-plugin-react-hooks@5` incapaz de satisfazer o peer range; o `golangci-lint-action` v9
+  aciona o golangci-lint v2, cujo schema de configuração é uma reescrita que o `.golangci.yml` v1
+  do repositório não atende; o `arduino/setup-task` sem token esgotou o orçamento compartilhado de
+  API do GitHub do runner; e o `alpine:3.24` trazia `libcrypto3` 3.5.7-r0, com uma negação de
+  serviço do OpenSSL (CVE-2026-14456).
+- A imagem do backend agora roda `apk upgrade` antes de instalar pacotes. Uma tag de imagem base é
+  reconstruída no ritmo dela, então entre a correção de uma CVE de pacote de SO e a republicação da
+  tag, todo build embarca a versão vulnerável. A imagem do frontend já fazia isso; o backend agora
+  acompanha. As quatro imagens passam limpas depois disso.
+- O `golangci-lint-action` fica fixado em v6 com uma nota de que uma PR do Dependabot que tente
+  subi-lo deve ser fechada, não mergeada, até o `.golangci.yml` migrar para o schema v2 -- essa
+  migração é trabalho próprio, não efeito colateral de um bump de versão.
+
+### Changed
+
+- O `eslint-plugin-react-hooks` v7 introduz `set-state-in-effect`, `purity` e `refs`, que não
+  existiam na v5 e apontam 18 lugares em 14 arquivos -- majoritariamente o padrão de "carregar a
+  configuração existente no estado do formulário na montagem". Elas ficam em `warn` em vez de
+  adotadas ou desligadas: o sinal continua visível e código novo segue sendo apontado conforme é
+  escrito, sem prender o build a um refactor que ninguém agendou. Voltem para `error` quando as
+  ocorrências atuais forem resolvidas.
+
+
 - `google.golang.org/grpc` atualizado de 1.82.1 para 1.83.1 por conta da CVE-2026-84304 (HIGH),
   apontada pelo scan de imagem nas três imagens Go. É dependência indireta, alcançada pelo cliente
   da API do Google; o `govulncheck` não reporta nada no código chamado, mas ela vai junto nas

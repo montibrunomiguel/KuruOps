@@ -24,7 +24,13 @@ FROM alpine:3.24 AS base
 # needed by all three binaries wherever a tenant's configured timezone
 # (Settings -> On-Call Schedule, or any other non-UTC tenant timezone) gets
 # resolved (OnCallScheduleService.ResolveCurrentAnalyst and friends).
-RUN apk add --no-cache ca-certificates tzdata && adduser -D -H kuruops
+# apk upgrade before installing: a base image tag is rebuilt on its own
+# schedule, so between an OS package CVE being fixed upstream and the tag
+# being republished, every build of this image ships the vulnerable version.
+# Upgrading here closes that window -- the container scan flagged
+# libcrypto3 3.5.7-r0 (CVE-2026-14456, an OpenSSL denial of service) while
+# alpine:3.24 still carried it.
+RUN apk --no-cache upgrade && apk add --no-cache ca-certificates tzdata && adduser -D -H kuruops
 USER kuruops
 
 FROM base AS api
