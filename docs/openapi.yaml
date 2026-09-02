@@ -1041,6 +1041,61 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
 
+  /api/v1/alerts/bulk/close:
+    post:
+      tags: [Alerts]
+      summary: Close several alerts under one classification
+      description: >
+        Closing cannot ride on /alerts/bulk/status: a direct transition to
+        'closed' is refused so that a classification is always captured.
+        Answers 200 with a per-alert result list even when some fail, the
+        same contract as /alerts/bulk/status -- one already-closed or
+        tag-hidden alert does not stop the rest. An invalid classification is
+        a single 400 rather than N identical failures. No attachment is
+        accepted: an attachment is evidence about one specific alert.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, classification]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 200
+                  items: { type: string, format: uuid }
+                classification:
+                  type: string
+                  enum: [false_positive, true_positive, authorized_event]
+                comment:
+                  type: string
+                  description: Optional note recorded on every alert in the batch.
+      responses:
+        "200":
+          description: Per-alert outcomes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        success: { type: boolean }
+                        error: { type: string }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/alerts/{id}/escalate:
     post:
       tags: [Alerts]

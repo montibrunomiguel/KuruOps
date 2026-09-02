@@ -63,6 +63,7 @@ func TestSubResourceRoutesRejectTagRestrictedCaller(t *testing.T) {
 var routesExemptFromTagScoping = map[string]bool{
 	"/":            true,
 	"/bulk/status": true,
+	"/bulk/close":  true,
 	"/bulk/phase":  true,
 }
 

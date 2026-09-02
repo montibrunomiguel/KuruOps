@@ -879,3 +879,67 @@ func TestAlertHandlers_ReassignRequiresAnalystIDKey(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, put(t, `{}`))
 	})
 }
+
+// TestAlertHandlers_BulkClose covers closing several alerts under one
+// classification. Closing deliberately cannot ride on bulk/status -- the
+// repository refuses a direct transition to 'closed' so a classification is
+// always captured -- which used to leave triaging a burst of near-identical
+// false positives as a one-dialog-at-a-time job.
+func TestAlertHandlers_BulkClose(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	post := func(t *testing.T, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := withClaims(httptest.NewRequest("POST", "/bulk/close", strings.NewReader(body)), tenantID, actorID, nil)
+		req.Header.Set("Content-Type", "application/json")
+		return doRequest(r, req)
+	}
+
+	t.Run("closes the selected alerts with one classification", func(t *testing.T) {
+		rec := post(t, `{"ids":["`+alertID.String()+`"],"classification":"false_positive","comment":"ruido conhecido"}`)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		var resp struct {
+			Results []struct {
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		require.Len(t, resp.Results, 1)
+		assert.True(t, resp.Results[0].Success, resp.Results[0].Error)
+
+		getRec := doRequest(r, withClaims(httptest.NewRequest("GET", "/"+alertID.String(), nil), tenantID, actorID, nil))
+		var alert domain.Alert
+		require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &alert))
+		assert.Equal(t, domain.AlertStatusClosed, alert.Status)
+	})
+
+	t.Run("one failure does not stop the rest", func(t *testing.T) {
+		// The alert above is closed now, so it fails; the unknown id fails
+		// too. Both come back as per-alert results, not a 500.
+		rec := post(t, `{"ids":["`+alertID.String()+`","`+uuid.New().String()+`"],"classification":"true_positive"}`)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var resp struct {
+			Results []struct {
+				Success bool `json:"success"`
+			} `json:"results"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+		assert.Len(t, resp.Results, 2)
+		for _, got := range resp.Results {
+			assert.False(t, got.Success)
+		}
+	})
+
+	t.Run("an unusable classification is one bad request, not N failures", func(t *testing.T) {
+		rec := post(t, `{"ids":["`+alertID.String()+`"],"classification":"nao_existe"}`)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "false_positive", "the error should name what is accepted")
+	})
+
+	t.Run("an empty id list is refused", func(t *testing.T) {
+		assert.Equal(t, http.StatusBadRequest, post(t, `{"ids":[],"classification":"false_positive"}`).Code)
+	})
+}

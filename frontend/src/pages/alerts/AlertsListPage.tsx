@@ -8,7 +8,7 @@ import { useEventStream } from "../../api/eventStream";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useRowSelection } from "../../hooks/useRowSelection";
 import { useBulkAction } from "../../hooks/useBulkAction";
-import type { Alert, AlertStatus, Severity } from "../../types/alerts";
+import type { Alert, AlertStatus, Severity, Classification } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
 import { SeverityFilter } from "../../components/SeverityFilter";
@@ -20,7 +20,12 @@ import { formatRelative, shortId } from "../../lib/format";
 // BulkChangeStatus, which just loops over it) rejects a direct transition
 // to closed so classification is always captured; closing an alert still
 // requires the existing per-item Close & Classify flow on the detail page.
-const BULK_STATUS_OPTIONS: AlertStatus[] = ["open", "investigating", "escalated"];
+// "closed" belongs here even though it takes a different endpoint: from the
+// analyst's side it is the same act -- pick what these alerts now are, apply.
+// Choosing it reveals the classification picker, because closing without one
+// is not allowed (see AlertService.Close).
+const BULK_STATUS_OPTIONS: AlertStatus[] = ["open", "investigating", "escalated", "closed"];
+const BULK_CLASSIFICATIONS: Classification[] = ["false_positive", "true_positive", "authorized_event"];
 
 export function AlertsListPage() {
   const { t } = useTranslation();
@@ -83,13 +88,31 @@ export function AlertsListPage() {
   );
 
   const [bulkStatus, setBulkStatus] = useState<AlertStatus>("investigating");
-  const { applying, error: bulkError, summary: bulkSummary, apply: applyBulk } = useBulkAction("/api/v1/alerts/bulk/status", token);
+  const [bulkClassification, setBulkClassification] = useState<Classification>("false_positive");
+  const [bulkComment, setBulkComment] = useState("");
+  const statusBulk = useBulkAction("/api/v1/alerts/bulk/status", token);
+  // Closing has its own endpoint because it carries a classification, so it
+  // gets its own hook instance. Only one of the two is ever in flight, and
+  // the toolbar reads whichever matches the chosen status.
+  const closeBulk = useBulkAction("/api/v1/alerts/bulk/close", token);
+  const closing = bulkStatus === "closed";
+  const active = closing ? closeBulk : statusBulk;
+  const applying = active.applying;
+  const bulkError = active.error;
+  const bulkSummary = active.summary;
 
   function applyBulkStatus() {
-    void applyBulk(Array.from(selected), { status: bulkStatus }, () => {
+    const ids = Array.from(selected);
+    const done = () => {
       clear();
+      setBulkComment("");
       reload();
-    });
+    };
+    if (closing) {
+      void closeBulk.apply(ids, { classification: bulkClassification, comment: bulkComment }, done);
+      return;
+    }
+    void statusBulk.apply(ids, { status: bulkStatus }, done);
   }
 
   // Live updates: another analyst (or the same one, in another tab)
@@ -178,8 +201,34 @@ export function AlertsListPage() {
               </option>
             ))}
           </select>
+          {closing && (
+            <>
+              <select
+                className="select"
+                aria-label={t("alerts.bulk.classificationLabel")}
+                value={bulkClassification}
+                onChange={(e) => setBulkClassification(e.target.value as Classification)}
+                disabled={applying}
+              >
+                {BULK_CLASSIFICATIONS.map((c) => (
+                  <option key={c} value={c}>
+                    {t(`common.classification.${c}`)}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input"
+                style={{ minWidth: 220 }}
+                aria-label={t("alerts.bulk.commentLabel")}
+                placeholder={t("alerts.bulk.commentPlaceholder")}
+                value={bulkComment}
+                onChange={(e) => setBulkComment(e.target.value)}
+                disabled={applying}
+              />
+            </>
+          )}
           <button className="btn btn-primary btn-sm" onClick={applyBulkStatus} disabled={applying}>
-            {applying ? t("alerts.bulk.applying") : t("alerts.bulk.apply")}
+            {applying ? t("alerts.bulk.applying") : closing ? t("alerts.bulk.applyClose") : t("alerts.bulk.apply")}
           </button>
           <button className="btn btn-ghost btn-sm" onClick={clear} disabled={applying}>
             {t("alerts.bulk.clearSelection")}

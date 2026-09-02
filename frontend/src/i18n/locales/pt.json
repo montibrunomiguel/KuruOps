@@ -398,7 +398,11 @@
       "clearSelection": "Limpar",
       "resultSummary": "{{success}} atualizados, {{failed}} falharam.",
       "allSucceeded_one": "{{count}} alerta atualizado.",
-      "allSucceeded_other": "{{count}} alertas atualizados."
+      "allSucceeded_other": "{{count}} alertas atualizados.",
+      "classificationLabel": "Classificação",
+      "commentLabel": "Nota de fechamento",
+      "commentPlaceholder": "Nota opcional aplicada a todos os alertas selecionados",
+      "applyClose": "Fechar alertas"
     }
   },
   "incidents": {

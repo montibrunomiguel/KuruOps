@@ -44,6 +44,7 @@ func (h *AlertHandlers) Routes(r chi.Router) {
 	r.Get("/", h.list)
 	r.Get("/{id}", h.get)
 	r.Post("/bulk/status", h.bulkChangeStatus)
+	r.Post("/bulk/close", h.bulkClose)
 	r.Post("/{id}/status", h.changeStatus)
 	r.Post("/{id}/close", h.close)
 	r.Put("/{id}/tags", h.updateTags)
@@ -193,6 +194,51 @@ func (h *AlertHandlers) bulkChangeStatus(w http.ResponseWriter, r *http.Request)
 	}
 
 	results := h.svc.BulkChangeStatus(r.Context(), tenantID, userID, req.IDs, req.Status, middleware.AllowedTags(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+type bulkCloseRequest struct {
+	IDs            []uuid.UUID           `json:"ids"`
+	Classification domain.Classification `json:"classification"`
+	Comment        string                `json:"comment"`
+}
+
+// bulkClose closes several alerts under one classification -- see
+// AlertService.BulkClose for why closing needs its own bulk route rather
+// than riding on bulk/status, and why no attachment is accepted. Answers
+// 200 with per-alert results even when some fail, same contract as
+// bulk/status.
+func (h *AlertHandlers) bulkClose(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := mustTenantID(w, r)
+	if !ok {
+		return
+	}
+	userID, _ := middleware.UserID(r.Context())
+
+	var req bulkCloseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must not be empty")
+		return
+	}
+	if len(req.IDs) > maxBulkIDs {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d ids per request", maxBulkIDs))
+		return
+	}
+	// Checked here rather than per-alert inside the loop: an unusable
+	// classification is a bad request, not a hundred individual failures.
+	if !domain.ClassificationIsValid(req.Classification) {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid classification %q (accepted: %s)",
+			req.Classification, domain.ClassificationNames()))
+		return
+	}
+
+	results := h.svc.BulkClose(r.Context(), tenantID, userID, req.IDs,
+		domain.CloseAlertInput{Classification: req.Classification, Comment: req.Comment},
+		middleware.AllowedTags(r.Context()))
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
