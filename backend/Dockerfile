@@ -8,7 +8,7 @@
 # golang-migrate as a library plus hand-ported role/RLS setup against a
 # customer-supplied target at runtime, so it needs the actual migration SQL
 # on disk in its own container, not just reachable from the host).
-FROM golang:1.25-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/ingest ./cmd/ingest
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
 
-FROM alpine:3.20 AS base
+FROM alpine:3.24 AS base
 # tzdata: alpine ships with no /usr/share/zoneinfo at all, so
 # time.LoadLocation fails for every IANA name except the hardcoded "UTC" --
 # needed by all three binaries wherever a tenant's configured timezone
