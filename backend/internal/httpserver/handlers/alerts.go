@@ -274,6 +274,28 @@ func (h *AlertHandlers) overrideSeverity(w http.ResponseWriter, r *http.Request)
 
 type reassignAlertRequest struct {
 	AnalystID *uuid.UUID `json:"analystId"`
+	// hasAnalystIDKey records whether the key was present at all, which the
+	// pointer alone cannot express -- absent and explicit-null both decode
+	// to nil. Set by UnmarshalJSON below.
+	hasAnalystIDKey bool
+}
+
+// UnmarshalJSON decodes the request while recording whether "analystId" was
+// actually supplied, so the handler can tell "unassign" from "wrong field
+// name". Decoding into an alias avoids recursing back into this method.
+func (r *reassignAlertRequest) UnmarshalJSON(data []byte) error {
+	type plain reassignAlertRequest
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	*r = reassignAlertRequest(p)
+	_, r.hasAnalystIDKey = keys["analystId"]
+	return nil
 }
 
 func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +307,16 @@ func (h *AlertHandlers) reassign(w http.ResponseWriter, r *http.Request) {
 	var req reassignAlertRequest
 	id, ok := decodeAndParseID(w, r, "alert", &req)
 	if !ok {
+		return
+	}
+	// AnalystID is a pointer so that an explicit null can mean "unassign".
+	// That made a body with no recognised field indistinguishable from a
+	// deliberate unassign: a client sending the wrong key name got a 204
+	// and a silently cleared assignee. Requiring the key to be present
+	// keeps the explicit-null unassign while turning a typo into an error.
+	if !req.hasAnalystIDKey {
+		writeError(w, http.StatusBadRequest,
+			`body must contain an "analystId" field: a user id to assign, or null to unassign`)
 		return
 	}
 

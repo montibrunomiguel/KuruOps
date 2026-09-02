@@ -74,7 +74,8 @@
       "eradication": "Erradicação",
       "recovery": "Recuperação",
       "post_incident": "Pós-Incidente"
-    }
+    },
+    "serverUnreachable": "O servidor está temporariamente indisponível. Tente novamente em instantes."
   },
   "sidebar": {
     "brandSub": "Gestão de Incidentes",

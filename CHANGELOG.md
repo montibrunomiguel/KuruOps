@@ -188,6 +188,33 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Every API restart left the frontend serving `502` until it was restarted too.** nginx resolves
+  a literal hostname in `proxy_pass` once, at config load, and caches it for the life of the
+  process -- so when the api container came back on a different address after a deploy, a crash or
+  a scale event, nginx kept dialling the old one and nothing recovered on its own. Observed
+  directly: nginx connecting to `172.20.0.6` while the api sat healthy on `172.20.0.5`, presenting
+  to users as the whole application being down. The upstream is now named through a variable with
+  an explicit `resolver`, which forces per-request resolution. Verified by parking a placeholder
+  container on the api's old address to force it onto a new one, then logging in successfully
+  through a frontend that was never restarted.
+- Gateway failures reached the user as raw HTTP status text -- a login form rendering
+  "Bad Gateway", which names neither what happened nor what to do. `502`, `503` and `504` carry no
+  `{error}` body because they come from a proxy rather than the API, so they now map to a
+  translated "the server is temporarily unreachable" instead of the status line.
+- `PUT /alerts/{id}/assignee` silently unassigned an alert when the request body used the wrong
+  field name. `analystId` is a pointer so an explicit `null` can mean "unassign", which made a body
+  carrying no recognised key indistinguishable from a deliberate one: a client with a typo got
+  `204` and a cleared assignee. The key must now be present; `{"analystId": null}` still unassigns.
+
+### Added
+
+- `.github/dependabot.yml` watching Go modules, npm, GitHub Actions and both Dockerfiles. Nothing
+  watched dependencies before, which is how `golang.org/x/crypto` sat twenty days behind a
+  published fix until a container scan caught it -- and it matters more with the project public.
+  Patch and minor updates are grouped into one PR per ecosystem; majors arrive alone so they get
+  read properly.
+
+
 - Field Mapping Template rules could not address an array element. A path like
   `detect.behaviors.0.tactic` -- the shape CrowdStrike, CloudTrail and Wazuh payloads all use --
   resolved to nothing and was skipped silently, indistinguishable from a field the payload never

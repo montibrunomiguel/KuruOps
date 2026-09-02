@@ -171,4 +171,31 @@ describe("api client -- 401 refresh-and-retry", () => {
     await Promise.all([p1, p2]);
     expect(refreshHandler).toHaveBeenCalledTimes(1);
   });
+
+describe("gateway failures", () => {
+  // 502/503/504 come from a proxy, not the API, so they carry no {error}
+  // body. The old fallback rendered the raw status line, which is how a
+  // login form ended up telling someone "Bad Gateway".
+  it.each([502, 503, 504])("maps a %i into something a person can act on", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status, statusText: "Bad Gateway" })));
+    await expect(api.get("/api/v1/alerts", "tok")).rejects.toMatchObject({
+      status,
+      message: expect.stringMatching(/unreachable|indispon/i),
+    });
+  });
+
+  it("still prefers the backend's own message when there is one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "alert not found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    await expect(api.get("/api/v1/alerts/x", "tok")).rejects.toMatchObject({ message: "alert not found" });
+  });
+});
+
 });
