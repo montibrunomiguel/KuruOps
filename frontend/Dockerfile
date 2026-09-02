@@ -9,7 +9,7 @@
 # its cross-language source of truth (see that file's own doc comment), and
 # `tsc`'s src-wide typecheck in `npm run build` fails if it can't resolve
 # that import, so docs/ has to be reachable from inside the build.
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -22,7 +22,7 @@ RUN npm run build
 # listens on 8080 (>1024, unprivileged ports only) instead of 80, both
 # handled by the image itself with no nginx.conf changes beyond the listen
 # port below. Same tag suffix as the image we're replacing.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 # The base image's own Alpine packages (openssl, c-ares, libexpat, libpng,
 # ...) lag behind Alpine's repos between nginx image releases -- picked up
 # by the new container-scan CI job (see .github/workflows/security.yml).
