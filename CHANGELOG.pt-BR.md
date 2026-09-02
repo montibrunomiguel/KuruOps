@@ -207,6 +207,34 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Todo restart da API deixava o frontend servindo `502` até ele também ser reiniciado.** O nginx
+  resolve um hostname literal em `proxy_pass` uma única vez, na carga da configuração, e o cacheia
+  pelo resto da vida do processo -- então quando o container da api voltava em outro endereço
+  depois de um deploy, um crash ou uma mudança de escala, o nginx continuava discando o antigo e
+  nada se recuperava sozinho. Observado diretamente: nginx conectando em `172.20.0.6` enquanto a
+  api estava saudável em `172.20.0.5`, o que para o usuário parecia a aplicação inteira fora do ar.
+  O upstream agora é nomeado por uma variável com `resolver` explícito, o que força resolução a
+  cada requisição. Verificado estacionando um container no endereço antigo da api para forçá-la a
+  outro, e então logando com sucesso por um frontend que nunca foi reiniciado.
+- Falhas de gateway chegavam ao usuário como texto cru de status HTTP -- uma tela de login
+  exibindo "Bad Gateway", que não diz nem o que aconteceu nem o que fazer. `502`, `503` e `504` não
+  trazem corpo `{error}` porque vêm de um proxy e não da API, então agora viram uma mensagem
+  traduzida de "servidor temporariamente indisponível" em vez da linha de status.
+- `PUT /alerts/{id}/assignee` desatribuía o alerta em silêncio quando o corpo usava o nome errado
+  de campo. `analystId` é um ponteiro para que um `null` explícito signifique "desatribuir", o que
+  tornava um corpo sem nenhuma chave reconhecida indistinguível de uma desatribuição intencional:
+  um cliente com um erro de digitação recebia `204` e o responsável apagado. A chave agora precisa
+  estar presente; `{"analystId": null}` continua desatribuindo.
+
+### Added
+
+- `.github/dependabot.yml` acompanhando módulos Go, npm, GitHub Actions e os dois Dockerfiles. Nada
+  acompanhava dependências antes, que é como o `golang.org/x/crypto` ficou vinte dias atrás de uma
+  correção publicada até um scan de container perceber -- e isso pesa mais com o projeto público.
+  Atualizações de patch e minor são agrupadas em um PR por ecossistema; as major chegam sozinhas
+  para serem lidas com atenção.
+
+
 - Regras de Template de Mapeamento de Campos não conseguiam endereçar um elemento de array. Um
   caminho como `detect.behaviors.0.tactic` -- o formato que payloads de CrowdStrike, CloudTrail e
   Wazuh usam -- não resolvia nada e era ignorado em silêncio, indistinguível de um campo que o

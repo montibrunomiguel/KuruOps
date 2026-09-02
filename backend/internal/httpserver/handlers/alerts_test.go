@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -841,5 +842,40 @@ func TestAlertHandlers_Reassign(t *testing.T) {
 		var alert domain.Alert
 		require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &alert))
 		assert.Nil(t, alert.AssignedAnalystID)
+	})
+}
+
+// TestAlertHandlers_ReassignRequiresAnalystIDKey guards the difference
+// between "unassign this alert" and "I got the field name wrong". AnalystID
+// is a pointer so an explicit null can mean unassign, which used to make a
+// body carrying no recognised key look identical to a deliberate unassign:
+// a client sending the wrong name got a 204 and a silently cleared
+// assignee.
+func TestAlertHandlers_ReassignRequiresAnalystIDKey(t *testing.T) {
+	h, tenantID, actorID, alertID := newAlertHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	put := func(t *testing.T, body string) int {
+		t.Helper()
+		req := withClaims(httptest.NewRequest("PUT", "/"+alertID.String()+"/assignee", strings.NewReader(body)), tenantID, actorID, nil)
+		req.Header.Set("Content-Type", "application/json")
+		return doRequest(r, req).Code
+	}
+
+	t.Run("assigning with the right key works", func(t *testing.T) {
+		assert.Equal(t, http.StatusNoContent, put(t, `{"analystId":"`+actorID.String()+`"}`))
+	})
+
+	t.Run("an explicit null still unassigns", func(t *testing.T) {
+		assert.Equal(t, http.StatusNoContent, put(t, `{"analystId":null}`))
+	})
+
+	t.Run("a body with the wrong field name is refused", func(t *testing.T) {
+		assert.Equal(t, http.StatusBadRequest, put(t, `{"assigneeId":"`+actorID.String()+`"}`),
+			"a typo must not read as 'unassign'")
+	})
+
+	t.Run("an empty object is refused", func(t *testing.T) {
+		assert.Equal(t, http.StatusBadRequest, put(t, `{}`))
 	})
 }

@@ -1,0 +1,52 @@
+# Nothing watched dependencies before this, which is how golang.org/x/crypto
+# sat twenty days behind a published fix until a container scan caught it.
+# It matters more now the project is public and other people deploy it.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(go)"
+    groups:
+      # One PR for the routine patch/minor churn; anything major still
+      # arrives on its own so it gets read properly.
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The workflows pin actions by release tag (see .github/workflows/
+  # security.yml's note on why @master is not used), so those pins need
+  # bumping too or they quietly rot.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(actions)"
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(docker)"
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(docker)"

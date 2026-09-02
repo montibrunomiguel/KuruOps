@@ -47,11 +47,21 @@ function refreshOnce(): Promise<string | null> {
 }
 
 // parseErrorMessage extracts a user-facing message from a failed response:
-// the backend's own {error: "..."} body when present, falling back to the
-// HTTP status text, falling back to a generic translated message.
+// the backend's own {error: "..."} body when present, then a translated
+// message for the infrastructure failures that never carry one, then the
+// HTTP status text, then a generic fallback.
+//
+// The infrastructure branch exists because 502/503/504 come from a proxy,
+// not the API, so there is no {error} body and the old fallback rendered
+// the raw status line -- a login form showing "Bad Gateway" tells the
+// person neither what happened nor what to do about it.
 function parseErrorMessage(res: Response, payload: unknown): string {
   const backendMessage = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : "";
-  return backendMessage || res.statusText || String(i18n.t("common.unexpectedError"));
+  if (backendMessage) return backendMessage;
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return String(i18n.t("common.serverUnreachable"));
+  }
+  return res.statusText || String(i18n.t("common.unexpectedError"));
 }
 
 // fetchWithAuth is request/requestPaged's shared core: attaches the bearer
