@@ -22,7 +22,7 @@ RUN npm run build
 # listens on 8080 (>1024, unprivileged ports only) instead of 80, both
 # handled by the image itself with no nginx.conf changes beyond the listen
 # port below. Same tag suffix as the image we're replacing.
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 # The base image's own Alpine packages (openssl, c-ares, libexpat, libpng,
 # ...) lag behind Alpine's repos between nginx image releases -- picked up
 # by the new container-scan CI job (see .github/workflows/security.yml).
