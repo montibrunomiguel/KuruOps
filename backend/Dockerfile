@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/ingest ./cmd/ingest
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
 
-FROM alpine:3.20 AS base
+FROM alpine:3.24 AS base
 # tzdata: alpine ships with no /usr/share/zoneinfo at all, so
 # time.LoadLocation fails for every IANA name except the hardcoded "UTC" --
 # needed by all three binaries wherever a tenant's configured timezone
