@@ -63,7 +63,7 @@ jobs:
       # ("the Go language version used to build golangci-lint is lower than
       # the targeted Go version").
       - name: Lint (golangci-lint)
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v1.64.8
           install-mode: goinstall
