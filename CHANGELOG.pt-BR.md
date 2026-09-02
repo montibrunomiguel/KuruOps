@@ -227,6 +227,11 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- `google.golang.org/grpc` atualizado de 1.82.1 para 1.83.1 por conta da CVE-2026-84304 (HIGH),
+  apontada pelo scan de imagem nas três imagens Go. É dependência indireta, alcançada pelo cliente
+  da API do Google; o `govulncheck` não reporta nada no código chamado, mas ela vai junto nas
+  imagens.
+
 - **Todo restart da API deixava o frontend servindo `502` até ele também ser reiniciado.** O nginx
   resolve um hostname literal em `proxy_pass` uma única vez, na carga da configuração, e o cacheia
   pelo resto da vida do processo -- então quando o container da api voltava em outro endereço

@@ -207,6 +207,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Bumped `google.golang.org/grpc` 1.82.1 -> 1.83.1 for CVE-2026-84304 (HIGH), flagged by the
+  container image scan on the three Go images. An indirect dependency reached through the Google
+  API client; `govulncheck` reports nothing in called code, but it ships inside the images.
+
 - **Every API restart left the frontend serving `502` until it was restarted too.** nginx resolves
   a literal hostname in `proxy_pass` once, at config load, and caches it for the life of the
   process -- so when the api container came back on a different address after a deploy, a crash or

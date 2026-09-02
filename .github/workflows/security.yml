@@ -79,6 +79,9 @@ jobs:
       - name: Scan for committed secrets
         uses: gitleaks/gitleaks-action@v2
         env:
+          # Required since gitleaks-action v2's breaking change: scanning a
+          # pull request needs a token to read the PR's commit range.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_CONFIG: .gitleaks.toml
           # The action nags for a licence key on org-owned repos; it is not
           # required for public ones. Set GITLEAKS_LICENSE as a repository
