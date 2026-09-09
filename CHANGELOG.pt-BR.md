@@ -258,6 +258,16 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   insatisfazível -- o que derrubou o job do frontend e o build da imagem. Revertido para a linha
   5.9 e o major do TypeScript adicionado à lista de `ignore` do `.github/dependabot.yml`, com o
   comando que diz quando é seguro removê-lo (`npm view typescript-eslint@latest peerDependencies`).
+- O Vitest 5 usa por padrão o pool `forks` -- um processo filho por arquivo de teste, cada um
+  construindo o próprio jsdom. Isso serve numa máquina de desenvolvimento e não num runner de CI de
+  dois núcleos: os 71 arquivos morreram com `[vitest-pool]: Failed to start forks worker`, e a
+  execução reportou "no tests" em vez de uma falha legível. Trocado por um pool `threads` com teto,
+  que preserva o isolamento por arquivo, abre mão apenas da fronteira de processo (nada aqui
+  depende dela) e roda a suíte em 46s em vez de 86s.
+- O `gitleaks-action` v3 escreve os achados de volta na pull request, então sob o padrão somente
+  leitura do workflow ele falhava com `Resource not accessible by integration` (403) *depois* de
+  escanear -- o que se lê como falha de varredura e não de permissão. O job agora concede
+  `pull-requests: write` só para si.
 
 
 - `main` reparada depois que quinze pull requests do Dependabot foram mergeadas de uma vez, várias

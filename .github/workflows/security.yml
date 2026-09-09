@@ -80,6 +80,15 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    # Job-level, overriding the workflow's read-only default for this job
+    # only. gitleaks-action v3 writes its findings back onto the pull
+    # request, so with contents:read alone it dies on
+    # "RequestError [HttpError]: Resource not accessible by integration"
+    # (403) -- after the scan itself has already run, which makes it look
+    # like a scan failure rather than a permissions one.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7

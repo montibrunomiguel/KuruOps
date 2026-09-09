@@ -237,6 +237,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   took out the frontend job and the frontend image build. Reverted to the 5.9 line and added the
   TypeScript major to `.github/dependabot.yml`'s ignore list, with the command that tells you when
   it is safe to remove (`npm view typescript-eslint@latest peerDependencies`).
+- Vitest 5 defaults to the `forks` pool -- one child process per test file, each building its own
+  jsdom. That fits a developer machine and not a two-core CI runner: all 71 files died with
+  `[vitest-pool]: Failed to start forks worker`, and the run reported "no tests" rather than a
+  failure anyone could read. Switched to a capped `threads` pool, which keeps per-file isolation,
+  gives up only the process boundary (nothing here needs it), and runs the suite in 46s instead of
+  86s.
+- `gitleaks-action` v3 writes its findings back onto the pull request, so under the workflow's
+  read-only default it failed with `Resource not accessible by integration` (403) *after* scanning
+  -- which reads as a scan failure rather than a permissions one. The job now grants
+  `pull-requests: write` for itself only.
 
 
 - Repaired `main` after fifteen Dependabot pull requests were merged in one go, several of them
