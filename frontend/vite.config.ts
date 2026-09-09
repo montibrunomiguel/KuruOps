@@ -24,6 +24,22 @@ export default defineConfig({
     // less useful "Test timed out" instead of the actual findBy*/waitFor
     // failure.
     testTimeout: 15000,
+    // Kept for speed, not for correctness -- the suite runs in roughly half
+    // the time on threads (46s vs 86s locally) because a thread is far
+    // cheaper to start than the child process the default "forks" pool
+    // spawns per test file, each building its own jsdom.
+    //
+    // Recorded because the comment here first said otherwise: the CI
+    // failures that prompted this were NOT a pool problem. Every test file
+    // failed to start a worker because the workflow was still on Node 20
+    // while Vitest 5 requires ^22.12.0 || ^24 || >=26 -- switching pools
+    // changed the message from "forks worker" to "threads worker" and
+    // nothing else. Per-file isolation is unchanged either way; only the
+    // process boundary is given up, and nothing here needs it.
+    pool: "threads",
+    poolOptions: {
+      threads: { maxThreads: 4, minThreads: 1 },
+    },
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],

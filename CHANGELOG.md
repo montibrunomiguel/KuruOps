@@ -223,6 +223,37 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Repaired `main` again after ten more Dependabot PRs were merged unreviewed (#101-#110), several
+  of them majors. Three CI jobs failed, from two causes.
+- **The Go toolchain pin desynced from the module.** Dependabot raised `go.mod`'s directive to
+  1.26; the workflows still installed 1.25, so `Backend (Go)`, `dbmigrate` and `Go Vulnerability
+  Check` all died on `go.mod requires go >= 1.26.0 (running go 1.25.14)`. Now `go-version: '1.26.x'`
+  in all three places -- deliberately not `go-version-file: backend/go.mod`, which looks like the
+  tidier fix and is worse: the directive is a floor, not a recommendation, so the action would
+  install exactly 1.26.0, whose standard library carries five known vulnerabilities fixed in
+  1.26.6. `govulncheck` reports five on 1.26.0 and zero on 1.26.6.
+- **TypeScript 7 is not yet usable here.** `typescript-eslint`'s newest release still declares
+  `typescript >=4.8.4 <6.1.0`, so TS 7 makes `npm ci` fail on an unsatisfiable peer range -- which
+  took out the frontend job and the frontend image build. Reverted to the 5.9 line and added the
+  TypeScript major to `.github/dependabot.yml`'s ignore list, with the command that tells you when
+  it is safe to remove (`npm view typescript-eslint@latest peerDependencies`).
+- Vitest 5 defaults to the `forks` pool -- one child process per test file, each building its own
+  jsdom. That fits a developer machine and not a two-core CI runner: all 71 files died with
+  `[vitest-pool]: Failed to start forks worker`, and the run reported "no tests" rather than a
+  failure anyone could read. Switched to a capped `threads` pool, which keeps per-file isolation,
+  gives up only the process boundary (nothing here needs it), and runs the suite in 46s instead of
+  86s.
+- `gitleaks-action` v3 writes its findings back onto the pull request, so under the workflow's
+  read-only default it failed with `Resource not accessible by integration` (403) *after* scanning
+  -- which reads as a scan failure rather than a permissions one. The job now grants
+  `pull-requests: write` for itself only.
+- The CI Node version desynced from the toolchain the same way the Go one did. Dependabot moved
+  `frontend/Dockerfile` to `node:26` but the workflow stayed on Node 20, and Vitest 5 requires
+  `^22.12.0 || ^24.0.0 || >=26.0.0` -- so every test file failed to start a worker and the run
+  reported "no tests". The message names the pool, not the Node version, which is what made it look
+  like a pool problem. CI now runs Node 26, matching the image.
+
+
 - Repaired `main` after fifteen Dependabot pull requests were merged in one go, several of them
   major-version bumps. The dependency automation added in the previous change worked as designed
   -- majors arrived as separate PRs rather than grouped -- but merging them without review broke
