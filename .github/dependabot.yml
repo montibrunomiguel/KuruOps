@@ -39,6 +39,16 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(npm)"
+    ignore:
+      # TypeScript 7 is released but the lint toolchain cannot use it yet:
+      # typescript-eslint's newest version still declares
+      # "typescript >=4.8.4 <6.1.0", so installing TS 7 makes npm ci fail
+      # outright on an unsatisfiable peer range. This was merged once and
+      # broke every frontend job. Remove this entry when typescript-eslint
+      # widens that range -- check with:
+      #   npm view typescript-eslint@latest peerDependencies
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]

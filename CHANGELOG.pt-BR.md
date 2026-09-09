@@ -244,6 +244,22 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- `main` reparada de novo depois que mais dez PRs do Dependabot foram mergeadas sem revisão
+  (#101-#110), várias delas majors. Três jobs de CI falharam, por duas causas.
+- **O pin do toolchain Go dessincronizou do módulo.** O Dependabot subiu a diretiva do `go.mod`
+  para 1.26; os workflows ainda instalavam 1.25, então `Backend (Go)`, `dbmigrate` e
+  `Go Vulnerability Check` morreram em `go.mod requires go >= 1.26.0 (running go 1.25.14)`. Agora
+  `go-version: '1.26.x'` nos três lugares -- deliberadamente não `go-version-file: backend/go.mod`,
+  que parece a correção mais elegante e é pior: a diretiva é um piso, não uma recomendação, então a
+  action instalaria exatamente a 1.26.0, cuja biblioteca padrão carrega cinco vulnerabilidades
+  conhecidas corrigidas na 1.26.6. O `govulncheck` reporta cinco na 1.26.0 e zero na 1.26.6.
+- **O TypeScript 7 ainda não é utilizável aqui.** A versão mais nova do `typescript-eslint` ainda
+  declara `typescript >=4.8.4 <6.1.0`, então o TS 7 faz o `npm ci` falhar num peer range
+  insatisfazível -- o que derrubou o job do frontend e o build da imagem. Revertido para a linha
+  5.9 e o major do TypeScript adicionado à lista de `ignore` do `.github/dependabot.yml`, com o
+  comando que diz quando é seguro removê-lo (`npm view typescript-eslint@latest peerDependencies`).
+
+
 - `main` reparada depois que quinze pull requests do Dependabot foram mergeadas de uma vez, várias
   delas de major. A automação de dependências adicionada na mudança anterior funcionou como
   projetada -- majors chegaram como PRs separadas em vez de agrupadas -- mas mergeá-las sem revisão

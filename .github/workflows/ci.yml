@@ -31,7 +31,23 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          # ".x" on purpose, and neither of the two obvious alternatives.
+          #
+          # A bare minor pin ('1.25') silently desynced when Dependabot
+          # raised go.mod's directive to 1.26 -- every Go job then failed
+          # with "go.mod requires go >= 1.26.0 (running go 1.25.14)".
+          #
+          # go-version-file: backend/go.mod looks like the fix and is worse:
+          # the directive is a FLOOR, not a recommendation, so the action
+          # installs exactly that patch. go.mod says 1.26.0, whose standard
+          # library carries five known vulnerabilities fixed in 1.26.6 --
+          # govulncheck reports zero on 1.26.6 and five on 1.26.0. Tracking
+          # the file would pin CI to the unpatched release.
+          #
+          # "1.26.x" takes the newest patch of the minor the module needs.
+          # When go.mod moves to a new MINOR this needs moving too, and the
+          # failure says so by name, which is the loud kind.
+          go-version: '1.26.x'
           cache: true
           cache-dependency-path: backend/go.sum
 
@@ -149,7 +165,23 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          # ".x" on purpose, and neither of the two obvious alternatives.
+          #
+          # A bare minor pin ('1.25') silently desynced when Dependabot
+          # raised go.mod's directive to 1.26 -- every Go job then failed
+          # with "go.mod requires go >= 1.26.0 (running go 1.25.14)".
+          #
+          # go-version-file: backend/go.mod looks like the fix and is worse:
+          # the directive is a FLOOR, not a recommendation, so the action
+          # installs exactly that patch. go.mod says 1.26.0, whose standard
+          # library carries five known vulnerabilities fixed in 1.26.6 --
+          # govulncheck reports zero on 1.26.6 and five on 1.26.0. Tracking
+          # the file would pin CI to the unpatched release.
+          #
+          # "1.26.x" takes the newest patch of the minor the module needs.
+          # When go.mod moves to a new MINOR this needs moving too, and the
+          # failure says so by name, which is the loud kind.
+          go-version: '1.26.x'
           cache: true
           cache-dependency-path: backend/go.sum
 

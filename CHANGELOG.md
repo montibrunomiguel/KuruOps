@@ -223,6 +223,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- Repaired `main` again after ten more Dependabot PRs were merged unreviewed (#101-#110), several
+  of them majors. Three CI jobs failed, from two causes.
+- **The Go toolchain pin desynced from the module.** Dependabot raised `go.mod`'s directive to
+  1.26; the workflows still installed 1.25, so `Backend (Go)`, `dbmigrate` and `Go Vulnerability
+  Check` all died on `go.mod requires go >= 1.26.0 (running go 1.25.14)`. Now `go-version: '1.26.x'`
+  in all three places -- deliberately not `go-version-file: backend/go.mod`, which looks like the
+  tidier fix and is worse: the directive is a floor, not a recommendation, so the action would
+  install exactly 1.26.0, whose standard library carries five known vulnerabilities fixed in
+  1.26.6. `govulncheck` reports five on 1.26.0 and zero on 1.26.6.
+- **TypeScript 7 is not yet usable here.** `typescript-eslint`'s newest release still declares
+  `typescript >=4.8.4 <6.1.0`, so TS 7 makes `npm ci` fail on an unsatisfiable peer range -- which
+  took out the frontend job and the frontend image build. Reverted to the 5.9 line and added the
+  TypeScript major to `.github/dependabot.yml`'s ignore list, with the command that tells you when
+  it is safe to remove (`npm view typescript-eslint@latest peerDependencies`).
+
+
 - Repaired `main` after fifteen Dependabot pull requests were merged in one go, several of them
   major-version bumps. The dependency automation added in the previous change worked as designed
   -- majors arrived as separate PRs rather than grouped -- but merging them without review broke
