@@ -24,17 +24,18 @@ export default defineConfig({
     // less useful "Test timed out" instead of the actual findBy*/waitFor
     // failure.
     testTimeout: 15000,
-    // Vitest 5 defaults to the "forks" pool: one child PROCESS per test
-    // file, each building its own jsdom. That is fine on a developer
-    // machine and does not fit a 2-core CI runner -- every one of the 71
-    // files died with "[vitest-pool]: Failed to start forks worker", so the
-    // run reported "no tests" rather than a failure anyone could read.
+    // Kept for speed, not for correctness -- the suite runs in roughly half
+    // the time on threads (46s vs 86s locally) because a thread is far
+    // cheaper to start than the child process the default "forks" pool
+    // spawns per test file, each building its own jsdom.
     //
-    // Threads share the process and are far cheaper to start. Isolation per
-    // file is preserved, which is what the suite actually relies on; only
-    // the process boundary is given up, and nothing here needs it. The cap
-    // keeps the pool inside a small runner instead of scaling to a core
-    // count that machine does not have.
+    // Recorded because the comment here first said otherwise: the CI
+    // failures that prompted this were NOT a pool problem. Every test file
+    // failed to start a worker because the workflow was still on Node 20
+    // while Vitest 5 requires ^22.12.0 || ^24 || >=26 -- switching pools
+    // changed the message from "forks worker" to "threads worker" and
+    // nothing else. Per-file isolation is unchanged either way; only the
+    // process boundary is given up, and nothing here needs it.
     pool: "threads",
     poolOptions: {
       threads: { maxThreads: 4, minThreads: 1 },

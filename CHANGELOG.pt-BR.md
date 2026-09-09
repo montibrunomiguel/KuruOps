@@ -268,6 +268,11 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   leitura do workflow ele falhava com `Resource not accessible by integration` (403) *depois* de
   escanear -- o que se lê como falha de varredura e não de permissão. O job agora concede
   `pull-requests: write` só para si.
+- A versão do Node no CI dessincronizou do toolchain do mesmo jeito que a do Go. O Dependabot moveu
+  o `frontend/Dockerfile` para `node:26` mas o workflow ficou no Node 20, e o Vitest 5 exige
+  `^22.12.0 || ^24.0.0 || >=26.0.0` -- então todo arquivo de teste falhava ao subir um worker e a
+  execução reportava "no tests". A mensagem nomeia o pool, não a versão do Node, que é o que a fez
+  parecer um problema de pool. O CI agora roda Node 26, igual à imagem.
 
 
 - `main` reparada depois que quinze pull requests do Dependabot foram mergeadas de uma vez, várias

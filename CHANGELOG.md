@@ -247,6 +247,11 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   read-only default it failed with `Resource not accessible by integration` (403) *after* scanning
   -- which reads as a scan failure rather than a permissions one. The job now grants
   `pull-requests: write` for itself only.
+- The CI Node version desynced from the toolchain the same way the Go one did. Dependabot moved
+  `frontend/Dockerfile` to `node:26` but the workflow stayed on Node 20, and Vitest 5 requires
+  `^22.12.0 || ^24.0.0 || >=26.0.0` -- so every test file failed to start a worker and the run
+  reported "no tests". The message names the pool, not the Node version, which is what made it look
+  like a pool problem. CI now runs Node 26, matching the image.
 
 
 - Repaired `main` after fifteen Dependabot pull requests were merged in one go, several of them
