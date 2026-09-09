@@ -77,7 +77,7 @@ jobs:
       # trivy-action is pinned below: a scanner should not change behaviour
       # from under a build without anyone reviewing it.
       - name: Scan for committed secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           # Required since gitleaks-action v2's breaking change: scanning a
           # pull request needs a token to read the PR's commit range.
