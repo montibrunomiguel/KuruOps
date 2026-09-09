@@ -64,4 +64,27 @@ task backend:test:migration       # external-database-migration feature's own in
 4. Make sure all automated tests pass.
 5. Push to your fork and submit a Pull Request to the `main` branch.
 
+## Dependency Updates
+
+Dependabot proposes updates weekly (see `.github/dependabot.yml`). Patch and minor bumps are
+grouped into one PR per ecosystem and are routinely safe to merge once CI is green.
+
+**A major bump is never merged without a human reading it.** Majors deliberately arrive as
+separate PRs so they can be. This is not a formality: fifteen Dependabot PRs were once merged in
+one sitting and broke the build in six unrelated ways — a runtime library moved a major version
+while its paired package did not, a linter dropped a transitive dependency and orphaned a plugin,
+a CI action moved to a line driving a config schema this repository does not use. Each was
+obvious in isolation and invisible in a batch.
+
+When reviewing a major, the questions worth asking are:
+
+- Does this package have a paired one that must move together? (`react`/`react-dom`,
+  `@types/react`/`@types/react-dom`, a plugin and the tool it plugs into.)
+- Does it drop something it used to provide transitively?
+- Does it change a config format this repository has a file for?
+- Does the changelog mention new lint rules or new errors on code that used to pass?
+
+If a major is blocked on other work, add it to the `ignore` list in `.github/dependabot.yml` with
+a comment saying what unblocks it, rather than closing the PR and letting it reopen next week.
+
 Thank you for contributing!

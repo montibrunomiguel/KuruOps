@@ -14,6 +14,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- Bumps de dependência major agora exigem revisão, em três camadas. O `.github/dependabot.yml`
+  declara a política e para de repropor o major do `golangci-lint-action`, que está travado na
+  migração do `.golangci.yml` para o schema v2 -- com uma nota dizendo o que o destrava, de modo
+  que fica adiado em vez de fechado-e-esquecido. O `.github/CODEOWNERS` faz toda PR solicitar
+  revisão e destaca os caminhos onde uma mudança não revisada é menos visível e mais danosa:
+  definições de CI, a própria automação de dependências, manifestos de deploy e os pacotes de
+  segredos e de proteção contra SSRF. O `CONTRIBUTING.md` registra a política junto com as
+  perguntas que valem para um major -- esse pacote tem um par que precisa andar junto, ele deixa de
+  fornecer algo que fornecia transitivamente, ele muda um formato de configuração do qual este
+  repositório tem um arquivo.
+
+  Nenhuma das camadas *bloqueia* um merge sozinha. A imposição é branch protection exigindo
+  revisão, que precisa de repositório público ou plano pago -- num repo privado gratuito a API a
+  recusa de saída, que é exatamente como quinze PRs foram mergeadas sem revisão. Habilitá-la é um
+  passo a dar quando o repositório for tornado público.
+
+
 - Playbooks não oferecem mais uma seção de fase "Novo" em "Passos por Fase" -- quando um incidente
   ainda está em Novo/Identificação, o analista ainda não triou o alerta, então nunca havia nada
   pra um playbook de resposta prescrever ali (passos só fazem sentido a partir de Detecção &
@@ -226,6 +243,35 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   preenchê-lo.
 
 ### Fixed
+
+- `main` reparada depois que quinze pull requests do Dependabot foram mergeadas de uma vez, várias
+  delas de major. A automação de dependências adicionada na mudança anterior funcionou como
+  projetada -- majors chegaram como PRs separadas em vez de agrupadas -- mas mergeá-las sem revisão
+  quebrou o build de seis formas distintas, cada uma com causa própria: `react` foi para 19 e
+  `react-dom` ficou em 18, partindo o par do runtime num major; `@types/react` e `@types/react-dom`
+  se partiram do mesmo jeito; o ESLint 10 deixou de trazer `@eslint/js` transitivamente e deixou o
+  `eslint-plugin-react-hooks@5` incapaz de satisfazer o peer range; o `golangci-lint-action` v9
+  aciona o golangci-lint v2, cujo schema de configuração é uma reescrita que o `.golangci.yml` v1
+  do repositório não atende; o `arduino/setup-task` sem token esgotou o orçamento compartilhado de
+  API do GitHub do runner; e o `alpine:3.24` trazia `libcrypto3` 3.5.7-r0, com uma negação de
+  serviço do OpenSSL (CVE-2026-14456).
+- A imagem do backend agora roda `apk upgrade` antes de instalar pacotes. Uma tag de imagem base é
+  reconstruída no ritmo dela, então entre a correção de uma CVE de pacote de SO e a republicação da
+  tag, todo build embarca a versão vulnerável. A imagem do frontend já fazia isso; o backend agora
+  acompanha. As quatro imagens passam limpas depois disso.
+- O `golangci-lint-action` fica fixado em v6 com uma nota de que uma PR do Dependabot que tente
+  subi-lo deve ser fechada, não mergeada, até o `.golangci.yml` migrar para o schema v2 -- essa
+  migração é trabalho próprio, não efeito colateral de um bump de versão.
+
+### Changed
+
+- O `eslint-plugin-react-hooks` v7 introduz `set-state-in-effect`, `purity` e `refs`, que não
+  existiam na v5 e apontam 18 lugares em 14 arquivos -- majoritariamente o padrão de "carregar a
+  configuração existente no estado do formulário na montagem". Elas ficam em `warn` em vez de
+  adotadas ou desligadas: o sinal continua visível e código novo segue sendo apontado conforme é
+  escrito, sem prender o build a um refactor que ninguém agendou. Voltem para `error` quando as
+  ocorrências atuais forem resolvidas.
+
 
 - `google.golang.org/grpc` atualizado de 1.82.1 para 1.83.1 por conta da CVE-2026-84304 (HIGH),
   apontada pelo scan de imagem nas três imagens Go. É dependência indireta, alcançada pelo cliente

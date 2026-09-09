@@ -13,6 +13,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- Major dependency bumps now require review, in three layers. `.github/dependabot.yml` states the
+  policy and stops re-proposing `golangci-lint-action`'s major, which is blocked on migrating
+  `.golangci.yml` to the v2 schema -- with a note saying what unblocks it, so it is deferred rather
+  than closed-and-forgotten. `.github/CODEOWNERS` makes every PR request a review, and calls out
+  the paths where an unreviewed change is least visible and most damaging: CI definitions, the
+  dependency automation itself, deployment manifests, and the secrets and SSRF-guard packages.
+  `CONTRIBUTING.md` writes the policy down along with the questions worth asking of a major -- does
+  this package have a paired one that must move together, does it drop something it provided
+  transitively, does it change a config format this repository has a file for.
+
+  Neither layer *blocks* a merge on its own. The enforcement is branch protection requiring a
+  review, which needs a public repository or a paid plan -- on a private free repo the API refuses
+  it outright, which is precisely how fifteen PRs merged unreviewed. Enabling it is a step to take
+  when the repository is made public.
+
+
 - Playbooks no longer offer a "New" phase section under "Steps by Phase" — by the time an
   incident is still in New/Identification, an analyst hasn't triaged it yet, so there was never
   anything for a response playbook to prescribe there (steps only make sense from Detection &
@@ -206,6 +222,35 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   it is never sent back to the browser, so there is nothing to prefill it with.
 
 ### Fixed
+
+- Repaired `main` after fifteen Dependabot pull requests were merged in one go, several of them
+  major-version bumps. The dependency automation added in the previous change worked as designed
+  -- majors arrived as separate PRs rather than grouped -- but merging them without review broke
+  the build in six distinct ways, each with its own cause: `react` went to 19 while `react-dom`
+  stayed on 18, splitting the runtime pair across a major; `@types/react` and `@types/react-dom`
+  split the same way; ESLint 10 dropped `@eslint/js` as a transitive dependency and left
+  `eslint-plugin-react-hooks@5` unable to satisfy its peer range; `golangci-lint-action` v9 drives
+  golangci-lint v2, whose config schema is a rewrite the repository's v1 `.golangci.yml` does not
+  match; `arduino/setup-task` without a token exhausted the runner's shared unauthenticated GitHub
+  API budget; and `alpine:3.24` shipped `libcrypto3` 3.5.7-r0, carrying an OpenSSL denial of
+  service (CVE-2026-14456).
+- The backend image now runs `apk upgrade` before installing packages. A base image tag is rebuilt
+  on its own schedule, so between an OS package CVE being fixed upstream and the tag being
+  republished, every build ships the vulnerable version. The frontend image already did this; the
+  backend now matches. All four images scan clean afterwards.
+- `golangci-lint-action` is pinned at v6 with a note that a Dependabot PR raising it should be
+  closed rather than merged until `.golangci.yml` is migrated to the v2 schema -- that migration is
+  its own piece of work, not a side effect of a version bump.
+
+### Changed
+
+- `eslint-plugin-react-hooks` v7 introduces `set-state-in-effect`, `purity` and `refs`, which did
+  not exist in v5 and flag 18 places across 14 files -- overwhelmingly the "load existing config
+  into form state on mount" pattern. They are set to `warn` rather than adopted or silenced: the
+  signal stays visible and new code is still flagged as it is written, without holding the build
+  hostage to a refactor nobody has scheduled. Raise them back to `error` once the existing hits are
+  cleared.
+
 
 - Bumped `google.golang.org/grpc` 1.82.1 -> 1.83.1 for CVE-2026-84304 (HIGH), flagged by the
   container image scan on the three Go images. An indirect dependency reached through the Google

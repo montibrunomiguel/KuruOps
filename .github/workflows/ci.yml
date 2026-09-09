@@ -39,6 +39,11 @@ jobs:
         uses: arduino/setup-task@v3
         with:
           version: 3.x
+          # setup-task looks the release up through the GitHub API. Without a
+          # token it shares the runner's shared unauthenticated budget and
+          # fails with "API rate limit exceeded" at random -- which is how
+          # this job started failing in 11 seconds.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check Formatting (gofmt)
         run: |
@@ -62,8 +67,15 @@ jobs:
       # rewrite) -- that older binary refuses to lint a `go 1.25` module
       # ("the Go language version used to build golangci-lint is lower than
       # the targeted Go version").
+      # Held at v6 deliberately. The action's v7+ line drives golangci-lint
+      # v2, whose config schema is a rewrite -- backend/.golangci.yml is a
+      # v1 config, so the v9 bump made the job fail outright trying to fetch
+      # a v2 module path at a v1 version. Moving to golangci-lint v2 means
+      # migrating that config, which is its own piece of work; until then
+      # this pin has to stay, and a Dependabot PR raising it should be
+      # closed rather than merged.
       - name: Lint (golangci-lint)
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
           install-mode: goinstall
@@ -145,6 +157,11 @@ jobs:
         uses: arduino/setup-task@v3
         with:
           version: 3.x
+          # setup-task looks the release up through the GitHub API. Without a
+          # token it shares the runner's shared unauthenticated budget and
+          # fails with "API rate limit exceeded" at random -- which is how
+          # this job started failing in 11 seconds.
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       # internal/dbmigrate (the Settings -> external-database-migration
       # feature: raw COPY BINARY streaming, FK-dependency-ordered table
