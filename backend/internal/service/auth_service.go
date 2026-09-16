@@ -456,16 +456,22 @@ func (s *AuthService) Logout(ctx context.Context, tenantID uuid.UUID, refreshTok
 // RevokeSessions) -- a password change is exactly the moment a stolen
 // refresh token must stop working, otherwise an attacker who captured one
 // before the legitimate user noticed and changed their password keeps a
-// working session indefinitely. The caller's own current access token
-// still works until its own 15-minute expiry (same tradeoff RevokeSessions'
-// doc comment already accepts); their next /auth/refresh simply fails and
-// they log in again, same as any other device that had a session open.
-func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID, currentPassword, newPassword string) (string, error) {
+// working session indefinitely.
+//
+// The one session that must survive is the one doing the changing, so a
+// fresh refresh token is issued after the revoke and returned alongside the
+// access token. Without it the first login of every new deployment ended
+// badly: the seeded admin is forced to change the password, keeps working
+// on an in-memory access token, and is thrown back to the login screen by
+// the first page reload -- because the cookie their own password change had
+// just revoked was the only thing that could rebuild the session.
+func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID, currentPassword, newPassword string) (string, string, error) {
 	if err := validatePasswordPolicy(newPassword); err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	var user *domain.User
+	var newRefreshToken string
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		u, err := s.users.Get(ctx, tx, tenantID, userID)
 		if err != nil {
@@ -489,19 +495,27 @@ func (s *AuthService) ChangePassword(ctx context.Context, tenantID, userID uuid.
 		if err := s.refreshTokens.RevokeAllForUser(ctx, tx, userID); err != nil {
 			return fmt.Errorf("revoke refresh tokens: %w", err)
 		}
+		// Issued after the revoke, so this one is the only survivor: every
+		// other device really is signed out, and the caller keeps a session
+		// they can reload into.
+		next, err := s.issueRefreshToken(ctx, tx, tenantID, userID)
+		if err != nil {
+			return err
+		}
+		newRefreshToken = next
 		u.MustChangePassword = false
 		user = u
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, false, user.MFATOTPSecret != nil)
 	if err != nil {
-		return "", fmt.Errorf("issue token: %w", err)
+		return "", "", fmt.Errorf("issue token: %w", err)
 	}
-	return token, nil
+	return token, newRefreshToken, nil
 }
 
 // UpdateProfile lets a local-auth user change their own name/email. A name

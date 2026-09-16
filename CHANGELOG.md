@@ -11,6 +11,17 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Fixed
+
+- **Changing your password signed you out on the next page reload.** The change revokes every
+  refresh token for the user, which is right -- a password change is exactly when a stolen token
+  must stop working -- but it revoked the caller's own cookie too, and nothing replaced it. The user
+  kept working on an in-memory access token and was thrown back to the login screen by their first
+  reload, with nothing on screen explaining why. This hit *every* new deployment, because the seeded
+  admin is forced to change the password before anything else unlocks. A fresh refresh token is now
+  issued after the revoke, so the session doing the changing survives and every other device is
+  still signed out.
+
 ### Security
 
 - **SAML no longer answers the IdP's POST with a session token.** `ServeACS` returned one as raw

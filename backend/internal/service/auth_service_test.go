@@ -127,22 +127,22 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	userID := testutil.NewUser(t, tenantID, "analyst", nil)
 
 	t.Run("rejects a new password shorter than 8 characters", func(t *testing.T) {
-		_, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "short")
+		_, _, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "short")
 		assert.ErrorContains(t, err, "at least 8 characters")
 	})
 
 	t.Run("rejects a new password with only letters", func(t *testing.T) {
-		_, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "onlyletters")
+		_, _, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "onlyletters")
 		assert.ErrorContains(t, err, "at least one letter and one digit")
 	})
 
 	t.Run("rejects a new password with only digits", func(t *testing.T) {
-		_, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "12345678")
+		_, _, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "12345678")
 		assert.ErrorContains(t, err, "at least one letter and one digit")
 	})
 
 	t.Run("rejects the wrong current password", func(t *testing.T) {
-		_, err := svc.ChangePassword(t.Context(), tenantID, userID, "wrong-current-password", "NewPassword123!")
+		_, _, err := svc.ChangePassword(t.Context(), tenantID, userID, "wrong-current-password", "NewPassword123!")
 		assert.ErrorContains(t, err, "incorrect")
 	})
 
@@ -151,7 +151,7 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, refreshToken, "a session issued before the password change")
 
-		token, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "NewPassword123!")
+		token, _, err := svc.ChangePassword(t.Context(), tenantID, userID, testutil.TestPassword, "NewPassword123!")
 		require.NoError(t, err)
 		assert.NotEmpty(t, token)
 
