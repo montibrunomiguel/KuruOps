@@ -202,7 +202,7 @@ func TestUserHandlers_Deactivate_RevokesRefreshToken(t *testing.T) {
 	req := withClaims(httptest.NewRequest("POST", "/"+targetUserID.String()+"/deactivate", nil), tenantID, uuid.New(), nil)
 	require.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 
-	token, newRT, err := authSvc.Refresh(t.Context(), tenantID, rt)
+	_, token, newRT, err := authSvc.Refresh(t.Context(), tenantID, rt)
 	require.NoError(t, err)
 	assert.Empty(t, token, "the refresh token issued before deactivation must no longer work")
 	assert.Empty(t, newRT)

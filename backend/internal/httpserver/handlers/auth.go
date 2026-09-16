@@ -240,10 +240,18 @@ func (h *AuthHandlers) loginLDAP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// refreshResponse carries only the new access token -- the rotated refresh
-// token goes back as a Set-Cookie, same reasoning as loginResponse.
+// refreshResponse carries the new access token and the identity it belongs
+// to; the rotated refresh token goes back as a Set-Cookie, same reasoning
+// as loginResponse.
+//
+// User is here because the access token lives in memory only: a page load
+// has the refresh cookie and nothing else, so this response has to be able
+// to rebuild a session on its own. It is also what makes the SAML flow work
+// without ever putting a token in a URL or a readable body -- see
+// SAMLAuthService.ServeACS.
 type refreshResponse struct {
-	Token string `json:"token"`
+	Token string    `json:"token"`
+	User  loginUser `json:"user"`
 }
 
 // refresh exchanges a still-valid refresh token for a new access token,
@@ -263,7 +271,7 @@ func (h *AuthHandlers) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, newRefreshToken, err := h.auth.Refresh(r.Context(), tenant.ID, presented)
+	user, token, newRefreshToken, err := h.auth.Refresh(r.Context(), tenant.ID, presented)
 	if err != nil {
 		writeInternalError(w, r, err)
 		return
@@ -278,7 +286,13 @@ func (h *AuthHandlers) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessioncookie.Set(w, newRefreshToken, h.secureCookies)
-	writeJSON(w, http.StatusOK, refreshResponse{Token: token})
+	writeJSON(w, http.StatusOK, refreshResponse{
+		Token: token,
+		User: loginUser{
+			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
+			MustChangePassword: user.MustChangePassword,
+		},
+	})
 }
 
 // logout revokes the refresh token the caller presents, so it can't be used

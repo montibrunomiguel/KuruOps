@@ -582,6 +582,41 @@ func toAnthropicTools(tools []Tool) []anthropicToolDef {
 	return wire
 }
 
+// providerError turns an LLM provider's HTTP failure into something an
+// analyst can act on.
+//
+// The whole response body used to become the message, and that message is
+// rendered verbatim in the analysis panel -- so a Gemini outage put a
+// multi-line JSON blob in front of whoever clicked Analyse, and a wrong
+// Base URL produced a bare "llm provider returned 404:" that said nothing
+// about which setting was wrong. The statuses below are the ones that
+// actually happen, each mapped to the thing to go and change; the raw body
+// is kept, truncated, because for anything unrecognised it is the only
+// clue there is.
+func providerError(status int, body []byte) error {
+	switch status {
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("the AI provider is rate-limiting requests (429) -- wait a moment and analyse again, or move to a higher quota tier")
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("the AI provider rejected the credentials (%d) -- check the API key in Settings -> AI Integration", status)
+	case http.StatusNotFound:
+		return fmt.Errorf("the AI provider returned 404 -- check the Base URL and model name in Settings -> AI Integration; for an OpenAI-compatible endpoint the Base URL is the part before /chat/completions")
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return fmt.Errorf("the AI provider is temporarily unavailable (%d) -- this is usually short-lived, try analysing again in a moment", status)
+	}
+	return fmt.Errorf("llm provider returned %d: %s", status, truncateForMessage(body))
+}
+
+// truncateForMessage caps a provider body so an error that reaches the UI
+// stays readable -- some providers answer with kilobytes of HTML.
+func truncateForMessage(body []byte) string {
+	const max = 300
+	if len(body) <= max {
+		return string(body)
+	}
+	return string(body[:max]) + "... (truncated)"
+}
+
 func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 	ctx, span := tracer.Start(req.Context(), "llm.request")
 	defer span.End()
@@ -604,7 +639,7 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 		}
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 		if resp.StatusCode >= 300 {
-			err := fmt.Errorf("llm provider returned %d: %s", resp.StatusCode, string(body))
+			err := providerError(resp.StatusCode, body)
 			// 5xx and 429 say the provider is unhealthy or overloaded.
 			// Every other 4xx is our request's fault and would fail
 			// identically forever -- counting those would trip the breaker

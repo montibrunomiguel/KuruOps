@@ -127,6 +127,11 @@
     "done": "Sua senha foi redefinida. Agora você pode entrar com sua nova senha.",
     "missingToken": "Este link de redefinição está sem o token -- use o link do seu e-mail exatamente como foi enviado."
   },
+  "samlCallback": {
+    "completing": "Concluindo o login…",
+    "failed": "Não foi possível concluir o login único. Entre novamente.",
+    "backToLogin": "Voltar para o login"
+  },
   "changePassword": {
     "title": "Alterar senha",
     "hint": "Esta conta está usando uma senha padrão. Defina uma senha sua antes de continuar.",

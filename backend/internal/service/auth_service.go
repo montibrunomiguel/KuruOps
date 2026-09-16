@@ -367,7 +367,7 @@ func (s *AuthService) DisableMFA(ctx context.Context, tenantID, userID uuid.UUID
 // one is revoked the instant its replacement is issued, so a stolen-and-
 // replayed old token after a legitimate refresh is rejected same as any
 // other revoked token).
-func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshToken string) (string, string, error) {
+func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshToken string) (*domain.User, string, string, error) {
 	var user *domain.User
 	var newRefreshToken string
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -399,17 +399,17 @@ func (s *AuthService) Refresh(ctx context.Context, tenantID uuid.UUID, refreshTo
 		return nil
 	})
 	if err != nil {
-		return "", "", err
+		return nil, "", "", err
 	}
 	if user == nil {
-		return "", "", nil
+		return nil, "", "", nil
 	}
 
 	token, err := s.issuer.Issue(tenantID, user.ID, user.Role.IsAdmin, user.Role.ResourceAccess, user.Role.AllowedTags, user.MustChangePassword, user.MFATOTPSecret != nil)
 	if err != nil {
-		return "", "", fmt.Errorf("issue token: %w", err)
+		return nil, "", "", fmt.Errorf("issue token: %w", err)
 	}
-	return token, newRefreshToken, nil
+	return user, token, newRefreshToken, nil
 }
 
 // RevokeSessions invalidates every outstanding refresh token for a user --

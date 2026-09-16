@@ -125,7 +125,7 @@ func TestPasswordResetService_ConfirmReset(t *testing.T) {
 		})
 
 		t.Run("a session issued before the reset is revoked", func(t *testing.T) {
-			newToken, newRT, err := authSvc.Refresh(t.Context(), tenantID, refreshToken)
+			_, newToken, newRT, err := authSvc.Refresh(t.Context(), tenantID, refreshToken)
 			require.NoError(t, err)
 			assert.Empty(t, newToken)
 			assert.Empty(t, newRT)

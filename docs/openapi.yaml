@@ -303,7 +303,10 @@ paths:
       responses:
         "200":
           description: >-
-            New access token issued, and a rotated refresh token set as a cookie.
+            New access token issued, and a rotated refresh token set as a cookie. The user is
+            included because the access token is never stored client-side: a page load (or a SAML
+            callback) has only the cookie to go on and has to rebuild the session from this
+            response alone.
           headers:
             Set-Cookie:
               schema:
@@ -316,6 +319,8 @@ paths:
                 properties:
                   token:
                     type: string
+                  user:
+                    $ref: '#/components/schemas/LoginResponse/properties/user'
         "401":
           description: >-
             No cookie presented, or the token in it is unknown, expired or already rotated. The
@@ -389,7 +394,15 @@ paths:
     post:
       tags: [Auth]
       summary: SAML Assertion Consumer Service callback
-      description: Unauthenticated. The IdP posts the SAML assertion here to complete login.
+      description: >-
+        Unauthenticated. The IdP posts the SAML assertion here to complete login. On success this
+        sets the `kuruops_refresh` cookie and redirects to the SPA at `/login/saml`, which
+        trades that cookie for an access token via `POST /auth/refresh`. No token is returned in
+        this response: a credential in the body of an IdP-initiated POST ends up in browser history
+        and proxy logs.
+
+        The SAML flow has not been validated against a real identity provider -- see
+        `backend/README.md`.
       security: []
       requestBody:
         required: true
@@ -401,8 +414,19 @@ paths:
                 SAMLResponse:
                   type: string
       responses:
-        "200":
-          description: Login completed (response shape mirrors LoginResponse, rendered/redirected by the SAML handler)
+        "302":
+          description: >-
+            Assertion accepted. Sets the `kuruops_refresh` cookie and redirects to the SPA's
+            `/login/saml`.
+          headers:
+            Location:
+              schema:
+                type: string
+              description: "`APP_BASE_URL` + `/login/saml` -- never carries a token."
+            Set-Cookie:
+              schema:
+                type: string
+              description: The `kuruops_refresh` cookie.
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":

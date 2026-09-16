@@ -428,6 +428,15 @@ export interface BulkResponse {
   results: BulkResult[];
 }
 
+// What POST /auth/refresh answers. It carries the identity as well as the
+// token because the access token is never stored: a page load has only the
+// HttpOnly cookie to go on, and a SAML callback has not even got a stored
+// user yet.
+export interface RefreshResponse {
+  token: string;
+  user: LoginResponse["user"];
+}
+
 export interface LoginResponse {
   token: string;
   // No refreshToken field on purpose: the backend delivers it as an

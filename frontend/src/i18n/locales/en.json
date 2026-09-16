@@ -127,6 +127,11 @@
     "done": "Your password has been reset. You can now sign in with your new password.",
     "missingToken": "This reset link is missing its token -- use the link from your email exactly as sent."
   },
+  "samlCallback": {
+    "completing": "Completing sign-in…",
+    "failed": "We couldn't complete the single sign-on. Please sign in again.",
+    "backToLogin": "Back to sign in"
+  },
   "changePassword": {
     "title": "Change Password",
     "hint": "This account is using a default password. Set your own password before continuing.",

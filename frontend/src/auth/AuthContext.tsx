@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError, setRefreshHandler } from "../api/client";
-import type { LoginResponse, MfaRequiredResponse } from "../types/api";
+import type { LoginResponse, MfaRequiredResponse, RefreshResponse } from "../types/api";
 
 // loginLocal's result: either the login completed outright, or the account
 // has TOTP enrolled and the caller must collect a 6-digit code and call
@@ -65,6 +65,11 @@ interface AuthContextValue extends AuthState {
   // freshly re-issued token (mustChangePassword cleared) without forcing a
   // new login.
   applyNewToken: (token: string) => void;
+  // Completes a login that happened entirely server-side (SAML): trades the
+  // HttpOnly refresh cookie for a session. Resolves false when there is no
+  // usable cookie, which is what a direct visit to the callback route looks
+  // like.
+  adoptCookieSession: () => Promise<boolean>;
   // Called after PUT /account/profile succeeds -- name/email aren't part of
   // the JWT claims (see decodeTokenClaims), so this patches the locally
   // held user directly from the response body instead of decoding a token.
@@ -236,7 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // No body: the cookie carries the refresh token, and the rotated one
       // comes back the same way.
-      const res = await api.post<{ token: string }>("/auth/refresh", {}, null);
+      const res = await api.post<RefreshResponse>("/auth/refresh", {}, null);
       const claims = decodeTokenClaims(res.token);
       persist({
         token: res.token,
@@ -246,6 +251,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       persist({ token: null, user: null });
       return null;
+    }
+  }, [persist]);
+
+  // adoptCookieSession builds a session out of nothing but the refresh
+  // cookie. Unlike refreshAccessToken above it does not need a user in
+  // storage first -- the response carries the identity -- which is what
+  // lets a federated login finish without a token ever travelling through
+  // a URL or a body the page can read: the ACS endpoint sets the HttpOnly
+  // cookie, redirects here, and this trades it for a session.
+  const adoptCookieSession = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await api.post<RefreshResponse>("/auth/refresh", {}, null);
+      const { isAdmin, resourceAccess, mfaEnabled } = decodeTokenClaims(res.token);
+      persist({ token: res.token, user: { ...res.user, isAdmin, resourceAccess, mfaEnabled } });
+      return true;
+    } catch {
+      persist({ token: null, user: null });
+      return false;
     }
   }, [persist]);
 
@@ -284,10 +307,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginLocal,
       verifyMfa,
       applyNewToken,
+      adoptCookieSession,
       updateProfile,
       logout,
     }),
-    [state, bootstrapping, loginLocal, verifyMfa, applyNewToken, updateProfile, logout],
+    [state, bootstrapping, loginLocal, verifyMfa, applyNewToken, adoptCookieSession, updateProfile, logout],
   );
 
   return (

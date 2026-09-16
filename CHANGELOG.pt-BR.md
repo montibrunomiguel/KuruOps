@@ -12,6 +12,60 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Security
+
+- **O SAML não responde mais ao POST do IdP com um token de sessão.** O `ServeACS` devolvia um como
+  JSON direto, colocando uma credencial no histórico do navegador, em qualquer log de proxy no
+  caminho e na própria página caso o redirect não acontecesse. A correção documentada era a SPA
+  trocar um código de uso único -- mas o cookie de refresh já *é* esse código, e mais forte
+  (HttpOnly, `SameSite=Strict`, escopo `/auth`, rotativo a cada uso, revogável). Então o ACS grava
+  esse cookie e redireciona para `/login/saml`, onde a SPA o troca por um access token pelo
+  `POST /auth/refresh` de sempre. Nenhum token trafega em URL nem em corpo que algum script leia.
+
+  A rota de callback deliberadamente não fica sob `/auth/`: o nginx faz proxy desse prefixo inteiro
+  para a API, então um callback ali é respondido pelo router do backend com 404 e nunca chega na
+  SPA. Descoberto abrindo no navegador -- nada nas suítes Go ou Vitest sabe que o nginx existe.
+
+  O `POST /auth/refresh` agora devolve o usuário junto do token. Precisa: o access token nunca é
+  armazenado, então um carregamento de página (e um callback SAML, que nem usuário guardado tem)
+  só dispõe do cookie para remontar a sessão.
+
+  **O SAML continua não validado contra um provedor de identidade real.** Metadata, o redirect de
+  login e a rejeição de assertion têm teste; uma assertion válida só foi exercitada com certificados
+  gerados. O `backend/README.md` diz isso com todas as letras em vez de sugerir que o fluxo está
+  comprovado.
+
+### Fixed
+
+- **Uma run de IA que falhava consumia a única chance do alerta de ter uma triagem completa.** A
+  primeira análise de um alerta recebe o prompt longo de triagem e as seguintes um prompt curto de
+  acompanhamento, mas a contagem incluía runs que tinham *falhado* -- e um 503 do LLM ("this model
+  is currently experiencing high demand") é o jeito mais comum de uma run terminar. Assim a primeira
+  falha transitória rebaixava silenciosamente toda retentativa: o analista clicava Analisar de novo,
+  recebia uma resposta mais pobre do que o alerta merecia e não tinha volta. Agora só contam runs
+  que de fato produziram uma análise.
+
+- **Uma pergunta de acompanhamento que falhava destruía a análise pronta.** Perguntar reaproveita a
+  run concluída, então uma falha do provedor nesse turno deixava a run em `failed` -- e a tentativa
+  seguinte, vendo a última run falha, começava uma conversa nova do zero. Dois cliques depois de um
+  relatório de triagem pronto, a tela mostrava só a pergunta sem resposta do próprio analista, com o
+  relatório alcançável apenas lendo o banco. Uma continuação que falha agora restaura a run para
+  concluída com o relatório intacto; o turno sem resposta é descartado em vez de ficar pendurado no
+  transcript.
+
+- **Falhas do provedor chegavam ao analista como JSON cru.** O corpo inteiro da resposta virava a
+  mensagem de erro, e essa mensagem é renderizada literalmente no painel de análise -- então uma
+  instabilidade do Gemini colocava um bloco de JSON de várias linhas na tela, e uma Base URL errada
+  produzia um "llm provider returned 404:" pelado, sem nomear nada. 401/403, 404, 429 e 5xx agora
+  dizem o que mudar; qualquer outro ainda carrega o corpo, truncado.
+
+- **O prompt de triagem agora diz *como* redigir, não só que redija.** Ao triar um alerta cujo
+  payload trazia uma API key, um modelo real reproduziu a chave literalmente enquanto recomendava
+  rotacioná-la -- ele leu nomear o valor como sendo útil. A instrução agora cobre esse caso pelo
+  nome. Re-testado contra o mesmo payload depois: tanto a chave quanto a senha voltaram como
+  `[REDACTED]`. Instrução não garante obediência do modelo, então trate como redução de risco, não
+  como eliminação.
+
 ### Fixed
 
 - **Um alerta ou incidente cujo título carrega um token longo sem espaços empurrava os botões de
