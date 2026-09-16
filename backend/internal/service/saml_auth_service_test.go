@@ -119,6 +119,27 @@ func TestSAMLAuthService_Configured(t *testing.T) {
 		assert.NotEmpty(t, location.Query().Get("RelayState"))
 	})
 
+	t.Run("ServeACS never answers with a token in the body", func(t *testing.T) {
+		// The gap this closes: the ACS used to answer the IdP's POST with a
+		// JSON body containing a live session token, putting a credential in
+		// browser history, any proxy log on the way, and the rendered page
+		// itself. It now sets the HttpOnly refresh cookie and redirects, and
+		// the SPA trades that cookie for a token from its own origin.
+		//
+		// Asserted on the rejection path because a valid assertion needs a
+		// real IdP signature -- but the property is about what this endpoint
+		// may ever write, so it holds for any outcome: nothing here is
+		// allowed to emit a bearer token.
+		req := httptest.NewRequest("POST", "/auth/saml/acs", strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		samlSvc.ServeACS(t.Context(), tenantID, rec, req)
+
+		assert.NotContains(t, rec.Body.String(), "token")
+		assert.NotContains(t, rec.Header().Get("Location"), "token",
+			"a redirect must not carry a credential in the query string either")
+	})
+
 	t.Run("ServeACS builds the service provider but rejects a missing assertion", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "/auth/saml/acs", strings.NewReader(""))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

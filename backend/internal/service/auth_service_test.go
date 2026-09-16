@@ -88,14 +88,14 @@ func TestAuthService_Refresh(t *testing.T) {
 	require.NotEmpty(t, refreshToken)
 
 	t.Run("a valid refresh token yields a new access token and rotates the refresh token", func(t *testing.T) {
-		newToken, newRefreshToken, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		_, newToken, newRefreshToken, err := svc.Refresh(t.Context(), tenantID, refreshToken)
 		require.NoError(t, err)
 		assert.NotEmpty(t, newToken)
 		assert.NotEmpty(t, newRefreshToken)
 		assert.NotEqual(t, refreshToken, newRefreshToken)
 
 		t.Run("the rotated-away old token can no longer be used", func(t *testing.T) {
-			token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+			_, token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
 			require.NoError(t, err)
 			assert.Empty(t, token)
 			assert.Empty(t, rt)
@@ -105,7 +105,7 @@ func TestAuthService_Refresh(t *testing.T) {
 	})
 
 	t.Run("an unknown refresh token yields no error and no token", func(t *testing.T) {
-		token, rt, err := svc.Refresh(t.Context(), tenantID, "rt_no-such-token")
+		_, token, rt, err := svc.Refresh(t.Context(), tenantID, "rt_no-such-token")
 		require.NoError(t, err)
 		assert.Empty(t, token)
 		assert.Empty(t, rt)
@@ -114,7 +114,7 @@ func TestAuthService_Refresh(t *testing.T) {
 	t.Run("RevokeSessions invalidates the current refresh token", func(t *testing.T) {
 		require.NoError(t, svc.RevokeSessions(t.Context(), tenantID, userID))
 
-		token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		_, token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
 		require.NoError(t, err)
 		assert.Empty(t, token)
 		assert.Empty(t, rt)
@@ -160,7 +160,7 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		require.NotNil(t, user)
 		assert.NotEmpty(t, loginToken)
 
-		newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		_, newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshToken)
 		require.NoError(t, err)
 		assert.Empty(t, newToken, "the refresh token issued before the password change must no longer work")
 		assert.Empty(t, newRT)
@@ -179,7 +179,7 @@ func TestAuthService_Logout(t *testing.T) {
 
 		require.NoError(t, svc.Logout(t.Context(), tenantID, refreshToken))
 
-		token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
+		_, token, rt, err := svc.Refresh(t.Context(), tenantID, refreshToken)
 		require.NoError(t, err)
 		assert.Empty(t, token, "a logged-out refresh token must no longer work")
 		assert.Empty(t, rt)
@@ -193,7 +193,7 @@ func TestAuthService_Logout(t *testing.T) {
 
 		require.NoError(t, svc.Logout(t.Context(), tenantID, refreshTokenA))
 
-		newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshTokenB)
+		_, newToken, newRT, err := svc.Refresh(t.Context(), tenantID, refreshTokenB)
 		require.NoError(t, err)
 		assert.NotEmpty(t, newToken, "logging out session A must not affect session B")
 		assert.NotEmpty(t, newRT)

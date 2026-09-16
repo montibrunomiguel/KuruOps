@@ -138,14 +138,20 @@ rules for:
 The flow works end-to-end (local/LDAP/SAML → JWT → `JWTAuth` middleware), but has known gaps,
 deliberately left as TODOs instead of a hidden half-solution:
 
-- **`ServeACS` returns the access token as raw JSON** — acceptable for testing the flow, but
-  production shouldn't expose a session token in the response of a POST coming from an IdP
-  redirect; the correct pattern is for the SPA to exchange a single-use code for a token via a
-  separate same-origin call. Narrowed but not closed: the *refresh* token now leaves as an
-  HttpOnly cookie like every other login path, so what this response still exposes is the
-  15-minute access token rather than a 30-day credential.
+- **The SAML flow has never run against a real IdP.** Metadata, the login redirect and assertion
+  rejection are covered by tests; a *successful* assertion has only ever been exercised with
+  generated certificates, never against Okta, Entra ID, Keycloak or anything else. Treat SAML as
+  unvalidated end-to-end until someone has logged in through a real provider — the mechanics below
+  are sound, but "sound" is not the same as "tried".
 
-Resolved since the last revision of this document: the refresh token is no longer returned in any
+Resolved since the last revision of this document: `ServeACS` no longer answers the IdP's POST with
+a session token. It used to return one as raw JSON, which put a credential in browser history, in
+any proxy log along the way, and in the rendered page if the redirect never happened. The documented
+fix was for the SPA to exchange a single-use code — but the refresh cookie already *is* such a code,
+and a better one (HttpOnly, SameSite=Strict, scoped to `/auth`, rotating on every use, revocable),
+so the ACS sets that cookie and redirects to `/login/saml`, where the SPA trades it for an
+access token through the ordinary `POST /auth/refresh`. No token travels in a URL or in a body any
+script can read; the refresh token is no longer returned in any
 response body — it is delivered as the `kuruops_refresh` cookie (`HttpOnly`, `SameSite=Strict`,
 `Path=/auth`, `Secure` when `APP_BASE_URL` is https; see `internal/sessioncookie`), and
 `/auth/refresh`/`/auth/logout` read it from there only, ignoring a `refreshToken` body field so a

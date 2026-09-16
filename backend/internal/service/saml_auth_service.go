@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,6 +27,16 @@ import (
 // single login (see authn.ResolveIDPMetadata's doc comment).
 const samlMetadataTTL = time.Hour
 
+// samlCallbackPath is the SPA route ServeACS hands the browser to -- see
+// frontend/src/pages/SamlCallback.tsx.
+//
+// Deliberately NOT under /auth/: frontend/nginx.conf proxies that whole
+// prefix to the API, so a callback there would be answered by the backend
+// router with a 404 instead of ever reaching the SPA. Caught by trying it
+// in a browser, not by any test -- nothing in the Go or Vitest suites
+// knows nginx exists.
+const samlCallbackPath = "/login/saml"
+
 type cachedSAMLMetadata struct {
 	entityDescriptor *saml.EntityDescriptor
 	fetchedAt        time.Time
@@ -44,6 +54,10 @@ type SAMLAuthService struct {
 	// secureCookies is the Secure attribute for the refresh cookie ServeACS
 	// writes, derived once from APP_BASE_URL -- see sessioncookie.Secure.
 	secureCookies bool
+	// appBaseURL is where ServeACS sends the browser once the assertion has
+	// been accepted -- the SPA's own origin, so the /auth/refresh call it
+	// makes there is same-site.
+	appBaseURL string
 
 	metadataMu    sync.Mutex
 	metadataCache map[uuid.UUID]cachedSAMLMetadata
@@ -53,6 +67,7 @@ func NewSAMLAuthService(pool *db.Pool, identityCfg *repository.IdentityConfigRep
 	return &SAMLAuthService{
 		pool: pool, identityCfg: identityCfg, secrets: store, auth: auth,
 		secureCookies: sessioncookie.Secure(appBaseURL),
+		appBaseURL:    appBaseURL,
 		metadataCache: make(map[uuid.UUID]cachedSAMLMetadata),
 	}
 }
@@ -191,18 +206,28 @@ func (s *SAMLAuthService) ServeACS(ctx context.Context, tenantID uuid.UUID, w ht
 		return
 	}
 
-	user, token, refreshToken, err := s.auth.ProvisionFederated(ctx, tenantID, domain.AuthProviderSAML, identity.NameID, identity.NameID, identity.Name, identity.Groups)
+	_, _, refreshToken, err := s.auth.ProvisionFederated(ctx, tenantID, domain.AuthProviderSAML, identity.NameID, identity.NameID, identity.Name, identity.Groups)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Same split as the /auth/login handlers: the refresh token goes back
-	// as an HttpOnly cookie and never appears in a body the page can read.
+	// Set the refresh cookie and redirect -- no token of any kind in this
+	// response.
+	//
+	// This used to answer the IdP's POST with a JSON body containing a live
+	// session token, which put a credential somewhere it did not belong:
+	// browser history, any proxy log along the way, and the rendered page
+	// itself if the redirect never happened. The documented fix was for the
+	// SPA to exchange a single-use code, but a code is exactly what the
+	// refresh cookie already is, only better -- HttpOnly, SameSite=Strict,
+	// scoped to /auth, rotating on every use, revocable. So the browser is
+	// simply sent to the app, where the SPA trades the cookie it cannot
+	// read for an access token through the ordinary /auth/refresh call.
+	//
+	// SameSite=Strict is not a problem here: a cookie can still be SET on a
+	// cross-site POST, and the /auth/refresh call that follows is the SPA
+	// calling its own origin.
 	sessioncookie.Set(w, refreshToken, s.secureCookies)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"token": token,
-		"user":  map[string]string{"id": user.ID.String(), "email": user.Email, "name": user.Name, "role": user.Role.Name},
-	})
+	http.Redirect(w, r, strings.TrimRight(s.appBaseURL, "/")+samlCallbackPath, http.StatusFound)
 }

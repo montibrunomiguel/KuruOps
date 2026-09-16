@@ -11,6 +11,59 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Security
+
+- **SAML no longer answers the IdP's POST with a session token.** `ServeACS` returned one as raw
+  JSON, putting a credential in browser history, in any proxy log along the way, and in the page
+  itself if the redirect never happened. The documented fix was for the SPA to exchange a
+  single-use code -- but the refresh cookie already *is* such a code, and a stronger one (HttpOnly,
+  `SameSite=Strict`, scoped to `/auth`, rotating on every use, revocable). So the ACS sets that
+  cookie and redirects to `/login/saml`, where the SPA trades it for an access token through the
+  ordinary `POST /auth/refresh`. No token travels in a URL or in a body any script can read.
+
+  The callback route is deliberately not under `/auth/`: nginx proxies that whole prefix to the
+  API, so a callback there is answered by the backend router with a 404 and never reaches the SPA.
+  Found by opening it in a browser -- nothing in the Go or Vitest suites knows nginx exists.
+
+  `POST /auth/refresh` now returns the user alongside the token. It has to: the access token is
+  never stored, so a page load (and a SAML callback, which does not even have a stored user) has
+  only the cookie to rebuild a session from.
+
+  **SAML remains unvalidated against a real identity provider.** Metadata, the login redirect and
+  assertion rejection have tests; a successful assertion has only ever been exercised with
+  generated certificates. `backend/README.md` says so plainly rather than implying the flow is
+  proven.
+
+### Fixed
+
+- **A failed AI run consumed the alert's one shot at a full triage analysis.** The first analysis of
+  an alert gets the long alert-triage prompt and later ones get a shorter follow-up prompt, but the
+  count included runs that had *failed* -- and a 503 from the LLM ("this model is currently
+  experiencing high demand") is the most ordinary way a run ends. So the first transient failure
+  silently downgraded every retry: the analyst clicked Analyse again, got a thinner answer than the
+  alert deserved, and had no way back. Only runs that actually produced an analysis count now.
+
+- **A failed follow-up question destroyed the finished analysis.** Asking a question re-uses the
+  completed run, so a provider failure on that turn left the run `failed` -- and the next attempt,
+  seeing a failed latest run, started a brand new conversation from scratch. Two clicks after a
+  finished triage report, the screen showed nothing but the analyst's own unanswered question, with
+  the report reachable only by reading the database. A failed follow-up now restores the run to
+  completed with its report intact; the unanswered turn is dropped rather than left hanging in the
+  transcript.
+
+- **Provider failures reached the analyst as raw JSON.** The whole response body became the error
+  message, and that message is rendered verbatim in the analysis panel -- so a Gemini outage put a
+  multi-line JSON blob on screen, and a mistyped Base URL produced a bare "llm provider returned
+  404:" that named nothing. 401/403, 404, 429 and 5xx each say what to go and change; anything
+  unrecognised still carries the body, truncated.
+
+- **The triage prompt now says how to redact, not just to redact.** Asked to triage an alert whose
+  payload carried an API key, a real model reproduced the key verbatim while recommending it be
+  rotated -- it read naming the value as being helpful. The instruction now covers that case by
+  name. Re-tested against the same payload afterwards: both the key and the password came back as
+  `[REDACTED]`. Model compliance is not guaranteed by an instruction, so treat this as reducing the
+  risk rather than removing it.
+
 ### Fixed
 
 - **An alert or incident whose title carries a long unbroken token pushed the action buttons off

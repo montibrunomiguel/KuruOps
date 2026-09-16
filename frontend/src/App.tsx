@@ -16,6 +16,7 @@ const ChangePasswordPage = lazy(() => import("./pages/ChangePassword").then((m) 
 const ProfilePage = lazy(() => import("./pages/Profile").then((m) => ({ default: m.ProfilePage })));
 const ForgotPasswordPage = lazy(() => import("./pages/ForgotPassword").then((m) => ({ default: m.ForgotPasswordPage })));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPasswordPage })));
+const SamlCallbackPage = lazy(() => import("./pages/SamlCallback").then((m) => ({ default: m.SamlCallbackPage })));
 const SettingsLayout = lazy(() => import("./pages/settings/SettingsLayout").then((m) => ({ default: m.SettingsLayout })));
 const DashboardLayout = lazy(() => import("./pages/dashboard/DashboardLayout").then((m) => ({ default: m.DashboardLayout })));
 const AlertsListPage = lazy(() => import("./pages/alerts/AlertsListPage").then((m) => ({ default: m.AlertsListPage })));
@@ -118,6 +119,10 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        {/* Where SAML lands after the IdP -- see SamlCallback.tsx. Public by
+            design: the session it establishes comes from the HttpOnly cookie
+            the ACS response set, not from anything in this URL. */}
+        <Route path="/login/saml" element={<SamlCallbackPage />} />
         <Route path="/change-password" element={<ChangePasswordRoute />} />
 
         <Route path="/dashboard/*" element={<RequireAuth><DashboardLayout /></RequireAuth>} />
