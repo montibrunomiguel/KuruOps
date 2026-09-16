@@ -60,6 +60,9 @@ func (s *FieldMappingTemplateService) Create(ctx context.Context, tenantID, acto
 		})
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("a field mapping template named %q already exists", name)
+		}
 		return nil, fmt.Errorf("create field mapping template: %w", err)
 	}
 	return t, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 
 	"github.com/google/uuid"
@@ -88,6 +89,9 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 	if err := validateToolLists(in.AllowedTools, in.SideEffectingTools); err != nil {
 		return nil, err
 	}
+	if err := validateEndpoint(in.EndpointOrCommand); err != nil {
+		return nil, err
+	}
 
 	var authRef *string
 	if in.AuthToken != "" {
@@ -128,6 +132,9 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 
 func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
 	if err := validateToolLists(in.AllowedTools, in.SideEffectingTools); err != nil {
+		return nil, err
+	}
+	if err := validateEndpoint(in.EndpointOrCommand); err != nil {
 		return nil, err
 	}
 
@@ -205,6 +212,31 @@ func (s *MCPServerService) Delete(ctx context.Context, tenantID, actorID, id uui
 			TenantID: tenantID, Area: "mcp-servers", Action: "delete", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
 	})
+}
+
+// validateEndpoint rejects an endpoint that isn't a dialable http(s) URL.
+//
+// Only the "Streamable HTTP" transport is actually implemented (see package
+// mcpclient), so anything else -- a bare hostname, a stdio command, a
+// file:// path -- was accepted at save time and only surfaced much later as
+// a 502 from Discover Tools, with the transport error as the only clue.
+// Catching it here means the admin is told while the form is still open.
+//
+// This is not the SSRF control: httpguard still refuses to dial private
+// addresses at request time, and must, since DNS can resolve a perfectly
+// public-looking name to 127.0.0.1 long after this check has passed.
+func validateEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint %q is not a valid URL", endpoint)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("endpoint must be an http:// or https:// URL, got %q", endpoint)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("endpoint %q is missing a host", endpoint)
+	}
+	return nil
 }
 
 func validateToolLists(allowed, sideEffecting []string) error {

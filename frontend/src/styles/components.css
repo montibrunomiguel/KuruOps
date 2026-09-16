@@ -264,12 +264,19 @@
   font-size: 17px;
   font-weight: 700;
   margin: 0 0 4px;
+  /* Security alert titles routinely carry an unbroken token -- a URL, a
+     SHA-256, a base64 payload, a Windows path. Without this the token
+     cannot wrap, so the heading grows to its full intrinsic width and
+     drags the page into a horizontal scroll (see .detail-header below,
+     where it also pushes the action buttons off-screen). */
+  overflow-wrap: anywhere;
 }
 
 .page-sub {
   font-size: 12.5px;
   color: var(--text-secondary);
   margin: 0 0 24px;
+  overflow-wrap: anywhere;
 }
 
 .settings-layout {
@@ -1422,6 +1429,31 @@
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 18px;
+  /* Lets the action buttons drop to their own line rather than squeezing
+     the title -- see the flex-basis on the title block below. */
+  flex-wrap: wrap;
+}
+
+/* The title block must be allowed to shrink. A flex item defaults to
+   min-width:auto, meaning it can never be narrower than its own content's
+   intrinsic minimum -- which, for a title containing one long unbroken
+   token, is the whole token. The item then widens the header past the
+   viewport and carries .toolbar-actions (flex-shrink:0) out of reach with
+   it: an alert titled with a malicious URL left Close/Escalate sitting at
+   x=2391 on a 1039px viewport, reachable only by scrolling sideways.
+   Pairs with overflow-wrap on .page-title -- min-width:0 permits the
+   shrink, overflow-wrap makes the text actually wrap into it. */
+.detail-header > :first-child {
+  /* The basis is what makes this work, not just min-width:0. min-width
+     alone lets the block shrink to nothing while .toolbar-actions
+     (flex-shrink:0) keeps its full width -- on a 1039px window that left a
+     long title in a 137px column sixteen lines tall. A 22rem basis instead
+     states a width worth having: when the buttons no longer fit beside it
+     the header wraps and the title takes the whole line, and on a wide
+     screen both still sit side by side. min-width:0 stays, so the title
+     can still give ground before the wrap happens. */
+  flex: 1 1 22rem;
+  min-width: 0;
 }
 
 .detail-header-badges {
