@@ -41,11 +41,6 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   armazenado, então um carregamento de página (e um callback SAML, que nem usuário guardado tem)
   só dispõe do cookie para remontar a sessão.
 
-  **O SAML continua não validado contra um provedor de identidade real.** Metadata, o redirect de
-  login e a rejeição de assertion têm teste; uma assertion válida só foi exercitada com certificados
-  gerados. O `backend/README.md` diz isso com todas as letras em vez de sugerir que o fluxo está
-  comprovado.
-
 ### Fixed
 
 - **Uma run de IA que falhava consumia a única chance do alerta de ter uma triagem completa.** A
