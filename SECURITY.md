@@ -17,7 +17,7 @@ As KuruOps is a cybersecurity alert and incident management system, security is 
 If you discover a security vulnerability in KuruOps, please follow these steps:
 
 1. **Do NOT open a public GitHub issue** for security vulnerabilities.
-2. Email your findings to `security@kuruops.org` (or contact the maintainers privately via GitHub Security Advisories).
+2. Email your findings to `kuruops@proton.me` (or contact the maintainers privately via GitHub Security Advisories).
 3. Include detailed information:
    - Description of the vulnerability
    - Steps to reproduce the issue
