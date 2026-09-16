@@ -18,7 +18,7 @@ prioridade máxima. Levamos vulnerabilidades de segurança muito a sério.
 Se você descobrir uma vulnerabilidade de segurança no KuruOps, siga estes passos:
 
 1. **Não abra uma issue pública no GitHub** para vulnerabilidades de segurança.
-2. Envie suas descobertas por email para `security@kuruops.org` (ou contate os mantenedores
+2. Envie suas descobertas por email para `kuruops@proton.me` (ou contate os mantenedores
    privadamente via GitHub Security Advisories).
 3. Inclua informações detalhadas:
    - Descrição da vulnerabilidade
