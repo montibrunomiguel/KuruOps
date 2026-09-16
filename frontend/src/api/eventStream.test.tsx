@@ -3,20 +3,14 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useEventStream } from "./eventStream";
 import { AuthProvider } from "../auth/AuthContext";
+import { seedSession, withSession } from "../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AuthProvider>{children}</AuthProvider>;
 }
 
 function sessionWith() {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      refreshToken: "rt",
-      user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] },
-    }),
-  );
+  return seedSession({ id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] });
 }
 
 function streamOf(...chunks: string[]) {
@@ -39,9 +33,9 @@ describe("useEventStream", () => {
   });
 
   it("connects with the bearer token and parses an SSE frame", async () => {
-    sessionWith();
+    const token = sessionWith();
     const fetchMock = vi.fn().mockResolvedValue(new Response(streamOf('event: alert\ndata: {"id":"a1","action":"received"}\n\n'), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     const onEvent = vi.fn();
     renderHook(() => useEventStream(onEvent), { wrapper });
@@ -49,16 +43,13 @@ describe("useEventStream", () => {
     await waitFor(() => expect(onEvent).toHaveBeenCalledWith({ type: "alert", data: { id: "a1", action: "received" } }));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/events/stream",
-      expect.objectContaining({ headers: { Authorization: "Bearer tok" } }),
+      expect.objectContaining({ headers: { Authorization: `Bearer ${token}` } }),
     );
   });
 
   it("ignores keep-alive ping comments and parses subsequent real events", async () => {
     sessionWith();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(streamOf(": ping\n\n", 'event: incident\ndata: {"id":"i1"}\n\n'), { status: 200 })),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response(streamOf(": ping\n\n", 'event: incident\ndata: {"id":"i1"}\n\n'), { status: 200 }))));
 
     const onEvent = vi.fn();
     renderHook(() => useEventStream(onEvent), { wrapper });
@@ -69,10 +60,7 @@ describe("useEventStream", () => {
 
   it("handles a frame split across two stream chunks", async () => {
     sessionWith();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(streamOf('event: alert\ndata: {"id":"a', '1"}\n\n'), { status: 200 })),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response(streamOf('event: alert\ndata: {"id":"a', '1"}\n\n'), { status: 200 }))));
 
     const onEvent = vi.fn();
     renderHook(() => useEventStream(onEvent), { wrapper });
@@ -82,7 +70,7 @@ describe("useEventStream", () => {
 
   it("does not connect when there is no authenticated session", () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderHook(() => useEventStream(vi.fn()), { wrapper });
 

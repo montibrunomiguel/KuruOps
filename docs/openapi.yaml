@@ -286,21 +286,29 @@ paths:
     post:
       tags: [Auth]
       summary: Exchange a refresh token for a new access token
-      description: Unauthenticated (the refresh token itself is the credential). Rotates the refresh token.
+      description: >-
+        Unauthenticated (the refresh token itself is the credential). Rotates the refresh token.
+        The token is read from the `kuruops_refresh` cookie only -- a `refreshToken` field in the
+        request body is ignored, which is what stops a value scraped from anywhere else being
+        replayed here. The rotated token comes back the same way, as a `Set-Cookie`, so it never
+        passes through a response body that page scripts can read.
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                refreshToken:
-                  type: string
-              required: [refreshToken]
+      parameters:
+        - in: cookie
+          name: kuruops_refresh
+          required: true
+          schema:
+            type: string
+          description: Set at login. HttpOnly, SameSite=Strict, Path=/auth, and Secure whenever APP_BASE_URL is https.
       responses:
         "200":
-          description: New token pair issued
+          description: >-
+            New access token issued, and a rotated refresh token set as a cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: The rotated `kuruops_refresh` cookie.
           content:
             application/json:
               schema:
@@ -308,12 +316,10 @@ paths:
                 properties:
                   token:
                     type: string
-                  refreshToken:
-                    type: string
-        "400":
-          $ref: '#/components/responses/BadRequest'
         "401":
-          description: Invalid or expired refresh token
+          description: >-
+            No cookie presented, or the token in it is unknown, expired or already rotated. The
+            stale cookie is cleared on the way out.
           content:
             text/plain:
               schema:
@@ -331,19 +337,23 @@ paths:
         one browser/tab does not sign out sessions open elsewhere; use the admin "revoke sessions"
         action for that. Always returns 204 regardless of whether the token was known, already
         revoked, or omitted, so this endpoint cannot be used to probe token validity.
+        The token is read from the `kuruops_refresh` cookie, which is cleared on the way out
+        regardless of whether the revoke found anything.
       security: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                refreshToken:
-                  type: string
+      parameters:
+        - in: cookie
+          name: kuruops_refresh
+          required: false
+          schema:
+            type: string
       responses:
         "204":
-          description: Token revoked (or already invalid/omitted -- treated the same)
+          description: Token revoked (or already invalid/omitted -- treated the same); the cookie is cleared
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Expires the `kuruops_refresh` cookie.
         "500":
           $ref: '#/components/responses/InternalError'
 
@@ -4797,11 +4807,13 @@ components:
         password: { type: string }
       required: [email, password]
 
+    # No refreshToken field: it is delivered as the HttpOnly `kuruops_refresh`
+    # cookie instead, so that page scripts have no way to read it. Applies to
+    # every login path -- local, LDAP, MFA's second step, and SAML's ACS.
     LoginResponse:
       type: object
       properties:
         token: { type: string }
-        refreshToken: { type: string }
         user:
           type: object
           properties:

@@ -124,8 +124,11 @@ rules for:
   `resourceAccess`. Within each resource, `allowedTags` filters the listing in the SQL query
   (`tags && $allowedTags`) and is checked again in
   `Get`/`ChangeStatus`/`Close`/`ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` — see
-  `service/access.go` and the comment in `IncidentService` about sub-resources (comments, links,
-  timeline) that don't yet repeat this check and rely solely on tenant isolation via RLS. Because
+  `service/access.go`. Sub-resources (comments, links, IOCs, timeline, status history, tool-call
+  approval) repeat the same check by loading the parent through `loadVisible` first; the structural
+  guard that keeps a newly added one from forgetting is
+  `TestSubResourceRoutesRejectTagRestrictedCaller`, which walks the registered chi routes rather
+  than a hand-maintained list. Because
   the JWT only mirrors the Role at login, editing a Role (or reassigning a user to a different one)
   takes effect on that user's next login/token refresh, not immediately — same staleness tradeoff
   `authn.Claims`' own doc comment describes for `mustChangePassword`.
@@ -135,12 +138,18 @@ rules for:
 The flow works end-to-end (local/LDAP/SAML → JWT → `JWTAuth` middleware), but has known gaps,
 deliberately left as TODOs instead of a hidden half-solution:
 
-- **`ServeACS` returns the token as raw JSON** — acceptable for testing the flow, but production
-  shouldn't expose a session token in the response of a POST coming from an IdP redirect; the
-  correct pattern is for the SPA to exchange a single-use code for a token via a separate
-  same-origin call.
+- **`ServeACS` returns the access token as raw JSON** — acceptable for testing the flow, but
+  production shouldn't expose a session token in the response of a POST coming from an IdP
+  redirect; the correct pattern is for the SPA to exchange a single-use code for a token via a
+  separate same-origin call. Narrowed but not closed: the *refresh* token now leaves as an
+  HttpOnly cookie like every other login path, so what this response still exposes is the
+  15-minute access token rather than a 30-day credential.
 
-Resolved since the last revision of this document: session revocation (refresh tokens in
+Resolved since the last revision of this document: the refresh token is no longer returned in any
+response body — it is delivered as the `kuruops_refresh` cookie (`HttpOnly`, `SameSite=Strict`,
+`Path=/auth`, `Secure` when `APP_BASE_URL` is https; see `internal/sessioncookie`), and
+`/auth/refresh`/`/auth/logout` read it from there only, ignoring a `refreshToken` body field so a
+value obtained elsewhere cannot be replayed; session revocation (refresh tokens in
 `refresh_tokens`, see `AuthService.Refresh`/`RevokeSessions` and the "Revoke sessions" button in
 Settings → Users), SAML metadata caching (`SAMLAuthService`'s `resolveIDPMetadata`, 1h TTL,
 invalidated on config save), per-account rate limiting on login (`AuthHandlers.loginAttempts`, in

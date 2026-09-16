@@ -4,15 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { DashboardLayout } from "./DashboardLayout";
 import { AuthProvider } from "../../auth/AuthContext";
+import { seedSession, withSession } from "../../test/session";
 
 function sessionWith(resourceAccess: string[]) {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: { id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess },
-    }),
-  );
+  seedSession({ id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess })
 }
 
 function jsonResponse(body: unknown) {
@@ -34,7 +29,7 @@ function renderDashboard(initialPath: string) {
 describe("DashboardLayout", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([]))));
   });
 
   it("shows only the tabs the user has capability for", async () => {
@@ -70,9 +65,7 @@ describe("AlertsTabPanel", () => {
 
   it("renders the stats-derived KPI cards", async () => {
     sessionWith(["alerts"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
             jsonResponse({
@@ -90,8 +83,7 @@ describe("AlertsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/alerts");
     expect(await screen.findByText("Open Alerts")).toBeInTheDocument();
@@ -104,7 +96,7 @@ describe("AlertsTabPanel", () => {
 
   it("shows the empty state when there is no recent activity", async () => {
     sessionWith(["alerts"]);
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([]))));
 
     renderDashboard("/dashboard/alerts");
     expect(await screen.findByText("No recent activity.")).toBeInTheDocument();
@@ -113,7 +105,7 @@ describe("AlertsTabPanel", () => {
   it("fetches recent activity scoped to kind=alert", async () => {
     sessionWith(["alerts"]);
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -135,7 +127,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -162,7 +154,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -190,7 +182,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -210,9 +202,7 @@ describe("AlertsTabPanel", () => {
 
   it("renders the Alerts by Analyst breakdown, unassigned bucket included", async () => {
     sessionWith(["alerts"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([{ id: "u1", name: "Marina Alves" }]));
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
@@ -224,8 +214,7 @@ describe("AlertsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/alerts");
     // "Alerts by Analyst" is a static heading rendered before the stats
@@ -252,7 +241,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -280,7 +269,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -341,7 +330,7 @@ describe("AlertsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/alerts");
     await waitFor(() => expect(screen.getByText("Open Alerts")).toBeInTheDocument());
@@ -356,9 +345,7 @@ describe("AlertsTabPanel", () => {
 
   it("renders recent activity items with their icon and relative time", async () => {
     sessionWith(["alerts"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/activity")) {
           return Promise.resolve(
             jsonResponse([
@@ -370,8 +357,7 @@ describe("AlertsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/alerts");
     expect(await screen.findByText("New webhook alert received from wazuh")).toBeInTheDocument();
@@ -379,17 +365,14 @@ describe("AlertsTabPanel", () => {
 
   it("shows the error banner when the stats request fails", async () => {
     sessionWith(["alerts"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
             new Response(JSON.stringify({ error: "stats boom" }), { status: 500, headers: { "content-type": "application/json" } }),
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/alerts");
     expect(await screen.findByText("stats boom")).toBeInTheDocument();
@@ -403,9 +386,7 @@ describe("IncidentsTabPanel", () => {
 
   it("renders the Incidents by Commander breakdown, no-commander bucket included", async () => {
     sessionWith(["incidents"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([{ id: "u1", name: "Diego Costa" }]));
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
@@ -417,8 +398,7 @@ describe("IncidentsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/incidents");
     // "Incidents by Commander" is a static heading rendered before the
@@ -433,9 +413,7 @@ describe("IncidentsTabPanel", () => {
 
   it("renders the Incident Volume chart from stats.incidentTrend", async () => {
     sessionWith(["incidents"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
@@ -447,8 +425,7 @@ describe("IncidentsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/incidents");
     expect(await screen.findByText("Incident Volume")).toBeInTheDocument();
@@ -468,7 +445,7 @@ describe("IncidentsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
@@ -495,7 +472,7 @@ describe("IncidentsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
@@ -524,7 +501,7 @@ describe("IncidentsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
@@ -552,7 +529,7 @@ describe("IncidentsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
@@ -572,17 +549,14 @@ describe("IncidentsTabPanel", () => {
 
   it("shows the error banner when the stats request fails", async () => {
     sessionWith(["incidents"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
             new Response(JSON.stringify({ error: "stats boom" }), { status: 500, headers: { "content-type": "application/json" } }),
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/incidents");
     expect(await screen.findByText("stats boom")).toBeInTheDocument();
@@ -590,9 +564,7 @@ describe("IncidentsTabPanel", () => {
 
   it("shows critical SLA-breach styling and copy when slaBreachedCount is nonzero", async () => {
     sessionWith(["incidents"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/stats")) {
           return Promise.resolve(
             jsonResponse({
@@ -602,8 +574,7 @@ describe("IncidentsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/incidents");
     // "SLA Breached" is a static label rendered before the stats fetch
@@ -615,9 +586,7 @@ describe("IncidentsTabPanel", () => {
 
   it("renders the recent incidents table with joined assignee names, and a dash when unassigned", async () => {
     sessionWith(["incidents"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.startsWith("/api/v1/incidents")) {
           return Promise.resolve(
             jsonResponse([
@@ -630,8 +599,7 @@ describe("IncidentsTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse([]));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/incidents");
     await screen.findByText("Ransomware outbreak");
@@ -672,7 +640,7 @@ describe("IncidentsTabPanel", () => {
       }
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/incidents");
     await waitFor(() => expect(screen.getByText("Active Incidents")).toBeInTheDocument());
@@ -693,9 +661,7 @@ describe("FollowupTabPanel", () => {
 
   it("renders the triage queue from the follow-up view's alerts", async () => {
     sessionWith(["followup"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/dashboard/followup")) {
           return Promise.resolve(
             jsonResponse({
@@ -705,8 +671,7 @@ describe("FollowupTabPanel", () => {
           );
         }
         return Promise.resolve(jsonResponse({}));
-      }),
-    );
+      })));
 
     renderDashboard("/dashboard/followup");
     expect(await screen.findByText("Escalated alert")).toBeInTheDocument();
@@ -714,10 +679,7 @@ describe("FollowupTabPanel", () => {
 
   it("shows the empty state when nothing needs follow-up", async () => {
     sessionWith(["followup"]);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ incidents: [], alerts: [] })),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse({ incidents: [], alerts: [] }))));
 
     renderDashboard("/dashboard/followup");
     expect(await screen.findByText("Nothing pending follow-up.")).toBeInTheDocument();
@@ -726,7 +688,7 @@ describe("FollowupTabPanel", () => {
   it("changing the time range re-fetches the follow-up view with a since query param", async () => {
     sessionWith(["followup"]);
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ incidents: [], alerts: [] }));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderDashboard("/dashboard/followup");
     expect(await screen.findByText("Nothing pending follow-up.")).toBeInTheDocument();

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/dbmigrate"
@@ -27,7 +28,9 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver"
 	"github.com/kuruops/kuruops/internal/httpserver/handlers"
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
+	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
@@ -79,6 +82,17 @@ func main() {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Fail fast on an LLM/MCP provider that has gone bad, instead of making
+	// every analysis run wait out the full HTTP timeout against a dead
+	// endpoint. Installed before any provider is constructed; a zero
+	// threshold or cooldown disables it -- see config.Config.
+	breakerCfg := circuitbreaker.Config{
+		Threshold: cfg.ExternalCallBreakerThreshold,
+		Cooldown:  cfg.ExternalCallBreakerCooldown,
+	}
+	llmclient.Configure(breakerCfg)
+	mcpclient.Configure(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -261,11 +275,11 @@ func main() {
 	identityCfgHandlers := handlers.NewIdentityConfigHandlers(identityCfgService)
 
 	ldapAuthService := service.NewLDAPAuthService(pool, identityCfgRepo, secretStore, authService)
-	samlAuthService := service.NewSAMLAuthService(pool, identityCfgRepo, secretStore, authService)
+	samlAuthService := service.NewSAMLAuthService(pool, identityCfgRepo, secretStore, authService, cfg.AppBaseURL)
 	identityCfgService.SetOnSAMLConfigChanged(samlAuthService.InvalidateMetadataCache)
 	passwordResetRepo := repository.NewPasswordResetRepository()
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, refreshTokenRepo, smtpConfigService, cfg.AppBaseURL)
-	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService)
+	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService, cfg.AppBaseURL)
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
 	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
 

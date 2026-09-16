@@ -31,7 +31,7 @@ import (
 func TestSAMLAuthService_NotConfigured(t *testing.T) {
 	pool, authSvc := newAuthService(t)
 	tenantID := testutil.NewTenant(t)
-	samlSvc := service.NewSAMLAuthService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore(), authSvc)
+	samlSvc := service.NewSAMLAuthService(pool, repository.NewIdentityConfigRepository(), secrets.NewEnvStore(), authSvc, "https://kuruops.test")
 
 	t.Run("ServeMetadata", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/auth/saml/metadata", nil)
@@ -80,7 +80,7 @@ func TestSAMLAuthService_Configured(t *testing.T) {
 		})
 	}))
 
-	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc)
+	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc, "https://kuruops.test")
 
 	t.Run("ServeMetadata succeeds and builds the service provider", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/auth/saml/metadata", nil)
@@ -158,7 +158,7 @@ func TestSAMLAuthService_Configured_UnresolvableSPCert(t *testing.T) {
 		})
 	}))
 
-	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc)
+	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc, "https://kuruops.test")
 
 	req := httptest.NewRequest("GET", "/auth/saml/metadata", nil)
 	rec := httptest.NewRecorder()

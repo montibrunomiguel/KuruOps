@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AlertDetailPage } from "./AlertDetailPage";
 import { AuthProvider } from "../../auth/AuthContext";
+import { seedSession, withSession } from "../../test/session";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -60,7 +61,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("renders the alert's title, severity, and status", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture()));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture())));
     renderDetail();
 
     expect(await screen.findByRole("heading", { name: "Suspicious login" })).toBeInTheDocument();
@@ -73,14 +74,14 @@ describe("AlertDetailPage", () => {
 
   it("shows the backend's error message when the alert doesn't exist", async () => {
     // Matches the real handler's 404 shape (writeError writes {"error": "..."}).
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ error: "alert not found" }, 404)));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse({ error: "alert not found" }, 404))));
     renderDetail();
 
     expect(await screen.findByText("alert not found")).toBeInTheDocument();
   });
 
   it("Start Investigating only appears while the alert is open", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "investigating" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ status: "investigating" }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -88,14 +89,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("clicking Start Investigating assigns the alert to the logged-in analyst and marks it investigating", async () => {
-    localStorage.setItem(
-      "kuruops.session",
-      JSON.stringify({
-        token: "tok",
-        refreshToken: "rt",
-        user: { id: "analyst-1", email: "a@b.com", name: "Analyst One", role: "Analyst", mustChangePassword: false, isAdmin: false, resourceAccess: [] },
-      }),
-    );
+    seedSession({ id: "analyst-1", email: "a@b.com", name: "Analyst One", role: "Analyst", mustChangePassword: false, isAdmin: false, resourceAccess: [] });
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/api/v1/alerts/a1/assignee")) return Promise.resolve(new Response(null, { status: 204 }));
       if (url.includes("/api/v1/alerts/a1/status")) return Promise.resolve(new Response(null, { status: 204 }));
@@ -109,7 +103,7 @@ describe("AlertDetailPage", () => {
       void init;
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Start Investigating" }));
@@ -127,7 +121,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("shows Escalate to Incident unless the alert is already escalated", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "escalated" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ status: "escalated" }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -136,7 +130,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("a closed alert shows no escalate button", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "closed", classification: "true_positive" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ status: "closed", classification: "true_positive" }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -144,10 +138,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("an already closed and classified alert shows no Close & Classify button, only the read-only summary", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(alertFixture({ status: "closed", classification: "true_positive", closeComment: "Confirmed benign" })),
-    );
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ status: "closed", classification: "true_positive", closeComment: "Confirmed benign" }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -157,7 +148,7 @@ describe("AlertDetailPage", () => {
 
   it("Close & Classify Alert opens a modal that can be dismissed without submitting", async () => {
     const fetchMock = routeFetch(alertFixture());
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Close & Classify Alert" }));
@@ -180,7 +171,7 @@ describe("AlertDetailPage", () => {
       if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Escalate to Incident" }));
@@ -196,7 +187,7 @@ describe("AlertDetailPage", () => {
 
   it("opening the close form and submitting posts classification+comment", async () => {
     const fetchMock = routeFetch(alertFixture());
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Close & Classify Alert" }));
@@ -223,7 +214,7 @@ describe("AlertDetailPage", () => {
       if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Close & Classify Alert" }));
@@ -247,7 +238,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("renders the linked incident button when incidentId is set", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ incidentId: "inc-1" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ incidentId: "inc-1" }))));
     renderDetail();
 
     expect(await screen.findByRole("button", { name: "View linked incident" })).toBeInTheDocument();
@@ -255,7 +246,7 @@ describe("AlertDetailPage", () => {
 
   it("clicking Analyze with AI opens the analysis chat instead of triggering a one-shot analysis", async () => {
     const fetchMock = routeFetch(alertFixture());
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
@@ -270,17 +261,14 @@ describe("AlertDetailPage", () => {
   });
 
   it("shows Analyzing... on the button while a background analysis is in progress", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ latestAnalysisStatus: "running" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ latestAnalysisStatus: "running" }))));
     renderDetail();
 
     expect(await screen.findByRole("button", { name: "Analyzing..." })).toBeInTheDocument();
   });
 
   it("shows the Metadata panel with a clickable link for URL-shaped values", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(alertFixture({ metadata: { slackChannel: "#incident-response", playbookUrl: "https://runbooks.example.com/brute-force" } })),
-    );
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ metadata: { slackChannel: "#incident-response", playbookUrl: "https://runbooks.example.com/brute-force" } }))));
     renderDetail();
 
     expect(await screen.findByText("Custom Metadata")).toBeInTheDocument();
@@ -293,7 +281,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("hides the Metadata panel entirely when there's no metadata", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ metadata: {} })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ metadata: {} }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -302,7 +290,7 @@ describe("AlertDetailPage", () => {
 
   it("changing severity in the override panel shows Save, and saving PUTs the new severity", async () => {
     const fetchMock = routeFetch(alertFixture());
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -319,7 +307,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("severity override is read-only once the alert is closed", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture({ status: "closed", classification: "true_positive" })));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ status: "closed", classification: "true_positive" }))));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -338,7 +326,7 @@ describe("AlertDetailPage", () => {
       if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.type(await screen.findByPlaceholderText("Search alerts by ID or title to link..."), "Outbound");
@@ -366,7 +354,7 @@ describe("AlertDetailPage", () => {
       if (url.includes("/api/v1/users/directory")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     expect(await screen.findByText("Marina Alves")).toBeInTheDocument();
@@ -386,7 +374,7 @@ describe("AlertDetailPage", () => {
       if (url.includes("/api/v1/tags")) return Promise.resolve(jsonResponse([]));
       return Promise.resolve(jsonResponse({}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await screen.findByLabelText("Assigned Analyst");
@@ -407,7 +395,7 @@ describe("AlertDetailPage", () => {
 
   it("posting a Team Note submits to the alert comments endpoint", async () => {
     const fetchMock = routeFetch(alertFixture());
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderDetail();
 
     await userEvent.type(await screen.findByPlaceholderText("Add a note for the team..."), "Investigating further");
@@ -422,7 +410,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("does not show the Related Playbook panel when the alert has no playbook assigned", async () => {
-    vi.stubGlobal("fetch", routeFetch(alertFixture()));
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture())));
     renderDetail();
 
     await screen.findByRole("heading", { name: "Suspicious login" });
@@ -430,10 +418,7 @@ describe("AlertDetailPage", () => {
   });
 
   it("shows the Related Playbook panel from the alert's own playbookId/playbookTitle, and opens the popup on click", async () => {
-    vi.stubGlobal(
-      "fetch",
-      routeFetch(alertFixture({ playbookId: "p1", playbookTitle: "Suspicious Login Response" })),
-    );
+    vi.stubGlobal("fetch", withSession(routeFetch(alertFixture({ playbookId: "p1", playbookTitle: "Suspicious Login Response" }))));
     renderDetail();
 
     expect(await screen.findByText("Related Playbook")).toBeInTheDocument();

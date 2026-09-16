@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
 import { IncidentsListPage } from "./IncidentsListPage";
 import { AuthProvider } from "../../auth/AuthContext";
+import { seedSession, withSession } from "../../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -33,28 +34,28 @@ describe("IncidentsListPage", () => {
   });
 
   it("renders fetched incidents", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture()])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture()]))));
     render(<IncidentsListPage />, { wrapper });
 
     expect(await screen.findByText("Ransomware suspected")).toBeInTheDocument();
   });
 
   it("flags SLA-breached incidents distinctly", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true })])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true })]))));
     render(<IncidentsListPage />, { wrapper });
 
     expect(await screen.findByText("SLA breached")).toBeInTheDocument();
   });
 
   it("shows the empty state with no results", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([]))));
     render(<IncidentsListPage />, { wrapper });
 
     expect(await screen.findByText("No incidents found for the current filters.")).toBeInTheDocument();
   });
 
   it("opens the create form, and a missing title blocks submission via the required attribute", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([]))));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -67,7 +68,7 @@ describe("IncidentsListPage", () => {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ ...incidentFixture(), id: "new-id" }, 201));
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -88,7 +89,7 @@ describe("IncidentsListPage", () => {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ error: "title is required" }, 400));
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -108,7 +109,7 @@ describe("IncidentsListPage", () => {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ ...incidentFixture(), id: "new-id" }, 201));
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -129,7 +130,7 @@ describe("IncidentsListPage", () => {
 
   it("changing the severity, priority, and phase filters re-fetches with the new query params", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -155,7 +156,7 @@ describe("IncidentsListPage", () => {
 
   it("the SLA filter re-fetches with the sla query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([incidentFixture()]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -175,7 +176,7 @@ describe("IncidentsListPage", () => {
 
   it("typing in the search box re-fetches with a q query param, after debouncing", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -191,7 +192,7 @@ describe("IncidentsListPage", () => {
 
   it("choosing a time-range preset re-fetches with a since query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -207,7 +208,7 @@ describe("IncidentsListPage", () => {
 
   it("a custom time range sends both since and until", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -226,14 +227,7 @@ describe("IncidentsListPage", () => {
   });
 
   it("reloads the list when a live incident event comes in over the event stream", async () => {
-    localStorage.setItem(
-      "kuruops.session",
-      JSON.stringify({
-        token: "tok",
-        refreshToken: "rt",
-        user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] },
-      }),
-    );
+    seedSession({ id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] });
 
     const encoder = new TextEncoder();
     const streamResponse = new Response(
@@ -257,7 +251,7 @@ describe("IncidentsListPage", () => {
       if (url.startsWith("/api/v1/events/stream")) return Promise.resolve(streamResponse);
       return Promise.resolve(jsonResponse([incidentFixture()]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     render(<IncidentsListPage />, { wrapper });
     await screen.findByText("Ransomware suspected");
@@ -270,7 +264,7 @@ describe("IncidentsListPage", () => {
 
   it("the × button on the create form dismisses it without submitting", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -283,17 +277,14 @@ describe("IncidentsListPage", () => {
   });
 
   it("renders tag chips and joined assignee names for an incident that has them", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(
         jsonResponse([
           incidentFixture({
             tags: ["ransomware", "priority"],
             assignees: [{ id: "u1", name: "Marina Alves" }, { id: "u2", name: "Diego Costa" }],
           }),
         ]),
-      ),
-    );
+      )));
     render(<IncidentsListPage />, { wrapper });
 
     await screen.findByText("Ransomware suspected");
@@ -303,10 +294,7 @@ describe("IncidentsListPage", () => {
   });
 
   it("shows 'Closed' for a closed incident regardless of SLA state", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true, closedAt: "2026-01-02T00:00:00Z" })])),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true, closedAt: "2026-01-02T00:00:00Z" })]))));
     render(<IncidentsListPage />, { wrapper });
 
     expect(await screen.findByText("Closed")).toBeInTheDocument();
@@ -314,10 +302,7 @@ describe("IncidentsListPage", () => {
 
   it("shows time-remaining copy for an open incident with an unbreached SLA due date", async () => {
     const future = new Date(Date.now() + 3600_000).toISOString();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: false, slaDueAt: future })])),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: false, slaDueAt: future })]))));
     render(<IncidentsListPage />, { wrapper });
 
     await screen.findByText("Ransomware suspected");
@@ -326,10 +311,7 @@ describe("IncidentsListPage", () => {
 
   it("includes the relative time-ago for a breached SLA that has a due date", async () => {
     const past = new Date(Date.now() - 3600_000).toISOString();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true, slaDueAt: past })])),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ slaBreached: true, slaDueAt: past })]))));
     render(<IncidentsListPage />, { wrapper });
 
     expect(await screen.findByText(/SLA breached .+ ago/)).toBeInTheDocument();
@@ -340,7 +322,7 @@ describe("IncidentsListPage", () => {
       if (init?.method === "POST") return Promise.resolve(jsonResponse({ ...incidentFixture(), id: "new-id" }, 201));
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<IncidentsListPage />, { wrapper });
     await waitFor(() => expect(screen.getByText("No incidents found for the current filters.")).toBeInTheDocument());
 
@@ -368,7 +350,7 @@ describe("IncidentsListPage", () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse(page1, 200, 21))
       .mockResolvedValueOnce(jsonResponse(page2, 200, 21));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     render(<IncidentsListPage />, { wrapper });
     await screen.findByText("Incident 0");
@@ -386,7 +368,7 @@ describe("IncidentsListPage", () => {
 
   describe("bulk phase-change", () => {
     it("selecting a row shows the bulk toolbar with a count, and it disappears on clear", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture()])));
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture()]))));
       render(<IncidentsListPage />, { wrapper });
       await screen.findByText("Ransomware suspected");
 
@@ -399,10 +381,7 @@ describe("IncidentsListPage", () => {
     });
 
     it("the header checkbox selects and deselects every row on the page", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ id: "i1" }), incidentFixture({ id: "i2", title: "Second incident" })])),
-      );
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture({ id: "i1" }), incidentFixture({ id: "i2", title: "Second incident" })]))));
       render(<IncidentsListPage />, { wrapper });
       await screen.findByText("Ransomware suspected");
 
@@ -414,7 +393,7 @@ describe("IncidentsListPage", () => {
     });
 
     it("the bulk phase dropdown never offers post_incident -- bulk-close is descoped", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([incidentFixture()])));
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([incidentFixture()]))));
       render(<IncidentsListPage />, { wrapper });
       await screen.findByText("Ransomware suspected");
 
@@ -431,7 +410,7 @@ describe("IncidentsListPage", () => {
         }
         return Promise.resolve(jsonResponse([incidentFixture()]));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       render(<IncidentsListPage />, { wrapper });
       await screen.findByText("Ransomware suspected");
 
@@ -462,7 +441,7 @@ describe("IncidentsListPage", () => {
         }
         return Promise.resolve(jsonResponse([incidentFixture({ id: "i1" }), incidentFixture({ id: "i2", title: "Second incident" })]));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       render(<IncidentsListPage />, { wrapper });
       await screen.findByText("Ransomware suspected");
 

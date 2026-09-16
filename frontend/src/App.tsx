@@ -42,7 +42,12 @@ function AppShell({ children }: { children: React.ReactNode }) {
 // middleware.RequirePasswordChanged), so this can't be bypassed by editing
 // the URL.
 function RequireAuth({ children }: { children: React.ReactElement }) {
-  const { isAuthenticated, mustChangePassword } = useAuth();
+  const { isAuthenticated, isBootstrapping, mustChangePassword } = useAuth();
+  // On a reload there is a stored user but no access token yet -- it lives
+  // in memory only, and AuthProvider is exchanging the HttpOnly refresh
+  // cookie for a new one. Redirecting here would turn every F5 into a
+  // logout, so wait for that call to settle first.
+  if (isBootstrapping) return <RouteFallback />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (mustChangePassword) return <Navigate to="/change-password" replace />;
   return <AppShell>{children}</AppShell>;
@@ -86,7 +91,8 @@ function RequireResourceAccess({
 }
 
 function ChangePasswordRoute() {
-  const { isAuthenticated, mustChangePassword } = useAuth();
+  const { isAuthenticated, isBootstrapping, mustChangePassword } = useAuth();
+  if (isBootstrapping) return <RouteFallback />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (!mustChangePassword) return <Navigate to="/dashboard" replace />;
   return <ChangePasswordPage />;

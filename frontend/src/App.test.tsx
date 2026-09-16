@@ -3,13 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./auth/AuthContext";
+import { seedSession, withSession } from "./test/session";
 
 function sessionWith(opts: { resourceAccess?: string[]; role?: string; isAdmin?: boolean; mustChangePassword?: boolean } = {}) {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: {
+  seedSession({
         id: "1",
         email: "user@test.local",
         name: "User",
@@ -17,9 +14,7 @@ function sessionWith(opts: { resourceAccess?: string[]; role?: string; isAdmin?:
         isAdmin: opts.isAdmin ?? false,
         mustChangePassword: opts.mustChangePassword ?? false,
         resourceAccess: opts.resourceAccess ?? ["alerts", "incidents", "followup"],
-      },
-    }),
-  );
+      })
 }
 
 function renderApp(initialPath: string) {
@@ -35,7 +30,7 @@ function renderApp(initialPath: string) {
 describe("App routing guards", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }))));
   });
 
   it("redirects an unauthenticated visitor from a protected route to /login", async () => {

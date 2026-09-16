@@ -90,14 +90,21 @@ real no futuro sem reescrever schema.
   coberto por RLS.
 - **Isolamento contra o role `postgres`** — intencional; esse role só é usado para setup
   administrativo, nunca por uma requisição HTTP.
-- **Consistência dos sub-recursos de incidente** — comentários, vínculos com alertas e timeline
-  ainda não repetem a checagem de `allowedTags` que `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
-  `SetSeverityAndPriority`/`UpdateDescription` já fazem (ver `backend/README.md`, seção
-  "Autorização") — dependem só do isolamento por tenant via RLS. Num ambiente single-tenant isso
-  não vaza nada entre tenants diferentes, mas significa que um usuário com acesso ao recurso
-  `incidents` (mas sem a tag específica de um incidente) pode, hoje, comentar/ver sub-recursos de
-  um incidente fora do seu `allowedTags` se souber o ID. Lacuna conhecida, não um achado novo desta
-  revisão.
+- **Consistência dos sub-recursos de incidente** — *fechada*. Comentários, vínculos com alertas,
+  IOCs, timeline, histórico de status e as rotas de aprovar/rejeitar tool call do MCP consultavam
+  por ID apenas sob o RLS do tenant, sem repetir a checagem de `allowedTags` que
+  `Get`/`ChangeStatus`/`Close`/`ChangePhase`/`SetSeverityAndPriority`/`UpdateDescription` fazem.
+  Isso era diretamente explorável: nada obriga um cliente a chamar `GET /incidents/{id}` antes de
+  `GET /incidents/{id}/comments`, então um analista restrito por tag que soubesse um ID fora do seu
+  escopo conseguia ler as Team Notes e os IOCs, escrever novos e aprovar tool calls com efeito
+  colateral. Todo sub-recurso agora carrega o pai via `loadVisible(ctx, tx, id, allowedTags)` antes.
+
+  A proteção contra a regressão é estrutural, não uma lista que alguém precisa lembrar de
+  atualizar: `TestSubResourceRoutesRejectTagRestrictedCaller` percorre as rotas chi *realmente
+  registradas* e afirma que nenhuma rota com `{id}` responde 2xx para um chamador restrito por tag
+  (42 rotas no momento em que isto foi escrito). Um sub-recurso novo passa a ser coberto no momento
+  em que é registrado; um que esqueça o gate quebra o teste. As únicas exceções são `/` e
+  `/bulk/*`, que não têm entidade prévia para checar — ver `routesExemptFromTagScoping`.
 
 ## O que a varredura de retenção de dados garante — e o que não garante
 

@@ -3,15 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChangePasswordPage } from "./ChangePassword";
 import { AuthProvider } from "../auth/AuthContext";
+import { seedSession, withSession } from "../test/session";
 
 function renderWithSession() {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: { id: "1", email: "admin@kuruops.local", name: "Admin", role: "admin", mustChangePassword: true, resourceAccess: [] },
-    }),
-  );
+  seedSession({ id: "1", email: "admin@kuruops.local", name: "Admin", role: "admin", mustChangePassword: true, resourceAccess: [] })
   return render(
     <AuthProvider>
       <ChangePasswordPage />
@@ -29,7 +24,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("rejects mismatched passwords without calling the API", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -42,7 +37,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("rejects a new password shorter than 8 characters without calling the API", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -55,7 +50,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("rejects a new password with only letters, without calling the API", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -68,7 +63,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("rejects a new password with only digits, without calling the API", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -81,7 +76,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("submits the change and clears the error on success", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { token: "new.token.here" })));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse(200, { token: "new.token.here" }))));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -96,7 +91,7 @@ describe("ChangePasswordPage", () => {
   });
 
   it("shows the server's error message on failure", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(400, { error: "current password is incorrect" })));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse(400, { error: "current password is incorrect" }))));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "wrong");

@@ -21,6 +21,7 @@ import (
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/sessioncookie"
 	"github.com/kuruops/kuruops/internal/testutil"
 )
 
@@ -65,14 +66,14 @@ func newAuthHandlersAndService(t *testing.T) (*handlers.AuthHandlers, *service.A
 	authSvc := service.NewAuthService(pool, tenants, users, repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), roleSvc, issuer, store)
 	identityCfg := repository.NewIdentityConfigRepository()
 	ldapSvc := service.NewLDAPAuthService(pool, identityCfg, store, authSvc)
-	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc)
+	samlSvc := service.NewSAMLAuthService(pool, identityCfg, store, authSvc, "https://kuruops.test")
 	// noopSender is defined in smtp_config_test.go (same package) -- these
 	// login/refresh/SAML tests never actually exercise password-reset email
 	// delivery, so a real Sender isn't needed here.
 	smtpSvc := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), store, noopSender{}, repository.NewAdminAuditEventRepository())
 	passwordResetSvc := service.NewPasswordResetService(pool, repository.NewPasswordResetRepository(), users, repository.NewRefreshTokenRepository(), smtpSvc, "http://localhost:3000")
 
-	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc), authSvc
+	return handlers.NewAuthHandlers(t.Context(), pool.Pool, authSvc, ldapSvc, samlSvc, passwordResetSvc, "https://kuruops.test"), authSvc
 }
 
 func TestAuthHandlers_LoginLocal(t *testing.T) {
@@ -182,11 +183,35 @@ func TestAuthHandlers_LoginLDAP_PerAccountRateLimit(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, attempt(), "11th attempt for this account is rate-limited")
 }
 
+// refreshCookie pulls the refresh token out of a response's Set-Cookie
+// header. Every assertion about the cookie's own attributes lives in
+// TestRefreshCookieAttributes; this one just needs the value.
+func refreshCookie(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessioncookie.Name {
+			return c.Value
+		}
+	}
+	t.Fatalf("no %s cookie in the response", sessioncookie.Name)
+	return ""
+}
+
+// withRefreshCookie presents a refresh token the way a browser would.
+func withRefreshCookie(req *http.Request, token string) *http.Request {
+	req.AddCookie(&http.Cookie{Name: sessioncookie.Name, Value: token})
+	return req
+}
+
 // TestAuthHandlers_Refresh exercises the one handler in this file with 0%
 // coverage before this test existed: a real login (against the seeded
 // default admin) issues a refresh token, which is then exchanged, rejected
-// when malformed/empty/unknown, and confirmed to actually rotate (the old
-// token stops working once a new one has been issued from it).
+// when missing/unknown, and confirmed to actually rotate (the old token
+// stops working once a new one has been issued from it).
+//
+// The token now travels as an HttpOnly cookie rather than a JSON field, so
+// every step here presents it the way a browser would -- see package
+// sessioncookie.
 func TestAuthHandlers_Refresh(t *testing.T) {
 	h := newAuthHandlers(t)
 	r := newRouter(h.Routes)
@@ -195,59 +220,104 @@ func TestAuthHandlers_Refresh(t *testing.T) {
 	loginReq := httptest.NewRequest("POST", "/login", bytes.NewReader(loginBody))
 	loginRec := doRequest(r, loginReq)
 	require.Equal(t, http.StatusOK, loginRec.Code)
-	var loginResp struct {
-		RefreshToken string `json:"refreshToken"`
-	}
-	require.NoError(t, json.Unmarshal(loginRec.Body.Bytes(), &loginResp))
-	require.NotEmpty(t, loginResp.RefreshToken)
+	originalToken := refreshCookie(t, loginRec)
+	require.NotEmpty(t, originalToken)
 
-	t.Run("malformed body -- 400", func(t *testing.T) {
-		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader([]byte("not json")))
-		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	t.Run("the login response body carries no refresh token", func(t *testing.T) {
+		// The whole point of the HttpOnly cookie: script on the page must
+		// have no way to read this value. A body field would hand it back.
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(loginRec.Body.Bytes(), &body))
+		assert.NotContains(t, body, "refreshToken")
+		assert.NotEmpty(t, body["token"], "the short-lived access token still comes back in the body")
 	})
 
-	t.Run("empty refreshToken -- 400", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"refreshToken": ""})
-		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
-		assert.Equal(t, http.StatusBadRequest, doRequest(r, req).Code)
+	t.Run("no cookie -- 401", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/refresh", nil)
+		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 	})
 
-	t.Run("unknown refreshToken -- 401", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"refreshToken": "rt_not-a-real-token"})
+	t.Run("a refresh token in the body is ignored -- 401", func(t *testing.T) {
+		// Accepting a body fallback would undo the migration: an attacker
+		// who scraped a token from somewhere could still replay it.
+		body, _ := json.Marshal(map[string]string{"refreshToken": originalToken})
 		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
 		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 	})
 
-	var rotatedRefreshToken string
-	t.Run("valid refreshToken -- 200, rotates the token", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"refreshToken": loginResp.RefreshToken})
-		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
+	t.Run("unknown token -- 401, and the stale cookie is cleared", func(t *testing.T) {
+		req := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), "rt_not-a-real-token")
+		rec := doRequest(r, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+		// Leaving a known-dead cookie in place would 401 every future
+		// refresh until it aged out on its own.
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == sessioncookie.Name {
+				assert.Empty(t, c.Value)
+				assert.Negative(t, c.MaxAge)
+				return
+			}
+		}
+		t.Fatal("expected the stale refresh cookie to be cleared")
+	})
+
+	var rotated string
+	t.Run("valid token -- 200, rotates the cookie", func(t *testing.T) {
+		req := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), originalToken)
 		rec := doRequest(r, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		var resp struct {
-			Token        string `json:"token"`
-			RefreshToken string `json:"refreshToken"`
-		}
+		var resp map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		assert.NotEmpty(t, resp.Token)
-		require.NotEmpty(t, resp.RefreshToken)
-		assert.NotEqual(t, loginResp.RefreshToken, resp.RefreshToken)
-		rotatedRefreshToken = resp.RefreshToken
+		assert.NotEmpty(t, resp["token"])
+		assert.NotContains(t, resp, "refreshToken", "the rotated token goes back as a cookie, not a body field")
+
+		rotated = refreshCookie(t, rec)
+		require.NotEmpty(t, rotated)
+		assert.NotEqual(t, originalToken, rotated)
 	})
 
 	t.Run("the old refresh token no longer works once rotated -- 401", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"refreshToken": loginResp.RefreshToken})
-		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
+		req := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), originalToken)
 		assert.Equal(t, http.StatusUnauthorized, doRequest(r, req).Code)
 	})
 
 	t.Run("the rotated token still works", func(t *testing.T) {
-		require.NotEmpty(t, rotatedRefreshToken)
-		body, _ := json.Marshal(map[string]string{"refreshToken": rotatedRefreshToken})
-		req := httptest.NewRequest("POST", "/refresh", bytes.NewReader(body))
+		require.NotEmpty(t, rotated)
+		req := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), rotated)
 		assert.Equal(t, http.StatusOK, doRequest(r, req).Code)
 	})
+}
+
+// TestRefreshCookieAttributes pins the four attributes the whole migration
+// rests on. Each one is load-bearing and silently weakenable: drop HttpOnly
+// and script can read the token again, drop SameSite and a cross-site
+// request can rotate or revoke a session, widen Path and a 30-day
+// credential rides along on every API call.
+func TestRefreshCookieAttributes(t *testing.T) {
+	h := newAuthHandlers(t)
+	r := newRouter(h.Routes)
+
+	body, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "ChangeMe123!"})
+	rec := doRequest(r, httptest.NewRequest("POST", "/login", bytes.NewReader(body)))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var c *http.Cookie
+	for _, got := range rec.Result().Cookies() {
+		if got.Name == sessioncookie.Name {
+			c = got
+		}
+	}
+	require.NotNil(t, c)
+
+	assert.True(t, c.HttpOnly, "script on the page must not be able to read the refresh token")
+	assert.Equal(t, http.SameSiteStrictMode, c.SameSite)
+	assert.Equal(t, "/auth", c.Path, "only /auth/refresh and /auth/logout ever need this cookie")
+	assert.Equal(t, int(sessioncookie.RefreshTTL.Seconds()), c.MaxAge,
+		"the cookie must expire exactly when the token it carries does")
+	// newAuthHandlers builds these with an https APP_BASE_URL.
+	assert.True(t, c.Secure, "Secure follows APP_BASE_URL's scheme -- see sessioncookie.Secure")
 }
 
 func TestAuthHandlers_Logout(t *testing.T) {
@@ -257,52 +327,56 @@ func TestAuthHandlers_Logout(t *testing.T) {
 	login := func(t *testing.T) string {
 		t.Helper()
 		body, _ := json.Marshal(map[string]string{"email": "admin@kuruops.local", "password": "ChangeMe123!"})
-		req := httptest.NewRequest("POST", "/login", bytes.NewReader(body))
-		rec := doRequest(r, req)
+		rec := doRequest(r, httptest.NewRequest("POST", "/login", bytes.NewReader(body)))
 		require.Equal(t, http.StatusOK, rec.Code)
-		var resp struct {
-			RefreshToken string `json:"refreshToken"`
-		}
-		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-		require.NotEmpty(t, resp.RefreshToken)
-		return resp.RefreshToken
+		return refreshCookie(t, rec)
 	}
 
-	t.Run("malformed body -- still 204, not an error", func(t *testing.T) {
-		// logout deliberately never fails on a bad/empty body -- see
+	t.Run("no cookie -- still 204, not an error", func(t *testing.T) {
+		// logout deliberately never fails on a missing token -- see
 		// AuthHandlers.logout's doc comment.
-		req := httptest.NewRequest("POST", "/logout", bytes.NewReader([]byte("not json")))
+		req := httptest.NewRequest("POST", "/logout", nil)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
 
-	t.Run("unknown refreshToken -- 204", func(t *testing.T) {
-		body, _ := json.Marshal(map[string]string{"refreshToken": "rt_not-a-real-token"})
-		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+	t.Run("unknown token -- 204", func(t *testing.T) {
+		req := withRefreshCookie(httptest.NewRequest("POST", "/logout", nil), "rt_not-a-real-token")
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 	})
 
-	t.Run("a valid refreshToken -- 204, and it no longer works afterward", func(t *testing.T) {
-		refreshToken := login(t)
+	t.Run("the cookie is cleared even when there was nothing to revoke", func(t *testing.T) {
+		// Getting the browser out of a logged-in state must not depend on
+		// the server-side revoke finding anything.
+		rec := doRequest(r, httptest.NewRequest("POST", "/logout", nil))
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == sessioncookie.Name {
+				assert.Empty(t, c.Value)
+				assert.Negative(t, c.MaxAge)
+				assert.Equal(t, "/auth", c.Path, "clearing from a different Path would leave the original in place")
+				return
+			}
+		}
+		t.Fatal("expected logout to clear the refresh cookie")
+	})
 
-		body, _ := json.Marshal(map[string]string{"refreshToken": refreshToken})
-		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+	t.Run("a valid token -- 204, and it no longer works afterward", func(t *testing.T) {
+		token := login(t)
+
+		req := withRefreshCookie(httptest.NewRequest("POST", "/logout", nil), token)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 
-		refreshBody, _ := json.Marshal(map[string]string{"refreshToken": refreshToken})
-		refreshReq := httptest.NewRequest("POST", "/refresh", bytes.NewReader(refreshBody))
+		refreshReq := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), token)
 		assert.Equal(t, http.StatusUnauthorized, doRequest(r, refreshReq).Code)
 	})
 
 	t.Run("logging out one session does not affect another session for the same user", func(t *testing.T) {
-		refreshTokenA := login(t)
-		refreshTokenB := login(t)
+		tokenA := login(t)
+		tokenB := login(t)
 
-		body, _ := json.Marshal(map[string]string{"refreshToken": refreshTokenA})
-		req := httptest.NewRequest("POST", "/logout", bytes.NewReader(body))
+		req := withRefreshCookie(httptest.NewRequest("POST", "/logout", nil), tokenA)
 		assert.Equal(t, http.StatusNoContent, doRequest(r, req).Code)
 
-		refreshBody, _ := json.Marshal(map[string]string{"refreshToken": refreshTokenB})
-		refreshReq := httptest.NewRequest("POST", "/refresh", bytes.NewReader(refreshBody))
+		refreshReq := withRefreshCookie(httptest.NewRequest("POST", "/refresh", nil), tokenB)
 		assert.Equal(t, http.StatusOK, doRequest(r, refreshReq).Code)
 	})
 }
@@ -382,7 +456,8 @@ func TestAuthHandlers_LoginLocal_MFA(t *testing.T) {
 		var resp map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		assert.NotEmpty(t, resp["token"])
-		assert.NotEmpty(t, resp["refreshToken"])
+		assert.NotContains(t, resp, "refreshToken", "MFA's second step sets the cookie, same as a plain login")
+		assert.NotEmpty(t, refreshCookie(t, rec))
 
 		t.Run("the same pending token cannot be reused afterward", func(t *testing.T) {
 			freshCode, err := totp.GenerateCode(secret, time.Now())

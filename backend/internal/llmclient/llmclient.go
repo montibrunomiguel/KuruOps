@@ -18,12 +18,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
@@ -32,6 +34,30 @@ import (
 // this package's one choke point every provider's Complete/CompleteWithTools
 // call eventually funnels through.
 var tracer = otel.Tracer("kuruops/llmclient")
+
+// breakers fails calls fast while a provider is unhealthy, instead of
+// letting every AI analysis run wait out the full defaultTimeout against a
+// dead endpoint -- see package circuitbreaker.
+//
+// Package-level, and keyed by host, for the same reason tracer is: doRequest
+// is the one choke point every provider funnels through, and it has no
+// per-tenant object to hang state off. Keyed by host rather than by
+// provider row so two tenants pointing at the same broken endpoint share
+// its breaker -- the endpoint is what's down, not the configuration.
+//
+// Replaced once at startup by Configure; the default is a disabled
+// registry, so tests and any caller that never calls Configure behave
+// exactly as they did before the breaker existed.
+var breakers atomic.Pointer[circuitbreaker.Registry]
+
+func init() { breakers.Store(circuitbreaker.NewRegistry(circuitbreaker.Config{})) }
+
+// Configure installs the circuit-breaker settings for every LLM call in
+// this process. Called once from cmd/* at startup, before any provider is
+// used.
+func Configure(cfg circuitbreaker.Config) {
+	breakers.Store(circuitbreaker.NewRegistry(cfg))
+}
 
 // Client sends one system+user prompt pair to an LLM and returns its text
 // response, or (via CompleteWithTools) runs one turn of a multi-turn,
@@ -562,24 +588,39 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 	req = req.WithContext(ctx)
 	span.SetAttributes(attribute.String("http.url", req.URL.Host+req.URL.Path))
 
-	resp, err := client.Do(req)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
+	var body []byte
+	err := breakers.Load().Do(req.URL.Host, func() error {
+		resp, err := client.Do(req)
+		if err != nil {
+			// A transport error (refused, DNS, timeout) is the clearest
+			// signal the provider is unreachable, so it always counts.
+			return circuitbreaker.Fault(fmt.Errorf("request failed: %w", err))
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return circuitbreaker.Fault(fmt.Errorf("read response: %w", err))
+		}
+		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+		if resp.StatusCode >= 300 {
+			err := fmt.Errorf("llm provider returned %d: %s", resp.StatusCode, string(body))
+			// 5xx and 429 say the provider is unhealthy or overloaded.
+			// Every other 4xx is our request's fault and would fail
+			// identically forever -- counting those would trip the breaker
+			// permanently on a wrong API key and bury the one error message
+			// that actually tells the operator what to fix.
+			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+				return circuitbreaker.Fault(err)
+			}
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-	if resp.StatusCode >= 300 {
-		span.SetStatus(codes.Error, fmt.Sprintf("llm provider returned %d", resp.StatusCode))
-		return nil, fmt.Errorf("llm provider returned %d: %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 	return body, nil
 }

@@ -21,7 +21,20 @@ data:
   # The frontend Service's externally-reachable URL -- used in escalation
   # notification links and password-reset emails. Adjust to your real
   # ingress/domain; there is no ingress manifest here (see README.md).
+  #
+  # Its scheme also decides whether the refresh-token cookie is marked
+  # Secure (see internal/sessioncookie.Secure), so leaving this on https
+  # for a deployment actually served over plain http would make every
+  # browser drop that cookie and log users out when their access token
+  # expires. Keep it truthful about how users actually reach the app.
   APP_BASE_URL: "https://kuruops.example.com"
+  # Circuit breaker on outbound LLM/MCP calls: after this many consecutive
+  # provider faults (transport errors, 5xx, 429 -- never a 4xx) against one
+  # host, calls to it fail fast for the cooldown instead of each waiting out
+  # the full HTTP timeout. Either value at 0 disables it. See
+  # backend/internal/circuitbreaker.
+  EXTERNAL_CALL_BREAKER_THRESHOLD: "5"
+  EXTERNAL_CALL_BREAKER_COOLDOWN: "30s"
   # "env" (default) needs only SECRETS_ENCRYPTION_KEY (see the Secret) --
   # switch to "vault" or "kms" and add the matching VAULT_*/KMS_* keys here
   # (non-sensitive) plus VAULT_TOKEN/KMS_SECRET_ACCESS_KEY in the Secret if

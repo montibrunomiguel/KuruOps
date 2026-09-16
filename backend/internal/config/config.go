@@ -151,6 +151,18 @@ type Config struct {
 	// foundation phase (no inbound receiver yet) but the Slack App fixes
 	// this value at creation time regardless, so it's read now to avoid
 	// asking the admin to re-paste it into a later PR.
+	// ExternalCallBreakerThreshold / ExternalCallBreakerCooldown tune the
+	// circuit breaker wrapping every outbound LLM and MCP call (see package
+	// circuitbreaker). Threshold is how many consecutive provider faults
+	// (transport errors, 5xx, 429 -- never a 4xx that would fail the same
+	// way forever) open the breaker for that host; Cooldown is how long it
+	// stays open before one probe is let through.
+	//
+	// Setting either to zero disables breaking entirely and restores the
+	// pre-breaker behaviour of dialling a dead provider on every call.
+	ExternalCallBreakerThreshold int
+	ExternalCallBreakerCooldown  time.Duration
+
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
@@ -190,6 +202,9 @@ func Load(logger *slog.Logger) (Config, error) {
 		WebhookRateLimitPerMinute: int(getEnvInt32Default(logger, "WEBHOOK_RATE_LIMIT_PER_MINUTE", 60)),
 
 		OTelExporterOTLPEndpoint: getEnvDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+
+		ExternalCallBreakerThreshold: int(getEnvInt32Default(logger, "EXTERNAL_CALL_BREAKER_THRESHOLD", 5)),
+		ExternalCallBreakerCooldown:  getEnvDurationDefault(logger, "EXTERNAL_CALL_BREAKER_COOLDOWN", 30*time.Second),
 
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),

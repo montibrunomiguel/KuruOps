@@ -3,19 +3,14 @@ import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { useSidebarCounts } from "./useSidebarCounts";
 import { AuthProvider } from "../auth/AuthContext";
+import { seedSession, withSession } from "../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AuthProvider>{children}</AuthProvider>;
 }
 
 function loggedInSession() {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: { id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess: ["alerts", "incidents"] },
-    }),
-  );
+  seedSession({ id: "1", email: "a@b.com", name: "A", role: "analyst", mustChangePassword: false, resourceAccess: ["alerts", "incidents"] })
 }
 
 function jsonResponse(body: unknown) {
@@ -39,7 +34,7 @@ describe("useSidebarCounts", () => {
 
   it("does not fetch either count when not authenticated", () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderHook(() => useSidebarCounts(true, true), { wrapper });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -50,7 +45,7 @@ describe("useSidebarCounts", () => {
       if (url.startsWith("/api/v1/events/stream")) return Promise.resolve(idleStream());
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     renderHook(() => useSidebarCounts(false, true), { wrapper });
     await waitFor(() => expect(fetchMock.mock.calls.some((c) => (c[0] as string).includes("/api/v1/incidents"))).toBe(true));
@@ -66,7 +61,7 @@ describe("useSidebarCounts", () => {
         jsonResponse([{ id: "1", phase: "new" }, { id: "2", phase: "post_incident" }, { id: "3", phase: "containment" }]),
       );
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     const { result } = renderHook(() => useSidebarCounts(true, true), { wrapper });
     await waitFor(() => expect(result.current.openAlerts).toBe(2));
@@ -75,7 +70,7 @@ describe("useSidebarCounts", () => {
 
   it("a failed fetch resolves the count to null rather than throwing", async () => {
     loggedInSession();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockRejectedValue(new Error("network down"))));
 
     const { result } = renderHook(() => useSidebarCounts(true, false), { wrapper });
     await waitFor(() => expect(result.current.openAlerts).toBeNull());
@@ -84,15 +79,26 @@ describe("useSidebarCounts", () => {
   it("reloads the open-alerts count when an SSE alert event arrives", async () => {
     loggedInSession();
     const encoder = new TextEncoder();
+
+    // The SSE frame must not land until the first /alerts GET has
+    // resolved. It used to be enough to defer it by a tick, but the
+    // session now arrives asynchronously (AuthProvider exchanges the
+    // refresh cookie on mount), so the stream connects at the same moment
+    // the counts start loading -- and a refetch issued while the first
+    // fetch is still in flight is deduplicated by react-query into that
+    // same request, producing one call instead of two. The test releases
+    // the frame itself, making the ordering explicit rather than timed.
+    let releaseFrame!: () => void;
+    const frameReleased = new Promise<void>((resolve) => {
+      releaseFrame = resolve;
+    });
+
     const streamResponse = new Response(
       new ReadableStream({
-        start(controller) {
-          // Deferred so the frame lands after the initial GETs resolve --
-          // same reasoning as AlertsListPage.test.tsx's identical SSE test.
-          setTimeout(() => {
-            controller.enqueue(encoder.encode('event: alert\ndata: {"id":"a1"}\n\n'));
-            controller.close();
-          }, 0);
+        async pull(controller) {
+          await frameReleased;
+          controller.enqueue(encoder.encode('event: alert\ndata: {"id":"a1"}\n\n'));
+          controller.close();
         },
       }),
       { status: 200 },
@@ -102,9 +108,13 @@ describe("useSidebarCounts", () => {
       if (url.includes("/api/v1/alerts")) return Promise.resolve(jsonResponse([{ id: "1" }]));
       return Promise.resolve(jsonResponse([]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
-    renderHook(() => useSidebarCounts(true, true), { wrapper });
+    const { result } = renderHook(() => useSidebarCounts(true, true), { wrapper });
+
+    // Let the first count settle before releasing the frame.
+    await waitFor(() => expect(result.current.openAlerts).toBe(1));
+    releaseFrame();
 
     await waitFor(() => {
       const alertsCalls = fetchMock.mock.calls.filter((c) => (c[0] as string).includes("/api/v1/alerts")).length;

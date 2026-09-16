@@ -131,6 +131,8 @@ services:
       # inert (see internal/telemetry.Setup's doc comment).
       LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-20}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
+      EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to
@@ -212,6 +214,8 @@ services:
       # flood; lower it if your ingest sits on an untrusted network.
       WEBHOOK_RATE_LIMIT_PER_MINUTE: ${WEBHOOK_RATE_LIMIT_PER_MINUTE:-600}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
+      EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to
@@ -255,6 +259,8 @@ services:
       # Must match the api service's key -- see its comment above.
       SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-k83Yh5rQGCdVDMbUtJywr5J6ScE6++Bp4m936YZDecw=}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
+      EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to
