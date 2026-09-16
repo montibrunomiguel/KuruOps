@@ -12,6 +12,51 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Fixed
+
+- **Um alerta ou incidente cujo título carrega um token longo sem espaços empurrava os botões de
+  ação para fora da tela.** URL, SHA-256, base64 ou caminho do Windows não têm ponto de quebra,
+  então o título crescia até a largura intrínseca inteira e levava o cabeçalho junto: numa janela de
+  1039px um alerta corriqueiro "Malicious download blocked: https://..." deixava Fechar, Escalar e
+  Analisar em x=2391, alcançáveis só rolando para o lado. O bloco do título agora declara uma base
+  flex com `min-width: 0`, e o cabeçalho quebra linha, então os botões descem para a própria linha
+  em vez de espremer o título; `overflow-wrap: anywhere` deixa o token em si quebrar. Afeta as três
+  páginas de detalhe (alertas, incidentes, playbooks), que compartilham `.detail-header`.
+
+- **Payload de webhook acima de 1 MiB era reportado como JSON malformado.** O limite era aplicado
+  com `io.LimitReader`, que sinaliza EOF em vez de erro, então o corpo era truncado em silêncio e o
+  decoder respondia `decode webhook body: unexpected end of JSON input` -- mandando quem integra
+  depurar o próprio serializador por causa de uma requisição que era só grande demais. Agora é
+  `http.MaxBytesReader`, respondendo 413 com o limite nomeado.
+
+- **Erros de nome duplicado e de referência inválida expunham texto cru do Postgres.** Criar um
+  segundo usuário com e-mail existente devolvia, literalmente,
+  `duplicate key value violates unique constraint "users_tenant_email_uq" (SQLSTATE 23505)`,
+  nomeando identificadores internos e não dizendo nada ao admin. O mesmo para roles, webhooks,
+  templates de mapeamento de campos e para um `roleId` inexistente. O `isUniqueViolation` já existia
+  no `tag_service.go` e era usado em um único lugar; agora vive em `constraint_errors.go` ao lado do
+  `isForeignKeyViolation` e é aplicado em todo create que pode bater numa constraint.
+
+- **Criação de usuário aceitava qualquer coisa como e-mail.** `not-an-email`, `a@` e `@b.com`
+  produziam contas com aparência perfeitamente válida -- e como o endereço é ao mesmo tempo o
+  identificador de login e o único canal de recuperação de senha, o erro só aparecia como "essa
+  pessoa nunca recebeu o convite". Os dois caminhos que gravam `users.email` (criação e edição de
+  perfil) agora chamam `domain.ValidateEmail`, deliberadamente permissivo: pega o erro de digitação
+  sem rejeitar plus-addressing, subdomínios ou qualquer outra coisa que gente de verdade usa.
+
+- **As listas de incidentes e de escalas serializavam `roles` e `overrides` como `null`.** Nenhum
+  dos dois é carregado pela query de lista -- decisão de custo deliberada -- mas um slice nil vira
+  `null` no JSON enquanto os tipos TypeScript os declaram não-nuláveis, então nada avisa até um
+  componente chamar `.filter`/`.find` neles. Agora vêm `[]`. Mesma armadilha que este repo já pegou
+  duas vezes com `Assignees`; o teste novo afirma `NotNil` e não `Empty`, já que `Empty` passa para
+  nil e é por isso que os casos anteriores passaram batido.
+
+- **O endpoint de um servidor MCP era aceito dissesse o que dissesse.** `file:///etc/passwd` salvava
+  normalmente e só falhava bem depois, como 502 no Discover Tools. O endpoint agora é checado por
+  scheme http(s) e host na hora de salvar. Isto não é o controle de SSRF -- o `httpguard` continua
+  recusando endereços privados na hora da requisição, e precisa continuar, já que o DNS pode apontar
+  um nome de cara pública para 127.0.0.1 muito depois desta checagem passar.
+
 ### Security
 
 - **Breaking (só para clientes de API).** O refresh token não volta mais em nenhum corpo de

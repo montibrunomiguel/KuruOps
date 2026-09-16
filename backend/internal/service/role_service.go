@@ -102,6 +102,9 @@ func (s *RoleService) Create(ctx context.Context, tenantID, actorID uuid.UUID, i
 		})
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("a role named %q already exists", in.Name)
+		}
 		return nil, fmt.Errorf("create role: %w", err)
 	}
 	return role, nil

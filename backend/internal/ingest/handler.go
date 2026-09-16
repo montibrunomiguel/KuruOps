@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -101,8 +103,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	// MaxBytesReader, not the io.LimitReader this used to use: LimitReader
+	// reports EOF at the limit rather than an error, so ReadAll succeeded
+	// with a *truncated* body and the JSON decoder below then blamed the
+	// payload:
+	//
+	//	decode webhook body: unexpected end of JSON input
+	//
+	// The one fact the sender needed -- that the request was too big -- was
+	// the one the error never mentioned, sending integrators to go debug
+	// their own serializer. MaxBytesReader fails the read instead, so the
+	// limit can be named, and it also has the server drop the connection
+	// rather than leave an oversized upload streaming into a handler that
+	// has already answered.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, fmt.Sprintf("webhook body exceeds the %d MiB limit -- send fewer alerts per request, or trim the payload", maxBodyBytes>>20), http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}

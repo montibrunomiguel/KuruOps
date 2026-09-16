@@ -11,6 +11,51 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Fixed
+
+- **An alert or incident whose title carries a long unbroken token pushed the action buttons off
+  the screen.** A URL, SHA-256, base64 blob or Windows path in a title has no break opportunity, so
+  the heading grew to its full intrinsic width and dragged the header with it: on a 1039px window a
+  routine "Malicious download blocked: https://..." alert put Close, Escalate and Analyse at
+  x=2391, reachable only by scrolling sideways. The title block now declares a flex basis with
+  `min-width: 0`, and the header wraps, so the buttons drop to their own line instead of squeezing
+  the title; `overflow-wrap: anywhere` lets the token itself break. Affects all three detail pages
+  (alerts, incidents, playbooks), which share `.detail-header`.
+
+- **A webhook payload over the 1 MiB limit was reported as malformed JSON.** The cap was applied
+  with `io.LimitReader`, which reports EOF rather than an error, so the body was silently truncated
+  and the decoder answered `decode webhook body: unexpected end of JSON input` -- sending
+  integrators to debug their own serializer over a request that was merely too big. Now
+  `http.MaxBytesReader`, answering 413 with the limit named.
+
+- **Duplicate-name and bad-reference errors surfaced raw Postgres text.** Creating a second user
+  with an existing email returned, verbatim,
+  `duplicate key value violates unique constraint "users_tenant_email_uq" (SQLSTATE 23505)`, naming
+  internal identifiers and telling the admin nothing. Same for roles, webhook endpoints, field
+  mapping templates, and for a `roleId` that doesn't exist. `isUniqueViolation` already existed in
+  `tag_service.go` and was used in exactly one place; it now lives in `constraint_errors.go`
+  alongside `isForeignKeyViolation` and is applied at every create that can hit a constraint.
+
+- **User creation accepted anything as an email.** `not-an-email`, `a@` and `@b.com` all produced
+  valid-looking accounts -- and since the address is both the login identifier and the only
+  password-reset channel, the mistake only surfaced as "they never got their invite". Both paths
+  that write `users.email` (create and profile edit) now call `domain.ValidateEmail`, which is
+  deliberately permissive: it catches the typo without rejecting plus-addressing, subdomains or
+  anything else real people use.
+
+- **Incident and on-call-schedule list responses serialized `roles` and `overrides` as `null`.**
+  Neither is loaded by its list query -- a deliberate cost decision -- but a nil slice marshals to
+  `null` while the TypeScript types declare them non-nullable, so nothing warns until a component
+  calls `.filter`/`.find` on one. Both are now `[]`. Same trap this codebase already hit twice with
+  `Assignees`; the new test asserts `NotNil` rather than `Empty`, since `Empty` passes for nil and
+  is why the earlier cases went unnoticed.
+
+- **An MCP server endpoint was accepted whatever it said.** `file:///etc/passwd` saved fine and
+  failed much later as a 502 from Discover Tools. The endpoint is now checked for an http(s) scheme
+  and a host at save time. This is not the SSRF control -- `httpguard` still refuses private
+  addresses at request time, and must, since DNS can point a public-looking name at 127.0.0.1 long
+  after this check passes.
+
 ### Security
 
 - **Breaking (API clients only).** The refresh token is no longer returned in any response body.

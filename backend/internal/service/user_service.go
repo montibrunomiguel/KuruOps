@@ -79,6 +79,9 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID, actorID uuid.UU
 	if email == "" {
 		return nil, "", fmt.Errorf("email is required")
 	}
+	if err := domain.ValidateEmail(email); err != nil {
+		return nil, "", err
+	}
 	if name == "" {
 		return nil, "", fmt.Errorf("name is required")
 	}
@@ -119,6 +122,12 @@ func (s *UserService) CreateLocal(ctx context.Context, tenantID, actorID uuid.UU
 		})
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, "", fmt.Errorf("a user with the email %q already exists", email)
+		}
+		if isForeignKeyViolation(err) {
+			return nil, "", fmt.Errorf("role %s does not exist", roleID)
+		}
 		return nil, "", fmt.Errorf("create user: %w", err)
 	}
 	return u, tempPassword, nil

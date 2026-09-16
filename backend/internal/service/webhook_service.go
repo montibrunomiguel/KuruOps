@@ -108,6 +108,9 @@ func (s *WebhookService) Create(ctx context.Context, tenantID, actorID uuid.UUID
 		})
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("a webhook endpoint named %q already exists", name)
+		}
 		return nil, fmt.Errorf("create webhook endpoint: %w", err)
 	}
 

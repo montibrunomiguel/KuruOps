@@ -544,5 +544,13 @@ func scanIncident(row pgx.Row) (*domain.Incident, error) {
 		return nil, fmt.Errorf("scan incident: %w", err)
 	}
 	inc.Assignees = []domain.UserSummary{}
+	// Roles are loaded only by Get (RolesForIncident); List deliberately
+	// doesn't pay for that second query, since nothing renders team roles
+	// in a list. Initialize anyway: left nil, the field serializes as JSON
+	// null while the TypeScript type declares IncidentRoleAssignment[] --
+	// non-nullable, so nothing warns, and the first component to read
+	// incident.roles off a list item dies on .filter of null. See the
+	// identical trap this codebase already hit with Assignees above.
+	inc.Roles = []domain.IncidentRoleAssignment{}
 	return &inc, nil
 }

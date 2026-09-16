@@ -484,5 +484,11 @@ func scanOnCallSchedule(row pgx.Row) (*domain.OnCallSchedule, error) {
 		}
 		return nil, fmt.Errorf("scan on-call schedule: %w", err)
 	}
+	// List deliberately doesn't load overrides (see its doc comment), but a
+	// nil slice serializes as JSON null while the TypeScript type declares
+	// OnCallOverride[]. OnCallTimeline calls schedule.overrides.find(...)
+	// unguarded, so the day a list-sourced schedule reaches it, it throws.
+	// Get overwrites this with the real rows.
+	s.Overrides = []domain.OnCallOverride{}
 	return &s, nil
 }

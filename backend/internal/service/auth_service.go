@@ -523,6 +523,13 @@ func (s *AuthService) UpdateProfile(ctx context.Context, tenantID, userID uuid.U
 	if email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
+	// Same check as UserService.CreateLocal -- this is the other path that
+	// writes users.email, and an account can lock itself out of password
+	// reset just as easily by editing the address as by being created with
+	// a bad one.
+	if err := domain.ValidateEmail(email); err != nil {
+		return nil, err
+	}
 
 	var user *domain.User
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {

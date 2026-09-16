@@ -74,6 +74,28 @@ func ValidatePhone(phone string) error {
 	return nil
 }
 
+// ValidateEmail rejects an address that isn't shaped like one.
+//
+// Deliberately permissive -- one "@", something either side, a dot in the
+// domain, no whitespace. The goal is not RFC 5322 conformance (that
+// grammar accepts addresses no mail server would route, and rejecting
+// valid-but-unusual real addresses is a worse failure than letting an odd
+// one through); it is to catch the typo that produces an account nobody
+// can ever sign in to or reach.
+//
+// This matters because the email IS the login identifier and the only
+// channel for a password reset: "not-an-email", "a@" and "@b.com" all
+// created perfectly valid-looking accounts before this existed, and the
+// mistake only surfaced when the person never received their credentials.
+func ValidateEmail(email string) error {
+	if !emailPattern.MatchString(email) {
+		return fmt.Errorf("%q is not a valid email address", email)
+	}
+	return nil
+}
+
+var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$`)
+
 // User mirrors `users`. PasswordHash and MFATOTPSecret are tagged
 // json:"-" so they can never leak through an API response even if a
 // handler accidentally serializes the whole struct.
