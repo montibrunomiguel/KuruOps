@@ -281,7 +281,7 @@ func main() {
 	passwordResetService := service.NewPasswordResetService(pool, passwordResetRepo, userRepo, refreshTokenRepo, smtpConfigService, cfg.AppBaseURL)
 	authHandlers := handlers.NewAuthHandlers(ctx, pool.Pool, authService, ldapAuthService, samlAuthService, passwordResetService, cfg.AppBaseURL)
 	apiTokenService := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), userRepo)
-	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService)
+	accountHandlers := handlers.NewAccountHandlers(authService, apiTokenService, cfg.AppBaseURL)
 
 	// Every 3rd-party OAuth provider's callback (Google Drive, Slack) --
 	// needs authService to resolve the tenant the same way AuthHandlers'

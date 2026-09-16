@@ -31,7 +31,7 @@ func TestAccountHandlers_ChangePassword(t *testing.T) {
 	}
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
-	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc, "https://kuruops.test")
 	r := newRouter(h.Routes)
 
 	t.Run("wrong current password -- 400", func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestAccountHandlers_UpdateProfile(t *testing.T) {
 	}
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
-	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc, "https://kuruops.test")
 	r := newRouter(h.Routes)
 
 	t.Run("missing name -- 400", func(t *testing.T) {
@@ -124,7 +124,7 @@ func TestAccountHandlers_APITokens(t *testing.T) {
 	require.NoError(t, err)
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
-	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc, "https://kuruops.test")
 	r := newRouter(h.Routes)
 
 	t.Run("missing name -- 400", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestAccountHandlers_MFA(t *testing.T) {
 	require.NoError(t, err)
 	authSvc := service.NewAuthService(pool, repository.NewTenantRepository(), repository.NewUserRepository(), repository.NewRefreshTokenRepository(), repository.NewMFAPendingTokenRepository(), service.NewRoleService(pool, repository.NewRoleRepository(), repository.NewAdminAuditEventRepository()), authn.NewIssuer(priv), secrets.NewEnvStore())
 	apiTokenSvc := service.NewUserAPITokenService(pool, repository.NewUserAPITokenRepository(), repository.NewUserRepository())
-	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc)
+	h := handlers.NewAccountHandlers(authSvc, apiTokenSvc, "https://kuruops.test")
 	r := newRouter(h.Routes)
 
 	var secret string

@@ -9,6 +9,7 @@ import (
 
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/sessioncookie"
 )
 
 // AccountHandlers is where an authenticated caller manages their own
@@ -17,10 +18,14 @@ import (
 type AccountHandlers struct {
 	auth      *service.AuthService
 	apiTokens *service.UserAPITokenService
+	// secureCookies is the Secure attribute for the refresh cookie a
+	// password change re-issues, derived from APP_BASE_URL exactly as
+	// AuthHandlers does -- see sessioncookie.Secure.
+	secureCookies bool
 }
 
-func NewAccountHandlers(auth *service.AuthService, apiTokens *service.UserAPITokenService) *AccountHandlers {
-	return &AccountHandlers{auth: auth, apiTokens: apiTokens}
+func NewAccountHandlers(auth *service.AuthService, apiTokens *service.UserAPITokenService, appBaseURL string) *AccountHandlers {
+	return &AccountHandlers{auth: auth, apiTokens: apiTokens, secureCookies: sessioncookie.Secure(appBaseURL)}
 }
 
 // ChangePasswordPath is registered on the router and passed to
@@ -48,7 +53,9 @@ type changePasswordRequest struct {
 // MustChangePassword set (see middleware.RequirePasswordChanged) -- it's
 // also just the normal "change my password" endpoint for everyone else.
 // Re-issues the session token with MustChangePassword cleared so the
-// frontend can swap it in immediately, no fresh login required.
+// frontend can swap it in immediately, no fresh login required -- and sets
+// a fresh refresh cookie, since the change revoked every existing one
+// including the caller's own (see AuthService.ChangePassword).
 func (h *AccountHandlers) changePassword(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := mustTenantID(w, r)
 	if !ok {
@@ -62,12 +69,13 @@ func (h *AccountHandlers) changePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token, err := h.auth.ChangePassword(r.Context(), tenantID, userID, req.CurrentPassword, req.NewPassword)
+	token, refreshToken, err := h.auth.ChangePassword(r.Context(), tenantID, userID, req.CurrentPassword, req.NewPassword)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
+	sessioncookie.Set(w, refreshToken, h.secureCookies)
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 

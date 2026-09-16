@@ -12,6 +12,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Fixed
+
+- **Trocar a senha derrubava a sessão no primeiro reload da página.** A troca revoga todos os
+  refresh tokens do usuário, o que está certo -- trocar a senha é exatamente quando um token roubado
+  precisa parar de funcionar -- mas revogava também o cookie de quem estava trocando, e nada o
+  substituía. A pessoa seguia trabalhando com o access token em memória e era jogada de volta para o
+  login no primeiro reload, sem nada na tela explicando. Isso atingia *toda* instalação nova, já que
+  o admin semeado é obrigado a trocar a senha antes de qualquer outra coisa destravar. Agora um
+  refresh token novo é emitido depois da revogação, então a sessão que fez a troca sobrevive e todos
+  os outros dispositivos continuam desconectados.
+
 ### Security
 
 - **O SAML não responde mais ao POST do IdP com um token de sessão.** O `ServeACS` devolvia um como
