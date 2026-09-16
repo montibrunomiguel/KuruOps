@@ -19,11 +19,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/httpserver"
+	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/mailer"
+	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/notifier"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
@@ -49,6 +52,17 @@ func main() {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Fail fast on an LLM/MCP provider that has gone bad, instead of making
+	// every analysis run wait out the full HTTP timeout against a dead
+	// endpoint. Installed before any provider is constructed; a zero
+	// threshold or cooldown disables it -- see config.Config.
+	breakerCfg := circuitbreaker.Config{
+		Threshold: cfg.ExternalCallBreakerThreshold,
+		Cooldown:  cfg.ExternalCallBreakerCooldown,
+	}
+	llmclient.Configure(breakerCfg)
+	mcpclient.Configure(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

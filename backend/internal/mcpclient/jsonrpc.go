@@ -18,13 +18,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/httpguard"
 )
 
@@ -32,6 +35,37 @@ import (
 // no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set) -- see post below, this
 // package's one choke point every call/notify eventually funnels through.
 var tracer = otel.Tracer("kuruops/mcpclient")
+
+// breakers fails calls fast while an MCP server is unhealthy rather than
+// waiting out the full 30s client timeout on every tool call -- see package
+// circuitbreaker, and llmclient's identical var for why this is
+// package-level and keyed by host.
+//
+// Replaced once at startup by Configure; the default is a disabled
+// registry, so tests and any caller that never calls Configure behave
+// exactly as they did before the breaker existed.
+var breakers atomic.Pointer[circuitbreaker.Registry]
+
+func init() { breakers.Store(circuitbreaker.NewRegistry(circuitbreaker.Config{})) }
+
+// Configure installs the circuit-breaker settings for every MCP call in
+// this process. Called once from cmd/* at startup, before any server is
+// used.
+func Configure(cfg circuitbreaker.Config) {
+	breakers.Store(circuitbreaker.NewRegistry(cfg))
+}
+
+// breakerKey is the host of endpoint, so every client pointed at the same
+// MCP server shares one breaker. A URL that won't parse falls back to the
+// raw string: a useless key would still be a correct one (it only ever
+// groups calls together), and refusing to construct a client over it would
+// be a worse trade.
+func breakerKey(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return endpoint
+}
 
 const (
 	protocolVersion = "2025-03-26"
@@ -233,40 +267,59 @@ func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
 		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
 	}
 
-	httpResp, err := c.httpClient.Do(httpReq)
+	var out []byte
+	err = breakers.Load().Do(breakerKey(c.endpoint), func() error {
+		httpResp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			// A transport error (refused, DNS, timeout) is the clearest
+			// signal the server is unreachable, so it always counts.
+			return circuitbreaker.Fault(fmt.Errorf("request failed: %w", err))
+		}
+		defer httpResp.Body.Close()
+		span.SetAttributes(attribute.Int("http.status_code", httpResp.StatusCode))
+
+		if sid := httpResp.Header.Get("Mcp-Session-Id"); sid != "" {
+			c.sessionID = sid
+		}
+
+		if httpResp.StatusCode == http.StatusAccepted {
+			// Accepted with no body is the valid response to a notification
+			// (e.g. notifications/initialized) -- nothing more to read.
+			return nil
+		}
+
+		bodyBytes, err := io.ReadAll(httpResp.Body)
+		if err != nil {
+			return circuitbreaker.Fault(fmt.Errorf("read response: %w", err))
+		}
+		if httpResp.StatusCode >= 300 {
+			err := fmt.Errorf("mcp server returned %d: %s", httpResp.StatusCode, string(bodyBytes))
+			// Same split as llmclient.doRequest: 5xx/429 mean the server is
+			// unhealthy, while a 401 from a stale auth token or a 400 from
+			// a malformed call would fail identically forever and must stay
+			// a precise, fixable error rather than becoming "circuit
+			// breaker is open".
+			if httpResp.StatusCode >= 500 || httpResp.StatusCode == http.StatusTooManyRequests {
+				return circuitbreaker.Fault(err)
+			}
+			return err
+		}
+
+		if strings.Contains(httpResp.Header.Get("Content-Type"), "text/event-stream") {
+			// A body that doesn't parse is a malformed response from this
+			// server, not evidence it's down -- deliberately not a fault.
+			out, err = extractJSONFromSSE(bodyBytes)
+			return err
+		}
+		out = bodyBytes
+		return nil
+	})
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, err
 	}
-	defer httpResp.Body.Close()
-	span.SetAttributes(attribute.Int("http.status_code", httpResp.StatusCode))
-
-	if sid := httpResp.Header.Get("Mcp-Session-Id"); sid != "" {
-		c.sessionID = sid
-	}
-
-	if httpResp.StatusCode == http.StatusAccepted {
-		// Accepted with no body is the valid response to a notification
-		// (e.g. notifications/initialized) -- nothing more to read.
-		return nil, nil
-	}
-
-	bodyBytes, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if httpResp.StatusCode >= 300 {
-		return nil, fmt.Errorf("mcp server returned %d: %s", httpResp.StatusCode, string(bodyBytes))
-	}
-
-	contentType := httpResp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "text/event-stream") {
-		return extractJSONFromSSE(bodyBytes)
-	}
-	return bodyBytes, nil
+	return out, nil
 }
 
 // extractJSONFromSSE pulls the JSON payload out of a (non-streamed, already

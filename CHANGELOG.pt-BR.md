@@ -12,6 +12,52 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Security
+
+- **Breaking (só para clientes de API).** O refresh token não volta mais em nenhum corpo de
+  resposta. Todo caminho de login -- local, LDAP, o segundo passo do MFA e o ACS do SAML -- agora o
+  entrega como cookie `kuruops_refresh` com `HttpOnly`, `SameSite=Strict`, `Path=/auth` e `Max-Age`
+  igual ao TTL de 30 dias do próprio token. O `Secure` segue o scheme do `APP_BASE_URL`, então um
+  deploy em https o recebe e um laptop em `http://localhost` (a única origem em texto claro que os
+  navegadores ainda consideram confiável) continua funcionando. `/auth/refresh` e `/auth/logout`
+  leem o token só desse cookie: um campo `refreshToken` no corpo é ignorado, e é isso que impede
+  que um valor obtido em outro lugar seja reapresentado.
+
+  O access token passa a viver só em memória -- não é mais escrito no `localStorage`, então um
+  reload recupera a sessão trocando o cookie, e não lendo uma credencial armazenada. O storage do
+  navegador agora guarda apenas dados de exibição (nome, e-mail, rótulo do papel). Um navegador já
+  logado atravessa a atualização: o usuário é lido do registro antigo
+  `{ token, refreshToken, user }` e os tokens dele são descartados.
+
+  Vale dizer com precisão o que isso compra. Não torna XSS inofensivo -- script na página ainda
+  consegue chamar `/auth/refresh` e usar o access token que vier. O que acaba é a exfiltração de
+  uma credencial de 30 dias para um host controlado pelo atacante, que é a diferença entre dano
+  limitado ao tempo de vida do script injetado e uma sessão portátil de um mês.
+
+### Added
+
+- Chamadas externas de LLM e MCP passam por um circuit breaker
+  (`backend/internal/circuitbreaker`), com chave por host para que um provedor morto não derrube
+  chamadas a um saudável. Após `EXTERNAL_CALL_BREAKER_THRESHOLD` falhas consecutivas (padrão 5) as
+  chamadas falham imediatamente por `EXTERNAL_CALL_BREAKER_COOLDOWN` (padrão 30s); depois uma sonda
+  passa, e uma sonda que falha reabre o circuito sem recontar. Qualquer um dos dois em 0 restaura o
+  comportamento anterior.
+
+  Só erros de transporte, 5xx e 429 contam como falha. Um 4xx deliberadamente não conta: uma API
+  key errada devolve 401 em toda chamada, então contá-la abriria o breaker permanentemente e
+  trocaria a única mensagem de erro que diz ao operador o que corrigir por um genérico "circuit
+  breaker is open".
+
+### Changed
+
+- O `docs/THREAT_MODEL.md` listava o escopo por tag nos sub-recursos de incidente como lacuna
+  aberta. Não é: comentários, vínculos, IOCs, timeline, histórico de status e aprovação de tool
+  call carregam o pai via `loadVisible(ctx, tx, id, allowedTags)` antes, e o
+  `TestSubResourceRoutesRejectTagRestrictedCaller` comprova percorrendo as rotas chi registradas
+  (42 delas) em vez de uma lista mantida à mão. A doc e o parágrafo correspondente no
+  `backend/README.md` agora descrevem o que o código faz. Sem mudança de comportamento -- esta
+  entrada existe porque uma "lacuna conhecida" desatualizada num threat model é pior que nenhuma.
+
 ### Changed
 
 - Bumps de dependência major agora exigem revisão, em três camadas. O `.github/dependabot.yml`

@@ -13,6 +13,7 @@ import (
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/service"
+	"github.com/kuruops/kuruops/internal/sessioncookie"
 )
 
 // AuthHandlers serves every login flow (local, LDAP, SAML) that converges
@@ -35,12 +36,17 @@ type AuthHandlers struct {
 	// reused for the password-reset routes below -- brute-forcing a reset
 	// token/request is the same threat class as brute-forcing a password.
 	loginAttempts *middleware.KeyedLimiter
+
+	// secureCookies is the Secure attribute for the refresh cookie,
+	// derived once from APP_BASE_URL's scheme -- see secureCookies().
+	secureCookies bool
 }
 
-func NewAuthHandlers(ctx context.Context, pool *pgxpool.Pool, auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService) *AuthHandlers {
+func NewAuthHandlers(ctx context.Context, pool *pgxpool.Pool, auth *service.AuthService, ldap *service.LDAPAuthService, saml *service.SAMLAuthService, passwordReset *service.PasswordResetService, appBaseURL string) *AuthHandlers {
 	return &AuthHandlers{
 		auth: auth, ldap: ldap, saml: saml, passwordReset: passwordReset,
 		loginAttempts: middleware.NewKeyedLimiter(ctx, pool, "login_email", 10, 15*time.Minute),
+		secureCookies: sessioncookie.Secure(appBaseURL),
 	}
 }
 
@@ -87,10 +93,13 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// loginResponse deliberately carries no refresh token. It is delivered as
+// an HttpOnly cookie instead (see sessioncookie.Set), which is only worth
+// anything if the value never also appears somewhere script on the page can
+// read it -- a response body it can read is exactly that.
 type loginResponse struct {
-	Token        string    `json:"token"`
-	RefreshToken string    `json:"refreshToken"`
-	User         loginUser `json:"user"`
+	Token string    `json:"token"`
+	User  loginUser `json:"user"`
 }
 
 type loginUser struct {
@@ -142,9 +151,9 @@ func (h *AuthHandlers) loginLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessioncookie.Set(w, refreshToken, h.secureCookies)
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:        token,
-		RefreshToken: refreshToken,
+		Token: token,
 		User: loginUser{
 			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
@@ -189,9 +198,9 @@ func (h *AuthHandlers) mfaVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessioncookie.Set(w, refreshToken, h.secureCookies)
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:        token,
-		RefreshToken: refreshToken,
+		Token: token,
 		User: loginUser{
 			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
@@ -221,9 +230,9 @@ func (h *AuthHandlers) loginLDAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessioncookie.Set(w, refreshToken, h.secureCookies)
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:        token,
-		RefreshToken: refreshToken,
+		Token: token,
 		User: loginUser{
 			ID: user.ID.String(), Email: user.Email, Name: user.Name, Phone: user.Phone, Role: user.Role.Name,
 			MustChangePassword: user.MustChangePassword,
@@ -231,13 +240,10 @@ func (h *AuthHandlers) loginLDAP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type refreshRequest struct {
-	RefreshToken string `json:"refreshToken"`
-}
-
+// refreshResponse carries only the new access token -- the rotated refresh
+// token goes back as a Set-Cookie, same reasoning as loginResponse.
 type refreshResponse struct {
-	Token        string `json:"token"`
-	RefreshToken string `json:"refreshToken"`
+	Token string `json:"token"`
 }
 
 // refresh exchanges a still-valid refresh token for a new access token,
@@ -251,27 +257,28 @@ func (h *AuthHandlers) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req refreshRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if req.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "refreshToken is required")
+	presented := sessioncookie.Read(r)
+	if presented == "" {
+		writeError(w, http.StatusUnauthorized, "no refresh token")
 		return
 	}
 
-	token, newRefreshToken, err := h.auth.Refresh(r.Context(), tenant.ID, req.RefreshToken)
+	token, newRefreshToken, err := h.auth.Refresh(r.Context(), tenant.ID, presented)
 	if err != nil {
 		writeInternalError(w, r, err)
 		return
 	}
 	if token == "" {
+		// Clear the cookie the caller sent: it is expired or revoked, so
+		// leaving it in the browser only produces a 401 on every future
+		// refresh until it ages out on its own.
+		sessioncookie.Clear(w, h.secureCookies)
 		writeError(w, http.StatusUnauthorized, "invalid or expired refresh token")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, refreshResponse{Token: token, RefreshToken: newRefreshToken})
+	sessioncookie.Set(w, newRefreshToken, h.secureCookies)
+	writeJSON(w, http.StatusOK, refreshResponse{Token: token})
 }
 
 // logout revokes the refresh token the caller presents, so it can't be used
@@ -289,10 +296,12 @@ func (h *AuthHandlers) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req refreshRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	// Clear the cookie regardless of what the revoke below does. Getting
+	// the user's own browser out of a logged-in state is the half that must
+	// not depend on anything else succeeding.
+	sessioncookie.Clear(w, h.secureCookies)
 
-	if err := h.auth.Logout(r.Context(), tenant.ID, req.RefreshToken); err != nil {
+	if err := h.auth.Logout(r.Context(), tenant.ID, sessioncookie.Read(r)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

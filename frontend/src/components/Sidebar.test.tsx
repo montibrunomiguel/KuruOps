@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import i18n from "../i18n";
 import { Sidebar } from "./Sidebar";
 import { AuthProvider } from "../auth/AuthContext";
+import { seedSession, withSession } from "../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -16,19 +17,13 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 function sessionWith(resourceAccess: string[], role = "Analyst", isAdmin = false) {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: { id: "1", email: "analyst@test.local", name: "Ana Lyst", role, isAdmin, mustChangePassword: false, resourceAccess },
-    }),
-  );
+  seedSession({ id: "1", email: "analyst@test.local", name: "Ana Lyst", role, isAdmin, mustChangePassword: false, resourceAccess })
 }
 
 describe("Sidebar", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }))));
   });
 
   it("shows only Alerts + Follow-up-eligible Dashboard for an alerts-only analyst, no Incidents/Settings", async () => {

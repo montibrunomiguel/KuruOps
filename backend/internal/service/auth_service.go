@@ -15,6 +15,7 @@ import (
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/sessioncookie"
 )
 
 // totpIssuer is the "issuer" label an authenticator app (Google
@@ -55,13 +56,6 @@ func mfaSecretPurpose(userID uuid.UUID) string {
 	return "mfa-totp:" + userID.String()
 }
 
-// refreshTokenTTL is how long a refresh token stays valid after issuance or
-// rotation -- deliberately much longer than the 15-minute access token
-// (authn.Issuer), since re-authenticating every 15 minutes would make the
-// short access-token TTL pointless from a usability standpoint. The
-// tradeoff is bounded by RevokeSessions, not by a short TTL here.
-const refreshTokenTTL = 30 * 24 * time.Hour
-
 const refreshTokenPrefix = "rt_"
 
 // issueRefreshToken generates and persists a new refresh token for a user
@@ -77,7 +71,7 @@ func (s *AuthService) issueRefreshToken(ctx context.Context, tx pgx.Tx, tenantID
 		TenantID:  tenantID,
 		UserID:    userID,
 		TokenHash: hashToken(plaintext),
-		ExpiresAt: time.Now().Add(refreshTokenTTL),
+		ExpiresAt: time.Now().Add(sessioncookie.RefreshTTL),
 	}
 	if err := s.refreshTokens.Insert(ctx, tx, rt); err != nil {
 		return "", fmt.Errorf("insert refresh token: %w", err)

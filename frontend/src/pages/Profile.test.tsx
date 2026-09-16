@@ -4,14 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { ProfilePage } from "./Profile";
 import { AuthProvider } from "../auth/AuthContext";
+import { seedSession, withSession } from "../test/session";
 
 function renderWithSession(phone?: string, mfaEnabled = false) {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      refreshToken: "rt",
-      user: {
+  seedSession({
         id: "1",
         email: "analyst@kuruops.local",
         name: "Ana Lyst",
@@ -20,9 +16,7 @@ function renderWithSession(phone?: string, mfaEnabled = false) {
         mustChangePassword: false,
         resourceAccess: [],
         mfaEnabled,
-      },
-    }),
-  );
+      });
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -51,7 +45,7 @@ describe("ProfilePage", () => {
   });
 
   it("loads the current name/email/phone into the form", () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession("+5511912345678");
 
     expect(screen.getByLabelText("Name")).toHaveValue("Ana Lyst");
@@ -64,7 +58,7 @@ describe("ProfilePage", () => {
       if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
       return Promise.resolve(jsonResponse(200, {}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText(/Phone/), "+5511912345678");
@@ -79,13 +73,10 @@ describe("ProfilePage", () => {
   });
 
   it("shows the server's error message when an invalid phone is rejected", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
         return Promise.resolve(jsonResponse(400, { error: "phone must include a country code, e.g. +5511912345678" }));
-      }),
-    );
+      })));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText(/Phone/), "5511912345678");
@@ -95,7 +86,7 @@ describe("ProfilePage", () => {
   });
 
   it("does not show the profile's current-password field until the email is changed", async () => {
-    vi.stubGlobal("fetch", vi.fn());
+    vi.stubGlobal("fetch", withSession(vi.fn()));
     renderWithSession();
 
     // The password-change section below always has its own "Current
@@ -114,7 +105,7 @@ describe("ProfilePage", () => {
       if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
       return Promise.resolve(jsonResponse(200, {}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     await userEvent.clear(screen.getByLabelText("Name"));
@@ -128,13 +119,10 @@ describe("ProfilePage", () => {
   });
 
   it("shows the server's error message when the profile update fails", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
         return Promise.resolve(jsonResponse(400, { error: "current password is incorrect" }));
-      }),
-    );
+      })));
     renderWithSession();
 
     await userEvent.clear(screen.getByLabelText("Email"));
@@ -147,7 +135,7 @@ describe("ProfilePage", () => {
 
   it("password section rejects mismatched passwords without calling the API", async () => {
     const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -167,7 +155,7 @@ describe("ProfilePage", () => {
       if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
       return Promise.resolve(jsonResponse(200, { token: "new.token.here" }));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     await userEvent.type(screen.getByLabelText("Current password"), "ChangeMe123!");
@@ -181,13 +169,10 @@ describe("ProfilePage", () => {
   });
 
   it("API Tokens: shows an empty state when there are none yet", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
+    vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
         if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
         return Promise.resolve(jsonResponse(200, {}));
-      }),
-    );
+      })));
     renderWithSession();
 
     expect(await screen.findByText("No API tokens yet.")).toBeInTheDocument();
@@ -206,7 +191,7 @@ describe("ProfilePage", () => {
       if (url.includes("/api-tokens")) return Promise.resolve(jsonResponse(200, []));
       return Promise.resolve(jsonResponse(200, {}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     await screen.findByText("No API tokens yet.");
@@ -234,7 +219,7 @@ describe("ProfilePage", () => {
       }
       return Promise.resolve(jsonResponse(200, {}));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     renderWithSession();
 
     expect(await screen.findByText("CI script")).toBeInTheDocument();
@@ -248,7 +233,7 @@ describe("ProfilePage", () => {
 
   describe("Two-Factor Authentication", () => {
     it("shows an Enable button and no Enabled badge when MFA is off", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, [])));
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse(200, []))));
       renderWithSession(undefined, false);
 
       expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
@@ -265,7 +250,7 @@ describe("ProfilePage", () => {
         }
         return Promise.resolve(jsonResponse(200, []));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       renderWithSession(undefined, false);
 
       await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
@@ -276,13 +261,10 @@ describe("ProfilePage", () => {
     });
 
     it("Cancel during enrollment returns to the Enable button without confirming", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockImplementation((url: string) => {
+      vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string) => {
           if (url.includes("/mfa/enroll")) return Promise.resolve(jsonResponse(200, { secret: "SECRET123", otpauthUrl: "otpauth://totp/x" }));
           return Promise.resolve(jsonResponse(200, []));
-        }),
-      );
+        })));
       renderWithSession(undefined, false);
 
       await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
@@ -302,7 +284,7 @@ describe("ProfilePage", () => {
         }
         return Promise.resolve(jsonResponse(200, []));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       renderWithSession(undefined, false);
 
       await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
@@ -321,14 +303,11 @@ describe("ProfilePage", () => {
     });
 
     it("shows the server's error when confirming with a wrong code", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string, init?: RequestInit) => {
           if (url.includes("/mfa/enroll")) return Promise.resolve(jsonResponse(200, { secret: "SECRET123", otpauthUrl: "otpauth://totp/x" }));
           if (url.endsWith("/api/v1/account/mfa") && init?.method === "PUT") return Promise.resolve(jsonResponse(400, { error: "invalid code" }));
           return Promise.resolve(jsonResponse(200, []));
-        }),
-      );
+        })));
       renderWithSession(undefined, false);
 
       await userEvent.click(await screen.findByRole("button", { name: "Enable" }));
@@ -340,7 +319,7 @@ describe("ProfilePage", () => {
     });
 
     it("when MFA is on, shows the Enabled badge and a Disable button", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, [])));
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse(200, []))));
       renderWithSession(undefined, true);
 
       expect(await screen.findByText("Enabled")).toBeInTheDocument();
@@ -349,13 +328,10 @@ describe("ProfilePage", () => {
     });
 
     it("Disable reveals a password field, and a wrong password shows an error without disabling", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation((url: string, init?: RequestInit) => {
           if (url.endsWith("/api/v1/account/mfa") && init?.method === "DELETE") return Promise.resolve(jsonResponse(400, { error: "current password is incorrect" }));
           return Promise.resolve(jsonResponse(200, []));
-        }),
-      );
+        })));
       renderWithSession(undefined, true);
 
       await userEvent.click(await screen.findByRole("button", { name: "Disable" }));
@@ -375,7 +351,7 @@ describe("ProfilePage", () => {
         }
         return Promise.resolve(jsonResponse(200, []));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       renderWithSession(undefined, true);
 
       await userEvent.click(await screen.findByRole("button", { name: "Disable" }));

@@ -205,7 +205,7 @@ func (h *UserHandlers) setActive(w http.ResponseWriter, r *http.Request, active 
 	// Not rolling back is the right call, but swallowing this silently was
 	// not: deactivating a compromised account is exactly when the revoke
 	// needs to have worked, and refresh tokens live for 30 days
-	// (AuthService.refreshTokenTTL), so a failure here can leave a
+	// (service.RefreshTokenTTL), so a failure here can leave a
 	// deactivated user with a renewable session for a month while the admin
 	// sees a clean 204. Logged so it's at least visible after the fact.
 	if !active {

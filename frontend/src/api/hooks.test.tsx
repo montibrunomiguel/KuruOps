@@ -4,19 +4,20 @@ import type { ReactNode } from "react";
 import { useList, usePagedList, mutationErrorMessage } from "./hooks";
 import { AuthProvider, useAuth } from "../auth/AuthContext";
 import { ApiError } from "./client";
+import { seedSession, withSession } from "../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <AuthProvider>{children}</AuthProvider>;
 }
 
+// Also installs a fetch stub, because "logged in" now involves a real
+// request: AuthProvider exchanges the refresh cookie for an access token on
+// mount. Tests in this file otherwise mock the fetcher, not fetch, so
+// without this the bootstrap call reaches jsdom's unstubbed fetch and the
+// session is dropped before the assertions run.
 function withLoggedInSession() {
-  localStorage.setItem(
-    "kuruops.session",
-    JSON.stringify({
-      token: "tok",
-      user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: ["alerts"] },
-    }),
-  );
+  vi.stubGlobal("fetch", withSession(vi.fn()));
+  seedSession({ id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: ["alerts"] })
 }
 
 describe("useList", () => {
@@ -84,8 +85,15 @@ describe("useList", () => {
       { wrapper },
     );
 
-    expect(result.current.auth.isAuthenticated).toBe(true);
-    await waitFor(() => expect(result.current.auth.isAuthenticated).toBe(false));
+    // No "starts authenticated" assertion: the access token now arrives
+    // asynchronously (AuthProvider exchanges the refresh cookie on mount),
+    // and the fetcher's 401 rejects on mount too, so the two race by
+    // design. Wait on the stored user disappearing -- that is the actual
+    // logout signal; isAuthenticated is false from the start either way.
+    await waitFor(() =>
+      expect(localStorage.getItem("kuruops.user")).toBeNull(),
+    );
+    expect(result.current.auth.isAuthenticated).toBe(false);
     expect(result.current.list.error).toBeNull();
   });
 
@@ -113,7 +121,13 @@ describe("usePagedList", () => {
     const { result } = renderHook(() => usePagedList(["test-paged-1"], fetcher), { wrapper });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(fetcher).toHaveBeenCalledWith("tok", 20, 0);
+    // null, not a token: this hook mounts before AuthProvider's bootstrap
+    // refresh has landed, because the access token is no longer read
+    // synchronously out of storage. Harmless in the app -- RequireAuth
+    // renders nothing until isBootstrapping clears, so a real page never
+    // fetches in this window -- but worth pinning, since a hook rendered
+    // outside that guard would.
+    expect(fetcher).toHaveBeenCalledWith(null, 20, 0);
     expect(result.current.items).toEqual([{ id: 1 }]);
     expect(result.current.page).toBe(1);
     expect(result.current.pageSize).toBe(20);

@@ -30,14 +30,27 @@ interface SessionUser {
   mfaEnabled: boolean;
 }
 
+// token is held in memory only and is deliberately absent from
+// localStorage: a 15-minute access token that survives a reload would have
+// to be readable by script, which is exactly what this design removes. The
+// refresh token lives in an HttpOnly cookie the page cannot see at all, so
+// a reload recovers a session by calling /auth/refresh rather than by
+// reading a stored credential -- see bootstrapping in AuthProvider.
+//
+// user is persisted, because it is display data (name, email, role label),
+// not a credential. Keeping it means a reload paints the shell immediately
+// instead of flashing the login screen while the refresh call is in flight.
 interface AuthState {
   token: string | null;
-  refreshToken: string | null;
   user: SessionUser | null;
 }
 
 interface AuthContextValue extends AuthState {
   isAuthenticated: boolean;
+  // True while the reload-time /auth/refresh call is still in flight. Route
+  // guards must wait it out rather than treat "no token yet" as "logged
+  // out" -- see AuthProvider's bootstrapping effect.
+  isBootstrapping: boolean;
   isAdmin: boolean;
   mustChangePassword: boolean;
   // Convenience helpers over user.resourceAccess -- see domain.ResourceCapability*
@@ -59,15 +72,23 @@ interface AuthContextValue extends AuthState {
   logout: () => void;
 }
 
-const STORAGE_KEY = "kuruops.session";
+const STORAGE_KEY = "kuruops.user";
 
-function loadStoredSession(): AuthState {
+// loadStoredUser reads back only the display half of a session. Any token
+// found in an old-format entry is dropped on the floor rather than used --
+// see AuthState.
+function loadStoredUser(): SessionUser | null {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return { token: null, refreshToken: null, user: null };
+  if (!raw) return null;
   try {
-    return JSON.parse(raw) as AuthState;
+    const parsed = JSON.parse(raw) as SessionUser | { user?: SessionUser };
+    // Tolerate the pre-cookie shape ({ token, refreshToken, user }) so an
+    // already-logged-in browser lands on a working session after the
+    // upgrade instead of an unexplained logout.
+    if (parsed && typeof parsed === "object" && "user" in parsed) return parsed.user ?? null;
+    return parsed as SessionUser;
   } catch {
-    return { token: null, refreshToken: null, user: null };
+    return null;
   }
 }
 
@@ -95,7 +116,11 @@ function decodeTokenClaims(token: string): { mustChangePassword: boolean; isAdmi
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AuthState>(loadStoredSession);
+  const [state, setState] = useState<AuthState>(() => ({ token: null, user: loadStoredUser() }));
+  // bootstrapping is true until the reload-time refresh attempt settles, so
+  // route guards don't bounce a still-valid session to /login in the
+  // milliseconds before the new access token arrives.
+  const [bootstrapping, setBootstrapping] = useState(() => loadStoredUser() !== null);
   // Owned by AuthProvider (rather than at main.tsx's top level) so that the
   // ~30 test files that already do render(<AuthProvider><Component/></AuthProvider>)
   // get a working query client for free, with no test-file changes needed.
@@ -109,9 +134,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     stateRef.current = state;
   }, [state]);
 
+  // persist writes only next.user -- the token stays in React state. A
+  // cleared session removes the entry outright rather than storing a null
+  // user, so nothing is left behind to reason about.
   const persist = useCallback((next: AuthState) => {
     setState(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    if (next.user) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next.user));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }, []);
 
   // applySession is the shared tail of a completed login -- both loginLocal
@@ -120,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applySession = useCallback(
     (res: LoginResponse) => {
       const { isAdmin, resourceAccess, mfaEnabled } = decodeTokenClaims(res.token);
-      persist({ token: res.token, refreshToken: res.refreshToken, user: { ...res.user, isAdmin, resourceAccess, mfaEnabled } });
+      persist({ token: res.token, user: { ...res.user, isAdmin, resourceAccess, mfaEnabled } });
     },
     [persist],
   );
@@ -155,7 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           token,
           user: { ...prev.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess, mfaEnabled: claims.mfaEnabled },
         };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next.user));
         return next;
       });
     },
@@ -167,7 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState((prev) => {
         if (!prev.user) return prev;
         const next: AuthState = { ...prev, user: { ...prev.user, name, email, phone: phone ?? prev.user.phone } };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next.user));
         return next;
       });
     },
@@ -183,11 +215,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // half of logout, and the token will simply expire on its own 30-day TTL
   // if the revoke call never lands.
   const logout = useCallback(() => {
-    const current = stateRef.current;
-    if (current.refreshToken) {
-      api.post("/auth/logout", { refreshToken: current.refreshToken }, null).catch(() => {});
-    }
-    persist({ token: null, refreshToken: null, user: null });
+    // No body: the refresh token rides along as a cookie, and the backend
+    // clears it on the way out. Fired unconditionally -- this page cannot
+    // see whether a cookie exists, and asking the server to revoke nothing
+    // is a 204.
+    api.post("/auth/logout", {}, null).catch(() => {});
+    persist({ token: null, user: null });
   }, [persist]);
 
   // refreshAccessToken exchanges the stored refresh token for a new access
@@ -199,25 +232,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // rejects it (expired/revoked -- e.g. the account was deactivated).
   const refreshAccessToken = useCallback(async (): Promise<string | null> => {
     const current = stateRef.current;
-    if (!current.refreshToken || !current.user) return null;
+    if (!current.user) return null;
     try {
-      const res = await api.post<{ token: string; refreshToken: string }>(
-        "/auth/refresh",
-        { refreshToken: current.refreshToken },
-        null,
-      );
+      // No body: the cookie carries the refresh token, and the rotated one
+      // comes back the same way.
+      const res = await api.post<{ token: string }>("/auth/refresh", {}, null);
       const claims = decodeTokenClaims(res.token);
       persist({
         token: res.token,
-        refreshToken: res.refreshToken,
         user: { ...current.user, mustChangePassword: claims.mustChangePassword, isAdmin: claims.isAdmin, resourceAccess: claims.resourceAccess, mfaEnabled: claims.mfaEnabled },
       });
       return res.token;
     } catch {
-      persist({ token: null, refreshToken: null, user: null });
+      persist({ token: null, user: null });
       return null;
     }
   }, [persist]);
+
+  // A reload leaves a stored user but no access token (it was never
+  // written to storage). Exchange the HttpOnly cookie for a fresh one
+  // before rendering any guarded route, so a still-valid session survives
+  // F5 instead of silently becoming a logout.
+  useEffect(() => {
+    if (!bootstrapping) return;
+    let cancelled = false;
+    void refreshAccessToken().finally(() => {
+      if (!cancelled) setBootstrapping(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately not depending on refreshAccessToken: this must run
+    // exactly once per mount, and that callback's identity changes with
+    // persist.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootstrapping]);
 
   useEffect(() => {
     setRefreshHandler(refreshAccessToken);
@@ -228,6 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       isAuthenticated: state.token !== null,
+      isBootstrapping: bootstrapping,
       isAdmin: state.user?.isAdmin ?? false,
       mustChangePassword: state.user?.mustChangePassword ?? false,
       hasResourceAccess: (capability) => state.user?.resourceAccess.includes(capability) ?? false,
@@ -237,7 +287,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updateProfile,
       logout,
     }),
-    [state, loginLocal, verifyMfa, applyNewToken, updateProfile, logout],
+    [state, bootstrapping, loginLocal, verifyMfa, applyNewToken, updateProfile, logout],
   );
 
   return (

@@ -11,6 +11,51 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Security
+
+- **Breaking (API clients only).** The refresh token is no longer returned in any response body.
+  Every login path -- local, LDAP, MFA's second step, and SAML's ACS -- now sets it as a
+  `kuruops_refresh` cookie with `HttpOnly`, `SameSite=Strict`, `Path=/auth`, and a `Max-Age` equal
+  to the token's own 30-day TTL. `Secure` follows `APP_BASE_URL`'s scheme, so an https deployment
+  gets it and a laptop on `http://localhost` (the one cleartext origin browsers still trust) still
+  works. `/auth/refresh` and `/auth/logout` read the token from that cookie only: a `refreshToken`
+  field in the request body is ignored, which is what stops a value scraped from anywhere else
+  being replayed.
+
+  The access token moves to memory only -- it is no longer written to `localStorage`, so a reload
+  recovers the session by exchanging the cookie rather than by reading a stored credential.
+  Browser storage now holds nothing but display data (name, email, role label). An already
+  logged-in browser is carried across the upgrade: the user is read out of the old
+  `{ token, refreshToken, user }` entry and its tokens discarded.
+
+  What this buys is narrow and worth stating precisely. It does not make XSS harmless -- script on
+  the page can still call `/auth/refresh` and use the access token it gets back. It stops a
+  30-day credential being exfiltrated to an attacker-controlled host, which is the difference
+  between damage bounded by the lifetime of the injected script and a portable, month-long
+  session.
+
+### Added
+
+- Outbound LLM and MCP calls go through a circuit breaker
+  (`backend/internal/circuitbreaker`), keyed by host so one dead provider cannot fail calls to a
+  healthy one. After `EXTERNAL_CALL_BREAKER_THRESHOLD` consecutive faults (default 5) calls fail
+  immediately for `EXTERNAL_CALL_BREAKER_COOLDOWN` (default 30s), then one probe is let through;
+  a failed probe re-opens without re-counting. Either value at 0 restores the previous behaviour.
+
+  Only transport errors, 5xx and 429 count as faults. A 4xx deliberately does not: a wrong API key
+  returns 401 on every call, so counting it would open the breaker permanently and replace the one
+  error message that tells an operator what to fix with a generic "circuit breaker is open".
+
+### Changed
+
+- `docs/THREAT_MODEL.md` listed tag-scoping on incident sub-resources as an open gap. It isn't:
+  comments, links, IOCs, timeline, status history and tool-call approval all load the parent
+  through `loadVisible(ctx, tx, id, allowedTags)` first, and
+  `TestSubResourceRoutesRejectTagRestrictedCaller` proves it by walking the registered chi routes
+  (42 of them) rather than a hand-maintained list. The doc and the matching paragraph in
+  `backend/README.md` now describe what the code does. No behaviour change -- this entry exists
+  because a stale "known gap" in a threat model is worse than no entry at all.
+
 ### Changed
 
 - Major dependency bumps now require review, in three layers. `.github/dependabot.yml` states the

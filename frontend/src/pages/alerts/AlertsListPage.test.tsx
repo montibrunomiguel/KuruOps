@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
 import { AlertsListPage } from "./AlertsListPage";
 import { AuthProvider } from "../../auth/AuthContext";
+import { seedSession, withSession } from "../../test/session";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -33,28 +34,28 @@ describe("AlertsListPage", () => {
   });
 
   it("renders fetched alerts in a table", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture()])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture()]))));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("Suspicious login")).toBeInTheDocument();
   });
 
   it("shows the empty state when there are no results", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([]))));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("No alerts found for the current filters.")).toBeInTheDocument();
   });
 
   it("shows a duplicate-count badge when duplicateCount > 0", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ duplicateCount: 3 })])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture({ duplicateCount: 3 })]))));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("+3")).toBeInTheDocument();
   });
 
   it("does not show a duplicate-count badge when duplicateCount is 0", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture()])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture()]))));
     render(<AlertsListPage />, { wrapper });
 
     await screen.findByText("Suspicious login");
@@ -63,7 +64,7 @@ describe("AlertsListPage", () => {
 
   it("changing the severity filter re-fetches with the new query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -84,7 +85,7 @@ describe("AlertsListPage", () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse(page1, 21))
       .mockResolvedValueOnce(jsonResponse(page2, 21));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     render(<AlertsListPage />, { wrapper });
     await screen.findByText("Alert 0");
@@ -103,7 +104,7 @@ describe("AlertsListPage", () => {
   it("changing the page size resets to page 1 and refetches with the new limit", async () => {
     const page1 = Array.from({ length: 20 }, (_, i) => alertFixture({ id: `a${i}`, title: `Alert ${i}` }));
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(page1, 21));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     render(<AlertsListPage />, { wrapper });
     await screen.findByText("Alert 0");
@@ -119,15 +120,12 @@ describe("AlertsListPage", () => {
   });
 
   it("shows the resolved assignee name, or a dash when unassigned", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(
         jsonResponse([
           alertFixture({ id: "a1", title: "Assigned alert", assignedAnalystId: "u1", assignedAnalystName: "Marina Alves" }),
           alertFixture({ id: "a2", title: "Unassigned alert" }),
         ]),
-      ),
-    );
+      )));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("Marina Alves")).toBeInTheDocument();
@@ -137,10 +135,7 @@ describe("AlertsListPage", () => {
   });
 
   it("falls back to a shortened analyst id when no assignee name was resolved", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(jsonResponse([alertFixture({ assignedAnalystId: "u1234567-abcd" })])),
-    );
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture({ assignedAnalystId: "u1234567-abcd" })]))));
     render(<AlertsListPage />, { wrapper });
 
     await screen.findByText("Suspicious login");
@@ -149,14 +144,14 @@ describe("AlertsListPage", () => {
   });
 
   it("shows the error banner on a failed fetch", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "boom" }), { status: 500, headers: { "content-type": "application/json" } }))));
     render(<AlertsListPage />, { wrapper });
 
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });
 
   it("shows a correlated badge when the alert has an incidentId", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ incidentId: "inc-1" })])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture({ incidentId: "inc-1" })]))));
     render(<AlertsListPage />, { wrapper });
 
     await screen.findByText("Suspicious login");
@@ -165,7 +160,7 @@ describe("AlertsListPage", () => {
   });
 
   it("renders tag chips for an alert that has tags", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture({ tags: ["ransomware", "priority"] })])));
+    vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture({ tags: ["ransomware", "priority"] })]))));
     render(<AlertsListPage />, { wrapper });
 
     await screen.findByText("Suspicious login");
@@ -175,7 +170,7 @@ describe("AlertsListPage", () => {
 
   it("changing the status filter re-fetches with the new query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -191,7 +186,7 @@ describe("AlertsListPage", () => {
 
   it("changing the correlated filter re-fetches with the new query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -207,7 +202,7 @@ describe("AlertsListPage", () => {
 
   it("typing in the source filter re-fetches with the new query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -223,7 +218,7 @@ describe("AlertsListPage", () => {
 
   it("typing in the tag filter re-fetches with the new query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -239,7 +234,7 @@ describe("AlertsListPage", () => {
 
   it("typing in the search box re-fetches with a q query param, after debouncing", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -255,7 +250,7 @@ describe("AlertsListPage", () => {
 
   it("choosing a time-range preset re-fetches with a since query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -271,7 +266,7 @@ describe("AlertsListPage", () => {
 
   it("a custom time range sends both since and until", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]));
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
     render(<AlertsListPage />, { wrapper });
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -290,14 +285,7 @@ describe("AlertsListPage", () => {
   });
 
   it("reloads the list when a live alert event comes in over the event stream", async () => {
-    localStorage.setItem(
-      "kuruops.session",
-      JSON.stringify({
-        token: "tok",
-        refreshToken: "rt",
-        user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] },
-      }),
-    );
+    seedSession({ id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false, resourceAccess: [] });
 
     const encoder = new TextEncoder();
     const streamResponse = new Response(
@@ -324,7 +312,7 @@ describe("AlertsListPage", () => {
       if (url.startsWith("/api/v1/events/stream")) return Promise.resolve(streamResponse);
       return Promise.resolve(jsonResponse([alertFixture()]));
     });
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", withSession(fetchMock));
 
     render(<AlertsListPage />, { wrapper });
     await screen.findByText("Suspicious login");
@@ -341,7 +329,7 @@ describe("AlertsListPage", () => {
 
   describe("bulk status-change", () => {
     it("selecting a row shows the bulk toolbar with a count, and it disappears on clear", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse([alertFixture()])));
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture()]))));
       render(<AlertsListPage />, { wrapper });
       await screen.findByText("Suspicious login");
 
@@ -354,10 +342,7 @@ describe("AlertsListPage", () => {
     });
 
     it("the header checkbox selects and deselects every row on the page", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn().mockResolvedValue(jsonResponse([alertFixture({ id: "a1" }), alertFixture({ id: "a2", title: "Second alert" })])),
-      );
+      vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(jsonResponse([alertFixture({ id: "a1" }), alertFixture({ id: "a2", title: "Second alert" })]))));
       render(<AlertsListPage />, { wrapper });
       await screen.findByText("Suspicious login");
 
@@ -377,7 +362,7 @@ describe("AlertsListPage", () => {
         }
         return Promise.resolve(jsonResponse([alertFixture()]));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       render(<AlertsListPage />, { wrapper });
       await screen.findByText("Suspicious login");
 
@@ -409,7 +394,7 @@ describe("AlertsListPage", () => {
         }
         return Promise.resolve(jsonResponse([alertFixture({ id: "a1" }), alertFixture({ id: "a2", title: "Second alert" })]));
       });
-      vi.stubGlobal("fetch", fetchMock);
+      vi.stubGlobal("fetch", withSession(fetchMock));
       render(<AlertsListPage />, { wrapper });
       await screen.findByText("Suspicious login");
 

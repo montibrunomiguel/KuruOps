@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { AuthProvider, useAuth, isSessionExpiredError } from "./AuthContext";
 import { api, ApiError } from "../api/client";
@@ -31,18 +31,60 @@ describe("AuthContext", () => {
     expect(result.current.user).toBeNull();
   });
 
-  it("restores a previously stored session from localStorage", () => {
+  // A reload has a stored user but no access token -- that one is memory-only
+  // by design. The session comes back by exchanging the HttpOnly refresh
+  // cookie, so "restoring" is a network call, not a localStorage read.
+  it("restores a session by refreshing against the cookie, not from localStorage", async () => {
     localStorage.setItem(
-      "kuruops.session",
-      JSON.stringify({ token: "tok", user: { id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] } }),
+      "kuruops.user",
+      JSON.stringify({ id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] }),
     );
+    vi.mocked(api.post).mockResolvedValue({ token: fakeToken({ is_admin: true, resource_access: ["alerts"] }) });
+
     const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isBootstrapping).toBe(false));
+
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.isAdmin).toBe(true);
+    // No refresh token anywhere in the request: it rides along as a cookie
+    // this code cannot see.
+    expect(api.post).toHaveBeenCalledWith("/auth/refresh", {}, null);
+  });
+
+  it("logs out when the refresh cookie is gone or rejected", async () => {
+    localStorage.setItem(
+      "kuruops.user",
+      JSON.stringify({ id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] }),
+    );
+    vi.mocked(api.post).mockRejectedValue(new Error("401"));
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isBootstrapping).toBe(false));
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("kuruops.user")).toBeNull();
+  });
+
+  // Anyone logged in when this shipped has the old { token, refreshToken,
+  // user } blob in storage. Reading the user back out of it means they land
+  // on a working session instead of an unexplained logout; the tokens it
+  // carries are ignored, which is the entire point of the change.
+  it("reads the user out of a pre-cookie stored session, ignoring its tokens", async () => {
+    localStorage.setItem(
+      "kuruops.user",
+      JSON.stringify({ token: "old-tok", refreshToken: "rt_old", user: { id: "1", email: "a@b.com", name: "A", role: "Admin", isAdmin: true, mustChangePassword: false, resourceAccess: ["alerts"] } }),
+    );
+    vi.mocked(api.post).mockResolvedValue({ token: fakeToken({ is_admin: true, resource_access: ["alerts"] }) });
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.isBootstrapping).toBe(false));
+
+    expect(result.current.user?.email).toBe("a@b.com");
+    expect(result.current.token).not.toBe("old-tok");
   });
 
   it("ignores corrupt stored session data instead of throwing", () => {
-    localStorage.setItem("kuruops.session", "not json");
+    localStorage.setItem("kuruops.user", "not json");
     const { result } = renderHook(() => useAuth(), { wrapper });
     expect(result.current.isAuthenticated).toBe(false);
   });
@@ -51,7 +93,6 @@ describe("AuthContext", () => {
     const token = fakeToken({ must_change_password: true, is_admin: false, resource_access: ["alerts", "followup"] });
     vi.mocked(api.post).mockResolvedValue({
       token,
-      refreshToken: "rt_1",
       user: { id: "1", email: "analyst@test.local", name: "Analyst", role: "Analyst", mustChangePassword: true },
     });
 
@@ -72,7 +113,6 @@ describe("AuthContext", () => {
     const token = fakeToken({ mfa_enabled: true });
     vi.mocked(api.post).mockResolvedValue({
       token,
-      refreshToken: "rt_1",
       user: { id: "1", email: "a@b.com", name: "A", role: "Admin", mustChangePassword: false },
     });
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -100,7 +140,6 @@ describe("AuthContext", () => {
     const token = fakeToken({ is_admin: true, resource_access: ["alerts"] });
     vi.mocked(api.post).mockResolvedValue({
       token,
-      refreshToken: "rt_2",
       user: { id: "1", email: "a@b.com", name: "A", role: "Admin", mustChangePassword: false },
     });
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -118,7 +157,6 @@ describe("AuthContext", () => {
   it("a malformed token decodes to safe defaults instead of throwing", async () => {
     vi.mocked(api.post).mockResolvedValue({
       token: "not-a-real-jwt",
-      refreshToken: "rt_1",
       user: { id: "1", email: "a@b.com", name: "A", role: "viewer", mustChangePassword: false },
     });
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -132,7 +170,6 @@ describe("AuthContext", () => {
     const initialToken = fakeToken({ must_change_password: true, resource_access: [] });
     vi.mocked(api.post).mockResolvedValue({
       token: initialToken,
-      refreshToken: "rt_1",
       user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: true },
     });
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -161,7 +198,6 @@ describe("AuthContext", () => {
   it("logout clears the session and localStorage", async () => {
     vi.mocked(api.post).mockResolvedValue({
       token: fakeToken({}),
-      refreshToken: "rt_1",
       user: { id: "1", email: "a@b.com", name: "A", role: "admin", mustChangePassword: false },
     });
     const { result } = renderHook(() => useAuth(), { wrapper });
@@ -174,7 +210,12 @@ describe("AuthContext", () => {
       result.current.logout();
     });
     expect(result.current.isAuthenticated).toBe(false);
-    expect(localStorage.getItem("kuruops.session")).toContain('"token":null');
+    // The entry is removed outright rather than rewritten with nulls --
+    // nothing is left behind to reason about on the next load.
+    expect(localStorage.getItem("kuruops.user")).toBeNull();
+    // No body: the backend clears the cookie it can see, and this code
+    // has no token to send.
+    expect(api.post).toHaveBeenCalledWith("/auth/logout", {}, null);
   });
 
   it("useAuth throws outside of AuthProvider", () => {

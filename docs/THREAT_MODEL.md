@@ -87,14 +87,21 @@ without a schema rewrite.
   in the query), not in the RLS policy itself. A bug in that layer is not covered by RLS.
 - **Isolation against the `postgres` role** — intentional; that role is only used for
   administrative setup, never by an HTTP request.
-- **Consistency of incident sub-resources** — comments, alert links, and the timeline still don't
-  repeat the `allowedTags` check that `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
-  `SetSeverityAndPriority`/`UpdateDescription` already perform (see `backend/README.md`, section
-  "Authorization") — they rely only on tenant isolation via RLS. In a single-tenant environment
-  this doesn't leak anything across different tenants, but it means a user with access to the
-  `incidents` resource (but without the specific tag on a given incident) can, today,
-  comment on/view sub-resources of an incident outside their `allowedTags` if they know the ID.
-  Known gap, not a new finding from this review.
+- **Consistency of incident sub-resources** — *closed*. Comments, alert links, IOCs, the timeline,
+  status history and the MCP tool-call approve/reject routes used to query by ID under tenant RLS
+  alone, without repeating the `allowedTags` check that `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
+  `SetSeverityAndPriority`/`UpdateDescription` perform. That was directly exploitable: nothing
+  forces a client to call `GET /incidents/{id}` before `GET /incidents/{id}/comments`, so a
+  tag-restricted analyst who knew an out-of-scope ID could read its Team Notes and IOCs, write new
+  ones, and approve its side-effecting tool calls. Every sub-resource now loads the parent through
+  `loadVisible(ctx, tx, id, allowedTags)` first.
+
+  The guard against it coming back is structural rather than a list someone has to remember to
+  update: `TestSubResourceRoutesRejectTagRestrictedCaller` walks the *actually registered* chi
+  routes and asserts that no `{id}`-scoped route ever answers a tag-restricted caller with a 2xx
+  (42 routes at the time of writing). A newly added sub-resource is covered the moment it is
+  registered; one that forgets its gate fails the test. The only exemptions are `/` and `/bulk/*`,
+  which have no prior entity to check — see `routesExemptFromTagScoping` for why each is listed.
 
 ## What the data retention sweep guarantees — and what it doesn't
 

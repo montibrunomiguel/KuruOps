@@ -16,7 +16,7 @@ import (
 	"github.com/kuruops/kuruops/internal/repository"
 )
 
-// passwordResetTokenTTL is deliberately much shorter than refreshTokenTTL --
+// passwordResetTokenTTL is deliberately much shorter than RefreshTokenTTL --
 // a reset link is a one-time bearer credential mailed in plaintext, so it
 // should go stale fast if unused.
 const passwordResetTokenTTL = 1 * time.Hour

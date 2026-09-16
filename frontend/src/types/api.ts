@@ -430,7 +430,9 @@ export interface BulkResponse {
 
 export interface LoginResponse {
   token: string;
-  refreshToken: string;
+  // No refreshToken field on purpose: the backend delivers it as an
+  // HttpOnly cookie (see internal/sessioncookie), which is only worth
+  // anything if the value never also reaches somewhere script can read it.
   user: {
     id: string;
     email: string;

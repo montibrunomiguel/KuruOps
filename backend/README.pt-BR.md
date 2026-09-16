@@ -123,10 +123,12 @@ regras de negócio para:
   `middleware.RequireResourceAccess` bloqueia `/alerts` ou `/incidents` por inteiro conforme o
   `resourceAccess` do usuário. Dentro de cada recurso, `allowedTags` filtra a listagem na query SQL
   (`tags && $allowedTags`) e é checado de novo em `Get`/`ChangeStatus`/`Close`/`ChangePhase`/
-  `SetSeverityAndPriority`/`UpdateDescription` — ver `service/access.go` e o comentário em
-  `IncidentService` sobre os sub-recursos (comentários, links, timeline) que ainda não repetem essa
-  checagem e dependem só do isolamento por tenant via RLS. Como o JWT só espelha o Role no momento
-  do login, editar um Role (ou reatribuir um usuário a outro) só tem efeito no próximo login/refresh
+  `SetSeverityAndPriority`/`UpdateDescription` — ver `service/access.go`. Os sub-recursos
+  (comentários, links, IOCs, timeline, histórico de status, aprovação de tool call) repetem a mesma
+  checagem carregando o pai via `loadVisible` antes; a proteção estrutural que impede um
+  sub-recurso novo de esquecer o gate é o `TestSubResourceRoutesRejectTagRestrictedCaller`, que
+  percorre as rotas chi registradas em vez de uma lista mantida à mão. Como o JWT só espelha o Role
+  no momento do login, editar um Role (ou reatribuir um usuário a outro) só tem efeito no próximo login/refresh
   de token desse usuário, não imediatamente — mesmo trade-off de defasagem que o próprio comentário
   de `authn.Claims` descreve para `mustChangePassword`.
 
@@ -135,11 +137,18 @@ regras de negócio para:
 O fluxo funciona ponta a ponta (local/LDAP/SAML → JWT → `JWTAuth` middleware), mas tem lacunas
 conhecidas, deliberadamente deixadas como TODO em vez de meia-solução escondida:
 
-- **`ServeACS` devolve o token como JSON direto** — aceitável para testar o fluxo, mas produção não
-  deve expor um token de sessão na resposta de um POST vindo de um redirect de IdP; o padrão correto
-  é a SPA trocar um código de uso único por token via uma chamada same-origin separada.
+- **`ServeACS` devolve o access token como JSON direto** — aceitável para testar o fluxo, mas
+  produção não deve expor um token de sessão na resposta de um POST vindo de um redirect de IdP; o
+  padrão correto é a SPA trocar um código de uso único por token via uma chamada same-origin
+  separada. Reduzido, não fechado: o *refresh* token agora sai como cookie HttpOnly, igual a todo
+  outro caminho de login, então o que essa resposta ainda expõe é o access token de 15 minutos, e
+  não uma credencial de 30 dias.
 
-Resolvidos desde a última revisão deste documento: revogação de sessão (refresh tokens em
+Resolvidos desde a última revisão deste documento: o refresh token não volta mais em nenhum corpo
+de resposta — ele é entregue como cookie `kuruops_refresh` (`HttpOnly`, `SameSite=Strict`,
+`Path=/auth`, `Secure` quando o `APP_BASE_URL` é https; ver `internal/sessioncookie`), e
+`/auth/refresh`/`/auth/logout` o leem só de lá, ignorando um campo `refreshToken` no corpo para que
+um valor obtido em outro lugar não possa ser reapresentado; revogação de sessão (refresh tokens em
 `refresh_tokens`, ver `AuthService.Refresh`/`RevokeSessions` e o botão "Revoke sessions" em
 Settings → Usuários), cache de metadata SAML (`SAMLAuthService`'s `resolveIDPMetadata`, TTL de 1h,
 invalidado ao salvar config), rate limiting por conta no login (`AuthHandlers.loginAttempts`, além

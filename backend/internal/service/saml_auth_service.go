@@ -17,6 +17,7 @@ import (
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/secrets"
+	"github.com/kuruops/kuruops/internal/sessioncookie"
 )
 
 // samlMetadataTTL bounds how long a cached IdP *saml.EntityDescriptor is
@@ -40,14 +41,18 @@ type SAMLAuthService struct {
 	identityCfg *repository.IdentityConfigRepository
 	secrets     secrets.Store
 	auth        *AuthService
+	// secureCookies is the Secure attribute for the refresh cookie ServeACS
+	// writes, derived once from APP_BASE_URL -- see sessioncookie.Secure.
+	secureCookies bool
 
 	metadataMu    sync.Mutex
 	metadataCache map[uuid.UUID]cachedSAMLMetadata
 }
 
-func NewSAMLAuthService(pool *db.Pool, identityCfg *repository.IdentityConfigRepository, store secrets.Store, auth *AuthService) *SAMLAuthService {
+func NewSAMLAuthService(pool *db.Pool, identityCfg *repository.IdentityConfigRepository, store secrets.Store, auth *AuthService, appBaseURL string) *SAMLAuthService {
 	return &SAMLAuthService{
 		pool: pool, identityCfg: identityCfg, secrets: store, auth: auth,
+		secureCookies: sessioncookie.Secure(appBaseURL),
 		metadataCache: make(map[uuid.UUID]cachedSAMLMetadata),
 	}
 }
@@ -192,10 +197,12 @@ func (s *SAMLAuthService) ServeACS(ctx context.Context, tenantID uuid.UUID, w ht
 		return
 	}
 
+	// Same split as the /auth/login handlers: the refresh token goes back
+	// as an HttpOnly cookie and never appears in a body the page can read.
+	sessioncookie.Set(w, refreshToken, s.secureCookies)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"token":        token,
-		"refreshToken": refreshToken,
-		"user":         map[string]string{"id": user.ID.String(), "email": user.Email, "name": user.Name, "role": user.Role.Name},
+		"token": token,
+		"user":  map[string]string{"id": user.ID.String(), "email": user.Email, "name": user.Name, "role": user.Role.Name},
 	})
 }
