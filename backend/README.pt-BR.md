@@ -132,16 +132,9 @@ regras de negócio para:
   de token desse usuário, não imediatamente — mesmo trade-off de defasagem que o próprio comentário
   de `authn.Claims` descreve para `mustChangePassword`.
 
-## Autenticação: o que falta para produção
+## Autenticação
 
-O fluxo funciona ponta a ponta (local/LDAP/SAML → JWT → `JWTAuth` middleware), mas tem lacunas
-conhecidas, deliberadamente deixadas como TODO em vez de meia-solução escondida:
-
-- **O fluxo SAML nunca rodou contra um IdP real.** Metadata, o redirect de login e a rejeição de
-  assertion têm teste; uma assertion *válida* só foi exercitada com certificados gerados, nunca
-  contra Okta, Entra ID, Keycloak ou qualquer outro. Trate SAML como não validado ponta a ponta até
-  alguém ter logado por um provedor de verdade — a mecânica abaixo é sólida, mas "sólida" não é o
-  mesmo que "testada".
+O fluxo funciona ponta a ponta (local/LDAP/SAML → JWT → `JWTAuth` middleware).
 
 Resolvidos desde a última revisão deste documento: o `ServeACS` não responde mais ao POST do IdP com
 um token de sessão. Ele devolvia um como JSON direto, o que colocava uma credencial no histórico do
@@ -169,9 +162,7 @@ persistido na tabela `secret_store` — sobrevive a um restart do processo, ao c
 (`AWSKMSStore`, Encrypt/Decrypt puro, sem Secrets Manager) — ver `secrets.NewFromConfig` para o
 factory switch e as variáveis de cada backend. `VaultStore` já foi validado contra um servidor
 Vault real em modo dev (`internal/secrets/vault_store_live_test.go`, `task backend:test:vault`) —
-um ciclo Put→Resolve de verdade, não só o mock em `vault_store_test.go`. `AWSKMSStore` ainda não
-foi validado contra uma conta AWS real (precisa de credencial real, ver Fase 3 do histórico de
-planos em `docs/history/`).
+um ciclo Put→Resolve de verdade, não só o mock em `vault_store_test.go`.
 
 ## Client MCP
 

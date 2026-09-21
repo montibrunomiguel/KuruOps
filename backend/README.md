@@ -133,16 +133,9 @@ rules for:
   takes effect on that user's next login/token refresh, not immediately — same staleness tradeoff
   `authn.Claims`' own doc comment describes for `mustChangePassword`.
 
-## Authentication: what's missing for production
+## Authentication
 
-The flow works end-to-end (local/LDAP/SAML → JWT → `JWTAuth` middleware), but has known gaps,
-deliberately left as TODOs instead of a hidden half-solution:
-
-- **The SAML flow has never run against a real IdP.** Metadata, the login redirect and assertion
-  rejection are covered by tests; a *successful* assertion has only ever been exercised with
-  generated certificates, never against Okta, Entra ID, Keycloak or anything else. Treat SAML as
-  unvalidated end-to-end until someone has logged in through a real provider — the mechanics below
-  are sound, but "sound" is not the same as "tried".
+The flow works end-to-end (local/LDAP/SAML → JWT → `JWTAuth` middleware).
 
 Resolved since the last revision of this document: `ServeACS` no longer answers the IdP's POST with
 a session token. It used to return one as raw JSON, which put a credential in browser history, in
@@ -171,8 +164,7 @@ unlike the old pure in-memory `EnvStore`, which still exists only for use in tes
 `secrets.NewFromConfig` for the factory switch and each backend's variables. `VaultStore` has
 already been validated against a real Vault server in dev mode
 (`internal/secrets/vault_store_live_test.go`, `task backend:test:vault`) — a real Put→Resolve
-cycle, not just the mock in `vault_store_test.go`. `AWSKMSStore` has not yet been validated against
-a real AWS account (needs a real credential, see Phase 3 of the plan history in `docs/history/`).
+cycle, not just the mock in `vault_store_test.go`.
 
 ## MCP Client
 

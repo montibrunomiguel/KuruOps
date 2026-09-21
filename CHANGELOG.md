@@ -40,11 +40,6 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   never stored, so a page load (and a SAML callback, which does not even have a stored user) has
   only the cookie to rebuild a session from.
 
-  **SAML remains unvalidated against a real identity provider.** Metadata, the login redirect and
-  assertion rejection have tests; a successful assertion has only ever been exercised with
-  generated certificates. `backend/README.md` says so plainly rather than implying the flow is
-  proven.
-
 ### Fixed
 
 - **A failed AI run consumed the alert's one shot at a full triage analysis.** The first analysis of

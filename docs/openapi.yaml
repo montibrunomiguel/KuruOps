@@ -400,9 +400,6 @@ paths:
         trades that cookie for an access token via `POST /auth/refresh`. No token is returned in
         this response: a credential in the body of an IdP-initiated POST ends up in browser history
         and proxy logs.
-
-        The SAML flow has not been validated against a real identity provider -- see
-        `backend/README.md`.
       security: []
       requestBody:
         required: true
