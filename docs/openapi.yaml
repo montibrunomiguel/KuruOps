@@ -780,9 +780,11 @@ paths:
         - $ref: '#/components/parameters/Offset'
         - name: severity
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "critical,high".
           schema: { $ref: '#/components/schemas/Severity' }
         - name: status
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "open,investigating".
           schema: { $ref: '#/components/schemas/AlertStatus' }
         - name: source
           in: query
@@ -1371,12 +1373,14 @@ paths:
         - $ref: '#/components/parameters/Offset'
         - name: severity
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "critical,high".
           schema: { $ref: '#/components/schemas/Severity' }
         - name: priority
           in: query
           schema: { $ref: '#/components/schemas/IncidentPriority' }
         - name: phase
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "new,containment".
           schema: { $ref: '#/components/schemas/IncidentPhase' }
         - name: tag
           in: query

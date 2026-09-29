@@ -50,9 +50,18 @@ func (r *IncidentRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (
 }
 
 type ListIncidentsFilter struct {
-	Severity    *domain.Severity
+	Severity *domain.Severity
+	// Severities is an OR'd alternative to Severity, for the Incidents list
+	// page's now-multi-select severity filter -- set at most one of the
+	// pair; if both are set, Severity wins (Severities is ignored), same
+	// precedence ListAlertsFilter.Severity/Severities already uses.
+	Severities  []domain.Severity
 	Priority    *domain.IncidentPriority
 	Phase       *domain.IncidentPhase
+	// Phases is an OR'd alternative to Phase, for the Incidents list page's
+	// now-multi-select "status" filter (which is really NIST phase -- see
+	// IncidentsListPage). Same set-at-most-one-of-the-pair precedence.
+	Phases      []domain.IncidentPhase
 	SLABreached *bool
 	Tag         *string
 	// OpenedSince/OpenedUntil restrict to incidents opened within
@@ -85,6 +94,13 @@ func incidentWhereClause(f ListIncidentsFilter) (string, []any) {
 	if f.Severity != nil {
 		args = append(args, *f.Severity)
 		query += fmt.Sprintf(" and severity = $%d", len(args))
+	} else if len(f.Severities) > 0 {
+		severities := make([]string, len(f.Severities))
+		for i, s := range f.Severities {
+			severities[i] = string(s)
+		}
+		args = append(args, severities)
+		query += fmt.Sprintf(" and severity = any($%d::severity_enum[])", len(args))
 	}
 	if f.Priority != nil {
 		args = append(args, *f.Priority)
@@ -93,6 +109,13 @@ func incidentWhereClause(f ListIncidentsFilter) (string, []any) {
 	if f.Phase != nil {
 		args = append(args, *f.Phase)
 		query += fmt.Sprintf(" and phase = $%d", len(args))
+	} else if len(f.Phases) > 0 {
+		phases := make([]string, len(f.Phases))
+		for i, p := range f.Phases {
+			phases[i] = string(p)
+		}
+		args = append(args, phases)
+		query += fmt.Sprintf(" and phase = any($%d::incident_phase_enum[])", len(args))
 	}
 	if f.SLABreached != nil {
 		args = append(args, *f.SLABreached)

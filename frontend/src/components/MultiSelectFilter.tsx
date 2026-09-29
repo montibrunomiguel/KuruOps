@@ -3,19 +3,23 @@ import { useTranslation } from "react-i18next";
 export interface MultiSelectOption {
   value: string;
   label: string;
+  // Optional accent color (a CSS color, typically one of
+  // chartColors.ts's SEVERITY_COLOR/ALERT_STATUS_COLOR/PHASE_COLOR) -- a
+  // severity/status/phase filter passes this so its chosen chip reads the
+  // same color as the badge for that value everywhere else in the app. A
+  // filter over an arbitrary catalog (tags, assignees) leaves it unset and
+  // gets a plain chip.
+  color?: string;
 }
 
-// A multi-select for a fixed, static list of options (severity, status) --
-// the exact same "chips + a <select> to add another" markup TagPicker uses
-// for its own (API-sourced) catalog: chips and the trailing <select> as
-// direct children of one .tag-picker box, not two loose elements sitting
-// side by side in the filter bar's own flex row. That used to be the
+// A multi-select for a fixed, static list of options (severity, status,
+// phase) -- the exact same "chips + a <select> to add another" markup
+// TagPicker uses for its own (API-sourced) catalog: chips and the trailing
+// <select> as direct children of one .tag-picker box, not two loose elements
+// sitting side by side in the filter bar's own flex row. That used to be the
 // difference between this control reading as one thing (a bordered pill)
 // and reading as three (a chip, a chip, a dropdown) -- see AssigneePicker
-// for the other control this same fix applies to. Kept separate from
-// SeverityFilter, which wraps a single-value <select> and is
-// still used as-is on AlertsListPage/IncidentsListPage -- changing its
-// value shape would break those single-select call sites.
+// for the other control this same fix applies to.
 export function MultiSelectFilter({
   options,
   value,
@@ -30,7 +34,7 @@ export function MultiSelectFilter({
   ariaLabel: string;
 }) {
   const { t } = useTranslation();
-  const byValue = new Map(options.map((o) => [o.value, o.label]));
+  const byValue = new Map(options.map((o) => [o.value, o]));
   const available = options.filter((o) => !value.includes(o.value));
 
   function remove(v: string) {
@@ -39,14 +43,19 @@ export function MultiSelectFilter({
 
   return (
     <div className="tag-picker">
-      {value.map((v) => (
-        <span className="tag-chip" key={v}>
-          {byValue.get(v) ?? v}
-          <button type="button" onClick={() => remove(v)} aria-label={t("common.removeFilterValue", { value: byValue.get(v) ?? v })}>
-            ×
-          </button>
-        </span>
-      ))}
+      {value.map((v) => {
+        const opt = byValue.get(v);
+        const color = opt?.color;
+        return (
+          <span className="tag-chip" key={v}>
+            {color && <span className="severity-dot" style={{ background: color }} />}
+            <span style={color ? { color } : undefined}>{opt?.label ?? v}</span>
+            <button type="button" onClick={() => remove(v)} aria-label={t("common.removeFilterValue", { value: opt?.label ?? v })}>
+              ×
+            </button>
+          </span>
+        );
+      })}
       <select
         className="tag-picker-add"
         aria-label={ariaLabel}

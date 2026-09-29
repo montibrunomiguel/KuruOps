@@ -737,6 +737,20 @@ func TestAlertHandlers_List_Filters(t *testing.T) {
 		assert.Empty(t, alerts)
 	})
 
+	// Last -- adds a second alert to the shared fixture, which every subtest
+	// above assumes is the only one (single-count assertions like "source
+	// filter"'s len==1 would otherwise break for every subtest that runs
+	// after this one).
+	t.Run("comma-separated severity is a multi-select OR filter", func(t *testing.T) {
+		newSecondAlert(t, h, tenantID) // medium, on top of the fixture's high
+		req := withClaims(httptest.NewRequest("GET", "/?severity=high,medium", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var alerts []domain.Alert
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &alerts))
+		assert.Len(t, alerts, 2)
+	})
+
 	_ = alertID
 }
 

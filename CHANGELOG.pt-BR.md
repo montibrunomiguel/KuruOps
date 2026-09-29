@@ -46,6 +46,29 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   Verificado ao vivo no navegador, nos dois temas, em larguras desktop e mobile; `tsc`, `vitest`
   (703/703), `eslint` (18 avisos pré-existentes, 0 novos) e `vite build` todos limpos.
 
+- **Os filtros de severidade/status das páginas de Alertas e Incidentes agora são multivalorados, e
+  seguem as cores dos badges.** Eram os últimos filtros de severidade/status do app ainda de seleção
+  única (`SeverityFilter`, agora removido, mais um `<select>` simples para status) -- em todo o resto
+  do app, incluindo as próprias abas de Alertas/Incidentes do Dashboard, já era possível escolher
+  vários valores. As duas páginas agora usam o mesmo `MultiSelectFilter` das abas do Dashboard,
+  conectado pelos mesmos helpers `severityFilterOptions`/`alertStatusFilterOptions`/
+  `phaseFilterOptions` (`lib/chartColors.ts`), então um chip escolhido renderiza exatamente com a cor
+  de severidade/status/fase que o badge daquele valor já usa em outros lugares -- um ponto colorido
+  mais texto colorido, via um novo campo opcional `color` em `MultiSelectOption` -- em vez de um chip
+  neutro. Os endpoints `/api/v1/alerts` e `/api/v1/incidents` do backend agora aceitam uma lista
+  separada por vírgulas para `severity`/`status`/`phase` (com OU lógico), a mesma convenção que
+  `/api/v1/dashboard/stats` já usava. Verificado ao vivo contra dados reais semeados nas duas
+  páginas; `go test` (backend, incluindo nova cobertura de repositório/handler para os filtros
+  multivalorados), `tsc`, `vitest` (705/705) e `eslint` (0 avisos novos) todos limpos.
+
+- **As fatias "Investigando" e "Escalado" do donut de status ficavam parecidas demais em cor.** As
+  duas liam como um tom de laranja/amarelo uma ao lado da outra no gráfico e na legenda. Investigando
+  agora usa o mesmo teal da severidade Baixa em vez do laranja de Alta -- Aberto continua vermelho
+  crítico e Escalado continua amarelo médio, as duas cores que já eram de fato distintas. Aplicado no
+  único lugar de onde tanto o gráfico quanto o badge `AlertStatusBadge` leem sua cor
+  (`ALERT_STATUS_COLOR` em `lib/chartColors.ts`, espelhado em `.badge-status-investigating`), então
+  todo badge "Investigando" do app mudou de cor, não só o gráfico.
+
 ### Fixed
 
 - **A barra de filtros do dashboard ainda parecia desconectada depois da reforma de identidade

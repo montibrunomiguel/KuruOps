@@ -673,8 +673,11 @@
 .severity-dot.badge-sev-low { background: var(--low); }
 .severity-dot.badge-sev-info { background: var(--info); }
 
+/* investigating uses low's teal, not high's orange -- see
+   lib/chartColors.ts's ALERT_STATUS_COLOR for why (orange/yellow read as
+   nearly the same color next to each other on the status donut). */
 .badge-status-open { --tag: var(--critical); color: var(--critical); }
-.badge-status-investigating { --tag: var(--high); color: var(--high); }
+.badge-status-investigating { --tag: var(--low); color: var(--low); }
 .badge-status-escalated { --tag: var(--medium); color: var(--medium); }
 .badge-status-closed { --tag: var(--border-strong); color: var(--text-muted); }
 

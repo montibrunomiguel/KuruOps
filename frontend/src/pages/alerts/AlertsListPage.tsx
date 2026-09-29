@@ -11,10 +11,11 @@ import { useBulkAction } from "../../hooks/useBulkAction";
 import type { Alert, AlertStatus, Severity, Classification } from "../../types/alerts";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
-import { SeverityFilter } from "../../components/SeverityFilter";
+import { MultiSelectFilter } from "../../components/MultiSelectFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { Pagination } from "../../components/Pagination";
 import { formatRelative, shortId } from "../../lib/format";
+import { severityFilterOptions, alertStatusFilterOptions } from "../../lib/chartColors";
 
 // Bulk status-change deliberately excludes "closed" -- ChangeStatus (and so
 // BulkChangeStatus, which just loops over it) rejects a direct transition
@@ -30,8 +31,8 @@ const BULK_CLASSIFICATIONS: Classification[] = ["false_positive", "true_positive
 export function AlertsListPage() {
   const { t } = useTranslation();
   const { token } = useAuth();
-  const [severity, setSeverity] = useState<Severity | "">("");
-  const [status, setStatus] = useState<AlertStatus | "">("");
+  const [severity, setSeverity] = useState<Severity[]>([]);
+  const [status, setStatus] = useState<AlertStatus[]>([]);
   const [source, setSource] = useState("");
   const [correlated, setCorrelated] = useState<"" | "true" | "false">("");
   const [tag, setTag] = useState("");
@@ -60,11 +61,11 @@ export function AlertsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Alert>(
-    ["alerts", severity, status, source, correlated, tag, trimmedQ, range.since, range.until],
+    ["alerts", severity.join(","), status.join(","), source, correlated, tag, trimmedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
-      if (severity) params.set("severity", severity);
-      if (status) params.set("status", status);
+      if (severity.length > 0) params.set("severity", severity.join(","));
+      if (status.length > 0) params.set("status", status.join(","));
       if (source) params.set("source", source);
       if (correlated) params.set("correlated", correlated);
       if (tag) params.set("tag", tag);
@@ -143,19 +144,20 @@ export function AlertsListPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <SeverityFilter value={severity} onChange={setSeverity} />
-          <select
-            className="select"
-            aria-label={t("dashboard.filters.statusFilterLabel")}
+          <MultiSelectFilter
+            ariaLabel={t("dashboard.filters.severityFilterLabel")}
+            placeholder={t("dashboard.filters.allSeverities")}
+            value={severity}
+            onChange={(next) => setSeverity(next as Severity[])}
+            options={severityFilterOptions(t)}
+          />
+          <MultiSelectFilter
+            ariaLabel={t("dashboard.filters.statusFilterLabel")}
+            placeholder={t("dashboard.filters.allStatuses")}
             value={status}
-            onChange={(e) => setStatus(e.target.value as AlertStatus | "")}
-          >
-            <option value="">{t("dashboard.filters.allStatuses")}</option>
-            <option value="open">{t("common.alertStatus.open")}</option>
-            <option value="investigating">{t("common.alertStatus.investigating")}</option>
-            <option value="escalated">{t("common.alertStatus.escalated")}</option>
-            <option value="closed">{t("common.alertStatus.closed")}</option>
-          </select>
+            onChange={(next) => setStatus(next as AlertStatus[])}
+            options={alertStatusFilterOptions(t)}
+          />
           <input
             className="input"
             aria-label={t("dashboard.filters.sourceFilterLabel")}

@@ -15,11 +15,12 @@ import { SeverityBadge, PriorityBadge, PhasePill } from "../../components/badges
 import { TagPicker } from "../../components/TagPicker";
 import { AssigneePicker } from "../../components/AssigneePicker";
 import { WebhookStatusIndicator } from "../../components/WebhookStatusIndicator";
-import { SeverityFilter } from "../../components/SeverityFilter";
+import { MultiSelectFilter } from "../../components/MultiSelectFilter";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { Pagination } from "../../components/Pagination";
 import { Modal } from "../../components/Modal";
 import { formatDuration, shortId } from "../../lib/format";
+import { severityFilterOptions, phaseFilterOptions } from "../../lib/chartColors";
 
 type SlaFilter = "" | "breached" | "ok";
 
@@ -36,9 +37,9 @@ export function IncidentsListPage() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const navigate = useNavigate();
-  const [severity, setSeverity] = useState<Severity | "">("");
+  const [severity, setSeverity] = useState<Severity[]>([]);
   const [priority, setPriority] = useState<IncidentPriority | "">("");
-  const [phase, setPhase] = useState<IncidentPhase | "">("");
+  const [phase, setPhase] = useState<IncidentPhase[]>([]);
   const [sla, setSla] = useState<SlaFilter>("");
   const [q, setQ] = useState("");
   const debouncedQ = useDebouncedValue(q);
@@ -63,12 +64,12 @@ export function IncidentsListPage() {
     setPageSize,
     reload,
   } = usePagedList<Incident>(
-    ["incidents", severity, priority, phase, sla, trimmedQ, range.since, range.until],
+    ["incidents", severity.join(","), priority, phase.join(","), sla, trimmedQ, range.since, range.until],
     (tk, limit, offset) => {
       const params = new URLSearchParams();
-      if (severity) params.set("severity", severity);
+      if (severity.length > 0) params.set("severity", severity.join(","));
       if (priority) params.set("priority", priority);
-      if (phase) params.set("phase", phase);
+      if (phase.length > 0) params.set("phase", phase.join(","));
       if (sla) params.set("sla", sla);
       if (trimmedQ) params.set("q", trimmedQ);
       if (range.since) params.set("since", range.since);
@@ -135,7 +136,13 @@ export function IncidentsListPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <SeverityFilter value={severity} onChange={setSeverity} />
+          <MultiSelectFilter
+            ariaLabel={t("dashboard.filters.severityFilterLabel")}
+            placeholder={t("dashboard.filters.allSeverities")}
+            value={severity}
+            onChange={(next) => setSeverity(next as Severity[])}
+            options={severityFilterOptions(t)}
+          />
           <select
             className="select"
             aria-label={t("dashboard.filters.priorityFilterLabel")}
@@ -148,19 +155,13 @@ export function IncidentsListPage() {
             <option value="p3">P3</option>
             <option value="p4">P4</option>
           </select>
-          <select
-            className="select"
-            aria-label={t("dashboard.filters.statusFilterLabel")}
+          <MultiSelectFilter
+            ariaLabel={t("dashboard.filters.statusFilterLabel")}
+            placeholder={t("dashboard.filters.allStatuses")}
             value={phase}
-            onChange={(e) => setPhase(e.target.value as IncidentPhase | "")}
-          >
-            <option value="">{t("dashboard.filters.allStatuses")}</option>
-            {NIST_PHASE_ORDER.map((p) => (
-              <option key={p} value={p}>
-                {t(`common.phase.${p}`)}
-              </option>
-            ))}
-          </select>
+            onChange={(next) => setPhase(next as IncidentPhase[])}
+            options={phaseFilterOptions(t)}
+          />
           <select
             className="select"
             aria-label={t("dashboard.filters.slaFilterLabel")}

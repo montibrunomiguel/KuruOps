@@ -43,6 +43,29 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   Verified live in the browser, both themes, desktop and mobile widths; `tsc`, `vitest` (703/703),
   `eslint` (18 pre-existing warnings, 0 new), and `vite build` all clean.
 
+- **The Alerts and Incidents list pages' severity/status filters are now multi-select, and match
+  their badge colors.** They were the last severity/status filters in the app still single-select
+  (`SeverityFilter`, now removed, plus a plain `<select>` for status) -- everywhere else, including
+  the Dashboard's own Alerts/Incidents tabs, already let an analyst pick several values. Both pages
+  now use the same `MultiSelectFilter` the Dashboard tabs use, wired through the same
+  `severityFilterOptions`/`alertStatusFilterOptions`/`phaseFilterOptions` helpers
+  (`lib/chartColors.ts`), so a chosen chip renders with the exact severity/status/phase color the
+  badge for that value already uses elsewhere -- a colored dot plus colored text, via a new optional
+  `color` field on `MultiSelectOption` -- instead of a plain neutral chip. The backend's
+  `/api/v1/alerts` and `/api/v1/incidents` list endpoints now accept a comma-separated list for
+  `severity`/`status`/`phase` (OR'd), the same convention `/api/v1/dashboard/stats` already used.
+  Verified live against real seeded data on both list pages; `go test` (backend, incl. new
+  repository/handler coverage for the multi-value filters), `tsc`, `vitest` (705/705), and `eslint`
+  (0 new warnings) all clean.
+
+- **The status donut's "Investigating" and "Escalated" slices were too close in color.** Both read
+  as a shade of orange/yellow next to each other on the chart and its legend. Investigating now uses
+  the same teal as the Low severity hue instead of High's orange -- Open stays critical-red and
+  Escalated stays medium-yellow, the two colors that were actually distinct already. Applied in the
+  one place both the chart and the `AlertStatusBadge` pill read their color from
+  (`ALERT_STATUS_COLOR` in `lib/chartColors.ts`, mirrored in `.badge-status-investigating`), so every
+  "Investigating" pill in the app changed color, not just the chart.
+
 ### Fixed
 
 - **The dashboard's filter bar still looked disconnected after the visual-identity rework.**

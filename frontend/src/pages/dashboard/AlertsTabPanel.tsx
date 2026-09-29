@@ -9,7 +9,7 @@ import type { AlertStatus, Severity } from "../../types/alerts";
 import { TrendChart } from "../../components/charts/TrendChart";
 import { DonutChart } from "../../components/charts/DonutChart";
 import { BellIcon, FlagIcon, ClockIcon } from "../../components/icons";
-import { SEVERITY_ORDER, SEVERITY_COLOR, ALERT_STATUS_ORDER, ALERT_STATUS_COLOR } from "../../lib/chartColors";
+import { SEVERITY_ORDER, SEVERITY_COLOR, ALERT_STATUS_ORDER, ALERT_STATUS_COLOR, severityFilterOptions, alertStatusFilterOptions } from "../../lib/chartColors";
 import { describeActivity } from "../../lib/activityText";
 import { formatDuration, formatRelative } from "../../lib/format";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
@@ -98,25 +98,14 @@ export function AlertsTabPanel() {
           placeholder={t("dashboard.filters.allSeverities")}
           value={severity}
           onChange={(next) => setSeverity(next as Severity[])}
-          options={[
-            { value: "critical", label: t("common.severity.critical") },
-            { value: "high", label: t("common.severity.high") },
-            { value: "medium", label: t("common.severity.medium") },
-            { value: "low", label: t("common.severity.low") },
-            { value: "informational", label: t("common.severity.informational") },
-          ]}
+          options={severityFilterOptions(t)}
         />
         <MultiSelectFilter
           ariaLabel={t("dashboard.filters.statusFilterLabel")}
           placeholder={t("dashboard.filters.allStatuses")}
           value={status}
           onChange={(next) => setStatus(next as AlertStatus[])}
-          options={[
-            { value: "open", label: t("common.alertStatus.open") },
-            { value: "investigating", label: t("common.alertStatus.investigating") },
-            { value: "escalated", label: t("common.alertStatus.escalated") },
-            { value: "closed", label: t("common.alertStatus.closed") },
-          ]}
+          options={alertStatusFilterOptions(t)}
         />
         <input
           className="input"

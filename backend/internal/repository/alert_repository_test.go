@@ -145,6 +145,25 @@ func TestAlertRepository_List_Filters(t *testing.T) {
 		assert.Equal(t, critOpen.ID, list[0].ID)
 	})
 
+	t.Run("filter by severities (OR) -- list page's multi-select", func(t *testing.T) {
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{
+			Severities: []domain.Severity{domain.SeverityLow, domain.SeverityHigh},
+		})
+		require.NoError(t, err)
+		assert.Len(t, list, 2)
+	})
+
+	t.Run("Severity wins over Severities when both are set", func(t *testing.T) {
+		sev := domain.SeverityCritical
+		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{
+			Severity:   &sev,
+			Severities: []domain.Severity{domain.SeverityLow, domain.SeverityHigh},
+		})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, critOpen.ID, list[0].ID)
+	})
+
 	t.Run("filter by single tag", func(t *testing.T) {
 		tag := "vpn"
 		list, err := repo.List(t.Context(), tx, repository.ListAlertsFilter{Tag: &tag})
@@ -275,6 +294,14 @@ func TestAlertRepository_Count(t *testing.T) {
 	t.Run("count reflects statuses OR filter", func(t *testing.T) {
 		count, err := repo.Count(t.Context(), tx, repository.ListAlertsFilter{
 			Statuses: []domain.AlertStatus{domain.AlertStatusInvestigating, domain.AlertStatusEscalated},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
+	})
+
+	t.Run("count reflects severities OR filter", func(t *testing.T) {
+		count, err := repo.Count(t.Context(), tx, repository.ListAlertsFilter{
+			Severities: []domain.Severity{domain.SeverityCritical, domain.SeverityHigh},
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 2, count)
