@@ -55,9 +55,9 @@ type ListIncidentsFilter struct {
 	// page's now-multi-select severity filter -- set at most one of the
 	// pair; if both are set, Severity wins (Severities is ignored), same
 	// precedence ListAlertsFilter.Severity/Severities already uses.
-	Severities  []domain.Severity
-	Priority    *domain.IncidentPriority
-	Phase       *domain.IncidentPhase
+	Severities []domain.Severity
+	Priority   *domain.IncidentPriority
+	Phase      *domain.IncidentPhase
 	// Phases is an OR'd alternative to Phase, for the Incidents list page's
 	// now-multi-select "status" filter (which is really NIST phase -- see
 	// IncidentsListPage). Same set-at-most-one-of-the-pair precedence.
