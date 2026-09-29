@@ -48,6 +48,18 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **A barra de filtros do dashboard ainda parecia desconectada depois da reforma de identidade
+  visual.** O `MultiSelectFilter` (filtros de severidade/status) e o `AssigneePicker` renderizavam
+  seus chips e o `<select>` de "adicionar mais" como elementos separados e sem borda flutuando lado a
+  lado na linha de filtros -- três coisas onde o `TagPicker`, bem ao lado, já lia como um único
+  controle com borda. Os dois componentes agora reaproveitam o mesmo markup
+  `.tag-picker`/`.tag-chip`/`.tag-picker-add` do `TagPicker`, então os chips e o dropdown ficam dentro
+  da mesma caixa em todo lugar onde existe um seletor multivalorado: as barras de filtro de
+  Alertas/Incidentes do Dashboard e o painel de Papéis da página de detalhe do incidente
+  (`IncidentRolesPanel`). Mudança puramente de JSX -- nenhum CSS novo foi necessário. Verificado ao
+  vivo contra dados reais semeados nas duas abas e no painel de Papéis; `tsc`, `vitest` (703/703) e
+  `eslint` (0 avisos novos) todos limpos.
+
 - **Trocar a senha derrubava a sessão no primeiro reload da página.** A troca revoga todos os
   refresh tokens do usuário, o que está certo -- trocar a senha é exatamente quando um token roubado
   precisa parar de funcionar -- mas revogava também o cookie de quem estava trocando, e nada o

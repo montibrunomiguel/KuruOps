@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface MultiSelectOption {
@@ -7,9 +6,13 @@ export interface MultiSelectOption {
 }
 
 // A multi-select for a fixed, static list of options (severity, status) --
-// same "chips + a <select> to add another" idiom TagPicker/AssigneePicker
-// already use for their own (API-sourced) catalogs, so every multi-select
-// control in the app looks and behaves the same way. Kept separate from
+// the exact same "chips + a <select> to add another" markup TagPicker uses
+// for its own (API-sourced) catalog: chips and the trailing <select> as
+// direct children of one .tag-picker box, not two loose elements sitting
+// side by side in the filter bar's own flex row. That used to be the
+// difference between this control reading as one thing (a bordered pill)
+// and reading as three (a chip, a chip, a dropdown) -- see AssigneePicker
+// for the other control this same fix applies to. Kept separate from
 // SeverityFilter, which wraps a single-value <select> and is
 // still used as-is on AlertsListPage/IncidentsListPage -- changing its
 // value shape would break those single-select call sites.
@@ -34,8 +37,8 @@ export function MultiSelectFilter({
     onChange(value.filter((x) => x !== v));
   }
 
-  const chips: ReactNode = value.length > 0 && (
-    <div className="tag-chip-list" style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, marginRight: 6 }}>
+  return (
+    <div className="tag-picker">
       {value.map((v) => (
         <span className="tag-chip" key={v}>
           {byValue.get(v) ?? v}
@@ -44,14 +47,8 @@ export function MultiSelectFilter({
           </button>
         </span>
       ))}
-    </div>
-  );
-
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center" }}>
-      {chips}
       <select
-        className="select"
+        className="tag-picker-add"
         aria-label={ariaLabel}
         value=""
         onChange={(e) => {

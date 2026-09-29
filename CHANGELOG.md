@@ -45,6 +45,17 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **The dashboard's filter bar still looked disconnected after the visual-identity rework.**
+  `MultiSelectFilter` (severity/status filters) and `AssigneePicker` rendered their chips and the
+  trailing "add another" `<select>` as separate, unbordered elements floating next to each other in
+  the filter row -- three things where `TagPicker`, right beside them, already read as one bordered
+  control. Both components now reuse `TagPicker`'s own `.tag-picker`/`.tag-chip`/`.tag-picker-add`
+  markup, so chips and the dropdown sit inside the same box everywhere a multi-value picker appears:
+  the Dashboard's Alerts/Incidents filter bars and the incident detail page's Roles panel
+  (`IncidentRolesPanel`). Pure JSX changes -- no new CSS needed. Verified live against real seeded
+  data in both tabs and the Roles panel; `tsc`, `vitest` (703/703), and `eslint` (0 new warnings)
+  all clean.
+
 - **Changing your password signed you out on the next page reload.** The change revokes every
   refresh token for the user, which is right -- a password change is exactly when a stolen token
   must stop working -- but it revoked the caller's own cookie too, and nothing replaced it. The user
