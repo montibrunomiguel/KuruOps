@@ -68,6 +68,17 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **The Dashboard's paired chart panels (Alerts/Incidents tabs) had misaligned top edges.**
+  `.panel + .panel { margin-top: 16px }` is meant for panels stacked vertically in normal document
+  flow, but the two panels in each `.dashboard-grid-2` row are laid out side by side and are still
+  DOM-adjacent siblings, so the rule matched there too -- pushing the second panel 16px down from the
+  first's top edge. `align-items: stretch` then kept their *bottoms* aligned (stretch grows from the
+  top), so every row's right-hand panel sat visibly lower than its left-hand pair -- "Alertas por
+  Severidade" below "Volume de Alertas & Tendência de MTTR", "Distribuição por Status" below "Alertas
+  por Analista", and the same pattern on the Incidents tab. Reset with a scoped
+  `.dashboard-grid-2 > .panel + .panel { margin-top: 0 }`. Verified live: every panel pair on both
+  tabs now shares the same top/bottom edge (measured via `getBoundingClientRect`, not just eyeballed).
+
 - **The dashboard's filter bar still looked disconnected after the visual-identity rework.**
   `MultiSelectFilter` (severity/status filters) and `AssigneePicker` rendered their chips and the
   trailing "add another" `<select>` as separate, unbordered elements floating next to each other in

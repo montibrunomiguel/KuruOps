@@ -71,6 +71,19 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Os painéis pareados de gráficos do Dashboard (abas Alertas/Incidentes) tinham as bordas
+  superiores desalinhadas.** A regra `.panel + .panel { margin-top: 16px }` existe para painéis
+  empilhados verticalmente no fluxo normal do documento, mas os dois painéis de cada linha do
+  `.dashboard-grid-2` ficam lado a lado e ainda são irmãos adjacentes no DOM, então a regra também
+  valia ali -- empurrando o segundo painel 16px para baixo em relação à borda superior do primeiro.
+  O `align-items: stretch` então mantinha as *bases* alinhadas (o stretch cresce a partir do topo),
+  então o painel da direita de cada linha ficava visivelmente mais baixo que o par da esquerda --
+  "Alertas por Severidade" abaixo de "Volume de Alertas & Tendência de MTTR", "Distribuição por
+  Status" abaixo de "Alertas por Analista", e o mesmo padrão na aba Incidentes. Corrigido com um
+  `.dashboard-grid-2 > .panel + .panel { margin-top: 0 }` restrito. Verificado ao vivo: todo par de
+  painéis nas duas abas agora compartilha a mesma borda superior/inferior (medido via
+  `getBoundingClientRect`, não só a olho).
+
 - **A barra de filtros do dashboard ainda parecia desconectada depois da reforma de identidade
   visual.** O `MultiSelectFilter` (filtros de severidade/status) e o `AssigneePicker` renderizavam
   seus chips e o `<select>` de "adicionar mais" como elementos separados e sem borda flutuando lado a

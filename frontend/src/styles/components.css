@@ -1012,6 +1012,17 @@
   flex-direction: column;
 }
 
+/* .panel + .panel's 16px stacking margin (below) is meant for panels stacked
+   vertically in normal flow -- inside this grid the two panels are laid out
+   side by side, but they're still DOM-adjacent siblings, so that rule was
+   also matching here and pushing the second panel 16px down from the
+   first's top edge (with align-items: stretch keeping their *bottoms*
+   aligned instead, since stretch grows from the top). Reset it so both
+   panels in a row actually start at the same top edge. */
+.dashboard-grid-2 > .panel + .panel {
+  margin-top: 0;
+}
+
 .dashboard-grid-2 .breakdown-list,
 .dashboard-grid-2 .legend-list {
   flex: 1;
