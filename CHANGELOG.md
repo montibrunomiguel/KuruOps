@@ -11,7 +11,84 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Changed
+
+- **Reworked the visual identity of the whole console** -- typography, the neutral/accent palette,
+  and the corner-radius scale, following `/frontend-design`. The prior look (Inter for every role,
+  a generic cornflower-blue accent, soft-filled pill badges, uniform 8-12px rounding) read as the
+  same template any dashboard scaffold reaches for. It's now built around KuruOps's own domain: one
+  type family (IBM Plex) carrying three deliberate roles -- Condensed for every heading/label/badge,
+  regular for body copy, Mono (already in place) for data -- a warmer, more considered graphite
+  neutral scale, a "signal" indigo accent chosen to stay clear of every severity hue, and a tighter
+  radius scale (`--radius-xs/sm/md`) that reads as engineered rather than soft.
+
+  The signature move is the badge system: severity, alert-status, and incident-phase labels were a
+  tinted-fill-plus-border pill repeated nearly verbatim across a dozen CSS rules -- the single most
+  generic "AI dashboard" tell in the app. They're now classification tags -- a flat plate with a 3px
+  solid tick on the left edge in the semantic color -- quoting the actual paper-trail vocabulary of
+  incident response (a case-file tab, a TLP marking) instead of a soft SaaS pill. Because
+  `SeverityBadge`/`AlertStatusBadge`/`PhasePill`/`PriorityBadge` already computed their color via a
+  className lookup, this landed entirely in `tokens.css`/`components.css` -- no JSX, no logic,
+  touched.
+
+  Also formalized `.auth-shell`/`.auth-card`, replacing five copies of the same hand-written
+  centering `style={{...}}` across Login, ChangePassword, ForgotPassword, and ResetPassword -- and
+  fixing `SamlCallbackPage`, which already referenced those class names but they'd never actually
+  been defined, so the page rendered unstyled. `ChangePasswordPage` also had a leftover `"A"`
+  letter-mark placeholder instead of the real logo (`BrandMark`); every auth page now shows the same
+  mark.
+
+  Severity/status/phase/success hues are unchanged in both themes -- they're functional signal
+  colors already validated across every badge and chart, not the source of the generic feel.
+  Verified live in the browser, both themes, desktop and mobile widths; `tsc`, `vitest` (703/703),
+  `eslint` (18 pre-existing warnings, 0 new), and `vite build` all clean.
+
+- **The Alerts and Incidents list pages' severity/status filters are now multi-select, and match
+  their badge colors.** They were the last severity/status filters in the app still single-select
+  (`SeverityFilter`, now removed, plus a plain `<select>` for status) -- everywhere else, including
+  the Dashboard's own Alerts/Incidents tabs, already let an analyst pick several values. Both pages
+  now use the same `MultiSelectFilter` the Dashboard tabs use, wired through the same
+  `severityFilterOptions`/`alertStatusFilterOptions`/`phaseFilterOptions` helpers
+  (`lib/chartColors.ts`), so a chosen chip renders with the exact severity/status/phase color the
+  badge for that value already uses elsewhere -- a colored dot plus colored text, via a new optional
+  `color` field on `MultiSelectOption` -- instead of a plain neutral chip. The backend's
+  `/api/v1/alerts` and `/api/v1/incidents` list endpoints now accept a comma-separated list for
+  `severity`/`status`/`phase` (OR'd), the same convention `/api/v1/dashboard/stats` already used.
+  Verified live against real seeded data on both list pages; `go test` (backend, incl. new
+  repository/handler coverage for the multi-value filters), `tsc`, `vitest` (705/705), and `eslint`
+  (0 new warnings) all clean.
+
+- **The status donut's "Investigating" and "Escalated" slices were too close in color.** Both read
+  as a shade of orange/yellow next to each other on the chart and its legend. Investigating now uses
+  the same teal as the Low severity hue instead of High's orange -- Open stays critical-red and
+  Escalated stays medium-yellow, the two colors that were actually distinct already. Applied in the
+  one place both the chart and the `AlertStatusBadge` pill read their color from
+  (`ALERT_STATUS_COLOR` in `lib/chartColors.ts`, mirrored in `.badge-status-investigating`), so every
+  "Investigating" pill in the app changed color, not just the chart.
+
 ### Fixed
+
+- **The Dashboard's paired chart panels (Alerts/Incidents tabs) had misaligned top edges.**
+  `.panel + .panel { margin-top: 16px }` is meant for panels stacked vertically in normal document
+  flow, but the two panels in each `.dashboard-grid-2` row are laid out side by side and are still
+  DOM-adjacent siblings, so the rule matched there too -- pushing the second panel 16px down from the
+  first's top edge. `align-items: stretch` then kept their *bottoms* aligned (stretch grows from the
+  top), so every row's right-hand panel sat visibly lower than its left-hand pair -- "Alertas por
+  Severidade" below "Volume de Alertas & Tendência de MTTR", "Distribuição por Status" below "Alertas
+  por Analista", and the same pattern on the Incidents tab. Reset with a scoped
+  `.dashboard-grid-2 > .panel + .panel { margin-top: 0 }`. Verified live: every panel pair on both
+  tabs now shares the same top/bottom edge (measured via `getBoundingClientRect`, not just eyeballed).
+
+- **The dashboard's filter bar still looked disconnected after the visual-identity rework.**
+  `MultiSelectFilter` (severity/status filters) and `AssigneePicker` rendered their chips and the
+  trailing "add another" `<select>` as separate, unbordered elements floating next to each other in
+  the filter row -- three things where `TagPicker`, right beside them, already read as one bordered
+  control. Both components now reuse `TagPicker`'s own `.tag-picker`/`.tag-chip`/`.tag-picker-add`
+  markup, so chips and the dropdown sit inside the same box everywhere a multi-value picker appears:
+  the Dashboard's Alerts/Incidents filter bars and the incident detail page's Roles panel
+  (`IncidentRolesPanel`). Pure JSX changes -- no new CSS needed. Verified live against real seeded
+  data in both tabs and the Roles panel; `tsc`, `vitest` (703/703), and `eslint` (0 new warnings)
+  all clean.
 
 - **Changing your password signed you out on the next page reload.** The change revokes every
   refresh token for the user, which is right -- a password change is exactly when a stolen token

@@ -12,7 +12,89 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Alterado
+
+- **Refeita a identidade visual de todo o console** -- tipografia, paleta de neutros/acento e a
+  escala de raio de borda, seguindo o `/frontend-design`. A aparência anterior (Inter para tudo, um
+  acento azul genérico, badges em pílula com preenchimento tingido, arredondamento uniforme de
+  8-12px) lia como o mesmo template que qualquer scaffold de dashboard produz. Agora é construída em
+  torno do domínio próprio do KuruOps: uma família tipográfica (IBM Plex) cumprindo três papéis
+  deliberados -- Condensed para todo título/rótulo/badge, regular para o corpo do texto, Mono (já
+  existente) para dado -- uma escala de neutros grafite mais quente e considerada, um acento índigo
+  de "sinal" escolhido para ficar fora de todo matiz de severidade, e uma escala de raio mais
+  fechada (`--radius-xs/sm/md`) que lê como engenharia, não como app macio.
+
+  O movimento de assinatura é o sistema de badges: os rótulos de severidade, status de alerta e fase
+  de incidente eram uma pílula de preenchimento tingido mais borda repetida quase palavra por
+  palavra em uma dúzia de regras CSS -- o tique mais genérico de "dashboard de IA" do app. Agora são
+  etiquetas de classificação -- uma placa plana com um traço sólido de 3px na borda esquerda na cor
+  semântica -- citando o vocabulário real de rastro em papel da resposta a incidentes (uma aba de
+  pasta de caso, uma marcação TLP) em vez de uma pílula SaaS macia. Como
+  `SeverityBadge`/`AlertStatusBadge`/`PhasePill`/`PriorityBadge` já calculavam sua cor via lookup de
+  className, isso caiu inteiramente em `tokens.css`/`components.css` -- nenhum JSX, nenhuma lógica,
+  tocados.
+
+  Também formalizados `.auth-shell`/`.auth-card`, substituindo cinco cópias do mesmo
+  `style={{...}}` de centralização escrito à mão em Login, ChangePassword, ForgotPassword e
+  ResetPassword -- e corrigindo o `SamlCallbackPage`, que já referenciava esses nomes de classe mas
+  eles nunca tinham sido de fato definidos, então a página renderizava sem estilo. O
+  `ChangePasswordPage` também tinha um placeholder de letra `"A"` remanescente no lugar do logo real
+  (`BrandMark`); toda página de autenticação agora mostra a mesma marca.
+
+  Os matizes de severidade/status/fase/sucesso permanecem inalterados nos dois temas -- são cores de
+  sinal funcionais já validadas em cada badge e gráfico, não a origem da sensação genérica.
+  Verificado ao vivo no navegador, nos dois temas, em larguras desktop e mobile; `tsc`, `vitest`
+  (703/703), `eslint` (18 avisos pré-existentes, 0 novos) e `vite build` todos limpos.
+
+- **Os filtros de severidade/status das páginas de Alertas e Incidentes agora são multivalorados, e
+  seguem as cores dos badges.** Eram os últimos filtros de severidade/status do app ainda de seleção
+  única (`SeverityFilter`, agora removido, mais um `<select>` simples para status) -- em todo o resto
+  do app, incluindo as próprias abas de Alertas/Incidentes do Dashboard, já era possível escolher
+  vários valores. As duas páginas agora usam o mesmo `MultiSelectFilter` das abas do Dashboard,
+  conectado pelos mesmos helpers `severityFilterOptions`/`alertStatusFilterOptions`/
+  `phaseFilterOptions` (`lib/chartColors.ts`), então um chip escolhido renderiza exatamente com a cor
+  de severidade/status/fase que o badge daquele valor já usa em outros lugares -- um ponto colorido
+  mais texto colorido, via um novo campo opcional `color` em `MultiSelectOption` -- em vez de um chip
+  neutro. Os endpoints `/api/v1/alerts` e `/api/v1/incidents` do backend agora aceitam uma lista
+  separada por vírgulas para `severity`/`status`/`phase` (com OU lógico), a mesma convenção que
+  `/api/v1/dashboard/stats` já usava. Verificado ao vivo contra dados reais semeados nas duas
+  páginas; `go test` (backend, incluindo nova cobertura de repositório/handler para os filtros
+  multivalorados), `tsc`, `vitest` (705/705) e `eslint` (0 avisos novos) todos limpos.
+
+- **As fatias "Investigando" e "Escalado" do donut de status ficavam parecidas demais em cor.** As
+  duas liam como um tom de laranja/amarelo uma ao lado da outra no gráfico e na legenda. Investigando
+  agora usa o mesmo teal da severidade Baixa em vez do laranja de Alta -- Aberto continua vermelho
+  crítico e Escalado continua amarelo médio, as duas cores que já eram de fato distintas. Aplicado no
+  único lugar de onde tanto o gráfico quanto o badge `AlertStatusBadge` leem sua cor
+  (`ALERT_STATUS_COLOR` em `lib/chartColors.ts`, espelhado em `.badge-status-investigating`), então
+  todo badge "Investigando" do app mudou de cor, não só o gráfico.
+
 ### Fixed
+
+- **Os painéis pareados de gráficos do Dashboard (abas Alertas/Incidentes) tinham as bordas
+  superiores desalinhadas.** A regra `.panel + .panel { margin-top: 16px }` existe para painéis
+  empilhados verticalmente no fluxo normal do documento, mas os dois painéis de cada linha do
+  `.dashboard-grid-2` ficam lado a lado e ainda são irmãos adjacentes no DOM, então a regra também
+  valia ali -- empurrando o segundo painel 16px para baixo em relação à borda superior do primeiro.
+  O `align-items: stretch` então mantinha as *bases* alinhadas (o stretch cresce a partir do topo),
+  então o painel da direita de cada linha ficava visivelmente mais baixo que o par da esquerda --
+  "Alertas por Severidade" abaixo de "Volume de Alertas & Tendência de MTTR", "Distribuição por
+  Status" abaixo de "Alertas por Analista", e o mesmo padrão na aba Incidentes. Corrigido com um
+  `.dashboard-grid-2 > .panel + .panel { margin-top: 0 }` restrito. Verificado ao vivo: todo par de
+  painéis nas duas abas agora compartilha a mesma borda superior/inferior (medido via
+  `getBoundingClientRect`, não só a olho).
+
+- **A barra de filtros do dashboard ainda parecia desconectada depois da reforma de identidade
+  visual.** O `MultiSelectFilter` (filtros de severidade/status) e o `AssigneePicker` renderizavam
+  seus chips e o `<select>` de "adicionar mais" como elementos separados e sem borda flutuando lado a
+  lado na linha de filtros -- três coisas onde o `TagPicker`, bem ao lado, já lia como um único
+  controle com borda. Os dois componentes agora reaproveitam o mesmo markup
+  `.tag-picker`/`.tag-chip`/`.tag-picker-add` do `TagPicker`, então os chips e o dropdown ficam dentro
+  da mesma caixa em todo lugar onde existe um seletor multivalorado: as barras de filtro de
+  Alertas/Incidentes do Dashboard e o painel de Papéis da página de detalhe do incidente
+  (`IncidentRolesPanel`). Mudança puramente de JSX -- nenhum CSS novo foi necessário. Verificado ao
+  vivo contra dados reais semeados nas duas abas e no painel de Papéis; `tsc`, `vitest` (703/703) e
+  `eslint` (0 avisos novos) todos limpos.
 
 - **Trocar a senha derrubava a sessão no primeiro reload da página.** A troca revoga todos os
   refresh tokens do usuário, o que está certo -- trocar a senha é exatamente quando um token roubado

@@ -1,20 +1,31 @@
-/* Design tokens transcribed from design_handoff_kuruops/README.md so the
-   real app matches the approved prototype pixel-close. Dark is default;
-   [data-theme="light"] overrides. */
+/* Design tokens for KuruOps's console identity.
+   Dark is default (a 24-hour SOC display, not a marketing surface) --
+   [data-theme="light"] overrides. Severity/status/phase hues (critical,
+   high, medium, low, info, success) are functional signal colors, not
+   brand decisions -- they stay exactly as validated in
+   frontend/src/lib/chartColors.ts and every SeverityBadge/PhasePill/chart
+   downstream of them, unchanged across both themes below. Everything else
+   -- neutrals, the single brand accent, the radius scale -- was rebuilt to
+   read as instrument-panel, not generic SaaS: see components.css's badge,
+   panel, and heading rules for where these get used. */
 :root,
 :root[data-theme="dark"] {
-  --bg: #0a0e16;
-  --bg-elevated: #0e1420;
-  --surface: #121926;
-  --surface-2: #182130;
-  --surface-hover: #1d283a;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --text: #e7ebf2;
-  --text-secondary: #8d96a8;
-  --text-muted: #7a86a0;
-  --accent: #4f8cff;
-  --accent-soft: rgba(79, 140, 255, 0.14);
+  --bg: #0b0c0e;
+  --bg-elevated: #0f1012;
+  --surface: #151619;
+  --surface-2: #1b1d21;
+  --surface-hover: #24262b;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #edeef0;
+  --text-secondary: #9a9ca2;
+  --text-muted: #6c6e75;
+  /* "Signal" -- the one brand hue, reserved for primary actions, focus,
+     links, and active nav. Kept out of the red-orange-yellow-teal-green
+     run the severity scale already owns, so it never reads as a seventh
+     severity level. */
+  --accent: #4657e8;
+  --accent-soft: rgba(70, 87, 232, 0.16);
   --critical: #f0475a;
   --critical-soft: rgba(240, 71, 90, 0.14);
   --high: #f5943a;
@@ -27,21 +38,34 @@
   --info-soft: rgba(139, 150, 168, 0.14);
   --success: #3ecf72;
   --success-soft: rgba(62, 207, 114, 0.14);
+
+  /* A tight, deliberate scale instead of one-off pixel values per rule --
+     xs for classification tags (badges/pills' square variant), sm for
+     controls (buttons, inputs, icon boxes), md for containers (panels,
+     cards, modals). Fully round shapes (avatars, dots, pill-tabs) stay
+     50%/999px literal -- that's a functional circle, not this scale. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  /* Not theme-dependent -- declared once here rather than duplicated under
+     [data-theme="light"], which never overrides it. */
+  --font-display: "IBM Plex Sans Condensed", "IBM Plex Sans", -apple-system, sans-serif;
 }
 
 :root[data-theme="light"] {
-  --bg: #f3f5f8;
+  --bg: #f4f4f6;
   --bg-elevated: #ffffff;
   --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --surface-hover: #e4e9f0;
-  --border: rgba(16, 22, 36, 0.08);
-  --border-strong: rgba(16, 22, 36, 0.16);
-  --text: #131a26;
-  --text-secondary: #5c6577;
-  --text-muted: #63708a;
-  --accent: #2f6fed;
-  --accent-soft: rgba(47, 111, 237, 0.12);
+  --surface-2: #ececf0;
+  --surface-hover: #e2e2e8;
+  --border: rgba(10, 10, 14, 0.08);
+  --border-strong: rgba(10, 10, 14, 0.16);
+  --text: #16171a;
+  --text-secondary: #55575f;
+  --text-muted: #6b6d75;
+  --accent: #3344c9;
+  --accent-soft: rgba(51, 68, 201, 0.1);
   --critical: #dc2b42;
   --critical-soft: rgba(220, 43, 66, 0.1);
   --high: #d97116;
@@ -70,11 +94,20 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: "Inter", -apple-system, "Segoe UI", sans-serif;
+  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
   font-size: 13.5px;
   -webkit-font-smoothing: antialiased;
 }
 
+/* The display face -- IBM Plex Sans Condensed -- carries the type
+   personality: every heading, table header, badge, and eyebrow label runs
+   through it (see components.css), so the interface reads as a stamped
+   operational record rather than the same grotesk doing every job at every
+   size. It's the Plex family throughout, not a second unrelated typeface,
+   because KuruOps produces documents in this same technical-manual register
+   (incident reports, postmortems, audit exports) -- one family, three
+   optical roles: condensed for structure, regular for reading, mono for
+   data. */
 code,
 .mono {
   font-family: "IBM Plex Mono", ui-monospace, monospace;

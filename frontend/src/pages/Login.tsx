@@ -65,16 +65,9 @@ export function LoginPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
+    <div className="auth-shell">
       {pendingToken === null ? (
-        <form onSubmit={handleSubmit} className="panel" style={{ width: 340 }}>
+        <form onSubmit={handleSubmit} className="auth-card">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
             <BrandMark />
             <div>
@@ -123,7 +116,7 @@ export function LoginPage() {
           </p>
         </form>
       ) : (
-        <form onSubmit={handleVerifyMfa} className="panel" style={{ width: 340 }}>
+        <form onSubmit={handleVerifyMfa} className="auth-card">
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
             <BrandMark />
             <div>

@@ -11,7 +11,7 @@ import type { Severity } from "../../types/alerts";
 import { SeverityBadge, PhasePill } from "../../components/badges";
 import { ShieldIcon, ClockIcon, FlagIcon } from "../../components/icons";
 import { IncidentTrendChart } from "../../components/charts/IncidentTrendChart";
-import { PRIORITY_ORDER, PHASE_ORDER, PHASE_COLOR } from "../../lib/chartColors";
+import { PRIORITY_ORDER, PHASE_ORDER, PHASE_COLOR, severityFilterOptions } from "../../lib/chartColors";
 import { formatDuration, shortId } from "../../lib/format";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 import { MultiSelectFilter } from "../../components/MultiSelectFilter";
@@ -91,13 +91,7 @@ export function IncidentsTabPanel() {
           placeholder={t("dashboard.filters.allSeverities")}
           value={severity}
           onChange={(next) => setSeverity(next as Severity[])}
-          options={[
-            { value: "critical", label: t("common.severity.critical") },
-            { value: "high", label: t("common.severity.high") },
-            { value: "medium", label: t("common.severity.medium") },
-            { value: "low", label: t("common.severity.low") },
-            { value: "informational", label: t("common.severity.informational") },
-          ]}
+          options={severityFilterOptions(t)}
         />
         <TagPicker value={tag} onChange={setTag} />
         <AssigneePicker value={commanderIds} onChange={setCommanderIds} />

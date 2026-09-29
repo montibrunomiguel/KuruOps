@@ -639,6 +639,29 @@ func TestIncidentHandlers_List_Filters(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
 		assert.Empty(t, incidents)
 	})
+
+	// Last -- creates a second incident, which every subtest above assumes
+	// is the only one (single-count assertions like "phase filter"'s len==1
+	// would otherwise break for every subtest that runs after this one).
+	t.Run("comma-separated severity/phase are multi-select OR filters", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{"title": "Second incident", "severity": "medium", "priority": "p3"})
+		req := withClaims(httptest.NewRequest("POST", "/", bytes.NewReader(body)), tenantID, actorID, nil)
+		require.Equal(t, http.StatusCreated, doRequest(r, req).Code)
+
+		req = withClaims(httptest.NewRequest("GET", "/?severity=critical,medium", nil), tenantID, actorID, nil)
+		rec := doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var incidents []domain.Incident
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 2)
+
+		req = withClaims(httptest.NewRequest("GET", "/?phase=new", nil), tenantID, actorID, nil)
+		rec = doRequest(r, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		incidents = nil
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &incidents))
+		assert.Len(t, incidents, 2, "both incidents default to phase new")
+	})
 }
 
 func TestIncidentHandlers_MalformedID_Returns400(t *testing.T) {
