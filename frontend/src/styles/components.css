@@ -31,7 +31,7 @@
   justify-content: center;
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
 }
@@ -60,7 +60,7 @@
 .sidebar-brand-mark {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--accent);
   display: flex;
@@ -78,9 +78,13 @@
   object-fit: contain;
 }
 
+/* Condensed + a touch of tracking gives the wordmark the stamped,
+   engineered-plate feel the display face is for -- see tokens.css. */
 .sidebar-brand-title {
+  font-family: var(--font-display);
   font-weight: 700;
-  font-size: 14px;
+  font-size: 15px;
+  letter-spacing: 0.01em;
   line-height: 1.2;
 }
 
@@ -98,7 +102,7 @@
 .sidebar-link {
   display: block;
   text-decoration: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
 
@@ -107,7 +111,7 @@
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
   transition: background 0.15s ease, color 0.15s ease;
@@ -164,7 +168,7 @@
   gap: 8px;
   width: 100%;
   padding: 8px 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-secondary);
@@ -191,7 +195,7 @@
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text-secondary);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   padding: 3px 7px;
   font-size: 10.5px;
   font-weight: 700;
@@ -210,7 +214,7 @@
   gap: 10px;
   padding: 6px;
   margin: 0 -6px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   transition: background 0.1s;
 }
 
@@ -226,7 +230,7 @@
 .sidebar-user-avatar {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-soft);
   color: var(--accent);
   display: flex;
@@ -261,8 +265,10 @@
 }
 
 .page-title {
-  font-size: 17px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: 0.005em;
   margin: 0 0 4px;
   /* Security alert titles routinely carry an unbroken token -- a URL, a
      SHA-256, a base64 payload, a Windows path. Without this the token
@@ -318,7 +324,7 @@
   background: none;
   border: none;
   cursor: pointer;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   font-family: inherit;
 }
 
@@ -338,14 +344,14 @@
 .settings-nav a {
   display: block;
   text-decoration: none;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
 }
 
 .settings-nav a span {
   display: block;
   text-align: left;
   padding: 9px 12px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -369,8 +375,34 @@
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 18px 20px;
+}
+
+/* The five unauthenticated pages (login, forgot/reset/change password, the
+   SAML callback) all centered a lone card the same way, each writing out
+   the same inline style by hand -- formalized here so it's one rule
+   instead of five copies, and so a page can't reference "auth-card" (as
+   SamlCallback.tsx already did) without the class actually existing. */
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  /* The one accent tick this page family gets -- an operator's console
+     signs on through this card, so it carries the same edge-of-panel
+     marking as everything the badge system stamps once they're inside. */
+  border-top: 2px solid var(--accent);
+  padding: 24px 24px 22px;
 }
 
 .panel + .panel {
@@ -385,8 +417,10 @@
 }
 
 .panel-title {
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-size: 15px;
   font-weight: 700;
+  letter-spacing: 0.01em;
   margin: 0;
 }
 
@@ -395,7 +429,7 @@
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   color: var(--text);
@@ -449,11 +483,12 @@
 }
 
 .field label {
+  font-family: var(--font-display);
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
 }
 
 .field-hint {
@@ -469,7 +504,7 @@
 .textarea {
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   color: var(--text);
   font-size: 13px;
@@ -545,15 +580,26 @@
   max-width: 100%;
 }
 
+/* Classification tags, not tinted pills. Every variant below is the same
+   shape -- flat plate background, a 3px solid tick on the left edge in the
+   semantic color, colored text -- quoting the actual paper-trail vocabulary
+   of incident response (a case-file tab, a TLP marking) rather than the
+   soft-filled-pill recipe every generic dashboard reaches for. Each variant
+   only ever sets --tag and color; the shape lives here once. */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 5px;
+  gap: 6px;
+  padding: 3px 8px 3px 7px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--tag, var(--border-strong));
+  font-family: var(--font-display);
   font-size: 10.5px;
   font-weight: 600;
-  border: 1px solid transparent;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
 }
 
 .badge-status-dot {
@@ -564,57 +610,54 @@
 }
 
 .badge-success {
-  background: var(--success-soft);
+  --tag: var(--success);
   color: var(--success);
-  border-color: var(--success);
 }
 
 .badge-critical {
-  background: var(--critical-soft);
+  --tag: var(--critical);
   color: var(--critical);
-  border-color: var(--critical);
 }
 
 .badge-muted {
-  background: var(--surface-2);
+  --tag: var(--border-strong);
   color: var(--text-muted);
-  border-color: var(--border-strong);
 }
 
 .badge-admin {
+  --tag: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
+/* Severity and alert-status labels are short, single enum words -- the only
+   badges tracked type reads well fully uppercased on. Phase labels are
+   longer, accented, multi-word ("Detecção e Análise") and stay in their
+   natural case, carrying only the shared condensed treatment above. */
 .badge-severity {
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.05em;
 }
 
 .badge-sev-critical {
-  background: var(--critical-soft);
+  --tag: var(--critical);
   color: var(--critical);
-  border-color: var(--critical);
 }
 .badge-sev-high {
-  background: var(--high-soft);
+  --tag: var(--high);
   color: var(--high);
-  border-color: var(--high);
 }
 .badge-sev-medium {
-  background: var(--medium-soft);
+  --tag: var(--medium);
   color: var(--medium);
-  border-color: var(--medium);
 }
 .badge-sev-low {
-  background: var(--low-soft);
+  --tag: var(--low);
   color: var(--low);
-  border-color: var(--low);
 }
 .badge-sev-info {
-  background: var(--info-soft);
+  --tag: var(--info);
   color: var(--info);
-  border-color: var(--info);
 }
 
 .severity-dot {
@@ -630,28 +673,35 @@
 .severity-dot.badge-sev-low { background: var(--low); }
 .severity-dot.badge-sev-info { background: var(--info); }
 
-.badge-status-open { background: var(--critical-soft); color: var(--critical); border-color: var(--critical); }
-.badge-status-investigating { background: var(--high-soft); color: var(--high); border-color: var(--high); }
-.badge-status-escalated { background: var(--medium-soft); color: var(--medium); border-color: var(--medium); }
-.badge-status-closed { background: var(--surface-2); color: var(--text-muted); border-color: var(--border-strong); }
+.badge-status-open { --tag: var(--critical); color: var(--critical); }
+.badge-status-investigating { --tag: var(--high); color: var(--high); }
+.badge-status-escalated { --tag: var(--medium); color: var(--medium); }
+.badge-status-closed { --tag: var(--border-strong); color: var(--text-muted); }
 
 /* Incident phase badges (list views) -- same mapping as lib/chartColors.ts's
    PHASE_COLOR, so a phase reads as the same color whether it's a table
    badge, a phase-tracker step, or a bar in the dashboard's "by phase"
    breakdown. Without this every phase rendered identically muted-gray,
    unlike the color-coded severity column right next to it. */
-.badge-phase-new { background: var(--info-soft); color: var(--info); border-color: var(--info); }
-.badge-phase-detection_analysis { background: var(--high-soft); color: var(--high); border-color: var(--high); }
-.badge-phase-containment { background: var(--critical-soft); color: var(--critical); border-color: var(--critical); }
-.badge-phase-eradication { background: var(--high-soft); color: var(--high); border-color: var(--high); }
-.badge-phase-recovery { background: var(--success-soft); color: var(--success); border-color: var(--success); }
-.badge-phase-post_incident { background: var(--surface-2); color: var(--text-muted); border-color: var(--border-strong); }
+.badge-phase-new { --tag: var(--info); color: var(--info); }
+.badge-phase-detection_analysis { --tag: var(--high); color: var(--high); }
+.badge-phase-containment { --tag: var(--critical); color: var(--critical); }
+.badge-phase-eradication { --tag: var(--high); color: var(--high); }
+.badge-phase-recovery { --tag: var(--success); color: var(--success); }
+.badge-phase-post_incident { --tag: var(--border-strong); color: var(--text-muted); }
 
 .badge-priority {
-  background: var(--surface-2);
+  --tag: var(--border-strong);
   color: var(--text);
-  border-color: var(--border-strong);
+  /* Overrides .badge's display face on purpose -- a priority is data
+     (P1..P4), read as data, same register as an id or a timestamp. This
+     also settles the tie with PriorityBadge's own redundant "mono"
+     className: both now agree on the same font, so which one would win the
+     specificity race no longer matters. */
+  font-family: "IBM Plex Mono", monospace;
   font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .pill-tabs {
@@ -736,7 +786,7 @@
   background: var(--critical-soft);
   border: 1px solid var(--critical);
   color: var(--critical);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 12.5px;
   margin-bottom: 14px;
@@ -759,7 +809,7 @@
   gap: 6px;
   padding: 6px 8px;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
 
@@ -848,16 +898,17 @@
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 16px 18px;
 }
 
 .kpi-label {
+  font-family: var(--font-display);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
   margin: 0 0 8px;
 }
 
@@ -888,7 +939,7 @@
 .stat-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 16px 18px;
 }
 
@@ -900,15 +951,17 @@
 }
 
 .stat-card-label {
-  font-size: 12px;
+  font-family: var(--font-display);
+  font-size: 12.5px;
   font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--text-secondary);
 }
 
 .stat-icon-box {
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1092,7 +1145,7 @@
 .activity-icon-box {
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1149,7 +1202,7 @@
   height: 34px;
   width: 100%;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   border: 1px solid var(--border);
   display: flex;
@@ -1212,7 +1265,7 @@
 
 .search-result-list {
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   margin-top: 6px;
   max-height: 220px;
   overflow-y: auto;
@@ -1283,7 +1336,7 @@
   flex-wrap: wrap;
   background: var(--accent-soft);
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 10px 14px;
   margin-bottom: 12px;
 }
@@ -1307,10 +1360,11 @@
 
 .table th {
   text-align: left;
+  font-family: var(--font-display);
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.06em;
   color: var(--text-muted);
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-strong);
@@ -1510,7 +1564,7 @@
   flex: 1;
   min-width: 90px;
   padding: 8px 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface-2);
   font-size: 11px;
@@ -1629,7 +1683,7 @@
 .modal {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 22px 24px;
   width: 100%;
   max-width: 560px;

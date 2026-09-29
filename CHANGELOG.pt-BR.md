@@ -12,6 +12,40 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Alterado
+
+- **Refeita a identidade visual de todo o console** -- tipografia, paleta de neutros/acento e a
+  escala de raio de borda, seguindo o `/frontend-design`. A aparência anterior (Inter para tudo, um
+  acento azul genérico, badges em pílula com preenchimento tingido, arredondamento uniforme de
+  8-12px) lia como o mesmo template que qualquer scaffold de dashboard produz. Agora é construída em
+  torno do domínio próprio do KuruOps: uma família tipográfica (IBM Plex) cumprindo três papéis
+  deliberados -- Condensed para todo título/rótulo/badge, regular para o corpo do texto, Mono (já
+  existente) para dado -- uma escala de neutros grafite mais quente e considerada, um acento índigo
+  de "sinal" escolhido para ficar fora de todo matiz de severidade, e uma escala de raio mais
+  fechada (`--radius-xs/sm/md`) que lê como engenharia, não como app macio.
+
+  O movimento de assinatura é o sistema de badges: os rótulos de severidade, status de alerta e fase
+  de incidente eram uma pílula de preenchimento tingido mais borda repetida quase palavra por
+  palavra em uma dúzia de regras CSS -- o tique mais genérico de "dashboard de IA" do app. Agora são
+  etiquetas de classificação -- uma placa plana com um traço sólido de 3px na borda esquerda na cor
+  semântica -- citando o vocabulário real de rastro em papel da resposta a incidentes (uma aba de
+  pasta de caso, uma marcação TLP) em vez de uma pílula SaaS macia. Como
+  `SeverityBadge`/`AlertStatusBadge`/`PhasePill`/`PriorityBadge` já calculavam sua cor via lookup de
+  className, isso caiu inteiramente em `tokens.css`/`components.css` -- nenhum JSX, nenhuma lógica,
+  tocados.
+
+  Também formalizados `.auth-shell`/`.auth-card`, substituindo cinco cópias do mesmo
+  `style={{...}}` de centralização escrito à mão em Login, ChangePassword, ForgotPassword e
+  ResetPassword -- e corrigindo o `SamlCallbackPage`, que já referenciava esses nomes de classe mas
+  eles nunca tinham sido de fato definidos, então a página renderizava sem estilo. O
+  `ChangePasswordPage` também tinha um placeholder de letra `"A"` remanescente no lugar do logo real
+  (`BrandMark`); toda página de autenticação agora mostra a mesma marca.
+
+  Os matizes de severidade/status/fase/sucesso permanecem inalterados nos dois temas -- são cores de
+  sinal funcionais já validadas em cada badge e gráfico, não a origem da sensação genérica.
+  Verificado ao vivo no navegador, nos dois temas, em larguras desktop e mobile; `tsc`, `vitest`
+  (703/703), `eslint` (18 avisos pré-existentes, 0 novos) e `vite build` todos limpos.
+
 ### Fixed
 
 - **Trocar a senha derrubava a sessão no primeiro reload da página.** A troca revoga todos os

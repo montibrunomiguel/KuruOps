@@ -11,6 +11,38 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Changed
+
+- **Reworked the visual identity of the whole console** -- typography, the neutral/accent palette,
+  and the corner-radius scale, following `/frontend-design`. The prior look (Inter for every role,
+  a generic cornflower-blue accent, soft-filled pill badges, uniform 8-12px rounding) read as the
+  same template any dashboard scaffold reaches for. It's now built around KuruOps's own domain: one
+  type family (IBM Plex) carrying three deliberate roles -- Condensed for every heading/label/badge,
+  regular for body copy, Mono (already in place) for data -- a warmer, more considered graphite
+  neutral scale, a "signal" indigo accent chosen to stay clear of every severity hue, and a tighter
+  radius scale (`--radius-xs/sm/md`) that reads as engineered rather than soft.
+
+  The signature move is the badge system: severity, alert-status, and incident-phase labels were a
+  tinted-fill-plus-border pill repeated nearly verbatim across a dozen CSS rules -- the single most
+  generic "AI dashboard" tell in the app. They're now classification tags -- a flat plate with a 3px
+  solid tick on the left edge in the semantic color -- quoting the actual paper-trail vocabulary of
+  incident response (a case-file tab, a TLP marking) instead of a soft SaaS pill. Because
+  `SeverityBadge`/`AlertStatusBadge`/`PhasePill`/`PriorityBadge` already computed their color via a
+  className lookup, this landed entirely in `tokens.css`/`components.css` -- no JSX, no logic,
+  touched.
+
+  Also formalized `.auth-shell`/`.auth-card`, replacing five copies of the same hand-written
+  centering `style={{...}}` across Login, ChangePassword, ForgotPassword, and ResetPassword -- and
+  fixing `SamlCallbackPage`, which already referenced those class names but they'd never actually
+  been defined, so the page rendered unstyled. `ChangePasswordPage` also had a leftover `"A"`
+  letter-mark placeholder instead of the real logo (`BrandMark`); every auth page now shows the same
+  mark.
+
+  Severity/status/phase/success hues are unchanged in both themes -- they're functional signal
+  colors already validated across every badge and chart, not the source of the generic feel.
+  Verified live in the browser, both themes, desktop and mobile widths; `tsc`, `vitest` (703/703),
+  `eslint` (18 pre-existing warnings, 0 new), and `vite build` all clean.
+
 ### Fixed
 
 - **Changing your password signed you out on the next page reload.** The change revokes every

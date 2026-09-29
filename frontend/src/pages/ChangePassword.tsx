@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api } from "../api/client";
 import { mutationErrorMessage } from "../api/hooks";
 import { validateNewPassword } from "../lib/format";
+import { BrandMark } from "../components/BrandMark";
 
 // Shown whenever the session's mustChangePassword flag is set -- always
 // true right after a fresh deploy's first login (see
@@ -46,10 +47,10 @@ export function ChangePasswordPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <form onSubmit={handleSubmit} className="panel" style={{ width: 360 }}>
+    <div className="auth-shell">
+      <form onSubmit={handleSubmit} className="auth-card">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <div className="sidebar-brand-mark">A</div>
+          <BrandMark />
           <div>
             <div className="sidebar-brand-title">{t("changePassword.title")}</div>
             <div className="sidebar-brand-sub">KuruOps</div>
