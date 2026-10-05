@@ -74,8 +74,15 @@ func (h *AlertHandlers) list(w http.ResponseWriter, r *http.Request) {
 	// dashboard.go's stats filters -- the Alerts list page's severity/status
 	// filters are multi-select (see AlertsListPage), matching a single value
 	// with no comma just as well.
-	f.Severities = parseStringListQueryParam[domain.Severity](r, "severity")
-	f.Statuses = parseStringListQueryParam[domain.AlertStatus](r, "status")
+	var err error
+	if f.Severities, err = parseEnumListQueryParam(r, "severity", validSeverities); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if f.Statuses, err = parseEnumListQueryParam(r, "status", validAlertStatuses); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if v := r.URL.Query().Get("source"); v != "" {
 		f.Source = &v
 	}

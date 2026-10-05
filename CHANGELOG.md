@@ -11,6 +11,16 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Fixed
+
+- **A bad `severity`/`status`/`phase`/`priority` filter on the alerts and incidents lists was a 500.**
+  The values were handed straight to Postgres, whose enum cast rejects anything it doesn't know --
+  so `GET /api/v1/alerts?severity=bogus` (a typo, a stale bookmark, a phase passed as a severity)
+  answered `500 internal error` and logged an error for what is just a malformed query string. Every
+  value is now checked against the enum first and an unknown one is a `400` that names it (truncated
+  if enormous). Surfaced while validating `main` from a clean install; it predates the multi-select
+  filters (the old single-value path failed the same way), which only made a typo easier to send.
+
 ### Changed
 
 - **MCP servers can now offer all of their tools, not just a hand-picked allow-list.** After

@@ -12,6 +12,17 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Fixed
+
+- **Um filtro `severity`/`status`/`phase`/`priority` inválido nas listas de alertas e incidentes
+  era um 500.** Os valores iam direto para o Postgres, cujo cast de enum rejeita o que não
+  conhece -- então `GET /api/v1/alerts?severity=bogus` (um erro de digitação, um favorito antigo,
+  uma fase passada como severidade) respondia `500 internal error` e registrava um erro por causa
+  de uma simples query string malformada. Agora cada valor é checado contra o enum antes e um
+  valor desconhecido é um `400` que o nomeia (truncado se for enorme). Descoberto ao validar a
+  `main` a partir de uma instalação limpa; é anterior aos filtros multi-seleção (o caminho antigo
+  de valor único falhava do mesmo jeito), que apenas tornaram o erro mais fácil de cometer.
+
 ### Alterado
 
 - **Servidores MCP agora podem oferecer todas as suas tools, não só uma allow-list escolhida à

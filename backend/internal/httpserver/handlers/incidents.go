@@ -77,12 +77,23 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 	// dashboard.go's stats filters -- the Incidents list page's
 	// severity/"status" (phase) filters are multi-select (see
 	// IncidentsListPage), matching a single value with no comma just as well.
-	f.Severities = parseStringListQueryParam[domain.Severity](r, "severity")
+	var err error
+	if f.Severities, err = parseEnumListQueryParam(r, "severity", validSeverities); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if v := r.URL.Query().Get("priority"); v != "" {
 		p := domain.IncidentPriority(v)
+		if err := checkEnumValue("priority", p, validIncidentPriorities); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		f.Priority = &p
 	}
-	f.Phases = parseStringListQueryParam[domain.IncidentPhase](r, "phase")
+	if f.Phases, err = parseEnumListQueryParam(r, "phase", validIncidentPhases); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if v := r.URL.Query().Get("tag"); v != "" {
 		f.Tag = &v
 	}
