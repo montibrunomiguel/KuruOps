@@ -3,6 +3,7 @@ package safego_test
 import (
 	"bytes"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -68,10 +69,16 @@ func TestGo_LogsThePanicWithTheGivenName(t *testing.T) {
 		panic("something went wrong")
 	})
 
+	// Waits for *this* test's line, not just any line: the goroutine from
+	// TestGo_RecoversAPanicInsteadOfCrashingTheProcess closes its done channel
+	// in a defer that runs before the recover that logs, so that test can
+	// return -- and this one install its handler -- while its panic is still
+	// about to be logged. That stray line then lands here, and a bare
+	// buf.Len() > 0 check passes on it and fails the assertions below.
 	require.Eventually(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return buf.Len() > 0
+		return strings.Contains(buf.String(), "my-goroutine-name")
 	}, 2*time.Second, 10*time.Millisecond, "expected a log line from the recovered panic")
 
 	mu.Lock()
