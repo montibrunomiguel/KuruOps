@@ -11,6 +11,10 @@ do handoff em `design_handoff_kuruops/`. Ver `backend/README.pt-BR.md`, `fronten
 `db/README.pt-BR.md` para detalhes de cada parte; este README cobre como subir tudo e o que esperar
 depois que sobe.
 
+<p align="center">
+  <img src="docs/dashboard-screenshot.png" alt="Dashboard do KuruOps — volume de alertas, distribuição por severidade/status e carga por analista" width="820" />
+</p>
+
 ## Requisitos
 
 - [Task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`)

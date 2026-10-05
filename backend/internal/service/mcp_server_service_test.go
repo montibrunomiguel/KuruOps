@@ -65,7 +65,7 @@ func TestMCPServerService_Create(t *testing.T) {
 
 	server, err := svc.Create(t.Context(), tenantID, actorID, service.MCPServerSaveInput{
 		Name: "Threat Intel", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
-		AuthToken:          "secret-token",
+		Auth:               service.MCPServerAuthInput{Type: domain.MCPAuthBearer, BearerToken: "secret-token"},
 		AllowedTools:       []string{"lookup_ip", "quarantine_host"},
 		SideEffectingTools: []string{"quarantine_host"},
 	})

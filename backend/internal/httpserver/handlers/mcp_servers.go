@@ -52,11 +52,40 @@ type saveMCPServerRequest struct {
 	Name               string   `json:"name"`
 	Transport          string   `json:"transport"`
 	EndpointOrCommand  string   `json:"endpointOrCommand"`
-	AuthToken          string   `json:"authToken"`
 	AllowedTools       []string `json:"allowedTools"`
 	EnabledFor         []string `json:"enabledFor"`
 	SideEffectingTools []string `json:"sideEffectingTools"`
+
+	// Authentication: AuthType selects which of the other fields apply (see
+	// service.MCPServerAuthInput). Every secret here is write-only -- stored in
+	// secrets.Store and never returned. On update, omit AuthType to leave
+	// authentication untouched.
+	AuthType          string `json:"authType"`
+	APIKeyHeader      string `json:"apiKeyHeader"`
+	APIKey            string `json:"apiKey"`
+	BearerToken       string `json:"bearerToken"`
+	OAuthTokenURL     string `json:"oauthTokenUrl"`
+	OAuthClientID     string `json:"oauthClientId"`
+	OAuthClientSecret string `json:"oauthClientSecret"`
+
+	// LegacyAuthToken is the pre-auth-types field. Silently ignoring it would
+	// save a server the client believes is authenticated with no credential at
+	// all, so it is rejected loudly instead of being mapped or dropped.
+	LegacyAuthToken string `json:"authToken"`
 }
+
+func (req saveMCPServerRequest) toInput() service.MCPServerSaveInput {
+	return service.MCPServerSaveInput{
+		Name: req.Name, Transport: req.Transport, EndpointOrCommand: req.EndpointOrCommand,
+		AllowedTools: req.AllowedTools, EnabledFor: req.EnabledFor, SideEffectingTools: req.SideEffectingTools,
+		Auth: service.MCPServerAuthInput{
+			Type: req.AuthType, APIKeyHeader: req.APIKeyHeader, APIKey: req.APIKey, BearerToken: req.BearerToken,
+			OAuthTokenURL: req.OAuthTokenURL, OAuthClientID: req.OAuthClientID, OAuthClientSecret: req.OAuthClientSecret,
+		},
+	}
+}
+
+const legacyAuthTokenMessage = `"authToken" was replaced: send "authType": "bearer" with "bearerToken" (or another authType)`
 
 func (h *MCPServerHandlers) create(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := mustTenantID(w, r)
@@ -78,12 +107,12 @@ func (h *MCPServerHandlers) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and endpointOrCommand are required")
 		return
 	}
+	if req.LegacyAuthToken != "" {
+		writeError(w, http.StatusBadRequest, legacyAuthTokenMessage)
+		return
+	}
 
-	srv, err := h.svc.Create(r.Context(), tenantID, userID, service.MCPServerSaveInput{
-		Name: req.Name, Transport: req.Transport, EndpointOrCommand: req.EndpointOrCommand,
-		AuthToken: req.AuthToken, AllowedTools: req.AllowedTools, EnabledFor: req.EnabledFor,
-		SideEffectingTools: req.SideEffectingTools,
-	})
+	srv, err := h.svc.Create(r.Context(), tenantID, userID, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -107,11 +136,12 @@ func (h *MCPServerHandlers) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.svc.Update(r.Context(), tenantID, userID, id, service.MCPServerSaveInput{
-		Name: req.Name, Transport: req.Transport, EndpointOrCommand: req.EndpointOrCommand,
-		AuthToken: req.AuthToken, AllowedTools: req.AllowedTools, EnabledFor: req.EnabledFor,
-		SideEffectingTools: req.SideEffectingTools,
-	})
+	if req.LegacyAuthToken != "" {
+		writeError(w, http.StatusBadRequest, legacyAuthTokenMessage)
+		return
+	}
+
+	srv, err := h.svc.Update(r.Context(), tenantID, userID, id, req.toInput())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -65,7 +65,11 @@ func (r *AlertRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*do
 
 type ListAlertsFilter struct {
 	Severity *domain.Severity
-	Status   *domain.AlertStatus
+	// Severities is an OR'd alternative to Severity, for the Alerts list
+	// page's now-multi-select severity filter -- same
+	// set-at-most-one-of-the-pair precedence as Status/Statuses below.
+	Severities []domain.Severity
+	Status     *domain.AlertStatus
 	// Statuses is an OR'd alternative to Status, for callers that need "any
 	// of these statuses" (e.g. the Follow-up view: escalated OR
 	// investigating) rather than a single exact match. Set at most one of
@@ -103,6 +107,13 @@ func alertWhereClause(f ListAlertsFilter) (string, []any) {
 	if f.Severity != nil {
 		args = append(args, *f.Severity)
 		query += fmt.Sprintf(" and a.severity = $%d", len(args))
+	} else if len(f.Severities) > 0 {
+		severities := make([]string, len(f.Severities))
+		for i, s := range f.Severities {
+			severities[i] = string(s)
+		}
+		args = append(args, severities)
+		query += fmt.Sprintf(" and a.severity = any($%d::severity_enum[])", len(args))
 	}
 	if f.Status != nil {
 		args = append(args, *f.Status)

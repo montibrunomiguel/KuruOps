@@ -80,4 +80,32 @@ describe("MultiSelectFilter", () => {
     render(<Controlled onChange={vi.fn()} />);
     expect(screen.getByText("All severities")).toBeInTheDocument();
   });
+
+  it("a chip with a color option renders a colored dot and colored text", async () => {
+    function ColoredControlled() {
+      const [value, setValue] = useState<string[]>([]);
+      return (
+        <MultiSelectFilter
+          options={[{ value: "critical", label: "Critical", color: "var(--critical)" }]}
+          value={value}
+          onChange={setValue}
+          placeholder="All severities"
+          ariaLabel="Severity filter"
+        />
+      );
+    }
+    render(<ColoredControlled />);
+    await userEvent.selectOptions(screen.getByLabelText("Severity filter"), "critical");
+
+    const chipText = screen.getByText("Critical");
+    expect(chipText).toHaveStyle({ color: "var(--critical)" });
+    expect(document.querySelector(".severity-dot")).toBeInTheDocument();
+  });
+
+  it("a chip with no color option renders plain, with no dot", async () => {
+    render(<Controlled onChange={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText("Severity filter"), "critical");
+
+    expect(document.querySelector(".severity-dot")).not.toBeInTheDocument();
+  });
 });

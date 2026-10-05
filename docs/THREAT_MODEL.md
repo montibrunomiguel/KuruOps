@@ -168,7 +168,7 @@ Five settings accept a URL that this codebase then dials on the tenant's behalf:
 policy's webhook `Destination` (`internal/notifier/webhook.go`), an escalation policy's Slack
 channel `Destination` — an admin-pasted Slack "Incoming Webhook" URL, never actually validated to
 be a real `hooks.slack.com` address (`internal/notifier/slack.go`), an MCP server's `endpoint`
-(`internal/mcpclient/jsonrpc.go`), an LLM provider's `base_url` for the
+(`internal/mcpclient/jsonrpc.go`) and, for OAuth auth, its token URL (`internal/mcpclient/oauth.go`, which also never follows redirects since it sends the client secret), an LLM provider's `base_url` for the
 `openai_compatible`/`azure_openai`/`self_hosted` kinds (`internal/llmclient/llmclient.go`) —
 anthropic's fixed `api.anthropic.com` isn't user-configurable, so it isn't in scope here — and a
 SAML identity provider's metadata URL (`internal/authn/saml.go`'s `ResolveIDPMetadata`). Anyone

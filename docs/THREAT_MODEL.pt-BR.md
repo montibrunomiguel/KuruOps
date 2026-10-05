@@ -175,7 +175,7 @@ ao iniciar se a chave configurada ainda for exatamente esse valor e `AUTH_MODE` 
 
 Três configurações aceitam uma URL que este código então acessa em nome do tenant: o
 `Destination` do webhook de uma política de escalonamento (`internal/notifier/webhook.go`), o
-`endpoint` de um servidor MCP (`internal/mcpclient/jsonrpc.go`), e o `base_url` de um provedor LLM
+`endpoint` de um servidor MCP (`internal/mcpclient/jsonrpc.go`) e, na autenticação OAuth, sua URL de token (`internal/mcpclient/oauth.go`, que também nunca segue redirects por enviar o client secret), e o `base_url` de um provedor LLM
 pros tipos `openai_compatible`/`azure_openai`/`self_hosted` (`internal/llmclient/llmclient.go`) —
 o `api.anthropic.com` fixo do tipo anthropic não é configurável pelo usuário, então não entra
 nesse escopo. Qualquer um com acesso a essas três áreas de Settings pode, de outra forma, apontar

@@ -121,10 +121,17 @@ func TestIncidentRepository_List_Filters(t *testing.T) {
 	p3 := newTestIncident(tenantID, domain.SeverityLow, domain.PriorityP3, []string{"phishing"})
 	require.NoError(t, repo.Insert(t.Context(), tx, p3))
 
+	// A third fixture in a different phase -- p1/p3 both default to PhaseNew,
+	// which can't tell a real "any of these phases" OR match apart from a
+	// plain no-op filter that happens to match everyone.
+	contained := newTestIncident(tenantID, domain.SeverityHigh, domain.PriorityP2, nil)
+	require.NoError(t, repo.Insert(t.Context(), tx, contained))
+	require.NoError(t, repo.UpdatePhase(t.Context(), tx, contained.ID, domain.PhaseContainment))
+
 	t.Run("no filter returns everything", func(t *testing.T) {
 		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{})
 		require.NoError(t, err)
-		assert.Len(t, list, 2)
+		assert.Len(t, list, 3)
 	})
 
 	t.Run("filter by priority", func(t *testing.T) {
@@ -143,11 +150,49 @@ func TestIncidentRepository_List_Filters(t *testing.T) {
 		assert.Equal(t, p3.ID, list[0].ID)
 	})
 
+	t.Run("filter by severities (OR) -- list page's multi-select", func(t *testing.T) {
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{
+			Severities: []domain.Severity{domain.SeverityLow, domain.SeverityHigh},
+		})
+		require.NoError(t, err)
+		assert.Len(t, list, 2)
+	})
+
+	t.Run("Severity wins over Severities when both are set", func(t *testing.T) {
+		sev := domain.SeverityLow
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{
+			Severity:   &sev,
+			Severities: []domain.Severity{domain.SeverityCritical, domain.SeverityHigh},
+		})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, p3.ID, list[0].ID)
+	})
+
 	t.Run("filter by phase", func(t *testing.T) {
 		phase := domain.PhaseNew
 		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{Phase: &phase})
 		require.NoError(t, err)
 		assert.Len(t, list, 2)
+	})
+
+	t.Run("filter by phases (OR) -- list page's multi-select \"status\" filter", func(t *testing.T) {
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{
+			Phases: []domain.IncidentPhase{domain.PhaseNew, domain.PhaseContainment},
+		})
+		require.NoError(t, err)
+		assert.Len(t, list, 3)
+	})
+
+	t.Run("Phase wins over Phases when both are set", func(t *testing.T) {
+		phase := domain.PhaseContainment
+		list, err := repo.List(t.Context(), tx, repository.ListIncidentsFilter{
+			Phase:  &phase,
+			Phases: []domain.IncidentPhase{domain.PhaseNew},
+		})
+		require.NoError(t, err)
+		require.Len(t, list, 1)
+		assert.Equal(t, contained.ID, list[0].ID)
 	})
 
 	t.Run("filter by tag", func(t *testing.T) {
@@ -268,6 +313,14 @@ func TestIncidentRepository_Count(t *testing.T) {
 		count, err := repo.Count(t.Context(), tx, repository.ListIncidentsFilter{SLABreached: &breached})
 		require.NoError(t, err)
 		assert.Equal(t, 0, count, "neither fixture incident has breached its SLA")
+	})
+
+	t.Run("count reflects severities OR filter", func(t *testing.T) {
+		count, err := repo.Count(t.Context(), tx, repository.ListIncidentsFilter{
+			Severities: []domain.Severity{domain.SeverityCritical, domain.SeverityLow},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 2, count)
 	})
 }
 

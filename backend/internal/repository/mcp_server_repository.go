@@ -18,7 +18,9 @@ func NewMCPServerRepository() *MCPServerRepository {
 }
 
 const mcpServerColumns = `
-	id, tenant_id, name, transport, endpoint_or_command, auth_secret_ref,
+	id, tenant_id, name, transport, endpoint_or_command,
+	auth_type, auth_header_name, auth_secret_ref,
+	oauth_token_url, oauth_client_id, oauth_client_secret_ref,
 	allowed_tools, enabled_for, side_effecting_tools, is_enabled, created_by, created_at, updated_at`
 
 func (r *MCPServerRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.MCPServer, error) {
@@ -30,13 +32,20 @@ func (r *MCPServerRepository) Get(ctx context.Context, tx pgx.Tx, id uuid.UUID) 
 }
 
 func (r *MCPServerRepository) Insert(ctx context.Context, tx pgx.Tx, s *domain.MCPServer) error {
+	if s.AuthType == "" {
+		s.AuthType = domain.MCPAuthNone
+	}
 	row := tx.QueryRow(ctx, `
 		insert into mcp_servers (
-			tenant_id, name, transport, endpoint_or_command, auth_secret_ref,
+			tenant_id, name, transport, endpoint_or_command,
+			auth_type, auth_header_name, auth_secret_ref,
+			oauth_token_url, oauth_client_id, oauth_client_secret_ref,
 			allowed_tools, enabled_for, side_effecting_tools, created_by
-		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		returning id, is_enabled, created_at, updated_at`,
-		s.TenantID, s.Name, s.Transport, s.EndpointOrCommand, s.AuthSecretRef,
+		s.TenantID, s.Name, s.Transport, s.EndpointOrCommand,
+		s.AuthType, s.AuthHeaderName, s.AuthSecretRef,
+		s.OAuthTokenURL, s.OAuthClientID, s.OAuthClientSecretRef,
 		s.AllowedTools, s.EnabledFor, s.SideEffectingTools, s.CreatedBy,
 	)
 	if err := row.Scan(&s.ID, &s.IsEnabled, &s.CreatedAt, &s.UpdatedAt); err != nil {
@@ -46,12 +55,19 @@ func (r *MCPServerRepository) Insert(ctx context.Context, tx pgx.Tx, s *domain.M
 }
 
 func (r *MCPServerRepository) Update(ctx context.Context, tx pgx.Tx, s *domain.MCPServer) error {
+	if s.AuthType == "" {
+		s.AuthType = domain.MCPAuthNone
+	}
 	_, err := tx.Exec(ctx, `
 		update mcp_servers
-		set name = $2, transport = $3, endpoint_or_command = $4, auth_secret_ref = $5,
-		    allowed_tools = $6, enabled_for = $7, side_effecting_tools = $8, updated_at = now()
+		set name = $2, transport = $3, endpoint_or_command = $4,
+		    auth_type = $5, auth_header_name = $6, auth_secret_ref = $7,
+		    oauth_token_url = $8, oauth_client_id = $9, oauth_client_secret_ref = $10,
+		    allowed_tools = $11, enabled_for = $12, side_effecting_tools = $13, updated_at = now()
 		where id = $1`,
-		s.ID, s.Name, s.Transport, s.EndpointOrCommand, s.AuthSecretRef,
+		s.ID, s.Name, s.Transport, s.EndpointOrCommand,
+		s.AuthType, s.AuthHeaderName, s.AuthSecretRef,
+		s.OAuthTokenURL, s.OAuthClientID, s.OAuthClientSecretRef,
 		s.AllowedTools, s.EnabledFor, s.SideEffectingTools,
 	)
 	if err != nil {
@@ -73,7 +89,9 @@ func (r *MCPServerRepository) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUI
 func scanMCPServer(row pgx.Row) (*domain.MCPServer, error) {
 	var s domain.MCPServer
 	err := row.Scan(
-		&s.ID, &s.TenantID, &s.Name, &s.Transport, &s.EndpointOrCommand, &s.AuthSecretRef,
+		&s.ID, &s.TenantID, &s.Name, &s.Transport, &s.EndpointOrCommand,
+		&s.AuthType, &s.AuthHeaderName, &s.AuthSecretRef,
+		&s.OAuthTokenURL, &s.OAuthClientID, &s.OAuthClientSecretRef,
 		&s.AllowedTools, &s.EnabledFor, &s.SideEffectingTools, &s.IsEnabled, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {

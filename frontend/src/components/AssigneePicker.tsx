@@ -49,38 +49,44 @@ export function AssigneePicker({
 
   return (
     <div>
-      {value.length > 0 && (
-        <div className="tag-chip-list" style={{ marginBottom: available.length > 0 && !disabled ? 8 : 0 }}>
-          {value.map((id) => (
-            <span className="tag-chip" key={id}>
-              {byId.get(id) ?? id}
-              {!disabled && (
-                <button type="button" onClick={() => remove(id)} aria-label={t("common.removeAssignee", { name: byId.get(id) ?? id })}>
-                  ×
-                </button>
-              )}
-            </span>
-          ))}
-        </div>
+      {/* Same .tag-picker/.tag-chip/.tag-picker-add markup TagPicker uses --
+          chips and the trailing <select> as one bordered box instead of a
+          bare chip list stacked above a separate <select>, which used to
+          read as two disconnected controls rather than one. */}
+      <div className="tag-picker">
+        {value.map((id) => (
+          <span className="tag-chip" key={id}>
+            {byId.get(id) ?? id}
+            {!disabled && (
+              <button type="button" onClick={() => remove(id)} aria-label={t("common.removeAssignee", { name: byId.get(id) ?? id })}>
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+        {!disabled && available.length > 0 && (
+          <select
+            className="tag-picker-add"
+            aria-label={t("common.addAssigneeOption")}
+            value=""
+            onChange={(e) => {
+              if (e.target.value) onChange([...value, e.target.value]);
+            }}
+          >
+            <option value="">{t("common.addAssigneeOption")}</option>
+            {available.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      {!disabled && (directory ?? []).length === 0 && (
+        <p className="helper-text" style={{ marginTop: 6 }}>
+          {t("common.noAssigneesDirectory")}
+        </p>
       )}
-      {!disabled && available.length > 0 && (
-        <select
-          className="select"
-          aria-label={t("common.addAssigneeOption")}
-          value=""
-          onChange={(e) => {
-            if (e.target.value) onChange([...value, e.target.value]);
-          }}
-        >
-          <option value="">{t("common.addAssigneeOption")}</option>
-          {available.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
-          ))}
-        </select>
-      )}
-      {!disabled && (directory ?? []).length === 0 && <p className="helper-text">{t("common.noAssigneesDirectory")}</p>}
     </div>
   );
 }

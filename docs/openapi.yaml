@@ -780,9 +780,11 @@ paths:
         - $ref: '#/components/parameters/Offset'
         - name: severity
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "critical,high".
           schema: { $ref: '#/components/schemas/Severity' }
         - name: status
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "open,investigating".
           schema: { $ref: '#/components/schemas/AlertStatus' }
         - name: source
           in: query
@@ -1371,12 +1373,14 @@ paths:
         - $ref: '#/components/parameters/Offset'
         - name: severity
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "critical,high".
           schema: { $ref: '#/components/schemas/Severity' }
         - name: priority
           in: query
           schema: { $ref: '#/components/schemas/IncidentPriority' }
         - name: phase
           in: query
+          description: Comma-separated for multiple values (OR'd), e.g. "new,containment".
           schema: { $ref: '#/components/schemas/IncidentPhase' }
         - name: tag
           in: query
@@ -5192,13 +5196,30 @@ components:
 
     MCPServer:
       type: object
-      description: AuthSecretRef is never serialized.
+      description: >-
+        Only the non-secret authentication parameters are serialized. Every
+        credential (API key, bearer token, OAuth client secret) is write-only:
+        stored in the secret store and never returned. A type that needs a
+        secret implies one is stored (enforced by a database constraint), so no
+        separate "secret set" flag is exposed.
       properties:
         id: { type: string, format: uuid }
         tenantId: { type: string, format: uuid }
         name: { type: string }
         transport: { type: string }
         endpointOrCommand: { type: string }
+        authType:
+          type: string
+          enum: [none, api_key, bearer, oauth]
+        authHeaderName:
+          type: string
+          description: The header an api_key credential is sent in. Present only for authType api_key.
+        oauthTokenUrl:
+          type: string
+          description: The authorization server's token endpoint. Present only for authType oauth.
+        oauthClientId:
+          type: string
+          description: Present only for authType oauth.
         allowedTools:
           type: array
           items: { type: string }
@@ -5220,9 +5241,46 @@ components:
         name: { type: string }
         transport: { type: string }
         endpointOrCommand: { type: string }
+        authType:
+          type: string
+          enum: [none, api_key, bearer, oauth]
+          description: >-
+            Selects which of the credential fields below apply; fields that
+            belong to another type are rejected. Defaults to none on create. On
+            update, omit it to leave authentication exactly as it is -- sending
+            any credential field without authType is an error.
+            A stored credential is only reused (a blank secret on update) while
+            the endpoint -- and for oauth, the token URL and client id -- are
+            unchanged; otherwise the secret must be sent again, so a credential
+            can't be redirected to a different host.
+        apiKeyHeader:
+          type: string
+          description: authType api_key. Header name the key is sent in (an RFC 7230 token; reserved headers such as Host or Content-Type are rejected).
+        apiKey:
+          type: string
+          description: authType api_key. Write-only. Blank on update keeps the stored key.
+        bearerToken:
+          type: string
+          description: >-
+            authType bearer. Write-only; sent as an Authorization header with
+            the Bearer scheme. Blank on update keeps the stored token.
+        oauthTokenUrl:
+          type: string
+          description: authType oauth. Token endpoint of the authorization server. Must be https (http is accepted only for localhost) and must not embed credentials.
+        oauthClientId:
+          type: string
+          description: authType oauth.
+        oauthClientSecret:
+          type: string
+          description: >-
+            authType oauth. Write-only. Blank on update keeps the stored secret.
+            Used for the OAuth 2.0 client_credentials grant (HTTP Basic client
+            authentication); the resulting access token is cached in memory
+            until shortly before it expires and sent as a Bearer token.
         authToken:
           type: string
-          description: Write-only.
+          deprecated: true
+          description: Removed. Rejected with 400 -- use authType "bearer" with bearerToken.
         allowedTools:
           type: array
           items: { type: string }

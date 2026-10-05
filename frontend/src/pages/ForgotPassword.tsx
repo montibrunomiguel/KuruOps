@@ -33,8 +33,8 @@ export function ForgotPasswordPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="panel" style={{ width: 340 }}>
+    <div className="auth-shell">
+      <div className="auth-card">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
           <BrandMark />
           <div>

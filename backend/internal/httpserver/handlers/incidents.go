@@ -73,18 +73,16 @@ func (h *IncidentHandlers) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := repository.ListIncidentsFilter{}
-	if v := r.URL.Query().Get("severity"); v != "" {
-		s := domain.Severity(v)
-		f.Severity = &s
-	}
+	// Comma-separated, same multi-select convention as
+	// dashboard.go's stats filters -- the Incidents list page's
+	// severity/"status" (phase) filters are multi-select (see
+	// IncidentsListPage), matching a single value with no comma just as well.
+	f.Severities = parseStringListQueryParam[domain.Severity](r, "severity")
 	if v := r.URL.Query().Get("priority"); v != "" {
 		p := domain.IncidentPriority(v)
 		f.Priority = &p
 	}
-	if v := r.URL.Query().Get("phase"); v != "" {
-		p := domain.IncidentPhase(v)
-		f.Phase = &p
-	}
+	f.Phases = parseStringListQueryParam[domain.IncidentPhase](r, "phase")
 	if v := r.URL.Query().Get("tag"); v != "" {
 		f.Tag = &v
 	}
