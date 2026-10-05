@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -46,14 +47,15 @@ func NewMCPServerService(pool *db.Pool, repo mcpServerRepo, store secrets.Store,
 }
 
 // mcpServerAuditFields is the subset of domain.MCPServer safe to put in an
-// admin audit event's data column -- AuthSecretRef is an opaque reference
-// into secrets.Store, not the plaintext token, but is left out anyway since
-// it's meaningless to a human reader; "authTokenSet" signals whether one is
-// configured without exposing it.
+// admin audit event's data column. Secret refs are opaque pointers into
+// secrets.Store, meaningless to a human reader, so they are left out; the auth
+// type (which implies a credential is set -- see mcp_servers_auth_shape_check)
+// and its non-secret parameters are enough to answer "what changed".
 func mcpServerAuditFields(s *domain.MCPServer) map[string]any {
 	return map[string]any{
 		"name": s.Name, "transport": s.Transport, "endpointOrCommand": s.EndpointOrCommand,
-		"authTokenSet": s.AuthSecretRef != nil,
+		"authType": s.AuthType, "authHeaderName": s.AuthHeaderName,
+		"oauthTokenUrl": s.OAuthTokenURL, "oauthClientId": s.OAuthClientID,
 		"allowedTools": s.AllowedTools, "enabledFor": s.EnabledFor, "sideEffectingTools": s.SideEffectingTools,
 		"isEnabled": s.IsEnabled,
 	}
@@ -73,7 +75,7 @@ type MCPServerSaveInput struct {
 	Name               string
 	Transport          string
 	EndpointOrCommand  string
-	AuthToken          string // plaintext, resolved to a secrets.Store ref; "" means no auth / keep existing on update
+	Auth               MCPServerAuthInput
 	AllowedTools       []string
 	EnabledFor         []string
 	SideEffectingTools []string
@@ -93,21 +95,11 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 		return nil, err
 	}
 
-	var authRef *string
-	if in.AuthToken != "" {
-		ref, err := s.secrets.Put(ctx, tenantID.String(), "mcp:"+in.Name, in.AuthToken)
-		if err != nil {
-			return nil, fmt.Errorf("store mcp auth token: %w", err)
-		}
-		authRef = &ref
-	}
-
 	server := &domain.MCPServer{
 		TenantID:          tenantID,
 		Name:              in.Name,
 		Transport:         in.Transport,
 		EndpointOrCommand: in.EndpointOrCommand,
-		AuthSecretRef:     authRef,
 		// mcp_servers.allowed_tools/enabled_for/side_effecting_tools are all NOT NULL
 		AllowedTools:       orEmptySlice(in.AllowedTools),
 		EnabledFor:         orEmptySlice(in.EnabledFor),
@@ -116,6 +108,16 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 	}
 
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		// Checked before any secret is stored: PersistentEnvStore and Vault
+		// key a secret by (tenant, purpose) alone, so storing one for a name
+		// that already exists would overwrite that server's credential --
+		// before the unique constraint got the chance to reject the insert.
+		if err := s.ensureNameFree(ctx, tx, in.Name, uuid.Nil); err != nil {
+			return err
+		}
+		if _, err := s.applyAuth(ctx, tenantID, server, nil, in.Auth); err != nil {
+			return err
+		}
 		if err := s.repo.Insert(ctx, tx, server); err != nil {
 			return err
 		}
@@ -128,6 +130,21 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 		return nil, fmt.Errorf("create mcp server: %w", err)
 	}
 	return server, nil
+}
+
+// ensureNameFree rejects a name another server already uses. exceptID is the
+// server being renamed (uuid.Nil on create).
+func (s *MCPServerService) ensureNameFree(ctx context.Context, tx pgx.Tx, name string, exceptID uuid.UUID) error {
+	all, err := s.repo.List(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("check mcp server name: %w", err)
+	}
+	for _, other := range all {
+		if other.Name == name && other.ID != exceptID {
+			return fmt.Errorf("an MCP server named %q already exists", name)
+		}
+	}
+	return nil
 }
 
 func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
@@ -148,30 +165,36 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uui
 			return fmt.Errorf("mcp server %s not found", id)
 		}
 		before := mcpServerAuditFields(existing)
+		prev := *existing
 
-		authRef := existing.AuthSecretRef
-		if in.AuthToken != "" {
-			ref, err := s.secrets.Put(ctx, tenantID.String(), "mcp:"+in.Name, in.AuthToken)
-			if err != nil {
-				return fmt.Errorf("store mcp auth token: %w", err)
+		if in.Name != existing.Name {
+			if err := s.ensureNameFree(ctx, tx, in.Name, id); err != nil {
+				return err
 			}
-			authRef = &ref
 		}
 
 		existing.Name = in.Name
 		existing.Transport = in.Transport
 		existing.EndpointOrCommand = in.EndpointOrCommand
-		existing.AuthSecretRef = authRef
 		existing.AllowedTools = orEmptySlice(in.AllowedTools)
 		existing.EnabledFor = orEmptySlice(in.EnabledFor)
 		existing.SideEffectingTools = orEmptySlice(in.SideEffectingTools)
+
+		rotated, err := s.applyAuth(ctx, tenantID, existing, &prev, in.Auth)
+		if err != nil {
+			return err
+		}
 
 		if err := s.repo.Update(ctx, tx, existing); err != nil {
 			return fmt.Errorf("update mcp server: %w", err)
 		}
 		updated = existing
 
-		data, _ := json.Marshal(map[string]any{"from": before, "to": mcpServerAuditFields(existing)})
+		after := mcpServerAuditFields(existing)
+		// A same-type rotation leaves every audited field unchanged, which
+		// would make the event look like a no-op.
+		after["credentialRotated"] = rotated
+		data, _ := json.Marshal(map[string]any{"from": before, "to": after})
 		return s.audit.InsertEvent(ctx, tx, &domain.AdminAuditEvent{
 			TenantID: tenantID, Area: "mcp-servers", Action: "update", ActorType: domain.ActorUser, ActorID: actorID, Data: data,
 		})
@@ -235,6 +258,12 @@ func validateEndpoint(endpoint string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("endpoint %q is missing a host", endpoint)
+	}
+	// A user:password@ in the URL would be stored in plaintext in the
+	// database and echoed into the audit log, sidestepping secrets.Store --
+	// there are proper authentication types for this now.
+	if u.User != nil {
+		return errors.New("endpoint must not contain embedded credentials; use an authentication type instead")
 	}
 	return nil
 }

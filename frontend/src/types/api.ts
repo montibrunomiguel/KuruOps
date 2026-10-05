@@ -132,6 +132,7 @@ export interface LLMProvider {
 }
 
 export type MCPTransport = "stdio" | "http" | "sse";
+export type MCPAuthType = "none" | "api_key" | "bearer" | "oauth";
 
 export interface MCPServer {
   id: string;
@@ -139,6 +140,13 @@ export interface MCPServer {
   name: string;
   transport: MCPTransport;
   endpointOrCommand: string;
+  // Authentication. Only the non-secret parameters come back from the API --
+  // every credential (API key, bearer token, OAuth client secret) is
+  // write-only. A type that needs a secret implies one is stored.
+  authType: MCPAuthType;
+  authHeaderName?: string;
+  oauthTokenUrl?: string;
+  oauthClientId?: string;
   allowedTools: string[];
   enabledFor: string[];
   sideEffectingTools: string[];

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -26,6 +27,9 @@ type MCPToolService struct {
 	servers   *repository.MCPServerRepository
 	toolCalls *repository.AIToolCallRepository
 	secrets   secrets.Store
+	// oauthTokens caches client_credentials access tokens per server, since a
+	// new mcpclient.Client (and so a fresh dial) is built for every call.
+	oauthTokens *mcpclient.OAuthTokenCache
 
 	// onToolCallResolved fires after ApproveToolCall/RejectToolCall settles
 	// a call, in case an AIAnalysisService agentic run is paused waiting on
@@ -37,7 +41,7 @@ type MCPToolService struct {
 }
 
 func NewMCPToolService(pool *db.Pool, servers *repository.MCPServerRepository, toolCalls *repository.AIToolCallRepository, store secrets.Store) *MCPToolService {
-	return &MCPToolService{pool: pool, servers: servers, toolCalls: toolCalls, secrets: store}
+	return &MCPToolService{pool: pool, servers: servers, toolCalls: toolCalls, secrets: store, oauthTokens: mcpclient.NewOAuthTokenCache()}
 }
 
 // SetOnToolCallResolved registers the resume-a-paused-analysis-run hook --
@@ -54,20 +58,83 @@ func (s *MCPToolService) dial(ctx context.Context, server *domain.MCPServer) (*m
 		return nil, fmt.Errorf("transport %q is not implemented yet (only http) -- see internal/mcpclient", server.Transport)
 	}
 
-	authToken := ""
-	if server.AuthSecretRef != nil {
-		t, err := s.secrets.Resolve(ctx, *server.AuthSecretRef)
-		if err != nil {
-			return nil, fmt.Errorf("resolve mcp auth token: %w", err)
-		}
-		authToken = t
+	auth, err := s.resolveAuth(ctx, server)
+	if err != nil {
+		return nil, fmt.Errorf("connect to mcp server %q: %w", server.Name, err)
 	}
 
-	client := mcpclient.New(server.EndpointOrCommand, authToken)
+	client := mcpclient.New(server.EndpointOrCommand, auth)
 	if err := client.Initialize(ctx); err != nil {
+		if server.AuthType == domain.MCPAuthOAuth {
+			// The likeliest reason a cached token suddenly stops working is
+			// that it was revoked; don't keep serving it until it expires.
+			s.oauthTokens.Invalidate(server.ID.String())
+		}
 		return nil, fmt.Errorf("connect to mcp server %q: %w", server.Name, err)
 	}
 	return client, nil
+}
+
+// resolveAuth turns a server's stored authentication config into the one
+// header to send. It fails closed: if the config says a credential is
+// required but the secret can't be resolved, that is an error -- never a
+// silent downgrade to an unauthenticated request (secrets.Store.Resolve
+// returns "" with no error for an unknown ref).
+func (s *MCPToolService) resolveAuth(ctx context.Context, server *domain.MCPServer) (mcpclient.Auth, error) {
+	switch server.AuthType {
+	case domain.MCPAuthNone, "":
+		return mcpclient.Auth{}, nil
+
+	case domain.MCPAuthBearer:
+		secret, err := s.resolveSecret(ctx, server.AuthSecretRef, "bearer token")
+		if err != nil {
+			return mcpclient.Auth{}, err
+		}
+		return mcpclient.Bearer(secret), nil
+
+	case domain.MCPAuthAPIKey:
+		if server.AuthHeaderName == nil {
+			return mcpclient.Auth{}, errors.New("api key header name is not configured")
+		}
+		secret, err := s.resolveSecret(ctx, server.AuthSecretRef, "api key")
+		if err != nil {
+			return mcpclient.Auth{}, err
+		}
+		return mcpclient.Header(*server.AuthHeaderName, secret), nil
+
+	case domain.MCPAuthOAuth:
+		if server.OAuthTokenURL == nil || server.OAuthClientID == nil {
+			return mcpclient.Auth{}, errors.New("oauth token URL or client id is not configured")
+		}
+		secret, err := s.resolveSecret(ctx, server.OAuthClientSecretRef, "oauth client secret")
+		if err != nil {
+			return mcpclient.Auth{}, err
+		}
+		token, err := s.oauthTokens.Token(ctx, server.ID.String(), mcpclient.OAuthConfig{
+			TokenURL: *server.OAuthTokenURL, ClientID: *server.OAuthClientID, ClientSecret: secret,
+		})
+		if err != nil {
+			return mcpclient.Auth{}, err
+		}
+		return mcpclient.Bearer(token), nil
+
+	default:
+		return mcpclient.Auth{}, fmt.Errorf("unknown auth type %q", server.AuthType)
+	}
+}
+
+func (s *MCPToolService) resolveSecret(ctx context.Context, ref *string, what string) (string, error) {
+	if ref == nil {
+		return "", fmt.Errorf("%s is not configured", what)
+	}
+	v, err := s.secrets.Resolve(ctx, *ref)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", what, err)
+	}
+	if v == "" {
+		return "", fmt.Errorf("%s could not be resolved from the secret store", what)
+	}
+	return v, nil
 }
 
 // DiscoverTools connects to a registered server and returns everything it
