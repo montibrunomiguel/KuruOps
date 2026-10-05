@@ -11,6 +11,10 @@ handoff in `design_handoff_kuruops/`. See `backend/README.md`, `frontend/README.
 `db/README.md` for details on each part; this README covers how to bring everything up and what to
 expect once it's running.
 
+<p align="center">
+  <img src="docs/dashboard-screenshot.png" alt="KuruOps Dashboard — alert volume, severity/status breakdowns, and per-analyst workload" width="820" />
+</p>
+
 ## Requirements
 
 - [Task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`)
