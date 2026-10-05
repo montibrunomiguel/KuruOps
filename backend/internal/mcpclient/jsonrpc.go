@@ -162,9 +162,26 @@ func (c *Client) Initialize(ctx context.Context) error {
 }
 
 type Tool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema json.RawMessage  `json:"inputSchema,omitempty"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+}
+
+// ToolAnnotations are the optional behavior hints an MCP server may attach to a
+// tool (spec 2025-03-26). They are hints from the server, not guarantees
+// enforced by anything here -- so the platform only ever uses them in the
+// permissive direction after the admin has chosen to trust this server, and
+// treats a missing hint as "unknown", never as "safe".
+type ToolAnnotations struct {
+	ReadOnlyHint    *bool `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+}
+
+// ReadOnly reports whether the server explicitly declared this tool read-only.
+// Absent annotations, or an absent/false readOnlyHint, are not read-only.
+func (t Tool) ReadOnly() bool {
+	return t.Annotations != nil && t.Annotations.ReadOnlyHint != nil && *t.Annotations.ReadOnlyHint
 }
 
 type listToolsResult struct {

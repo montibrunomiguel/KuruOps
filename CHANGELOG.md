@@ -13,6 +13,26 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- **MCP servers can now offer all of their tools, not just a hand-picked allow-list.** After
+  configuring a server you had to list its tools in "Allowed tools" (or open *Discover tools* and
+  tick them one by one) before the AI could use any of them, and a tool the server added later was
+  invisible until someone noticed. There is now an **Allow all of the server's tools** option --
+  on by default for a new server -- and the *Discover tools* panel switches an existing server
+  either way. It widens what the AI can *see*, not what it can run unattended: in this mode a tool
+  executes without approval only if the server itself declares it read-only (the MCP
+  `readOnlyHint` annotation) and it isn't in the new optional "Tools that always require
+  approval" list; every other tool -- unannotated, declared destructive, or added to the server
+  after the fact -- stops at "proposed" and waits for an analyst, so "use all the tools" can never
+  mean "an unknown tool quietly acts on its own". The decision is made against the server's live
+  `tools/list` at call time (so a tool name the model invented is refused rather than forwarded),
+  and a read-only hint never widens an explicit allow-list. Existing servers keep their allow-list
+  (migration `0013`, default off). The Discover panel now shows, per tool, whether it runs on its
+  own or needs approval.
+
+  API: `allowAllTools` on the MCP server request/response; omitting it on update leaves the mode
+  alone (the Discover panel's save doesn't know about it). In allow-all mode `sideEffectingTools`
+  may name tools that aren't in `allowedTools`.
+
 - **MCP servers now support four authentication types: none, API key, bearer token and OAuth.**
   Until now a server had one implicit option, an optional bearer token. Settings -> MCP Servers
   now has an *Authentication* selector -- **None**; **API key** (header name + key, for servers that

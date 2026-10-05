@@ -20,6 +20,7 @@ export function DiscoverToolsPanel({
     ["mcp-discover-tools", server.id],
     (tok) => api.post<DiscoveredTool[]>(`/api/v1/settings/mcp-servers/${server.id}/discover-tools`, {}, tok),
   );
+  const [allowAll, setAllowAll] = useState(server.allowAllTools);
   const [allowed, setAllowed] = useState<Set<string>>(new Set(server.allowedTools));
   const [sideEffecting, setSideEffecting] = useState<Set<string>>(new Set(server.sideEffectingTools));
   const [saving, setSaving] = useState(false);
@@ -61,8 +62,12 @@ export function DiscoverToolsPanel({
           name: server.name,
           transport: server.transport,
           endpointOrCommand: server.endpointOrCommand,
+          allowAllTools: allowAll,
           allowedTools: Array.from(allowed),
-          sideEffectingTools: Array.from(sideEffecting),
+          // Only an allow-list requires every always-approve tool to be
+          // allowed too; switching back from allow-all drops any stragglers
+          // instead of tripping that rule.
+          sideEffectingTools: Array.from(sideEffecting).filter((name) => allowAll || allowed.has(name)),
           enabledFor: server.enabledFor,
         },
         token,
@@ -85,37 +90,71 @@ export function DiscoverToolsPanel({
       )}
       {!loading && tools && tools.length > 0 && (
         <>
-          <p className="field-hint" style={{ marginBottom: 10 }}>
-            {t("settings.mcp.discover.helper")}
-          </p>
-          {tools.map((tool) => (
-            <div key={tool.name} className="row" style={{ padding: "8px 0" }}>
-              <div className="row-main">
-                <label className="checkbox-row">
-                  <input type="checkbox" checked={allowed.has(tool.name)} onChange={() => toggleAllowed(tool.name)} />
-                  <strong>{tool.name}</strong>
-                </label>
-                {tool.description && (
-                  <p className="row-sub" style={{ marginLeft: 22 }}>
-                    {tool.description}
-                  </p>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <label className="checkbox-row">
+              <input type="checkbox" checked={allowAll} onChange={(e) => setAllowAll(e.target.checked)} />
+              {t("settings.mcp.form.allowAllTools")}
+            </label>
+            <span className="field-hint">
+              {allowAll ? t("settings.mcp.discover.helperAll") : t("settings.mcp.discover.helper")}
+            </span>
+          </div>
+
+          {tools.map((tool) => {
+            const readOnly = tool.annotations?.readOnlyHint === true;
+            return (
+              <div key={tool.name} className="row" style={{ padding: "8px 0" }}>
+                <div className="row-main">
+                  {allowAll ? (
+                    <strong>{tool.name}</strong>
+                  ) : (
+                    <label className="checkbox-row">
+                      <input type="checkbox" checked={allowed.has(tool.name)} onChange={() => toggleAllowed(tool.name)} />
+                      <strong>{tool.name}</strong>
+                    </label>
+                  )}
+                  {tool.description && (
+                    <p className="row-sub" style={allowAll ? undefined : { marginLeft: 22 }}>
+                      {tool.description}
+                    </p>
+                  )}
+                </div>
+                {allowAll ? (
+                  <>
+                    <span className={`badge ${readOnly && !sideEffecting.has(tool.name) ? "badge-success" : "badge-muted"}`}>
+                      {readOnly && !sideEffecting.has(tool.name)
+                        ? t("settings.mcp.discover.readOnly")
+                        : t("settings.mcp.discover.needsApproval")}
+                    </span>
+                    {readOnly && (
+                      <label className="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={sideEffecting.has(tool.name)}
+                          onChange={() => toggleSideEffecting(tool.name)}
+                        />
+                        {t("settings.mcp.discover.alwaysApproval")}
+                      </label>
+                    )}
+                  </>
+                ) : (
+                  allowed.has(tool.name) && (
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={sideEffecting.has(tool.name)}
+                        onChange={() => toggleSideEffecting(tool.name)}
+                      />
+                      {t("settings.mcp.discover.sideEffecting")}
+                    </label>
+                  )
                 )}
               </div>
-              {allowed.has(tool.name) && (
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={sideEffecting.has(tool.name)}
-                    onChange={() => toggleSideEffecting(tool.name)}
-                  />
-                  {t("settings.mcp.discover.sideEffecting")}
-                </label>
-              )}
-            </div>
-          ))}
+            );
+          })}
           <div className="row-actions" style={{ marginTop: 10 }}>
             <button className="btn btn-primary btn-sm" onClick={save} disabled={saving}>
-              {saving ? t("common.saving") : t("settings.mcp.discover.saveAllowList")}
+              {saving ? t("common.saving") : allowAll ? t("settings.mcp.discover.saveSettings") : t("settings.mcp.discover.saveAllowList")}
             </button>
             <button className="btn btn-ghost btn-sm" onClick={onClose}>
               {t("common.cancel")}

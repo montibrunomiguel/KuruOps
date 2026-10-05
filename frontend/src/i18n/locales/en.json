@@ -685,9 +685,9 @@
     "mcp": {
       "title": "MCP Servers",
       "newServer": "+ New Server",
-      "helperTextPre": "SIEM/XDR tools the AI agent can query during \"Analyze with AI\". Only allow-listed tools are offered to the model; tools flagged as ",
-      "helperTextMid": "side-effecting",
-      "helperTextPost": " (isolate host, block IP...) always require an analyst's approval before executing.",
+      "helperTextPre": "SIEM/XDR tools the AI agent can query during \"Analyze with AI\". Offer all of a server's tools -- the ones it declares ",
+      "helperTextMid": "read-only",
+      "helperTextPost": " run on their own and every other tool waits for an analyst's approval -- or only an allow-list, where just the tools you flag as side-effecting wait for approval.",
       "noServers": "No MCP server registered yet.",
       "approvals": {
         "title": "Pending Tool Approvals",
@@ -718,7 +718,12 @@
         "sideEffectingHint": "Must also be in the list above.",
         "enabledFor": "Enabled for",
         "alertAnalysis": "Alert analysis",
-        "incidentAnalysis": "Incident analysis"
+        "incidentAnalysis": "Incident analysis",
+        "allowAllTools": "Allow all of the server's tools",
+        "allowAllHint": "The AI can use any tool this server exposes, including ones added later. A tool runs without approval only if the server declares it read-only; every other tool waits for an analyst's approval.",
+        "allowListHint": "Only the tools you list below are offered to the AI. Anything else the server exposes is ignored.",
+        "alwaysApprovalTools": "Tools that always require approval",
+        "alwaysApprovalHint": "Optional. These wait for an analyst even if the server declares them read-only."
       },
       "enabledBadge": "enabled",
       "disabledBadge": "disabled",
@@ -732,7 +737,12 @@
         "noTools": "The server didn't expose any tools.",
         "helper": "Check the allowed tools; among the checked ones, indicate which are side-effecting (require an analyst's approval before executing).",
         "sideEffecting": "side-effecting",
-        "saveAllowList": "Save allow-list"
+        "saveAllowList": "Save allow-list",
+        "helperAll": "Every tool is available to the AI. Tools the server declares read-only run on their own; the others wait for an analyst's approval. Check any read-only tool that should always wait too.",
+        "readOnly": "read-only: runs without approval",
+        "needsApproval": "requires approval",
+        "alwaysApproval": "always require approval",
+        "saveSettings": "Save"
       },
       "auth": {
         "label": "Authentication",
@@ -758,7 +768,9 @@
       },
       "editAuth": "Authentication",
       "authSaved": "Authentication updated.",
-      "authBadge": "auth: {{type}}"
+      "authBadge": "auth: {{type}}",
+      "allToolsBadge": "all of the server's tools",
+      "allToolsHint": "Every tool the server exposes is available to the AI; only tools the server declares read-only run without approval."
     },
     "users": {
       "title": "Users",

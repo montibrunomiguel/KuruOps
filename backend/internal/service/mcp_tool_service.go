@@ -182,9 +182,9 @@ func (s *MCPToolService) ProposeToolCall(ctx context.Context, tenantID, serverID
 		return nil, fmt.Errorf("mcp server %s not found", serverID)
 	}
 
-	policy := EvaluateToolInvocation(*server, toolName)
-	if !policy.Allowed {
-		return nil, fmt.Errorf("tool %q is not in the allow-list for mcp server %q", toolName, server.Name)
+	policy, err := s.policyFor(ctx, server, toolName)
+	if err != nil {
+		return nil, err
 	}
 
 	argsJSON, err := json.Marshal(args)
@@ -215,6 +215,40 @@ func (s *MCPToolService) ProposeToolCall(ctx context.Context, tenantID, serverID
 		}
 	}
 	return call, nil
+}
+
+// policyFor decides whether, and under what approval rule, toolName may be
+// called on server. An allow-list server is decided from its config alone. An
+// allow-all server is asked what it exposes right now -- which both proves the
+// tool really exists there (a name the model invented is refused instead of
+// being sent) and supplies the read-only hint that decides if approval is
+// needed. That makes the decision authoritative here, not something the
+// agent's earlier snapshot of the catalog could get stale on.
+func (s *MCPToolService) policyFor(ctx context.Context, server *domain.MCPServer, toolName string) (ToolInvocationPolicy, error) {
+	if !server.AllowAllTools {
+		policy := EvaluateToolInvocation(*server, toolName)
+		if !policy.Allowed {
+			return policy, fmt.Errorf("tool %q is not in the allow-list for mcp server %q", toolName, server.Name)
+		}
+		return policy, nil
+	}
+	if !server.IsEnabled {
+		return ToolInvocationPolicy{}, fmt.Errorf("mcp server %q is disabled", server.Name)
+	}
+	client, err := s.dial(ctx, server)
+	if err != nil {
+		return ToolInvocationPolicy{}, err
+	}
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		return ToolInvocationPolicy{}, fmt.Errorf("list tools on mcp server %q: %w", server.Name, err)
+	}
+	for _, tool := range tools {
+		if tool.Name == toolName {
+			return EvaluateDiscoveredTool(*server, tool), nil
+		}
+	}
+	return ToolInvocationPolicy{}, fmt.Errorf("tool %q is not exposed by mcp server %q", toolName, server.Name)
 }
 
 // ApproveToolCall records the analyst's approval and executes the call.

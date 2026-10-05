@@ -685,9 +685,9 @@
     "mcp": {
       "title": "Servidores MCP",
       "newServer": "+ Novo Servidor",
-      "helperTextPre": "Ferramentas de SIEM/XDR que o agente de IA pode consultar durante uma Análise com IA. Só tools na allow-list são oferecidas ao modelo; tools marcadas como ",
-      "helperTextMid": "efeito colateral",
-      "helperTextPost": " (isolar host, bloquear IP...) sempre exigem aprovação de um analista antes de executar.",
+      "helperTextPre": "Ferramentas de SIEM/XDR que o agente de IA pode consultar durante uma Análise com IA. Ofereça todas as tools de um servidor -- as que ele declara ",
+      "helperTextMid": "somente leitura",
+      "helperTextPost": " executam sozinhas e todas as outras aguardam a aprovação de um analista -- ou só uma allow-list, em que apenas as tools marcadas como efeito colateral aguardam aprovação.",
       "noServers": "Nenhum servidor MCP cadastrado ainda.",
       "approvals": {
         "title": "Aprovações Pendentes",
@@ -718,7 +718,12 @@
         "sideEffectingHint": "Precisam também estar na lista acima.",
         "enabledFor": "Habilitado para",
         "alertAnalysis": "Análise de alertas",
-        "incidentAnalysis": "Análise de incidentes"
+        "incidentAnalysis": "Análise de incidentes",
+        "allowAllTools": "Permitir todas as tools do servidor",
+        "allowAllHint": "A IA pode usar qualquer tool que o servidor expuser, inclusive as adicionadas depois. Uma tool só executa sem aprovação se o servidor a declarar somente leitura; todas as outras aguardam a aprovação de um analista.",
+        "allowListHint": "Só as tools listadas abaixo são oferecidas à IA. Qualquer outra que o servidor expuser é ignorada.",
+        "alwaysApprovalTools": "Tools que sempre exigem aprovação",
+        "alwaysApprovalHint": "Opcional. Estas aguardam um analista mesmo que o servidor as declare somente leitura."
       },
       "enabledBadge": "enabled",
       "disabledBadge": "disabled",
@@ -732,7 +737,12 @@
         "noTools": "O servidor não expôs nenhuma tool.",
         "helper": "Marque as tools permitidas; entre as marcadas, indique quais têm efeito colateral (exigem aprovação de um analista antes de executar).",
         "sideEffecting": "efeito colateral",
-        "saveAllowList": "Salvar allow-list"
+        "saveAllowList": "Salvar allow-list",
+        "helperAll": "Todas as tools estão disponíveis para a IA. As que o servidor declara somente leitura executam sozinhas; as demais aguardam a aprovação de um analista. Marque qualquer tool somente leitura que também deva sempre aguardar.",
+        "readOnly": "somente leitura: executa sem aprovação",
+        "needsApproval": "exige aprovação",
+        "alwaysApproval": "sempre exigir aprovação",
+        "saveSettings": "Salvar"
       },
       "auth": {
         "label": "Autenticação",
@@ -758,7 +768,9 @@
       },
       "editAuth": "Autenticação",
       "authSaved": "Autenticação atualizada.",
-      "authBadge": "auth: {{type}}"
+      "authBadge": "auth: {{type}}",
+      "allToolsBadge": "todas as tools do servidor",
+      "allToolsHint": "Toda tool que o servidor expõe fica disponível para a IA; só as que o servidor declara somente leitura executam sem aprovação."
     },
     "users": {
       "title": "Usuários",

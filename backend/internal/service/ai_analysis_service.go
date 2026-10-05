@@ -776,7 +776,8 @@ func (s *AIAnalysisService) resolveAgentTools(ctx context.Context, tenantID uuid
 			continue
 		}
 		for _, dt := range discovered {
-			if !slices.Contains(server.AllowedTools, dt.Name) {
+			policy := EvaluateDiscoveredTool(server, dt)
+			if !policy.Allowed {
 				continue
 			}
 			if _, exists := routes[dt.Name]; exists {
@@ -785,7 +786,7 @@ func (s *AIAnalysisService) resolveAgentTools(ctx context.Context, tenantID uuid
 			tools = append(tools, llmclient.Tool{Name: dt.Name, Description: dt.Description, InputSchema: dt.InputSchema})
 			routes[dt.Name] = agentToolRoute{
 				ServerID:         server.ID,
-				RequiresApproval: slices.Contains(server.SideEffectingTools, dt.Name),
+				RequiresApproval: policy.RequiresApproval,
 			}
 		}
 	}

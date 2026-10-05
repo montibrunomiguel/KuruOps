@@ -11,7 +11,7 @@ function jsonResponse(body: unknown, status = 200) {
 function serverFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "s1", name: "Threat Intel", transport: "http", endpointOrCommand: "https://mcp.example.com",
-    authType: "none", isEnabled: true, allowedTools: ["lookup_ip"], sideEffectingTools: [], enabledFor: ["alert_analysis"], ...overrides,
+    authType: "none", allowAllTools: false, isEnabled: true, allowedTools: ["lookup_ip"], sideEffectingTools: [], enabledFor: ["alert_analysis"], ...overrides,
   };
 }
 
@@ -57,6 +57,7 @@ describe("MCPServersPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "+ New Server" }));
     await userEvent.type(screen.getByLabelText("Name"), "Test Server");
     await userEvent.type(screen.getByLabelText(/Endpoint URL/), "https://mcp.example.com");
+    await userEvent.click(screen.getByLabelText(/Allow all of the server's tools/));
     await userEvent.type(screen.getByLabelText(/Allowed tools/), "lookup_ip");
     await userEvent.type(screen.getByLabelText(/Side-effecting tools/), "quarantine_host");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -78,6 +79,7 @@ describe("MCPServersPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "+ New Server" }));
     await userEvent.type(screen.getByLabelText("Name"), "Test Server");
     await userEvent.type(screen.getByLabelText(/Endpoint URL/), "https://mcp.example.com");
+    await userEvent.click(screen.getByLabelText(/Allow all of the server's tools/));
     await userEvent.type(screen.getByLabelText(/Allowed tools/), "lookup_ip, quarantine_host");
     await userEvent.type(screen.getByLabelText(/Side-effecting tools/), "quarantine_host");
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -89,7 +91,7 @@ describe("MCPServersPanel", () => {
           method: "POST",
           body: JSON.stringify({
             name: "Test Server", transport: "http", endpointOrCommand: "https://mcp.example.com",
-            authType: "none", allowedTools: ["lookup_ip", "quarantine_host"], sideEffectingTools: ["quarantine_host"],
+            authType: "none", allowAllTools: false, allowedTools: ["lookup_ip", "quarantine_host"], sideEffectingTools: ["quarantine_host"],
             enabledFor: ["alert_analysis", "incident_analysis"],
           }),
         }),
@@ -283,5 +285,150 @@ describe("MCPServersPanel -- pending tool approvals", () => {
         expect.objectContaining({ method: "POST" }),
       ),
     );
+  });
+});
+
+describe("MCPServersPanel -- allow all tools", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  function postMock() {
+    return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (init?.method === "POST" && url === "/api/v1/settings/mcp-servers") return Promise.resolve(jsonResponse(serverFixture(), 201));
+      return Promise.resolve(jsonResponse([]));
+    });
+  }
+
+  function lastPostBody(fetchMock: ReturnType<typeof vi.fn>) {
+    const calls = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "POST");
+    return JSON.parse((calls[calls.length - 1][1] as RequestInit).body as string);
+  }
+
+  it("a new server defaults to allowing all of the server's tools, with no allow-list to fill in", async () => {
+    const fetchMock = postMock();
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No MCP server registered yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Server" }));
+    expect(screen.getByLabelText(/Allow all of the server's tools/)).toBeChecked();
+    expect(screen.queryByLabelText(/Allowed tools/)).not.toBeInTheDocument();
+    expect(screen.getByText(/runs without approval only if the server declares it read-only/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Name"), "Test Server");
+    await userEvent.type(screen.getByLabelText(/Endpoint URL/), "https://mcp.example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/mcp-servers", expect.objectContaining({ method: "POST" })));
+    expect(lastPostBody(fetchMock)).toMatchObject({ allowAllTools: true, allowedTools: [], sideEffectingTools: [] });
+  });
+
+  it("allow-all lets 'always require approval' name tools that are not allow-listed", async () => {
+    const fetchMock = postMock();
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No MCP server registered yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Server" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Test Server");
+    await userEvent.type(screen.getByLabelText(/Endpoint URL/), "https://mcp.example.com");
+    await userEvent.type(screen.getByLabelText(/Tools that always require approval/), "isolate_host");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/mcp-servers", expect.objectContaining({ method: "POST" })));
+    expect(lastPostBody(fetchMock)).toMatchObject({ allowAllTools: true, sideEffectingTools: ["isolate_host"] });
+  });
+
+  it("unchecking it brings back the allow-list field", async () => {
+    vi.stubGlobal("fetch", postMock());
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("No MCP server registered yet.")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "+ New Server" }));
+    await userEvent.click(screen.getByLabelText(/Allow all of the server's tools/));
+
+    expect(screen.getByLabelText(/Allowed tools/)).toBeInTheDocument();
+    expect(screen.getByText(/Only the tools you list below are offered to the AI/)).toBeInTheDocument();
+  });
+
+  it("an allow-all server's row says so instead of showing an empty allow-list", async () => {
+    vi.stubGlobal("fetch", routeFetch([serverFixture({ allowAllTools: true, allowedTools: [] })]));
+    renderPanel();
+
+    expect(await screen.findByText("all of the server's tools")).toBeInTheDocument();
+    expect(screen.queryByText("No tools in the allow-list yet.")).not.toBeInTheDocument();
+  });
+
+  describe("the Discover tools panel", () => {
+    const catalog = [
+      { name: "lookup_ip", description: "Look up an IP", annotations: { readOnlyHint: true } },
+      { name: "isolate_host", description: "Isolate a host" },
+    ];
+
+    function discoverMock(server: unknown) {
+      return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/discover-tools")) return Promise.resolve(jsonResponse(catalog));
+        if (init?.method === "PUT") return Promise.resolve(jsonResponse(server));
+        if (url.includes("/tool-calls")) return Promise.resolve(jsonResponse([]));
+        return Promise.resolve(jsonResponse([server]));
+      });
+    }
+
+    function lastPutBody(fetchMock: ReturnType<typeof vi.fn>) {
+      const calls = fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "PUT");
+      return JSON.parse((calls[calls.length - 1][1] as RequestInit).body as string);
+    }
+
+    it("on an allow-all server shows which tools run on their own and which need approval", async () => {
+      vi.stubGlobal("fetch", discoverMock(serverFixture({ allowAllTools: true })));
+      renderPanel();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Discover tools" }));
+
+      expect(await screen.findByText("read-only: runs without approval")).toBeInTheDocument();
+      expect(screen.getByText("requires approval")).toBeInTheDocument();
+      expect(screen.getByLabelText(/Allow all of the server's tools/)).toBeChecked();
+    });
+
+    it("a read-only tool can be marked as always requiring approval", async () => {
+      const fetchMock = discoverMock(serverFixture({ allowAllTools: true }));
+      vi.stubGlobal("fetch", fetchMock);
+      renderPanel();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Discover tools" }));
+      await userEvent.click(await screen.findByLabelText("always require approval"));
+      expect(screen.queryByText("read-only: runs without approval")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/mcp-servers/s1", expect.objectContaining({ method: "PUT" })));
+      expect(lastPutBody(fetchMock)).toMatchObject({ allowAllTools: true, sideEffectingTools: ["lookup_ip"] });
+    });
+
+    it("an existing allow-list server can be switched to allow-all", async () => {
+      const fetchMock = discoverMock(serverFixture());
+      vi.stubGlobal("fetch", fetchMock);
+      renderPanel();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Discover tools" }));
+      await userEvent.click(await screen.findByLabelText(/Allow all of the server's tools/));
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/mcp-servers/s1", expect.objectContaining({ method: "PUT" })));
+      expect(lastPutBody(fetchMock)).toMatchObject({ allowAllTools: true });
+    });
+
+    it("switching an allow-all server back drops always-approve names that were never allow-listed", async () => {
+      const fetchMock = discoverMock(serverFixture({ allowAllTools: true, allowedTools: [], sideEffectingTools: ["isolate_host"] }));
+      vi.stubGlobal("fetch", fetchMock);
+      renderPanel();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Discover tools" }));
+      await userEvent.click(await screen.findByLabelText(/Allow all of the server's tools/));
+      await userEvent.click(screen.getByRole("button", { name: "Save allow-list" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/settings/mcp-servers/s1", expect.objectContaining({ method: "PUT" })));
+      expect(lastPutBody(fetchMock)).toMatchObject({ allowAllTools: false, allowedTools: [], sideEffectingTools: [] });
+    });
   });
 });

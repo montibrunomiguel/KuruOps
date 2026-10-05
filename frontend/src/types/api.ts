@@ -147,6 +147,10 @@ export interface MCPServer {
   authHeaderName?: string;
   oauthTokenUrl?: string;
   oauthClientId?: string;
+  // When true the agent is offered every tool the server exposes and
+  // allowedTools is ignored; a tool still needs analyst approval unless the
+  // server declares it read-only (see DiscoveredTool.annotations).
+  allowAllTools: boolean;
   allowedTools: string[];
   enabledFor: string[];
   sideEffectingTools: string[];
@@ -391,6 +395,9 @@ export interface SMTPConfig {
 export interface DiscoveredTool {
   name: string;
   description: string;
+  // MCP tool behavior hints, as declared by the server. Only readOnlyHint
+  // lets a tool run without approval, and only on an allow-all server.
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
 }
 
 // AnalysisChatMessage/AnalysisChatTranscript mirror backend

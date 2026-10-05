@@ -14,6 +14,27 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Alterado
 
+- **Servidores MCP agora podem oferecer todas as suas tools, não só uma allow-list escolhida à
+  mão.** Depois de configurar um servidor era preciso listar as tools em "Tools permitidas" (ou
+  abrir *Discover tools* e marcá-las uma a uma) antes de a IA poder usar qualquer uma, e uma tool
+  que o servidor adicionasse depois ficava invisível até alguém notar. Agora existe a opção
+  **Permitir todas as tools do servidor** -- marcada por padrão num servidor novo -- e o painel
+  *Discover tools* alterna um servidor existente nos dois sentidos. Isso amplia o que a IA pode
+  *ver*, não o que ela pode executar sozinha: nesse modo uma tool só executa sem aprovação se o
+  próprio servidor a declarar somente leitura (a anotação MCP `readOnlyHint`) e ela não estiver na
+  nova lista opcional "Tools que sempre exigem aprovação"; qualquer outra -- sem anotação,
+  declarada destrutiva ou adicionada ao servidor depois -- para em "proposta" e aguarda um
+  analista, então "usar todas as tools" nunca pode significar "uma tool desconhecida age sozinha".
+  A decisão é tomada contra o `tools/list` ao vivo do servidor no momento da chamada (um nome de
+  tool inventado pelo modelo é recusado em vez de encaminhado), e uma dica somente leitura nunca
+  amplia uma allow-list explícita. Servidores existentes mantêm a allow-list (migration `0013`,
+  padrão desligado). O painel Discover agora mostra, por tool, se ela executa sozinha ou exige
+  aprovação.
+
+  API: `allowAllTools` na requisição/resposta do servidor MCP; omiti-lo num update mantém o modo
+  (o save do painel Discover não o conhece). No modo todas as tools, `sideEffectingTools` pode
+  citar tools que não estão em `allowedTools`.
+
 - **Servidores MCP agora suportam quatro tipos de autenticação: nenhuma, API key, bearer token e
   OAuth.** Até agora um servidor tinha uma única opção implícita, um bearer token opcional. Em
   Configurações -> Servidores MCP há agora um seletor de *Autenticação* -- **Nenhuma**; **API Key**

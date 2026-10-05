@@ -167,3 +167,35 @@ func TestMCPServerRepository_AuthColumns(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPServerRepository_AllowAllTools(t *testing.T) {
+	pool := testutil.RequireTestDB(t)
+	tenantID := testutil.NewTenant(t)
+	repo := repository.NewMCPServerRepository()
+	tx := testutil.BeginTx(t, pool, tenantID)
+
+	s := &domain.MCPServer{
+		TenantID: tenantID, Name: "all", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
+		AllowAllTools: true, AllowedTools: []string{}, EnabledFor: []string{}, SideEffectingTools: []string{"isolate_host"},
+	}
+	require.NoError(t, repo.Insert(t.Context(), tx, s))
+
+	got, err := repo.Get(t.Context(), tx, s.ID)
+	require.NoError(t, err)
+	assert.True(t, got.AllowAllTools)
+
+	s.AllowAllTools = false
+	require.NoError(t, repo.Update(t.Context(), tx, s))
+	got, err = repo.Get(t.Context(), tx, s.ID)
+	require.NoError(t, err)
+	assert.False(t, got.AllowAllTools)
+
+	other := &domain.MCPServer{
+		TenantID: tenantID, Name: "default", Transport: "http", EndpointOrCommand: "https://mcp.example.com",
+		AllowedTools: []string{}, EnabledFor: []string{}, SideEffectingTools: []string{},
+	}
+	require.NoError(t, repo.Insert(t.Context(), tx, other))
+	got, err = repo.Get(t.Context(), tx, other.ID)
+	require.NoError(t, err)
+	assert.False(t, got.AllowAllTools, "a server created without the flag keeps its explicit allow-list")
+}
