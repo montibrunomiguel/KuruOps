@@ -4,6 +4,7 @@ import { useAuth } from "../../../auth/AuthContext";
 import { api } from "../../../api/client";
 import { mutationErrorMessage } from "../../../api/hooks";
 import type { MCPTransport } from "../../../types/api";
+import { AuthFields, EMPTY_AUTH_DRAFT, authPayload, type AuthDraft } from "./AuthFields";
 
 function parseCsv(v: string): string[] {
   return v
@@ -18,7 +19,7 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<MCPTransport>("http");
   const [endpointOrCommand, setEndpointOrCommand] = useState("");
-  const [authToken, setAuthToken] = useState("");
+  const [auth, setAuth] = useState<AuthDraft>(EMPTY_AUTH_DRAFT);
   const [allowedTools, setAllowedTools] = useState("");
   const [sideEffectingTools, setSideEffectingTools] = useState("");
   const [enabledForAlerts, setEnabledForAlerts] = useState(true);
@@ -51,7 +52,7 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
           name,
           transport,
           endpointOrCommand,
-          authToken: authToken || undefined,
+          ...authPayload(auth),
           allowedTools: allowed,
           sideEffectingTools: sideEffecting,
           enabledFor,
@@ -101,18 +102,7 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
             required
           />
         </div>
-        <div className="field field-full">
-          <label htmlFor="mcp-auth">
-            {t("settings.mcp.form.authToken")} <span className="field-hint">{t("settings.mcp.form.optional")}</span>
-          </label>
-          <input
-            id="mcp-auth"
-            className="input"
-            type="password"
-            value={authToken}
-            onChange={(e) => setAuthToken(e.target.value)}
-          />
-        </div>
+        <AuthFields value={auth} onChange={setAuth} />
       </div>
 
       <hr className="section-divider" />

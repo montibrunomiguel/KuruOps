@@ -41,7 +41,7 @@ func TestClient_Initialize(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "test-token")
+	client := mcpclient.New(srv.URL, mcpclient.Bearer("test-token"))
 	require.NoError(t, client.Initialize(t.Context()))
 	assert.Equal(t, "Bearer test-token", gotAuth)
 }
@@ -72,7 +72,7 @@ func TestClient_ListTools_FollowsPaginationCursor(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	tools, err := client.ListTools(t.Context())
 	require.NoError(t, err)
 	require.Len(t, tools, 2)
@@ -95,7 +95,7 @@ func TestClient_CallTool(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	result, err := client.CallTool(t.Context(), "lookup_ip", map[string]any{"ip": "10.0.0.5"})
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
@@ -113,7 +113,7 @@ func TestClient_CallTool_ServerReturnsRPCError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "nonexistent_tool", nil)
 	assert.ErrorContains(t, err, "method not found")
 }
@@ -124,13 +124,13 @@ func TestClient_CallTool_HTTPErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	assert.ErrorContains(t, err, "500")
 }
 
 func TestClient_CallTool_UnreachableServer(t *testing.T) {
-	client := mcpclient.New("http://127.0.0.1:1", "")
+	client := mcpclient.New("http://127.0.0.1:1", mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	assert.Error(t, err)
 }
@@ -148,7 +148,7 @@ func TestClient_ServerSentEventsResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	result, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Content, 1)
@@ -161,7 +161,7 @@ func TestClient_ResponseIDMismatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	assert.ErrorContains(t, err, "does not match")
 }
@@ -172,7 +172,7 @@ func TestClient_EmptyResponseBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := mcpclient.New(srv.URL, "")
+	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	assert.ErrorContains(t, err, "empty response")
 }

@@ -707,8 +707,6 @@
         "endpointUrl": "Endpoint URL",
         "commandPlaceholder": "/usr/local/bin/mcp-siem-server",
         "endpointPlaceholder": "https://mcp.yourcompany.com/xdr",
-        "authToken": "Auth token",
-        "optional": "(optional)",
         "discoverHelper": "Tools can't be auto-discovered here yet because the server needs to exist first — save with the list below (may be left blank) and use \"Discover tools\" on the server's row afterward to pick from the real catalog via ",
         "allowedTools": "Allowed tools",
         "commaSeparated": "(comma separated)",
@@ -735,7 +733,32 @@
         "helper": "Check the allowed tools; among the checked ones, indicate which are side-effecting (require an analyst's approval before executing).",
         "sideEffecting": "side-effecting",
         "saveAllowList": "Save allow-list"
-      }
+      },
+      "auth": {
+        "label": "Authentication",
+        "types": {
+          "none": "None",
+          "api_key": "API key",
+          "bearer": "Bearer token",
+          "oauth": "OAuth 2.0 (client credentials)"
+        },
+        "apiKeyHeader": "Header",
+        "apiKeyHeaderPlaceholder": "X-API-Key",
+        "apiKey": "API key",
+        "bearerToken": "Token",
+        "oauthTokenUrl": "Authorization server (token URL)",
+        "oauthTokenUrlPlaceholder": "https://auth.yourcompany.com/oauth/token",
+        "oauthClientId": "Client ID",
+        "oauthClientSecret": "Client secret",
+        "secretNote": "Stored encrypted; never shown again.",
+        "keepHint": "Leave blank to keep the current value.",
+        "reenterHint": "Re-enter the credential if you change the endpoint, token URL or client ID.",
+        "oauthHint": "Requests an access token with the OAuth 2.0 client credentials grant and sends it as a Bearer token.",
+        "oauthHttpsHint": "The token URL must use https."
+      },
+      "editAuth": "Authentication",
+      "authSaved": "Authentication updated.",
+      "authBadge": "auth: {{type}}"
     },
     "users": {
       "title": "Users",

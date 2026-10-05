@@ -5,6 +5,7 @@ import { api } from "../../../api/client";
 import { mutationErrorMessage } from "../../../api/hooks";
 import type { MCPServer } from "../../../types/api";
 import { DiscoverToolsPanel } from "./DiscoverToolsPanel";
+import { AuthEditPanel } from "./AuthEditPanel";
 
 export function ServerRow({
   server,
@@ -27,6 +28,7 @@ export function ServerRow({
   const { token } = useAuth();
   const [busy, setBusy] = useState(false);
   const [discovering, setDiscovering] = useState(false);
+  const [editingAuth, setEditingAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function toggle() {
@@ -57,6 +59,11 @@ export function ServerRow({
           <p className="row-sub">
             {server.transport} · {server.endpointOrCommand}
           </p>
+          <p className="row-sub">
+            {t("settings.mcp.authBadge", { type: t(`settings.mcp.auth.types.${server.authType}`) })}
+            {server.authType === "api_key" && server.authHeaderName && ` · ${server.authHeaderName}`}
+            {server.authType === "oauth" && server.oauthClientId && ` · ${server.oauthClientId}`}
+          </p>
           <div className="tag-chip-list" style={{ marginTop: 8 }}>
             {server.allowedTools.length === 0 && (
               <span className="field-hint">{t("settings.mcp.noAllowedTools")}</span>
@@ -75,6 +82,9 @@ export function ServerRow({
           {error && <div className="error-banner" style={{ marginTop: 8 }}>{error}</div>}
         </div>
         <div className="row-actions">
+          <button className="btn btn-sm" onClick={() => setEditingAuth((v) => !v)}>
+            {editingAuth ? t("common.close") : t("settings.mcp.editAuth")}
+          </button>
           <button className="btn btn-sm" onClick={() => setDiscovering((v) => !v)} disabled={server.transport !== "http"}>
             {discovering ? t("common.close") : t("settings.mcp.discoverTools")}
           </button>
@@ -105,6 +115,17 @@ export function ServerRow({
         <p className="field-hint" style={{ marginTop: 4 }}>
           {t("settings.mcp.discoverHttpOnly")}
         </p>
+      )}
+
+      {editingAuth && (
+        <AuthEditPanel
+          server={server}
+          onClose={() => setEditingAuth(false)}
+          onSaved={() => {
+            setEditingAuth(false);
+            onChanged();
+          }}
+        />
       )}
 
       {discovering && (

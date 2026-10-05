@@ -34,7 +34,7 @@ func skipUnlessMCPServerLive(t *testing.T) string {
 
 func TestMCPClient_Live_InitializeListToolsCallTool(t *testing.T) {
 	addr := skipUnlessMCPServerLive(t)
-	client := mcpclient.New(addr, "")
+	client := mcpclient.New(addr, mcpclient.Auth{})
 
 	require.NoError(t, client.Initialize(t.Context()), "handshake against a real server")
 

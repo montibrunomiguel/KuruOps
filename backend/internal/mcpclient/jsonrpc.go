@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,7 +103,7 @@ func (e *rpcError) Error() string {
 // operation, which matches how internal/service/mcp_tool_service.go uses it.
 type Client struct {
 	endpoint   string
-	authToken  string
+	auth       Auth
 	httpClient *http.Client
 	sessionID  string
 	nextID     int64
@@ -112,12 +113,25 @@ type Client struct {
 // not a URL this codebase controls -- httpguard.NewClient refuses to dial
 // a loopback/link-local/private address, closing the SSRF pivot that a
 // plain http.Client would leave open here.
-func New(endpoint, authToken string) *Client {
-	return &Client{
-		endpoint:   endpoint,
-		authToken:  authToken,
-		httpClient: httpguard.NewClient(30 * time.Second),
+//
+// auth is the single credential header to send (see Auth); the zero value
+// sends none.
+func New(endpoint string, auth Auth) *Client {
+	httpClient := httpguard.NewClient(30 * time.Second)
+	// Go strips Authorization when a redirect crosses hosts, but replays every
+	// other header -- including a custom API-key header -- to the new target.
+	// An MCP endpoint has no business redirecting somewhere else, so refuse
+	// a cross-host redirect instead of forwarding the credential to it.
+	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if req.URL.Host != via[0].URL.Host {
+			return errors.New("refusing to follow a redirect to a different host")
+		}
+		return nil
 	}
+	return &Client{endpoint: endpoint, auth: auth, httpClient: httpClient}
 }
 
 type initializeResult struct {
@@ -260,9 +274,7 @@ func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json, text/event-stream")
-	if c.authToken != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
+	c.auth.apply(httpReq.Header)
 	if c.sessionID != "" {
 		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
 	}

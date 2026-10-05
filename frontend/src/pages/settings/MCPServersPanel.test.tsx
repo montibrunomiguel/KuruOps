@@ -11,7 +11,7 @@ function jsonResponse(body: unknown, status = 200) {
 function serverFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "s1", name: "Threat Intel", transport: "http", endpointOrCommand: "https://mcp.example.com",
-    isEnabled: true, allowedTools: ["lookup_ip"], sideEffectingTools: [], enabledFor: ["alert_analysis"], ...overrides,
+    authType: "none", isEnabled: true, allowedTools: ["lookup_ip"], sideEffectingTools: [], enabledFor: ["alert_analysis"], ...overrides,
   };
 }
 
@@ -89,7 +89,7 @@ describe("MCPServersPanel", () => {
           method: "POST",
           body: JSON.stringify({
             name: "Test Server", transport: "http", endpointOrCommand: "https://mcp.example.com",
-            authToken: undefined, allowedTools: ["lookup_ip", "quarantine_host"], sideEffectingTools: ["quarantine_host"],
+            authType: "none", allowedTools: ["lookup_ip", "quarantine_host"], sideEffectingTools: ["quarantine_host"],
             enabledFor: ["alert_analysis", "incident_analysis"],
           }),
         }),
