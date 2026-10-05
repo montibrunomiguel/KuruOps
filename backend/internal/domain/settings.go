@@ -85,17 +85,42 @@ type LLMProvider struct {
 // ai_tool_calls.status and the architecture review's "IA sugere vs IA
 // executa" principle).
 type MCPServer struct {
-	ID                 uuid.UUID  `json:"id"`
-	TenantID           uuid.UUID  `json:"tenantId"`
-	Name               string     `json:"name"`
-	Transport          string     `json:"transport"`
-	EndpointOrCommand  string     `json:"endpointOrCommand"`
-	AuthSecretRef      *string    `json:"-"`
-	AllowedTools       []string   `json:"allowedTools"`
-	EnabledFor         []string   `json:"enabledFor"`
-	SideEffectingTools []string   `json:"sideEffectingTools"`
-	IsEnabled          bool       `json:"isEnabled"`
-	CreatedBy          *uuid.UUID `json:"createdBy,omitempty"`
-	CreatedAt          time.Time  `json:"createdAt"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
+	ID                uuid.UUID `json:"id"`
+	TenantID          uuid.UUID `json:"tenantId"`
+	Name              string    `json:"name"`
+	Transport         string    `json:"transport"`
+	EndpointOrCommand string    `json:"endpointOrCommand"`
+	// AuthType selects how requests to the server are authenticated; see the
+	// MCPAuth* constants. The non-secret parameters of each type are
+	// serialized (the admin UI needs to show which header or client id is
+	// configured); every secret is only ever an opaque secrets.Store ref
+	// tagged json:"-". A type that needs a secret implies it is set -- the
+	// mcp_servers_auth_shape_check constraint guarantees it -- so no separate
+	// "secret set" flag is exposed.
+	AuthType string `json:"authType"`
+	// AuthHeaderName is the custom header an api_key credential is sent in.
+	AuthHeaderName *string `json:"authHeaderName,omitempty"`
+	// AuthSecretRef holds the api_key value or the bearer token.
+	AuthSecretRef *string `json:"-"`
+	// OAuthTokenURL/OAuthClientID/OAuthClientSecretRef configure the OAuth
+	// 2.0 client_credentials grant used when AuthType is MCPAuthOAuth.
+	OAuthTokenURL        *string    `json:"oauthTokenUrl,omitempty"`
+	OAuthClientID        *string    `json:"oauthClientId,omitempty"`
+	OAuthClientSecretRef *string    `json:"-"`
+	AllowedTools         []string   `json:"allowedTools"`
+	EnabledFor           []string   `json:"enabledFor"`
+	SideEffectingTools   []string   `json:"sideEffectingTools"`
+	IsEnabled            bool       `json:"isEnabled"`
+	CreatedBy            *uuid.UUID `json:"createdBy,omitempty"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }
+
+// MCPServer.AuthType values -- kept in sync with the
+// mcp_servers_auth_type_check constraint.
+const (
+	MCPAuthNone   = "none"
+	MCPAuthAPIKey = "api_key"
+	MCPAuthBearer = "bearer"
+	MCPAuthOAuth  = "oauth"
+)

@@ -707,8 +707,6 @@
         "endpointUrl": "Endpoint URL",
         "commandPlaceholder": "/usr/local/bin/mcp-siem-server",
         "endpointPlaceholder": "https://mcp.suaempresa.com/xdr",
-        "authToken": "Auth token",
-        "optional": "(opcional)",
         "discoverHelper": "Ainda não dá para descobrir as tools automaticamente aqui porque o servidor precisa existir primeiro — salve com a lista abaixo (pode deixar em branco) e use \"Discover tools\" na linha do servidor depois para escolher a partir do catálogo real via ",
         "allowedTools": "Tools permitidas",
         "commaSeparated": "(separadas por vírgula)",
@@ -735,7 +733,32 @@
         "helper": "Marque as tools permitidas; entre as marcadas, indique quais têm efeito colateral (exigem aprovação de um analista antes de executar).",
         "sideEffecting": "efeito colateral",
         "saveAllowList": "Salvar allow-list"
-      }
+      },
+      "auth": {
+        "label": "Autenticação",
+        "types": {
+          "none": "Nenhuma",
+          "api_key": "API Key",
+          "bearer": "Bearer Token",
+          "oauth": "OAuth 2.0 (client credentials)"
+        },
+        "apiKeyHeader": "Header",
+        "apiKeyHeaderPlaceholder": "X-API-Key",
+        "apiKey": "API Key",
+        "bearerToken": "Token",
+        "oauthTokenUrl": "Auth Server (URL do token)",
+        "oauthTokenUrlPlaceholder": "https://auth.suaempresa.com/oauth/token",
+        "oauthClientId": "Client ID",
+        "oauthClientSecret": "Client Secret",
+        "secretNote": "Armazenado criptografado; nunca é exibido novamente.",
+        "keepHint": "Deixe em branco para manter o valor atual.",
+        "reenterHint": "Informe a credencial novamente se alterar o endpoint, a URL do token ou o client ID.",
+        "oauthHint": "Obtém um access token pelo fluxo OAuth 2.0 client credentials e o envia como Bearer token.",
+        "oauthHttpsHint": "A URL do token deve usar https."
+      },
+      "editAuth": "Autenticação",
+      "authSaved": "Autenticação atualizada.",
+      "authBadge": "auth: {{type}}"
     },
     "users": {
       "title": "Usuários",

@@ -14,6 +14,29 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Alterado
 
+- **Servidores MCP agora suportam quatro tipos de autenticação: nenhuma, API key, bearer token e
+  OAuth.** Até agora um servidor tinha uma única opção implícita, um bearer token opcional. Em
+  Configurações -> Servidores MCP há agora um seletor de *Autenticação* -- **Nenhuma**; **API Key**
+  (nome do header + chave, para servidores que esperam por exemplo `X-API-Key`); **Bearer Token**; e
+  **OAuth 2.0** (URL do token do Auth Server + Client ID + Client Secret, usando o fluxo
+  `client_credentials`, com o access token em cache na memória e renovado pouco antes de expirar) --
+  e cada servidor salvo tem um botão *Autenticação* para trocar o tipo ou rotacionar uma credencial.
+  Servidores existentes que tinham token foram migrados para bearer (migration `0012`).
+
+  Todo segredo passa pelo `secrets.Store` como a credencial de qualquer outra integração, nunca é
+  devolvido pela API e aparece na auditoria apenas como o tipo de autenticação mais uma flag
+  `credentialRotated`. Um `CHECK` no banco torna irrepresentável uma combinação incoerente (um
+  servidor API key sem header, um OAuth com bearer perdido). A requisição de token OAuth passa pelo
+  mesmo cliente com proteção SSRF das chamadas MCP, nunca segue redirects, e seus erros carregam só
+  o status e o código `error` padrão do OAuth -- nunca o corpo da resposta. Falha fechada: uma
+  credencial que não resolve é um erro, não uma chamada sem autenticação.
+
+  **Mudança de API:** o campo `authToken` foi removido. Ele é rejeitado com `400` em vez de
+  ignorado, pois descartá-lo em silêncio salvaria um servidor que o chamador acredita estar
+  autenticado sem nenhuma credencial; envie `authType: "bearer"` com `bearerToken`. As respostas
+  agora incluem `authType` e os parâmetros não secretos (`authHeaderName`, `oauthTokenUrl`,
+  `oauthClientId`).
+
 - **Refeita a identidade visual de todo o console** -- tipografia, paleta de neutros/acento e a
   escala de raio de borda, seguindo o `/frontend-design`. A aparência anterior (Inter para tudo, um
   acento azul genérico, badges em pílula com preenchimento tingido, arredondamento uniforme de
@@ -106,6 +129,22 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   os outros dispositivos continuam desconectados.
 
 ### Security
+
+- **Credenciais MCP não podem mais ser redirecionadas para um host controlado pelo admin, nem
+  sobrescritas por um nome duplicado.** Três brechas em torno do token MCP armazenado, fechadas
+  junto com os novos tipos de autenticação: (1) uma credencial armazenada era reaproveitada sempre
+  que o campo de segredo ficava em branco, mesmo após trocar o endpoint -- qualquer admin podia
+  apontar um servidor para um host próprio e fazer a plataforma entregar um segredo que ele nunca
+  pôde ler. Agora a credencial só é mantida para o endpoint (e, no OAuth, URL do token e client ID)
+  com que foi salva; senão precisa ser informada de novo. (2) criar -- ou renomear um servidor para --
+  um nome já existente gravava o novo segredo *antes* de a constraint de unicidade rejeitar o save, e
+  o secret store indexa por nome, então a credencial do servidor existente era sobrescrita; o nome
+  agora é checado antes. (3) o cliente MCP repassava headers customizados (uma API key) em um
+  redirect para outro host, o que o Go faz com todo header exceto `Authorization`; redirects para
+  outro host agora são recusados. Além disso: credenciais embutidas na URL do endpoint
+  (`https://user:pass@host`) são rejeitadas -- seriam armazenadas em texto puro e ecoadas na
+  auditoria -- e os nomes de header de API key são validados (token RFC 7230, headers reservados
+  recusados), com caracteres de controle rejeitados em todo segredo, fechando injeção de header.
 
 - **O SAML não responde mais ao POST do IdP com um token de sessão.** O `ServeACS` devolvia um como
   JSON direto, colocando uma credencial no histórico do navegador, em qualquer log de proxy no
