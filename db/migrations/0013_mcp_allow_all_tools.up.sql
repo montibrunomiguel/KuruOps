@@ -1,0 +1,12 @@
+-- mcp_servers.allow_all_tools: offer every tool the server exposes to the AI
+-- agent instead of only the explicit allowed_tools list.
+--
+-- It widens what the agent can *see*, not what it can do unattended: in this
+-- mode a tool runs without analyst approval only if the server itself declares
+-- it read-only (the MCP readOnlyHint annotation) and it isn't in
+-- side_effecting_tools; anything else -- including a tool added to the server
+-- after the admin configured it -- stops at 'proposed' and waits for approval.
+-- allowed_tools is ignored while this is on.
+--
+-- Defaults to false so every existing server keeps its explicit allow-list.
+alter table mcp_servers add column allow_all_tools boolean not null default false;

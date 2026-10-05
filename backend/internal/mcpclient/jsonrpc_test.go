@@ -2,6 +2,7 @@ package mcpclient_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -175,4 +176,25 @@ func TestClient_EmptyResponseBody(t *testing.T) {
 	client := mcpclient.New(srv.URL, mcpclient.Auth{})
 	_, err := client.CallTool(t.Context(), "lookup_ip", nil)
 	assert.ErrorContains(t, err, "empty response")
+}
+
+func TestClient_ListTools_ParsesAnnotations(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpcEnvelope
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + fmt.Sprint(req.ID) + `,"result":{"tools":[
+			{"name":"reader","annotations":{"readOnlyHint":true}},
+			{"name":"writer","annotations":{"readOnlyHint":false,"destructiveHint":true}},
+			{"name":"plain"}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	tools, err := mcpclient.New(srv.URL, mcpclient.Auth{}).ListTools(t.Context())
+
+	require.NoError(t, err)
+	require.Len(t, tools, 3)
+	assert.True(t, tools[0].ReadOnly())
+	assert.False(t, tools[1].ReadOnly(), "readOnlyHint false is not read-only")
+	assert.False(t, tools[2].ReadOnly(), "no annotations means unknown, not read-only")
 }

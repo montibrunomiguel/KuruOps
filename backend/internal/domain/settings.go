@@ -104,16 +104,22 @@ type MCPServer struct {
 	AuthSecretRef *string `json:"-"`
 	// OAuthTokenURL/OAuthClientID/OAuthClientSecretRef configure the OAuth
 	// 2.0 client_credentials grant used when AuthType is MCPAuthOAuth.
-	OAuthTokenURL        *string    `json:"oauthTokenUrl,omitempty"`
-	OAuthClientID        *string    `json:"oauthClientId,omitempty"`
-	OAuthClientSecretRef *string    `json:"-"`
-	AllowedTools         []string   `json:"allowedTools"`
-	EnabledFor           []string   `json:"enabledFor"`
-	SideEffectingTools   []string   `json:"sideEffectingTools"`
-	IsEnabled            bool       `json:"isEnabled"`
-	CreatedBy            *uuid.UUID `json:"createdBy,omitempty"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	OAuthTokenURL        *string `json:"oauthTokenUrl,omitempty"`
+	OAuthClientID        *string `json:"oauthClientId,omitempty"`
+	OAuthClientSecretRef *string `json:"-"`
+	// AllowAllTools offers the agent every tool the server exposes rather than
+	// only AllowedTools (which is then ignored). It widens what the agent can
+	// see, not what it can run unattended: a tool executes without approval
+	// only if the server declares it read-only and it isn't in
+	// SideEffectingTools -- see service.EvaluateDiscoveredTool.
+	AllowAllTools      bool       `json:"allowAllTools"`
+	AllowedTools       []string   `json:"allowedTools"`
+	EnabledFor         []string   `json:"enabledFor"`
+	SideEffectingTools []string   `json:"sideEffectingTools"`
+	IsEnabled          bool       `json:"isEnabled"`
+	CreatedBy          *uuid.UUID `json:"createdBy,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
 }
 
 // MCPServer.AuthType values -- kept in sync with the

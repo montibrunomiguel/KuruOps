@@ -20,6 +20,11 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
   const [transport, setTransport] = useState<MCPTransport>("http");
   const [endpointOrCommand, setEndpointOrCommand] = useState("");
   const [auth, setAuth] = useState<AuthDraft>(EMPTY_AUTH_DRAFT);
+  // On by default: the usual expectation after configuring a server is that its
+  // tools are usable. This does not weaken the approval rule -- see
+  // service.EvaluateDiscoveredTool: only tools the server declares read-only
+  // run unattended, everything else waits for an analyst.
+  const [allowAllTools, setAllowAllTools] = useState(true);
   const [allowedTools, setAllowedTools] = useState("");
   const [sideEffectingTools, setSideEffectingTools] = useState("");
   const [enabledForAlerts, setEnabledForAlerts] = useState(true);
@@ -31,9 +36,10 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
     e.preventDefault();
     setError(null);
 
-    const allowed = parseCsv(allowedTools);
+    const allowed = allowAllTools ? [] : parseCsv(allowedTools);
     const sideEffecting = parseCsv(sideEffectingTools);
-    const notAllowed = sideEffecting.filter((tool) => !allowed.includes(tool));
+    // The "must also be allowed" rule only exists for an explicit allow-list.
+    const notAllowed = allowAllTools ? [] : sideEffecting.filter((tool) => !allowed.includes(tool));
     if (notAllowed.length > 0) {
       setError(`${t("settings.mcp.form.sideEffectingTools")} ${t("settings.mcp.form.requiresApproval")}: ${notAllowed.join(", ")}`);
       return;
@@ -53,6 +59,7 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
           transport,
           endpointOrCommand,
           ...authPayload(auth),
+          allowAllTools,
           allowedTools: allowed,
           sideEffectingTools: sideEffecting,
           enabledFor,
@@ -107,28 +114,45 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
 
       <hr className="section-divider" />
 
-      <p className="helper-text" style={{ marginBottom: 10 }}>
-        {t("settings.mcp.form.discoverHelper")}
-        <code>tools/list</code>.
-      </p>
-
       <div className="field">
-        <label htmlFor="mcp-allowed">
-          {t("settings.mcp.form.allowedTools")} <span className="field-hint">{t("settings.mcp.form.commaSeparated")}</span>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={allowAllTools} onChange={(e) => setAllowAllTools(e.target.checked)} />
+          {t("settings.mcp.form.allowAllTools")}
         </label>
-        <input
-          id="mcp-allowed"
-          className="input"
-          placeholder={t("settings.mcp.form.allowedToolsPlaceholder")}
-          value={allowedTools}
-          onChange={(e) => setAllowedTools(e.target.value)}
-        />
-        <span className="field-hint">{t("settings.mcp.form.allowedToolsHint")}</span>
+        <span className="field-hint">
+          {allowAllTools ? t("settings.mcp.form.allowAllHint") : t("settings.mcp.form.allowListHint")}
+        </span>
       </div>
+
+      {!allowAllTools && (
+        <>
+          <p className="helper-text" style={{ marginBottom: 10 }}>
+            {t("settings.mcp.form.discoverHelper")}
+            <code>tools/list</code>.
+          </p>
+
+          <div className="field">
+            <label htmlFor="mcp-allowed">
+              {t("settings.mcp.form.allowedTools")} <span className="field-hint">{t("settings.mcp.form.commaSeparated")}</span>
+            </label>
+            <input
+              id="mcp-allowed"
+              className="input"
+              placeholder={t("settings.mcp.form.allowedToolsPlaceholder")}
+              value={allowedTools}
+              onChange={(e) => setAllowedTools(e.target.value)}
+            />
+            <span className="field-hint">{t("settings.mcp.form.allowedToolsHint")}</span>
+          </div>
+        </>
+      )}
 
       <div className="field">
         <label htmlFor="mcp-sideeffect">
-          {t("settings.mcp.form.sideEffectingTools")} <span className="field-hint">{t("settings.mcp.form.requiresApproval")}</span>
+          {allowAllTools ? t("settings.mcp.form.alwaysApprovalTools") : t("settings.mcp.form.sideEffectingTools")}{" "}
+          <span className="field-hint">
+            {allowAllTools ? t("settings.mcp.form.commaSeparated") : t("settings.mcp.form.requiresApproval")}
+          </span>
         </label>
         <input
           id="mcp-sideeffect"
@@ -137,7 +161,9 @@ export function ServerForm({ onCancel, onSaved }: { onCancel: () => void; onSave
           value={sideEffectingTools}
           onChange={(e) => setSideEffectingTools(e.target.value)}
         />
-        <span className="field-hint">{t("settings.mcp.form.sideEffectingHint")}</span>
+        <span className="field-hint">
+          {allowAllTools ? t("settings.mcp.form.alwaysApprovalHint") : t("settings.mcp.form.sideEffectingHint")}
+        </span>
       </div>
 
       <div className="field">

@@ -55,6 +55,9 @@ type saveMCPServerRequest struct {
 	AllowedTools       []string `json:"allowedTools"`
 	EnabledFor         []string `json:"enabledFor"`
 	SideEffectingTools []string `json:"sideEffectingTools"`
+	// AllowAllTools is a pointer so "not sent" (leave as is on update) differs
+	// from an explicit false.
+	AllowAllTools *bool `json:"allowAllTools"`
 
 	// Authentication: AuthType selects which of the other fields apply (see
 	// service.MCPServerAuthInput). Every secret here is write-only -- stored in
@@ -78,6 +81,7 @@ func (req saveMCPServerRequest) toInput() service.MCPServerSaveInput {
 	return service.MCPServerSaveInput{
 		Name: req.Name, Transport: req.Transport, EndpointOrCommand: req.EndpointOrCommand,
 		AllowedTools: req.AllowedTools, EnabledFor: req.EnabledFor, SideEffectingTools: req.SideEffectingTools,
+		AllowAllTools: req.AllowAllTools,
 		Auth: service.MCPServerAuthInput{
 			Type: req.AuthType, APIKeyHeader: req.APIKeyHeader, APIKey: req.APIKey, BearerToken: req.BearerToken,
 			OAuthTokenURL: req.OAuthTokenURL, OAuthClientID: req.OAuthClientID, OAuthClientSecret: req.OAuthClientSecret,

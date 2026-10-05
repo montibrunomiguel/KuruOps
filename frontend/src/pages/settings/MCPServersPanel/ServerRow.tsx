@@ -65,10 +65,15 @@ export function ServerRow({
             {server.authType === "oauth" && server.oauthClientId && ` · ${server.oauthClientId}`}
           </p>
           <div className="tag-chip-list" style={{ marginTop: 8 }}>
-            {server.allowedTools.length === 0 && (
+            {server.allowAllTools && (
+              <span className="tag-chip" title={t("settings.mcp.allToolsHint")}>
+                {t("settings.mcp.allToolsBadge")}
+              </span>
+            )}
+            {!server.allowAllTools && server.allowedTools.length === 0 && (
               <span className="field-hint">{t("settings.mcp.noAllowedTools")}</span>
             )}
-            {server.allowedTools.map((tool) => (
+            {!server.allowAllTools && server.allowedTools.map((tool) => (
               <span key={tool} className="tag-chip">
                 {tool}
                 {server.sideEffectingTools.includes(tool) && (

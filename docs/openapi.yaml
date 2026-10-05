@@ -5220,16 +5220,30 @@ components:
         oauthClientId:
           type: string
           description: Present only for authType oauth.
+        allowAllTools:
+          type: boolean
+          description: >-
+            When true the AI agent is offered every tool the server exposes and
+            allowedTools is ignored. This widens what the agent can see, not
+            what it can run unattended: a tool executes without approval only
+            if the server declares it read-only (the MCP readOnlyHint tool
+            annotation) and it is not in sideEffectingTools. Any other tool --
+            unannotated, destructive, or added to the server after it was
+            configured -- waits for an analyst's approval.
         allowedTools:
           type: array
           items: { type: string }
+          description: The explicit allow-list. Ignored while allowAllTools is true.
         enabledFor:
           type: array
           items: { type: string }
         sideEffectingTools:
           type: array
           items: { type: string }
-          description: Subset of allowedTools that always require analyst approval before executing.
+          description: >-
+            Tools that always require analyst approval before executing. With
+            an allow-list this must be a subset of allowedTools; with
+            allowAllTools it may name any tool.
         isEnabled: { type: boolean }
         createdBy: { type: string, format: uuid, nullable: true }
         createdAt: { type: string, format: date-time }
@@ -5281,6 +5295,12 @@ components:
           type: string
           deprecated: true
           description: Removed. Rejected with 400 -- use authType "bearer" with bearerToken.
+        allowAllTools:
+          type: boolean
+          description: >-
+            Offer every tool the server exposes (see MCPServer.allowAllTools for
+            the approval rule). Defaults to false on create. On update, omit it
+            to leave the mode as it is.
         allowedTools:
           type: array
           items: { type: string }
@@ -5299,6 +5319,16 @@ components:
         description: { type: string }
         inputSchema:
           description: JSON Schema describing the tool's arguments.
+        annotations:
+          type: object
+          description: >-
+            Behavior hints the server declared for the tool (MCP 2025-03-26).
+            They are the server's own claims; only readOnlyHint: true is used,
+            and only to let a tool run without approval on an allowAllTools
+            server. A missing hint means unknown, never safe.
+          properties:
+            readOnlyHint: { type: boolean }
+            destructiveHint: { type: boolean }
 
     AIToolCall:
       type: object

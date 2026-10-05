@@ -13,6 +13,7 @@ import (
 
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/secrets"
 )
@@ -56,7 +57,8 @@ func mcpServerAuditFields(s *domain.MCPServer) map[string]any {
 		"name": s.Name, "transport": s.Transport, "endpointOrCommand": s.EndpointOrCommand,
 		"authType": s.AuthType, "authHeaderName": s.AuthHeaderName,
 		"oauthTokenUrl": s.OAuthTokenURL, "oauthClientId": s.OAuthClientID,
-		"allowedTools": s.AllowedTools, "enabledFor": s.EnabledFor, "sideEffectingTools": s.SideEffectingTools,
+		"allowAllTools": s.AllowAllTools,
+		"allowedTools":  s.AllowedTools, "enabledFor": s.EnabledFor, "sideEffectingTools": s.SideEffectingTools,
 		"isEnabled": s.IsEnabled,
 	}
 }
@@ -72,10 +74,14 @@ func (s *MCPServerService) List(ctx context.Context, tenantID uuid.UUID) ([]doma
 }
 
 type MCPServerSaveInput struct {
-	Name               string
-	Transport          string
-	EndpointOrCommand  string
-	Auth               MCPServerAuthInput
+	Name              string
+	Transport         string
+	EndpointOrCommand string
+	Auth              MCPServerAuthInput
+	// AllowAllTools: nil means "leave as is" on update and false on create, so
+	// a client that doesn't know about the field (the Discover Tools panel
+	// saves the lists without it) can't silently flip a server back.
+	AllowAllTools      *bool
 	AllowedTools       []string
 	EnabledFor         []string
 	SideEffectingTools []string
@@ -88,7 +94,8 @@ type MCPServerSaveInput struct {
 // allowed at all before "requires human approval" is a meaningful flag on
 // it (see architecture review, "IA sugere vs IA executa").
 func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
-	if err := validateToolLists(in.AllowedTools, in.SideEffectingTools); err != nil {
+	allowAll := in.AllowAllTools != nil && *in.AllowAllTools
+	if err := validateToolLists(allowAll, in.AllowedTools, in.SideEffectingTools); err != nil {
 		return nil, err
 	}
 	if err := validateEndpoint(in.EndpointOrCommand); err != nil {
@@ -100,6 +107,7 @@ func (s *MCPServerService) Create(ctx context.Context, tenantID, actorID uuid.UU
 		Name:              in.Name,
 		Transport:         in.Transport,
 		EndpointOrCommand: in.EndpointOrCommand,
+		AllowAllTools:     allowAll,
 		// mcp_servers.allowed_tools/enabled_for/side_effecting_tools are all NOT NULL
 		AllowedTools:       orEmptySlice(in.AllowedTools),
 		EnabledFor:         orEmptySlice(in.EnabledFor),
@@ -148,9 +156,6 @@ func (s *MCPServerService) ensureNameFree(ctx context.Context, tx pgx.Tx, name s
 }
 
 func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uuid.UUID, in MCPServerSaveInput) (*domain.MCPServer, error) {
-	if err := validateToolLists(in.AllowedTools, in.SideEffectingTools); err != nil {
-		return nil, err
-	}
 	if err := validateEndpoint(in.EndpointOrCommand); err != nil {
 		return nil, err
 	}
@@ -167,6 +172,14 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uui
 		before := mcpServerAuditFields(existing)
 		prev := *existing
 
+		allowAll := existing.AllowAllTools
+		if in.AllowAllTools != nil {
+			allowAll = *in.AllowAllTools
+		}
+		if err := validateToolLists(allowAll, in.AllowedTools, in.SideEffectingTools); err != nil {
+			return err
+		}
+
 		if in.Name != existing.Name {
 			if err := s.ensureNameFree(ctx, tx, in.Name, id); err != nil {
 				return err
@@ -176,6 +189,7 @@ func (s *MCPServerService) Update(ctx context.Context, tenantID, actorID, id uui
 		existing.Name = in.Name
 		existing.Transport = in.Transport
 		existing.EndpointOrCommand = in.EndpointOrCommand
+		existing.AllowAllTools = allowAll
 		existing.AllowedTools = orEmptySlice(in.AllowedTools)
 		existing.EnabledFor = orEmptySlice(in.EnabledFor)
 		existing.SideEffectingTools = orEmptySlice(in.SideEffectingTools)
@@ -268,7 +282,14 @@ func validateEndpoint(endpoint string) error {
 	return nil
 }
 
-func validateToolLists(allowed, sideEffecting []string) error {
+// validateToolLists enforces that every always-needs-approval tool is also
+// allow-listed -- but only in allow-list mode. With allowAll there is no
+// allow-list to be a subset of: sideEffecting is then simply "tools that always
+// need approval, even if the server calls them read-only".
+func validateToolLists(allowAll bool, allowed, sideEffecting []string) error {
+	if allowAll {
+		return nil
+	}
 	for _, tool := range sideEffecting {
 		if !slices.Contains(allowed, tool) {
 			return fmt.Errorf("side-effecting tool %q must also be in allowed_tools", tool)
@@ -288,12 +309,48 @@ type ToolInvocationPolicy struct {
 	RequiresApproval bool
 }
 
+// EvaluateToolInvocation decides from the server's config and a tool *name*
+// alone. For an allow-list server that is the whole decision. For an
+// allow-all server it can't be: whether a tool may run unattended depends on
+// what the server says about it (see EvaluateDiscoveredTool), and a bare name
+// carries no such information -- so it answers "allowed, but only with
+// approval", the fail-safe reading, never "allowed to run".
 func EvaluateToolInvocation(server domain.MCPServer, toolName string) ToolInvocationPolicy {
-	if !server.IsEnabled || !slices.Contains(server.AllowedTools, toolName) {
+	if !server.IsEnabled {
+		return ToolInvocationPolicy{Allowed: false}
+	}
+	if server.AllowAllTools {
+		return ToolInvocationPolicy{Allowed: true, RequiresApproval: true}
+	}
+	if !slices.Contains(server.AllowedTools, toolName) {
 		return ToolInvocationPolicy{Allowed: false}
 	}
 	return ToolInvocationPolicy{
 		Allowed:          true,
 		RequiresApproval: slices.Contains(server.SideEffectingTools, toolName),
+	}
+}
+
+// EvaluateDiscoveredTool is EvaluateToolInvocation with the tool's metadata
+// from a live tools/list, which is what an allow-all server needs.
+//
+// In allow-all mode every tool the server exposes is allowed, and one runs
+// without approval only when the server explicitly declares it read-only AND
+// the admin hasn't listed it as always-needs-approval. A tool with no
+// annotations, readOnlyHint false, or added to the server after it was
+// configured therefore waits for an analyst -- so "use all the tools" can never
+// mean "an unknown tool quietly acts on its own". The hint is the server's own
+// claim and is only trusted because the admin chose to trust the server; it is
+// never used to widen an allow-list server.
+func EvaluateDiscoveredTool(server domain.MCPServer, tool mcpclient.Tool) ToolInvocationPolicy {
+	if !server.AllowAllTools {
+		return EvaluateToolInvocation(server, tool.Name)
+	}
+	if !server.IsEnabled {
+		return ToolInvocationPolicy{Allowed: false}
+	}
+	return ToolInvocationPolicy{
+		Allowed:          true,
+		RequiresApproval: !tool.ReadOnly() || slices.Contains(server.SideEffectingTools, tool.Name),
 	}
 }

@@ -21,7 +21,7 @@ const mcpServerColumns = `
 	id, tenant_id, name, transport, endpoint_or_command,
 	auth_type, auth_header_name, auth_secret_ref,
 	oauth_token_url, oauth_client_id, oauth_client_secret_ref,
-	allowed_tools, enabled_for, side_effecting_tools, is_enabled, created_by, created_at, updated_at`
+	allow_all_tools, allowed_tools, enabled_for, side_effecting_tools, is_enabled, created_by, created_at, updated_at`
 
 func (r *MCPServerRepository) List(ctx context.Context, tx pgx.Tx) ([]domain.MCPServer, error) {
 	return queryList(ctx, tx, `select `+mcpServerColumns+` from mcp_servers order by created_at asc`, scanMCPServer)
@@ -40,13 +40,13 @@ func (r *MCPServerRepository) Insert(ctx context.Context, tx pgx.Tx, s *domain.M
 			tenant_id, name, transport, endpoint_or_command,
 			auth_type, auth_header_name, auth_secret_ref,
 			oauth_token_url, oauth_client_id, oauth_client_secret_ref,
-			allowed_tools, enabled_for, side_effecting_tools, created_by
-		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			allow_all_tools, allowed_tools, enabled_for, side_effecting_tools, created_by
+		) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		returning id, is_enabled, created_at, updated_at`,
 		s.TenantID, s.Name, s.Transport, s.EndpointOrCommand,
 		s.AuthType, s.AuthHeaderName, s.AuthSecretRef,
 		s.OAuthTokenURL, s.OAuthClientID, s.OAuthClientSecretRef,
-		s.AllowedTools, s.EnabledFor, s.SideEffectingTools, s.CreatedBy,
+		s.AllowAllTools, s.AllowedTools, s.EnabledFor, s.SideEffectingTools, s.CreatedBy,
 	)
 	if err := row.Scan(&s.ID, &s.IsEnabled, &s.CreatedAt, &s.UpdatedAt); err != nil {
 		return fmt.Errorf("insert mcp server: %w", err)
@@ -63,12 +63,12 @@ func (r *MCPServerRepository) Update(ctx context.Context, tx pgx.Tx, s *domain.M
 		set name = $2, transport = $3, endpoint_or_command = $4,
 		    auth_type = $5, auth_header_name = $6, auth_secret_ref = $7,
 		    oauth_token_url = $8, oauth_client_id = $9, oauth_client_secret_ref = $10,
-		    allowed_tools = $11, enabled_for = $12, side_effecting_tools = $13, updated_at = now()
+		    allow_all_tools = $11, allowed_tools = $12, enabled_for = $13, side_effecting_tools = $14, updated_at = now()
 		where id = $1`,
 		s.ID, s.Name, s.Transport, s.EndpointOrCommand,
 		s.AuthType, s.AuthHeaderName, s.AuthSecretRef,
 		s.OAuthTokenURL, s.OAuthClientID, s.OAuthClientSecretRef,
-		s.AllowedTools, s.EnabledFor, s.SideEffectingTools,
+		s.AllowAllTools, s.AllowedTools, s.EnabledFor, s.SideEffectingTools,
 	)
 	if err != nil {
 		return fmt.Errorf("update mcp server: %w", err)
@@ -92,7 +92,7 @@ func scanMCPServer(row pgx.Row) (*domain.MCPServer, error) {
 		&s.ID, &s.TenantID, &s.Name, &s.Transport, &s.EndpointOrCommand,
 		&s.AuthType, &s.AuthHeaderName, &s.AuthSecretRef,
 		&s.OAuthTokenURL, &s.OAuthClientID, &s.OAuthClientSecretRef,
-		&s.AllowedTools, &s.EnabledFor, &s.SideEffectingTools, &s.IsEnabled, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt,
+		&s.AllowAllTools, &s.AllowedTools, &s.EnabledFor, &s.SideEffectingTools, &s.IsEnabled, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

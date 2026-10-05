@@ -285,3 +285,61 @@ func TestMCPServerHandlers_Authentication(t *testing.T) {
 		assert.Equal(t, "bearer", updated["authType"])
 	})
 }
+
+func TestMCPServerHandlers_AllowAllTools(t *testing.T) {
+	h, tenantID, actorID := newMCPServerHandlerFixture(t)
+	r := newRouter(h.Routes)
+
+	send := func(t *testing.T, method, path string, payload map[string]any) (int, map[string]any) {
+		t.Helper()
+		body, _ := json.Marshal(payload)
+		rec := doRequest(r, withClaims(httptest.NewRequest(method, path, bytes.NewReader(body)), tenantID, actorID, nil))
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	base := func(name string) map[string]any {
+		return map[string]any{"name": name, "transport": "http", "endpointOrCommand": "https://mcp.example.com"}
+	}
+
+	t.Run("create with allowAllTools true -- reflected in the response, no allow-list needed", func(t *testing.T) {
+		payload := base("all")
+		payload["allowAllTools"] = true
+		payload["sideEffectingTools"] = []string{"isolate_host"}
+		code, srv := send(t, "POST", "/", payload)
+		require.Equal(t, http.StatusCreated, code)
+		assert.Equal(t, true, srv["allowAllTools"])
+	})
+
+	t.Run("omitting it on create means an explicit allow-list", func(t *testing.T) {
+		code, srv := send(t, "POST", "/", base("default"))
+		require.Equal(t, http.StatusCreated, code)
+		assert.Equal(t, false, srv["allowAllTools"])
+	})
+
+	t.Run("a PUT that omits it leaves the mode alone; an explicit false changes it", func(t *testing.T) {
+		payload := base("flip")
+		payload["allowAllTools"] = true
+		_, srv := send(t, "POST", "/", payload)
+		id := srv["id"].(string)
+
+		code, got := send(t, "PUT", "/"+id, base("flip"))
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, true, got["allowAllTools"], "the Discover Tools save omits the field and must not reset it")
+
+		off := base("flip")
+		off["allowAllTools"] = false
+		code, got = send(t, "PUT", "/"+id, off)
+		require.Equal(t, http.StatusOK, code)
+		assert.Equal(t, false, got["allowAllTools"])
+	})
+
+	t.Run("allow-list mode still rejects a side-effecting tool that is not allow-listed", func(t *testing.T) {
+		payload := base("strict")
+		payload["allowAllTools"] = false
+		payload["allowedTools"] = []string{"lookup_ip"}
+		payload["sideEffectingTools"] = []string{"isolate_host"}
+		code, _ := send(t, "POST", "/", payload)
+		assert.Equal(t, http.StatusBadRequest, code)
+	})
+}
