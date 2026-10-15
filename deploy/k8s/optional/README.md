@@ -25,8 +25,8 @@ kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/
 kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 
 # 2. Secrets. The owner secret must be of type kubernetes.io/basic-auth (what
-#    CloudNativePG expects); it is the role that runs the migrations. The second holds
-#    the passwords of the two application roles.
+#    CloudNativePG expects); it owns the database. The second holds the passwords of the
+#    two application roles.
 kubectl -n kuruops create secret generic kuruops-pg-owner --type=kubernetes.io/basic-auth \
   --from-literal=username=kuruops_owner --from-literal=password="$(openssl rand -base64 24)"
 kubectl -n kuruops create secret generic kuruops-pg-roles \
@@ -37,8 +37,11 @@ kubectl -n kuruops create secret generic kuruops-pg-roles \
 kubectl apply -f deploy/k8s/optional/postgres-cnpg.yaml
 kubectl -n kuruops wait --for=condition=Ready cluster/kuruops-pg --timeout=300s
 
-# 4. Migrations (03-migration-job.yaml) with DATABASE_URL_MIGRATE pointing at
-#    kuruops-pg-rw as kuruops_owner, THEN the roles and grants:
+# 4. Migrations (03-migration-job.yaml) with DATABASE_URL_MIGRATE pointing at kuruops-pg-rw as
+#    the `postgres` superuser (its password is in the kuruops-pg-superuser secret the operator
+#    creates). Not as kuruops_owner: the migrations seed rows into tables with row-level
+#    security FORCED, which only a superuser (or BYPASSRLS role) may do -- as the owner they fail
+#    with "new row violates row-level security policy". THEN the roles and grants:
 kubectl -n kuruops create configmap kuruops-db-init --from-file=db/init/
 kubectl apply -f deploy/k8s/optional/postgres-roles-job.yaml
 ```
@@ -55,6 +58,9 @@ read-only `kuruops-pg-ro` Service: KuruOps writes on every request.
   parent directory is a second, independent safety net.
 - **Storage class.** `storage.storageClass` is left to the cluster default; pick one with
   volume expansion and snapshots.
+- **Tested.** The manifests here were applied to a kind cluster: three instances came up, the
+  migrations and the roles Job ran against it, and deleting the primary pod promoted a replica
+  within seconds with the data intact and writes accepted through the same `kuruops-pg-rw`.
 - **Failover is not free of blips.** In-flight requests during the few seconds of a failover
   fail and the application retries on its next call -- every KuruOps process reconnects without
   a restart (verified by restarting Postgres under a running stack).
