@@ -72,16 +72,6 @@ func (e *jobEnv) jobFor(t *testing.T, alertID uuid.UUID) *domain.AIAnalysisJob {
 	return job
 }
 
-// forceDue makes a job claimable immediately. The tests use the admin
-// connection's view of time rather than sleeping.
-func forceDue(t *testing.T, e *jobEnv, jobID int64) {
-	t.Helper()
-	require.NoError(t, e.pool.WithTenant(t.Context(), e.tenantID, func(tx pgx.Tx) error {
-		_, err := tx.Exec(t.Context(), `update ai_analysis_jobs set next_attempt_at = now() - interval '1 second' where id = $1`, jobID)
-		return err
-	}))
-}
-
 func TestAIAnalysisJobRepository_Enqueue(t *testing.T) {
 	t.Run("queues a job when the default provider auto-analyses", func(t *testing.T) {
 		e := newJobEnv(t, true)
