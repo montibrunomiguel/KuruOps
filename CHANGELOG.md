@@ -23,7 +23,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   asked anything. A conversation opened from the chat -- its first message, or any follow-up --
   gets a direct answer to the question. The general prompt itself was reworded to say so (it used
   to say "provide a triage analysis" regardless of what was asked). Incidents have no automatic
-  trigger, so for them only the "a question was asked" rule applies.
+  trigger, so for them only the "a question was asked" rule applies. Because chat turns now use
+  the general prompt, it also carries the payload-injection and secret-redaction rules that used
+  to live only in the triage prompt (shared constant `payloadSafetyRules`, pinned by a test): alert
+  content is attacker-controlled and the chat can call MCP tools.
 - **A failed follow-up question in the "Analyze with AI" chat looked like it was never sent.** When
   the provider answered a follow-up with an error (a Gemini 503, say), the backend correctly put
   the finished report back and dropped the unanswered question -- but the chat only rendered a

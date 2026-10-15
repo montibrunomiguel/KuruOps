@@ -25,7 +25,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   chat -- a primeira mensagem ou qualquer follow-up -- recebe uma resposta direta à pergunta. O
   prompt geral também foi reescrito para dizer isso (antes dizia "forneça uma análise de triagem"
   independente do que fosse perguntado). Incidentes não têm gatilho automático, então para eles
-  vale só a regra "alguém fez uma pergunta".
+  vale só a regra "alguém fez uma pergunta". Como os turnos do chat agora usam o prompt geral, ele
+  também carrega as regras de prompt injection e de redação de segredos que antes viviam só no
+  prompt de triagem (constante compartilhada `payloadSafetyRules`, fixada por teste): o conteúdo
+  do alerta é controlado por quem envia e o chat pode chamar ferramentas MCP.
 - **Uma pergunta de acompanhamento que falhava no chat "Analisar com IA" parecia nunca ter sido
   enviada.** Quando o provedor respondia a pergunta com erro (um 503 do Gemini, por exemplo), o
   backend recolocava corretamente o relatório pronto e descartava a pergunta sem resposta -- mas o
