@@ -14,9 +14,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -25,6 +27,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/httpguard"
@@ -594,18 +597,21 @@ func toAnthropicTools(tools []Tool) []anthropicToolDef {
 // actually happen, each mapped to the thing to go and change; the raw body
 // is kept, truncated, because for anything unrecognised it is the only
 // clue there is.
-func providerError(status int, body []byte) error {
+func providerError(status int, body []byte) *ProviderError {
+	pe := &ProviderError{Status: status}
 	switch status {
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("the AI provider is rate-limiting requests (429) -- wait a moment and analyse again, or move to a higher quota tier")
+		pe.Message = "the AI provider is rate-limiting requests (429) -- wait a moment and analyse again, or move to a higher quota tier"
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("the AI provider rejected the credentials (%d) -- check the API key in Settings -> AI Integration", status)
+		pe.Message = fmt.Sprintf("the AI provider rejected the credentials (%d) -- check the API key in Settings -> AI Integration", status)
 	case http.StatusNotFound:
-		return fmt.Errorf("the AI provider returned 404 -- check the Base URL and model name in Settings -> AI Integration; for an OpenAI-compatible endpoint the Base URL is the part before /chat/completions")
+		pe.Message = "the AI provider returned 404 -- check the Base URL and model name in Settings -> AI Integration; for an OpenAI-compatible endpoint the Base URL is the part before /chat/completions"
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return fmt.Errorf("the AI provider is temporarily unavailable (%d) -- this is usually short-lived, try analysing again in a moment", status)
+		pe.Message = fmt.Sprintf("the AI provider is temporarily unavailable (%d) -- this is usually short-lived, try analysing again in a moment", status)
+	default:
+		pe.Message = fmt.Sprintf("llm provider returned %d: %s", status, truncateForMessage(body))
 	}
-	return fmt.Errorf("llm provider returned %d: %s", status, truncateForMessage(body))
+	return pe
 }
 
 // truncateForMessage caps a provider body so an error that reaches the UI
@@ -627,25 +633,141 @@ func truncateBody(body []byte, max int) string {
 // 400, so it keeps enough of the body to read a typical JSON error in full.
 const maxLoggedBodyBytes = 2000
 
+// The retry policy for a single provider call. A provider's 503 ("model is
+// currently experiencing high demand") is the most ordinary failure there is
+// and usually clears within seconds, but doRequest used to make exactly one
+// attempt, so one blip ended the analysis -- an auto-analysis ended for good,
+// with nothing ever retrying it. These are vars, not constants, so a test can
+// shrink the waits instead of sleeping through them.
+var (
+	// retryMaxAttempts is the total number of tries, so 3 means two retries.
+	// Kept small on purpose: each try can itself wait out the client timeout,
+	// and the analysis queue provides the slow, long-horizon retries (minutes)
+	// for a provider that is genuinely down.
+	retryMaxAttempts = 3
+	retryBaseDelay   = time.Second
+	retryMaxDelay    = 8 * time.Second
+	// retryAfterCeiling bounds how long a provider's Retry-After is honoured
+	// in place. A provider that asks for a minute is not going to be waited out
+	// inside one analysis turn; the error is returned instead, and the queue
+	// retries at its own, much longer, schedule.
+	retryAfterCeiling = 15 * time.Second
+)
+
+// retryDelay decides whether a failed attempt should be retried and after how
+// long. attempt is the 1-based number of the attempt that just failed.
+//
+// Only failures that can clear up are retried (ProviderError.Retryable,
+// TransportError.Retryable). An open circuit breaker is not: it means "this
+// host just failed several times in a row", and hammering it from inside a
+// retry loop is exactly what the breaker exists to stop.
+func retryDelay(err error, attempt int) (time.Duration, bool) {
+	if attempt >= retryMaxAttempts {
+		return 0, false
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) && pe.Retryable() {
+		if pe.RetryAfter > retryAfterCeiling {
+			return 0, false
+		}
+		return max(backoff(attempt), pe.RetryAfter), true
+	}
+	var te *TransportError
+	if errors.As(err, &te) && te.Retryable() {
+		return backoff(attempt), true
+	}
+	return 0, false
+}
+
+// backoff is exponential (base, 2*base, 4*base ... capped at retryMaxDelay)
+// with jitter in [d/2, d], so a burst of analyses that all hit the same 503
+// does not retry in lockstep and hit the provider again at the same instant.
+func backoff(attempt int) time.Duration {
+	d := retryBaseDelay << (attempt - 1)
+	if d <= 0 || d > retryMaxDelay {
+		d = retryMaxDelay
+	}
+	half := d / 2
+	if half <= 0 {
+		return d
+	}
+	return half + rand.N(half+1)
+}
+
+// sleepCtx waits d or until ctx ends, reporting which.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// doRequest sends req and returns the response body, retrying transient
+// failures (see retryDelay) with backoff. The request must be repeatable: every
+// caller builds it with http.NewRequestWithContext over a bytes.Reader, which
+// is what gives it a GetBody to rewind.
 func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 	ctx, span := tracer.Start(req.Context(), "llm.request")
 	defer span.End()
 	req = req.WithContext(ctx)
 	span.SetAttributes(attribute.String("http.url", req.URL.Host+req.URL.Path))
 
+	for attempt := 1; ; attempt++ {
+		body, err := doRequestOnce(client, req, span, attempt)
+		if err == nil {
+			span.SetAttributes(attribute.Int("llm.attempts", attempt))
+			return body, nil
+		}
+
+		delay, retry := retryDelay(err, attempt)
+		// A caller that has gone away (cancelled, deadline) is not waiting for
+		// an answer any more; do not sleep on its behalf.
+		if !retry || ctx.Err() != nil {
+			span.SetAttributes(attribute.Int("llm.attempts", attempt))
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, err
+		}
+		slog.InfoContext(ctx, "retrying llm request after a transient failure",
+			"host", req.URL.Host, "attempt", attempt, "max_attempts", retryMaxAttempts, "wait", delay, "error", err)
+		if sleepCtx(ctx, delay) != nil {
+			// The original failure is the useful one to report, not "context
+			// canceled".
+			span.RecordError(err)
+			return nil, err
+		}
+	}
+}
+
+// doRequestOnce is one attempt: a fresh copy of req (its body rewound), run
+// through the circuit breaker for its host.
+func doRequestOnce(client *http.Client, req *http.Request, span trace.Span, attempt int) ([]byte, error) {
+	attemptReq := req.Clone(req.Context())
+	if req.GetBody != nil {
+		b, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("rewind request body for attempt %d: %w", attempt, err)
+		}
+		attemptReq.Body = b
+	}
+
 	var body []byte
-	err := breakers.Load().Do(req.URL.Host, func() error {
-		resp, err := client.Do(req)
+	err := breakers.Load().Do(attemptReq.URL.Host, func() error {
+		resp, err := client.Do(attemptReq)
 		if err != nil {
 			// A transport error (refused, DNS, timeout) is the clearest
 			// signal the provider is unreachable, so it always counts.
-			return circuitbreaker.Fault(fmt.Errorf("request failed: %w", err))
+			return circuitbreaker.Fault(&TransportError{Err: err})
 		}
 		defer resp.Body.Close()
 
 		body, err = io.ReadAll(resp.Body)
 		if err != nil {
-			return circuitbreaker.Fault(fmt.Errorf("read response: %w", err))
+			return circuitbreaker.Fault(&TransportError{Err: fmt.Errorf("read response: %w", err)})
 		}
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 		if resp.StatusCode >= 300 {
@@ -654,25 +776,24 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 			// nothing to diagnose a recurring failure from (a 503 that only
 			// ever hits follow-up turns, say). Log what the provider actually
 			// said; only the response is logged, never the request or key.
-			slog.WarnContext(req.Context(), "llm provider returned an error response",
-				"host", req.URL.Host, "path", req.URL.Path, "status", resp.StatusCode,
+			slog.WarnContext(attemptReq.Context(), "llm provider returned an error response",
+				"host", attemptReq.URL.Host, "path", attemptReq.URL.Path, "status", resp.StatusCode, "attempt", attempt,
 				"body", truncateBody(body, maxLoggedBodyBytes))
-			err := providerError(resp.StatusCode, body)
+			pe := providerError(resp.StatusCode, body)
+			pe.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 			// 5xx and 429 say the provider is unhealthy or overloaded.
 			// Every other 4xx is our request's fault and would fail
 			// identically forever -- counting those would trip the breaker
 			// permanently on a wrong API key and bury the one error message
 			// that actually tells the operator what to fix.
-			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
-				return circuitbreaker.Fault(err)
+			if pe.Retryable() {
+				return circuitbreaker.Fault(pe)
 			}
-			return err
+			return pe
 		}
 		return nil
 	})
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
 	return body, nil
