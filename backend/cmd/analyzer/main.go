@@ -19,6 +19,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,26 +45,28 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	cfg, err := config.Load(logger)
-	if err != nil {
-		logger.Error("config load failed", "error", err)
-		os.Exit(1)
-	}
-	if err := cfg.Validate(); err != nil {
-		logger.Error("refusing to start: insecure configuration", "error", err)
-		os.Exit(1)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	code := runMain(ctx, os.Stdout)
+	stop()
+	os.Exit(code)
+}
 
+// runMain is main without the process: it loads and validates the configuration, runs the
+// command until ctx is cancelled, and returns the exit status instead of exiting -- so a
+// test can drive the whole startup path (including the refusal to start) in-process.
+func runMain(ctx context.Context, stdout io.Writer) int {
+	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+
+	cfg, err := config.LoadAndValidate(logger)
+	if err != nil {
+		logger.Error("startup refused", "error", err)
+		return 1
+	}
 	if err := run(ctx, cfg, logger); err != nil {
 		logger.Error("analyzer stopped", "error", err)
-		stop()
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // run wires the process and blocks until ctx is cancelled, then drains the queue.
@@ -96,7 +100,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
-		return err
+		return fmt.Errorf("database connection: %w", err)
 	}
 	defer pool.Close()
 	metrics := httpserver.GetMetrics()
@@ -104,7 +108,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
-		return err
+		return fmt.Errorf("secrets backend %q setup: %w", cfg.SecretsBackend, err)
 	}
 
 	// The same Postgres NOTIFY channel cmd/api listens on: the end of an analysis

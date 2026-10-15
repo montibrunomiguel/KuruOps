@@ -11,6 +11,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -39,21 +40,34 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := runMain(ctx, os.Stdout)
+	stop()
+	os.Exit(code)
+}
 
-	cfg, err := config.Load(logger)
+// runMain is main without the process: it loads and validates the configuration, runs the
+// command until ctx is cancelled, and returns the exit status instead of exiting -- so a
+// test can drive the whole startup path (including the refusal to start) in-process.
+func runMain(ctx context.Context, stdout io.Writer) int {
+	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+
+	cfg, err := config.LoadAndValidate(logger)
 	if err != nil {
-		logger.Error("config load failed", "error", err)
-		os.Exit(1)
+		logger.Error("startup refused", "error", err)
+		return 1
 	}
-	// Refuses configurations that are insecure by construction (dev-headers
-	// without its explicit acknowledgement, a well-known DB password under
-	// AUTH_MODE=jwt) -- see config.Config.Validate.
-	if err := cfg.Validate(); err != nil {
-		logger.Error("refusing to start: insecure configuration", "error", err)
-		os.Exit(1)
+	if err := run(ctx, cfg, logger); err != nil {
+		logger.Error("api stopped", "error", err)
+		return 1
 	}
+	return 0
+}
 
+// run wires the process and blocks until ctx is cancelled, then shuts the server down.
+// It returns an error only for a failure to start or serve. It exists apart from main so
+// a test can start the real server against a test database and stop it again.
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// AUTH_MODE has three values, two independent concerns:
 	//   - "jwt" (default): real JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH required, JWTAuth enforced.
 	//   - "dev": no key files needed (a keypair is generated once and persisted
@@ -80,17 +94,12 @@ func main() {
 
 	privateKey, publicKey, err := loadOrGenerateJWTKeys(cfg, allowEphemeralKeys, logger)
 	if err != nil {
-		logger.Error("jwt key setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("jwt key setup: %w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-api", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
-		logger.Error("telemetry setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("telemetry setup: %w", err)
 	}
 
 	// Fail fast on an LLM/MCP provider that has gone bad, instead of making
@@ -118,8 +127,7 @@ func main() {
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("database connection: %w", err)
 	}
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
@@ -177,8 +185,7 @@ func main() {
 	// tenant's LLM provider API key.
 	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
-		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
-		os.Exit(1)
+		return fmt.Errorf("secrets backend %q setup: %w", cfg.SecretsBackend, err)
 	}
 	llmProviderRepo := repository.NewLLMProviderRepository()
 
@@ -244,8 +251,7 @@ func main() {
 	// created -- and only required to be creatable -- for the local backend.
 	if cfg.UploadBackend != "database" {
 		if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
-			logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
-			os.Exit(1)
+			return fmt.Errorf("upload dir %q setup: %w", cfg.UploadDir, err)
 		}
 	}
 	oauthStateService := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
@@ -367,15 +373,19 @@ func main() {
 		Idle:       cfg.HTTPIdleTimeout,
 	})
 
+	serveErr := make(chan error, 1)
 	safego.Go("api.ListenAndServe", func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr, "build", buildinfo.Build)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
+			serveErr <- err
 		}
 	})
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		return fmt.Errorf("server failed: %w", err)
+	}
 	logger.Info("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
@@ -383,6 +393,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+	return nil
 }
 
 // loadOrGenerateJWTKeys loads the configured RSA keypair, or — only when

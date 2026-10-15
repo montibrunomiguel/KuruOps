@@ -235,6 +235,21 @@ type Config struct {
 	SlackSigningSecret string
 }
 
+// LoadAndValidate is what every cmd/* does before anything else: read the configuration
+// from the environment, then refuse to continue if it is insecure by construction (see
+// Validate). One function so the four binaries cannot drift apart on what "valid enough to
+// start" means, and so that rule can be tested without launching a process.
+func LoadAndValidate(logger *slog.Logger) (Config, error) {
+	cfg, err := Load(logger)
+	if err != nil {
+		return Config{}, fmt.Errorf("config load failed: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("refusing to start: insecure configuration: %w", err)
+	}
+	return cfg, nil
+}
+
 func Load(logger *slog.Logger) (Config, error) {
 	cfg := Config{
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
