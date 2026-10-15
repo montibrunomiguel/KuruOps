@@ -12,6 +12,37 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Security
+
+- **`AUTH_MODE=dev-headers` não pode mais ser ligado por uma variável esquecida.** Esse modo troca
+  a verificação de JWT por confiança em `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` do chamador --
+  nenhuma autenticação -- e um log de aviso era a única proteção. Agora exige também
+  `ALLOW_INSECURE_DEV_AUTH=true`, e um `AUTH_MODE` desconhecido (um erro como `dev_headers` caía no
+  caminho de JWT sem avisar) é erro na inicialização. O comando do README para o modo já traz a
+  variável nova.
+- **Processos de produção recusam uma senha de banco conhecida.** Com `AUTH_MODE=jwt`, api, ingest e
+  worker se recusam a subir com as senhas que este repositório distribui como padrão de dev
+  (`kuruops_app`, `kuruops_worker`, `postgres`) ou um placeholder (`changeme`, vazia, ...) sem
+  `ALLOW_DEFAULT_CREDENTIALS=true`. `AUTH_MODE=dev` (o padrão do docker-compose) fica isento. Ver
+  `config.Config.Validate`.
+- **Os servidores HTTP agora têm timeouts de leitura, escrita e ociosidade.** Só `ReadHeaderTimeout`
+  estava definido, então um cliente que gotejava um corpo, nunca lia a resposta ou deixava uma
+  conexão parada segurava um socket e uma goroutine para sempre. A api roda com `HTTP_READ_TIMEOUT`
+  2m / `HTTP_WRITE_TIMEOUT` 90s / `HTTP_IDLE_TIMEOUT` 120s, o ingest (o exposto à internet) com
+  30s/30s/90s, o endpoint de saúde do worker com 10s/10s/60s. O stream SSE renova um deadline de
+  escrita de 30s antes de cada escrita em vez de herdar o do servidor (um stream saudável nunca é
+  cortado, um par que parou de ler é liberado), e a migração de banco externo estende o próprio
+  deadline; os dois são provados contra um servidor real nos testes, com um controle mostrando que o
+  stream comum é cortado.
+- **Kubernetes: `deploy/k8s/10-networkpolicy.yaml`.** Nega ingresso por padrão no namespace, com
+  só os caminhos necessários reabertos (frontend e ingest de webhooks vindos de fora, a API só a
+  partir do frontend, métricas só a partir do Prometheus) e uma lista de egress para o frontend.
+  Precisa de um CNI que aplique NetworkPolicy.
+- **CI: o Security Scan semanal falhando agora abre uma issue.** Ele ficou vermelho na `main` por
+  três dias porque uma execução agendada vermelha não avisa quem não está olhando a aba Actions. Um
+  job novo abre (ou comenta em) uma issue de acompanhamento quando a execução agendada falha e a
+  fecha quando uma execução posterior volta limpa; as execuções de pull request não mudam.
+
 ### Fixed
 
 - **A primeira mensagem do chat "Analisar com IA" sempre voltava como um "Alert Triage Report",

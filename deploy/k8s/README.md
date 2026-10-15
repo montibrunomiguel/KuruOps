@@ -65,6 +65,13 @@ kubectl apply -f deploy/k8s/08-backup-cronjob.yaml
 # Alertmanager receiver ships as a placeholder null route until you edit
 # 09-monitoring.yaml's alertmanager-config to point at a real destination.
 kubectl apply -f deploy/k8s/09-monitoring.yaml
+
+# Recommended: deny all in-namespace ingress by default and re-open only the
+# paths the stack uses (frontend and webhook ingest from outside, the API only
+# from the frontend, metrics only from Prometheus). Needs a CNI that enforces
+# NetworkPolicy (Calico, Cilium, ...) -- on one that does not it is silently
+# inert, so verify with the throwaway-pod check in 10-networkpolicy.yaml's header.
+kubectl apply -f deploy/k8s/10-networkpolicy.yaml
 ```
 
 Re-running the whole set after a new release is safe: the migration Job is

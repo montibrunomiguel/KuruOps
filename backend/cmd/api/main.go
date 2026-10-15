@@ -46,6 +46,13 @@ func main() {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
+	// Refuses configurations that are insecure by construction (dev-headers
+	// without its explicit acknowledgement, a well-known DB password under
+	// AUTH_MODE=jwt) -- see config.Config.Validate.
+	if err := cfg.Validate(); err != nil {
+		logger.Error("refusing to start: insecure configuration", "error", err)
+		os.Exit(1)
+	}
 
 	// AUTH_MODE has three values, two independent concerns:
 	//   - "jwt" (default): real JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH required, JWTAuth enforced.
@@ -65,7 +72,10 @@ func main() {
 	allowEphemeralKeys := cfg.AuthMode == "dev" || cfg.AuthMode == "dev-headers"
 	useDevHeaderAuth := cfg.AuthMode == "dev-headers"
 	if useDevHeaderAuth {
-		logger.Warn("AUTH_MODE=dev-headers: /api/v1 trusts X-Tenant-ID/X-User-ID headers verbatim and ignores bearer tokens, do not run this outside local development")
+		// cfg.Validate already refused to get here without
+		// ALLOW_INSECURE_DEV_AUTH=true; the warning stays so the mode is
+		// impossible to miss in the logs of an instance that chose it.
+		logger.Warn("AUTH_MODE=dev-headers: /api/v1 trusts X-Tenant-ID/X-User-ID/X-Is-Admin headers verbatim and ignores bearer tokens, do not run this outside local development")
 	}
 
 	privateKey, publicKey, err := loadOrGenerateJWTKeys(cfg, allowEphemeralKeys, logger)
@@ -338,11 +348,12 @@ func main() {
 		Tracer:                       tracer,
 	})
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := httpserver.NewServer(cfg.HTTPAddr, router, httpserver.Timeouts{
+		ReadHeader: 5 * time.Second,
+		Read:       cfg.HTTPReadTimeout,
+		Write:      cfg.HTTPWriteTimeout,
+		Idle:       cfg.HTTPIdleTimeout,
+	})
 
 	safego.Go("api.ListenAndServe", func() {
 		logger.Info("api listening", "addr", cfg.HTTPAddr)

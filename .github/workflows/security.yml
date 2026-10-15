@@ -167,3 +167,48 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: true
+
+  # The weekly scheduled run is the only thing that catches a NEW advisory
+  # against dependencies nobody has touched: a push-triggered scan only runs
+  # when someone is already looking at the PR. When it failed on 2026-10-12 it
+  # just sat red on main for three days, because a red scheduled run notifies
+  # nobody who is not already watching the Actions tab. This job turns that
+  # into an open issue (and closes it again when a later run is clean), so the
+  # failure arrives where work is actually tracked.
+  #
+  # Scheduled runs only: on a PR the author is already looking at the checks,
+  # and an issue per red PR would be noise.
+  schedule-report:
+    name: Report Scheduled Scan Result
+    needs: [govulncheck, npm-audit, secret-scan, container-scan]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    # Job-level grant: the workflow default (contents: read) stays untouched for
+    # every scanning job above, which have no business writing anything.
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_TITLE: 'Security Scan is failing on main'
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      FAILED: ${{ contains(needs.*.result, 'failure') }}
+    steps:
+      - name: Open, update or close the tracking issue
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')
+
+          if [ "$FAILED" = "true" ]; then
+            body="The scheduled Security Scan failed on \`main\`: $RUN_URL
+
+          A scheduled run exists to catch a *newly published* advisory against a dependency or base image nobody touched, so the cause is usually an upgrade away. Open the failing job for the exact package and the fixed version."
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "Still failing: $RUN_URL"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body "$body"
+            fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" \
+              --comment "The scheduled Security Scan is clean again: $RUN_URL"
+          fi

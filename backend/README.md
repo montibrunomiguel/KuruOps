@@ -62,9 +62,16 @@ To curl `/api/v1` without going through login (a shortcut, not a general-purpose
 swaps JWT verification for trusting raw headers, so a login token doesn't work in this mode):
 
 ```bash
-AUTH_MODE=dev-headers make run-api
+AUTH_MODE=dev-headers ALLOW_INSECURE_DEV_AUTH=true make run-api
 curl -H "X-Tenant-ID: <uuid>" -H "X-User-ID: <uuid>" http://localhost:8080/api/v1/alerts
 ```
+
+`ALLOW_INSECURE_DEV_AUTH=true` is required on purpose: this mode trusts `X-Tenant-ID`, `X-User-ID`
+and even `X-Is-Admin` from any caller, i.e. it is no authentication at all, so the API refuses to
+start in it unless that second variable is also set. The API (and ingest/worker) likewise refuse to
+start under `AUTH_MODE=jwt` with a well-known database password (`kuruops_app`, `postgres`, ...)
+unless `ALLOW_DEFAULT_CREDENTIALS=true` -- see `config.Config.Validate` and
+[docs/THREAT_MODEL.md](../docs/THREAT_MODEL.md).
 
 Testing the ingestion endpoint (create a test `webhook_endpoints` row first, hash the token with
 sha256):

@@ -62,9 +62,16 @@ geral — troca a verificação de JWT por confiar em headers crus, então um to
 funciona nesse modo):
 
 ```bash
-AUTH_MODE=dev-headers make run-api
+AUTH_MODE=dev-headers ALLOW_INSECURE_DEV_AUTH=true make run-api
 curl -H "X-Tenant-ID: <uuid>" -H "X-User-ID: <uuid>" http://localhost:8080/api/v1/alerts
 ```
+
+`ALLOW_INSECURE_DEV_AUTH=true` é obrigatório de propósito: esse modo confia em `X-Tenant-ID`,
+`X-User-ID` e até `X-Is-Admin` de qualquer chamador, ou seja, não é autenticação nenhuma, então a
+API se recusa a subir nele sem essa segunda variável. A API (e ingest/worker) também se recusam a
+subir com `AUTH_MODE=jwt` e uma senha de banco conhecida (`kuruops_app`, `postgres`, ...) sem
+`ALLOW_DEFAULT_CREDENTIALS=true` -- ver `config.Config.Validate` e
+[docs/THREAT_MODEL.pt-BR.md](../docs/THREAT_MODEL.pt-BR.md).
 
 Teste do endpoint de ingestão (crie um `webhook_endpoints` de teste primeiro, hash do token com
 sha256):

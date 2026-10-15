@@ -162,6 +162,35 @@ same convenience makes it a known, publicly-visible key if it's ever copy-pasted
 real deployment instead of generated fresh. `secrets.NewFromConfig` hard-fails at startup if the
 configured key still equals that exact value and `AUTH_MODE` isn't `dev`/`dev-headers`.
 
+**Insecure-by-construction configurations are refused at startup.** Every binary calls
+`config.Config.Validate` right after loading its configuration, and it refuses three things that used
+to be one forgotten variable away from a breach:
+
+- `AUTH_MODE=dev-headers` without `ALLOW_INSECURE_DEV_AUTH=true`. That mode replaces JWT verification
+  with trust in `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` supplied by the caller -- no
+  authentication at all. A warning log was the only guard; it now takes two deliberate settings.
+- An unknown `AUTH_MODE`. A typo such as `dev_headers` used to fall through to the JWT path without a
+  word, hiding the mistake.
+- `AUTH_MODE=jwt` (the production-like mode) with a well-known database password -- the ones this
+  repository ships (`kuruops_app`, `kuruops_worker`, `postgres`) or a placeholder (`changeme`,
+  `password`, an empty one) -- unless `ALLOW_DEFAULT_CREDENTIALS=true`. The app role's password is the
+  only thing between a network-adjacent attacker and every tenant's rows, and the defaults are public.
+  The dev modes are exempt, since docker-compose's defaults exist for them.
+
+**HTTP server deadlines.** Before, only `ReadHeaderTimeout` was set, so a client that trickled a
+request body, never read its response, or parked an idle keep-alive connection held a goroutine and a
+socket indefinitely. `cmd/api` now runs with read/write/idle timeouts (`HTTP_READ_TIMEOUT` 2m,
+`HTTP_WRITE_TIMEOUT` 90s, `HTTP_IDLE_TIMEOUT` 120s), `cmd/ingest` -- the only internet-facing process --
+with 30s/30s/90s, and `cmd/worker`'s health endpoint with 10s/10s/60s. The two routes that legitimately
+outlive the write timeout manage it themselves per request: the SSE stream renews a 30s deadline
+before every write (so a peer that stopped reading is released, while a healthy stream is never cut),
+and the external-database migration extends its own deadline to its configured timeout.
+
+**Kubernetes network isolation.** `deploy/k8s/10-networkpolicy.yaml` denies all ingress to the
+namespace by default and re-opens only the paths the stack needs: the frontend and the webhook ingest
+from outside, the API only from the frontend, and metrics only from Prometheus. It needs a CNI that
+enforces NetworkPolicy (Calico, Cilium, ...); on one that does not, it is silently inert.
+
 ## Outbound requests to admin-configured URLs: SSRF protection
 
 Five settings accept a URL that this codebase then dials on the tenant's behalf: an escalation

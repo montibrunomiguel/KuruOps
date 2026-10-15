@@ -39,6 +39,10 @@ func main() {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(); err != nil {
+		logger.Error("refusing to start: insecure configuration", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -149,11 +153,9 @@ func main() {
 	mux.HandleFunc("/metrics", httpserver.MetricsHandler)
 	mux.Handle("/hooks", hookLimiter(handler))
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.WrapWithObservability(mux, logger, tracer),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	// The only internet-facing process, so it gets the tightest deadlines --
+	// see httpserver.IngestTimeouts.
+	srv := httpserver.NewServer(cfg.HTTPAddr, httpserver.WrapWithObservability(mux, logger, tracer), httpserver.IngestTimeouts)
 
 	safego.Go("ingest.ListenAndServe", func() {
 		logger.Info("ingest listening", "addr", cfg.HTTPAddr)

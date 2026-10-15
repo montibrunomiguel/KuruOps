@@ -1,0 +1,162 @@
+# Network isolation for the kuruops namespace.
+#
+# Without this, every pod in the namespace can open a connection to every
+# other pod on every port: a compromised frontend container could talk straight
+# to the API, the worker's health endpoint, Prometheus or Alertmanager. These
+# policies deny all ingress by default and re-open only the paths the stack
+# actually uses:
+#
+#   internet / ingress controller ->  frontend :8080        (the SPA + /api proxy)
+#   webhook sources (SIEM/XDR)    ->  ingest   :8080        (POST /hooks)
+#   frontend                      ->  api      :8080
+#   prometheus                    ->  api, ingest, worker :8080 (/metrics)
+#   prometheus                    ->  alertmanager :9093
+#
+# Postgres is not in this namespace (see README.md "What's NOT included"), so
+# nothing here governs it -- restrict it with your database provider's own
+# firewall/security group to the cluster's egress addresses.
+#
+# REQUIRES a CNI that enforces NetworkPolicy (Calico, Cilium, Antrea, the
+# managed offerings' network-policy add-ons ...). On one that does not, these
+# objects are accepted and silently do nothing, which is worse than not having
+# them: verify enforcement before relying on it, e.g. from a throwaway pod
+#   kubectl -n kuruops run np-test --rm -it --image=busybox -- \
+#     wget -qO- --timeout=3 http://api:8080/healthz
+# which must now time out (only the frontend may reach the api).
+#
+# If an ingress controller or load balancer fronts the frontend/ingest, the
+# rules below that say "from anywhere" can be narrowed with a `from:` that
+# selects its namespace, e.g.
+#   - from:
+#       - namespaceSelector:
+#           matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+---
+# Deny all ingress to every pod in the namespace. Everything below is an
+# allow-list on top of this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: kuruops
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The SPA is the one thing users reach directly. "From anywhere" because the
+# source is whatever fronts the cluster (an ingress controller, a cloud load
+# balancer, a port-forward); narrow it with a namespaceSelector as described
+# above if you know it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: frontend }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8080 }
+---
+# Webhook senders live outside the cluster and their addresses are not
+# knowable here -- ingest authenticates each request with a per-endpoint token
+# and rate-limits per source IP instead (see docs/THREAT_MODEL.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingest-webhooks
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: ingest }
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8080 }
+---
+# The API is reachable only through the frontend's /api and /auth proxy, plus
+# Prometheus scraping /metrics. Nothing else in the namespace has a reason to
+# call it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-from-frontend-and-prometheus
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: frontend }
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# The worker serves only /healthz, /livez and /metrics. The kubelet's probes
+# are not subject to NetworkPolicy, so only Prometheus needs a rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-metrics
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: worker }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# Prometheus pushes alerts to Alertmanager; nothing else should talk to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alertmanager-from-prometheus
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: alertmanager }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 9093 }
+---
+# The frontend is the one pod that faces users, so it also gets an egress
+# allow-list: it may only call the API and resolve names. A compromised nginx
+# container then cannot reach Postgres-adjacent addresses, the metadata
+# service or the internet. api/ingest/worker are deliberately NOT egress
+# restricted: they dial admin-configured destinations (LLM providers, webhook
+# receivers, SMTP, Vault/KMS) that are not knowable here -- internal/httpguard
+# is what constrains those.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: frontend }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app: api }
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # DNS. Any namespace on :53, because the cluster DNS pods' labels differ
+    # between distributions (kube-dns / coredns).
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

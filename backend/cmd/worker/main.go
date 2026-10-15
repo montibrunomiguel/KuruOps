@@ -43,6 +43,10 @@ func main() {
 		logger.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(); err != nil {
+		logger.Error("refusing to start: insecure configuration", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -89,11 +93,7 @@ func main() {
 	healthMux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
 	healthMux.HandleFunc("/livez", httpserver.Livez)
 	healthMux.HandleFunc("/metrics", httpserver.MetricsHandler)
-	healthSrv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.WrapWithObservability(healthMux, logger, tracer),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	healthSrv := httpserver.NewServer(cfg.HTTPAddr, httpserver.WrapWithObservability(healthMux, logger, tracer), httpserver.InternalTimeouts)
 	safego.Go("worker.ListenAndServe", func() {
 		logger.Info("worker health/metrics listening", "addr", cfg.HTTPAddr)
 		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

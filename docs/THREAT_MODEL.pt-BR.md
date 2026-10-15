@@ -171,6 +171,36 @@ copiada e colada direto num deploy real em vez de gerada do zero. `secrets.NewFr
 ao iniciar se a chave configurada ainda for exatamente esse valor e `AUTH_MODE` não for
 `dev`/`dev-headers`.
 
+**Configurações inseguras por construção são recusadas na inicialização.** Todo binário chama
+`config.Config.Validate` logo depois de carregar a configuração, e ela recusa três coisas que antes
+estavam a uma variável esquecida de um incidente:
+
+- `AUTH_MODE=dev-headers` sem `ALLOW_INSECURE_DEV_AUTH=true`. Esse modo troca a verificação de JWT por
+  confiança em `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` enviados pelo chamador -- nenhuma
+  autenticação. Um log de aviso era a única proteção; agora exige duas configurações deliberadas.
+- Um `AUTH_MODE` desconhecido. Um erro de digitação como `dev_headers` caía no caminho de JWT sem
+  avisar, escondendo o engano.
+- `AUTH_MODE=jwt` (o modo de produção) com uma senha de banco conhecida -- as que este repositório
+  distribui (`kuruops_app`, `kuruops_worker`, `postgres`) ou um placeholder (`changeme`, `password`,
+  vazia) -- sem `ALLOW_DEFAULT_CREDENTIALS=true`. A senha do papel da aplicação é a única coisa entre
+  um atacante na rede e as linhas de todos os tenants, e os padrões são públicos. Os modos dev ficam
+  isentos, pois os padrões do docker-compose existem para eles.
+
+**Deadlines do servidor HTTP.** Antes só `ReadHeaderTimeout` estava definido, então um cliente que
+gotejava o corpo da requisição, nunca lia a resposta ou deixava uma conexão keep-alive parada
+segurava uma goroutine e um socket indefinidamente. O `cmd/api` agora roda com timeouts de
+leitura/escrita/ociosidade (`HTTP_READ_TIMEOUT` 2m, `HTTP_WRITE_TIMEOUT` 90s, `HTTP_IDLE_TIMEOUT`
+120s), o `cmd/ingest` -- o único processo exposto à internet -- com 30s/30s/90s, e o endpoint de saúde
+do `cmd/worker` com 10s/10s/60s. As duas rotas que legitimamente passam do timeout de escrita cuidam
+disso por requisição: o stream SSE renova um deadline de 30s antes de cada escrita (um par que parou
+de ler é liberado, e um stream saudável nunca é cortado), e a migração de banco externo estende o
+próprio deadline até o timeout configurado.
+
+**Isolamento de rede no Kubernetes.** `deploy/k8s/10-networkpolicy.yaml` nega todo ingresso ao
+namespace por padrão e reabre só os caminhos que a stack precisa: o frontend e o ingest de webhooks
+vindos de fora, a API só a partir do frontend, e as métricas só a partir do Prometheus. Precisa de um
+CNI que aplique NetworkPolicy (Calico, Cilium, ...); em um que não aplique, fica inerte sem avisar.
+
 ## Requisições de saída para URLs configuradas por admin: proteção contra SSRF
 
 Três configurações aceitam uma URL que este código então acessa em nome do tenant: o

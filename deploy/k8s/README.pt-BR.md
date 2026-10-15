@@ -69,6 +69,14 @@ kubectl apply -f deploy/k8s/08-backup-cronjob.yaml
 # até você editar o alertmanager-config em 09-monitoring.yaml para apontar
 # para um destino real.
 kubectl apply -f deploy/k8s/09-monitoring.yaml
+
+# Recomendado: nega todo ingresso dentro do namespace por padrão e reabre só os
+# caminhos que a stack usa (frontend e ingest de webhooks vindos de fora, a API
+# só a partir do frontend, métricas só a partir do Prometheus). Precisa de um
+# CNI que aplique NetworkPolicy (Calico, Cilium, ...) -- em um que não aplique
+# fica inerte sem avisar, então confirme com o teste do pod descartável no
+# cabeçalho de 10-networkpolicy.yaml.
+kubectl apply -f deploy/k8s/10-networkpolicy.yaml
 ```
 
 Reaplicar todo o conjunto após um novo release é seguro: o Job de migração é

@@ -2,10 +2,12 @@ package handlers_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,4 +116,82 @@ func TestEventsHandlers_Stream_MissingTenantContext(t *testing.T) {
 	h.Stream(rec, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// sseServer runs h.Stream behind a real net/http server whose Read/Write
+// timeouts are far shorter than the test, the way cmd/api's are shorter than a
+// real stream's lifetime. A ResponseRecorder cannot show this: the bug being
+// guarded is the server cutting a healthy connection, and only a real
+// connection has a deadline to cut it with.
+func sseServer(t *testing.T, tenantID uuid.UUID, handler func(w http.ResponseWriter, r *http.Request), timeout time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(handler))
+	srv.Config.ReadTimeout = timeout
+	srv.Config.WriteTimeout = timeout
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// countPings reads the stream for d and returns how many keep-alive comments
+// arrived and whether the connection was still open when the window ended.
+func countPings(t *testing.T, url string, d time.Duration) (pings int, stillOpen bool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		pings += strings.Count(string(buf[:n]), ": ping")
+		if err != nil {
+			// Our own deadline firing means the server never closed on us.
+			return pings, errors.Is(err, context.DeadlineExceeded)
+		}
+	}
+}
+
+// The server-wide WriteTimeout added for slow-client protection would end every
+// SSE stream a minute and a half after it opened, however healthy. Stream
+// renews its own write deadline per write instead.
+func TestEventsHandlers_Stream_SurvivesTheServerWriteTimeout(t *testing.T) {
+	restore := handlers.SetSSETimingsForTest(40*time.Millisecond, 400*time.Millisecond)
+	defer restore()
+
+	h := handlers.NewEventsHandlers(newTestBroadcaster(t))
+	tenantID := uuid.New()
+	srv := sseServer(t, tenantID, func(w http.ResponseWriter, r *http.Request) {
+		h.Stream(w, withClaims(r, tenantID, uuid.New(), nil))
+	}, 300*time.Millisecond)
+
+	// 1.2s is four times the server's 300ms WriteTimeout.
+	pings, stillOpen := countPings(t, srv.URL, 1200*time.Millisecond)
+	assert.True(t, stillOpen, "the server closed a healthy stream after its WriteTimeout")
+	assert.GreaterOrEqual(t, pings, 15, "pings must keep flowing well past the server's WriteTimeout")
+}
+
+// The control for the test above: the identical stream written by a handler
+// that does NOT renew its deadline is cut by the same server. Without this the
+// test above would also pass if WriteTimeout were not being enforced at all.
+func TestEventsHandlers_Stream_ControlPlainStreamIsCutByWriteTimeout(t *testing.T) {
+	srv := sseServer(t, uuid.New(), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		for r.Context().Err() == nil {
+			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+			time.Sleep(40 * time.Millisecond)
+		}
+	}, 300*time.Millisecond)
+
+	_, stillOpen := countPings(t, srv.URL, 1200*time.Millisecond)
+	assert.False(t, stillOpen, "the control stream should have been closed by the server's WriteTimeout")
 }

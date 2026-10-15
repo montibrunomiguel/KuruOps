@@ -4,10 +4,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,10 +30,45 @@ type Config struct {
 	// don't set it.
 	JWTPrivateKeyPath string
 
-	// AuthMode "dev" enables the trust-any-header auth bypass
-	// (middleware.DevHeaderAuth). Anything else requires real JWT
-	// verification. Never set to "dev" outside a developer's own machine.
+	// AuthMode is "jwt" (the default: real JWT verification, explicit keys),
+	// "dev" (real auth, but a throwaway/persisted keypair is generated when no
+	// key paths are set) or "dev-headers" (swaps JWT verification for
+	// middleware.DevHeaderAuth, which trusts X-Tenant-ID/X-User-ID/X-Is-Admin
+	// verbatim -- a complete authentication bypass). Validate refuses
+	// "dev-headers" unless AllowInsecureDevAuth is also set, and refuses an
+	// unknown value. Never use "dev" or "dev-headers" outside a developer's
+	// own machine.
 	AuthMode string
+
+	// AllowInsecureDevAuth (ALLOW_INSECURE_DEV_AUTH=true) is the explicit,
+	// separate acknowledgement AUTH_MODE=dev-headers requires. A bare warning
+	// log was the only thing standing between that mode and an
+	// unauthenticated API when the variable was set by accident (a copied
+	// .env, a template left in a manifest); this makes it two deliberate
+	// settings instead of one.
+	AllowInsecureDevAuth bool
+
+	// AllowDefaultCredentials (ALLOW_DEFAULT_CREDENTIALS=true) lets a
+	// production-like process (AUTH_MODE=jwt) start with a well-known
+	// database password. Off by default -- see Validate.
+	AllowDefaultCredentials bool
+
+	// HTTPReadTimeout/HTTPWriteTimeout/HTTPIdleTimeout are cmd/api's
+	// http.Server timeouts. Only ReadHeaderTimeout was set before, so a client
+	// that opened a connection and trickled a body, or simply never read the
+	// response, held a connection and its goroutine indefinitely.
+	//
+	// The write timeout is deliberately longer than HTTPRequestTimeout: that
+	// bound cancels the handler's context, this one cuts the socket, and the
+	// socket must outlive the 504 that chimw.Timeout still has to write. The
+	// two routes that legitimately run longer -- the SSE stream and the
+	// external-database migration -- manage their own write deadline per
+	// request (see handlers.EventsHandlers.Stream and
+	// middleware.ExtendWriteDeadline) instead of this being raised for
+	// everything.
+	HTTPReadTimeout  time.Duration
+	HTTPWriteTimeout time.Duration
+	HTTPIdleTimeout  time.Duration
 
 	// DevKeysDir is where cmd/api persists the JWT keypair it generates for
 	// AUTH_MODE=dev/dev-headers when JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH
@@ -175,10 +213,21 @@ func Load(logger *slog.Logger) (Config, error) {
 		JWTPublicKeyPath:  os.Getenv("JWT_PUBLIC_KEY_PATH"),
 		JWTPrivateKeyPath: os.Getenv("JWT_PRIVATE_KEY_PATH"),
 		AuthMode:          getEnvDefault("AUTH_MODE", "jwt"),
-		DevKeysDir:        getEnvDefault("DEV_KEYS_DIR", ".dev-keys"),
-		ShutdownTimeout:   getEnvDurationDefault(logger, "SHUTDOWN_TIMEOUT", 15*time.Second),
-		UploadDir:         getEnvDefault("UPLOAD_DIR", "/data/uploads"),
-		AppBaseURL:        getEnvDefault("APP_BASE_URL", "http://localhost:3000"),
+
+		AllowInsecureDevAuth:    os.Getenv("ALLOW_INSECURE_DEV_AUTH") == "true",
+		AllowDefaultCredentials: os.Getenv("ALLOW_DEFAULT_CREDENTIALS") == "true",
+
+		// 2m read covers a 25 MiB attachment (the upload cap) from a ~1.7 Mbit/s
+		// client; anything slower than that is the trickling client this exists
+		// to cut off.
+		HTTPReadTimeout:  getEnvDurationDefault(logger, "HTTP_READ_TIMEOUT", 2*time.Minute),
+		HTTPWriteTimeout: getEnvDurationDefault(logger, "HTTP_WRITE_TIMEOUT", 90*time.Second),
+		HTTPIdleTimeout:  getEnvDurationDefault(logger, "HTTP_IDLE_TIMEOUT", 120*time.Second),
+
+		DevKeysDir:      getEnvDefault("DEV_KEYS_DIR", ".dev-keys"),
+		ShutdownTimeout: getEnvDurationDefault(logger, "SHUTDOWN_TIMEOUT", 15*time.Second),
+		UploadDir:       getEnvDefault("UPLOAD_DIR", "/data/uploads"),
+		AppBaseURL:      getEnvDefault("APP_BASE_URL", "http://localhost:3000"),
 
 		SecretsBackend:       getEnvDefault("SECRETS_BACKEND", "env"),
 		SecretsEncryptionKey: os.Getenv("SECRETS_ENCRYPTION_KEY"),
@@ -219,6 +268,83 @@ func Load(logger *slog.Logger) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// weakDatabasePasswords are the credentials this repository itself ships as
+// local-development defaults (docker-compose.yml, the db/init role scripts,
+// Taskfile.yml) plus the placeholders people leave behind. A production-like
+// process must not start with one of them: the app role's password is the only
+// thing between a network-adjacent attacker and every tenant's rows, and the
+// defaults are public in the repo.
+var weakDatabasePasswords = map[string]struct{}{
+	"":               {},
+	"postgres":       {},
+	"password":       {},
+	"changeme":       {},
+	"change_me":      {},
+	"admin":          {},
+	"root":           {},
+	"secret":         {},
+	"kuruops":        {},
+	"kuruops_app":    {},
+	"kuruops_worker": {},
+}
+
+// Validate refuses configurations that are insecure by construction, so they
+// have to be chosen on purpose rather than arrived at by accident. It is the
+// startup counterpart of the SECRETS_ENCRYPTION_KEY check in
+// secrets.NewFromConfig (same signal: AUTH_MODE tells it whether this is a
+// developer's machine) and is called by every cmd/* binary right after Load.
+//
+//   - An unknown AUTH_MODE is an error: a typo such as "dev_headers" used to
+//     fall through to the JWT path silently, hiding the mistake.
+//   - AUTH_MODE=dev-headers additionally needs ALLOW_INSECURE_DEV_AUTH=true. It
+//     trusts client-supplied identity headers (including X-Is-Admin), so it
+//     must never be reachable by one forgotten environment variable.
+//   - AUTH_MODE=jwt (the production-like mode) refuses a well-known database
+//     password unless ALLOW_DEFAULT_CREDENTIALS=true. The dev modes are exempt:
+//     they are what docker-compose's defaults are for.
+//
+// Every error names the exact variable that overrides it, so a deliberate
+// choice is one line, not an investigation.
+func (c Config) Validate() error {
+	switch c.AuthMode {
+	case "jwt", "dev", "dev-headers":
+	default:
+		return fmt.Errorf("unknown AUTH_MODE %q: must be one of jwt, dev, dev-headers", c.AuthMode)
+	}
+
+	if c.AuthMode == "dev-headers" && !c.AllowInsecureDevAuth {
+		return errors.New("AUTH_MODE=dev-headers disables authentication entirely (the API would trust X-Tenant-ID, X-User-ID and X-Is-Admin from any caller); " +
+			"refusing to start. If this really is a throwaway local instance, also set ALLOW_INSECURE_DEV_AUTH=true")
+	}
+
+	if c.AuthMode == "jwt" && !c.AllowDefaultCredentials {
+		if pw, weak := databasePasswordIsWeak(c.DatabaseURL); weak {
+			shown := "(empty)"
+			if pw != "" {
+				shown = fmt.Sprintf("%q", pw)
+			}
+			return fmt.Errorf("DATABASE_URL uses a well-known database password %s, and AUTH_MODE=jwt marks this as a production-like deployment; "+
+				"refusing to start. Set a strong password for the role (see db/init/*.sql), or, for a local setup you accept the risk of, "+
+				"set ALLOW_DEFAULT_CREDENTIALS=true or use AUTH_MODE=dev", shown)
+		}
+	}
+
+	return nil
+}
+
+// databasePasswordIsWeak extracts the password from a postgres URL and reports
+// whether it is on the weak list. A URL that does not parse reports not-weak:
+// db.NewPool fails on it moments later with a better error than this could give.
+func databasePasswordIsWeak(databaseURL string) (password string, weak bool) {
+	u, err := url.Parse(databaseURL)
+	if err != nil || u.User == nil {
+		return "", false
+	}
+	pw, _ := u.User.Password()
+	_, weak = weakDatabasePasswords[strings.ToLower(pw)]
+	return pw, weak
 }
 
 func getEnvDefault(key, def string) string {

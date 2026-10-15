@@ -11,6 +11,36 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Security
+
+- **`AUTH_MODE=dev-headers` can no longer be switched on by one forgotten variable.** That mode
+  replaces JWT verification with trust in `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` from the caller
+  -- no authentication at all -- and a warning log was the only guard. It now also requires
+  `ALLOW_INSECURE_DEV_AUTH=true`, and an unknown `AUTH_MODE` (a typo such as `dev_headers` used to
+  fall through to the JWT path silently) is a startup error. The README command for the mode
+  carries the new variable.
+- **Production-like processes refuse a well-known database password.** Under `AUTH_MODE=jwt`, the
+  api, ingest and worker refuse to start with the passwords this repository ships as dev defaults
+  (`kuruops_app`, `kuruops_worker`, `postgres`) or a placeholder (`changeme`, empty, ...) unless
+  `ALLOW_DEFAULT_CREDENTIALS=true`. `AUTH_MODE=dev` (docker-compose's default) is exempt. See
+  `config.Config.Validate`.
+- **HTTP servers now have read, write and idle timeouts.** Only `ReadHeaderTimeout` was set, so a
+  client that trickled a body, never read its response or parked an idle connection held a socket
+  and a goroutine forever. The api runs with `HTTP_READ_TIMEOUT` 2m / `HTTP_WRITE_TIMEOUT` 90s /
+  `HTTP_IDLE_TIMEOUT` 120s, ingest (the internet-facing one) 30s/30s/90s, the worker's health
+  endpoint 10s/10s/60s. The SSE stream renews a 30s write deadline before each write instead of
+  inheriting the server's (a healthy stream is never cut, a peer that stopped reading is released),
+  and the external-database migration extends its own deadline; both are proven against a real
+  server in tests, with a control showing the plain stream is cut.
+- **Kubernetes: `deploy/k8s/10-networkpolicy.yaml`.** Default-deny ingress for the namespace, with
+  only the needed paths re-opened (frontend and webhook ingest from outside, the API only from the
+  frontend, metrics only from Prometheus) and an egress allow-list for the frontend. Needs a CNI
+  that enforces NetworkPolicy.
+- **CI: a failing weekly Security Scan now opens an issue.** It sat red on `main` for three days
+  because a red scheduled run notifies nobody who is not already watching the Actions tab. A new
+  job opens (or comments on) a tracking issue when the scheduled run fails and closes it when a
+  later run is clean; pull-request runs are unaffected.
+
 ### Fixed
 
 - **The first message in the "Analyze with AI" chat always came back as an "Alert Triage Report",
