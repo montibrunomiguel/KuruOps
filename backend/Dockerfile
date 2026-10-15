@@ -36,8 +36,12 @@ FROM alpine:3.24 AS base
 # Upgrading here closes that window -- the container scan flagged
 # libcrypto3 3.5.7-r0 (CVE-2026-14456, an OpenSSL denial of service) while
 # alpine:3.24 still carried it.
-RUN apk --no-cache upgrade && apk add --no-cache ca-certificates tzdata && adduser -D -H kuruops
-USER kuruops
+RUN apk --no-cache upgrade && apk add --no-cache ca-certificates tzdata && adduser -D -H -u 1000 kuruops
+# Numeric, not "USER kuruops": a pod with runAsNonRoot: true is refused ("image has
+# non-numeric user, cannot verify user is non-root") when the image's user is a name,
+# so by name none of the Kubernetes Deployments could start. 1000 is also what
+# 04-api.yaml's fsGroup assumes.
+USER 1000:1000
 
 FROM base AS api
 COPY --from=build /out/api /usr/local/bin/api
@@ -54,7 +58,7 @@ RUN mkdir -p /app/.dev-keys
 # ("could not store uploaded file"). Needs root only for the chown.
 USER root
 RUN mkdir -p /data/uploads && chown kuruops:kuruops /data/uploads
-USER kuruops
+USER 1000:1000
 ENTRYPOINT ["/usr/local/bin/api"]
 
 FROM base AS ingest

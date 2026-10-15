@@ -43,6 +43,13 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **The Kubernetes Deployments can start.** Every manifest sets `runAsNonRoot: true`, but the images
+  declared their user by name (`USER kuruops`, `USER nginx`), and the kubelet refuses a pod when it
+  "cannot verify user is non-root" for a non-numeric user -- so none of api, ingest, worker or frontend
+  could ever leave `CreateContainerConfigError` on a real cluster. The images now use numeric users
+  (1000 and 101). Found by deploying the manifests to a kind cluster; there, NetworkPolicy (Calico),
+  the frontend-to-api proxy through kube-dns, PDBs and the frontend HPA (2 to 4 replicas under load)
+  were also exercised.
 - **Attachment uploads work on a fresh deploy.** The `uploads` volume (compose) and PVC (Kubernetes)
   were mounted root-owned while the api runs as the non-root `kuruops` user, so every upload with local
   storage failed with "could not store uploaded file". The image now creates `/data/uploads` owned by

@@ -45,6 +45,13 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Os Deployments do Kubernetes conseguem iniciar.** Todo manifesto define `runAsNonRoot: true`, mas as
+  imagens declaravam o usuário por nome (`USER kuruops`, `USER nginx`), e o kubelet recusa o pod quando
+  "cannot verify user is non-root" para um usuário não numérico -- então nenhum de api, ingest, worker ou
+  frontend saía de `CreateContainerConfigError` num cluster de verdade. As imagens agora usam usuários
+  numéricos (1000 e 101). Achado ao implantar os manifestos num cluster kind; ali também foram exercitados
+  NetworkPolicy (Calico), o proxy frontend-api via kube-dns, os PDBs e o HPA do frontend (de 2 para 4
+  réplicas sob carga).
 - **Upload de anexos funciona num deploy novo.** O volume `uploads` (compose) e o PVC (Kubernetes)
   eram montados com dono root enquanto o api roda como o usuário não-root `kuruops`, então todo upload
   com armazenamento local falhava com "could not store uploaded file". A imagem agora cria

@@ -30,7 +30,9 @@ FROM nginxinc/nginx-unprivileged:1.31-alpine
 # patch-level security fix.
 USER root
 RUN apk update && apk upgrade --no-cache
-USER nginx
+# Numeric (nginx is uid/gid 101 in this base image): a Kubernetes pod with
+# runAsNonRoot: true refuses to start an image whose USER is a name.
+USER 101:101
 # nginx.conf is a template: the base image's entrypoint renders it into
 # /etc/nginx/conf.d/default.conf at start, filling in the two variables below
 # (the resolver comes from the container's own /etc/resolv.conf). Override
