@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -52,7 +53,7 @@ func TestLivez_AlwaysReturns200(t *testing.T) {
 }
 
 func TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	orig := globalMetrics
 	globalMetrics = m
 	defer func() { globalMetrics = orig }()
@@ -75,8 +76,8 @@ func TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if got := m.httpRequestsTotal.Load(); got != 1 {
-		t.Fatalf("expected the request to be recorded in metrics, got %d", got)
+	if got := testutil.ToFloat64(m.requests); got != 1 {
+		t.Fatalf("expected the request to be recorded in metrics, got %v", got)
 	}
 
 	var entry map[string]any
@@ -106,7 +107,7 @@ func TestWrapWithObservability_RecoversFromPanic(t *testing.T) {
 	// same isolation TestWrapWithObservability_AssignsRequestIDAndRecordsMetrics
 	// above already uses.
 	orig := globalMetrics
-	globalMetrics = &MetricsCollector{}
+	globalMetrics = NewMetricsCollector()
 	defer func() { globalMetrics = orig }()
 
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))

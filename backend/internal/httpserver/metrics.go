@@ -2,78 +2,101 @@ package httpserver
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/domain"
 )
 
-// numDurationBuckets/durationBucketBoundsSeconds define the request-
-// duration histogram's buckets -- a fixed, hand-rolled set close to
-// Prometheus's own client library defaults, small enough to cover typical
-// request latency plus the occasional slow one (e.g. a synchronous
-// validation step) without adding client_golang as a dependency just for
-// this (see this project's general lean-dependency stance).
-const numDurationBuckets = 9
+// durationBucketBoundsSeconds are the request-duration histogram's buckets: close
+// to Prometheus's own defaults, wide enough to cover typical latency plus the
+// occasional slow request (e.g. a synchronous validation step). Kept identical to
+// what the hand-written exposition used, so existing dashboards and the
+// KuruOpsHighLatencyP99 rule see the same series.
+var durationBucketBoundsSeconds = []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 
-var durationBucketBoundsSeconds = [numDurationBuckets]float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
-
-// MetricsCollector tracks HTTP statistics for Prometheus scraping.
+// MetricsCollector holds this process's Prometheus metrics. It used to render the
+// exposition format by hand (counters in atomics, a histogram in a bucket array,
+// HELP/TYPE lines in Fprintf); it is now a thin layer over client_golang, which
+// gets the format, escaping, content negotiation and the Go-runtime/process
+// collectors right without this package maintaining them. Every metric name and
+// label from the hand-written version is preserved -- alert rules depend on them.
+//
+// Each MetricsCollector has its own registry, so a test can build one and not see
+// (or disturb) what another test or the process-wide instance has recorded.
 type MetricsCollector struct {
-	httpRequestsTotal atomic.Uint64
-	http2xxTotal      atomic.Uint64
-	http4xxTotal      atomic.Uint64
-	http5xxTotal      atomic.Uint64
-	activeSSE         atomic.Int64
+	registry *prometheus.Registry
 
-	durationBucketCounts [numDurationBuckets]atomic.Uint64
-	durationCount        atomic.Uint64
-	durationSumMicros    atomic.Uint64
+	requests    prometheus.Counter
+	requests2xx prometheus.Counter
+	requests4xx prometheus.Counter
+	requests5xx prometheus.Counter
+	duration    prometheus.Histogram
+	activeSSE   prometheus.Gauge
 
-	// pool is optional (see SetPool) -- MetricsHandler simply omits the
-	// kuruops_db_pool_* gauges when it's never registered.
-	pool *pgxpool.Pool
+	// lastSweepSuccess is labelled sweep_job, not job: Prometheus injects its own
+	// "job" label onto every scraped series from the scrape config's job_name (see
+	// deploy/k8s/09-monitoring.yaml), so a custom label also called "job" would
+	// silently collide with it.
+	lastSweepSuccess *prometheus.GaugeVec
 
-	// lastSweepSuccessUnix tracks, per cmd/worker sweep job name (see
-	// runLocked's job strings), the unix time it last completed a tick
-	// without panicking -- a zero-value sync.Map needs no constructor,
-	// matching every other field here being safe to use straight off
-	// &MetricsCollector{} (see this type's own test fixtures). This is the
-	// first labeled metric in this file, by necessity: an unlabeled single
-	// gauge couldn't distinguish "escalations sweep is stuck" from "SLA
-	// sweep is stuck". The label is named sweep_job, not job -- Prometheus
-	// auto-injects its own "job" label onto every scraped series from the
-	// scrape config's job_name (see deploy/k8s/09-monitoring.yaml), so a
-	// custom label also called "job" would silently collide with it.
-	lastSweepSuccessUnix sync.Map // map[string]int64
-
-	// aiQueueStats is optional (see SetAIQueueStats): only the process that works
-	// the auto-analysis queue (cmd/ingest) registers it.
-	aiQueueStats func(ctx context.Context) (domain.AIAnalysisJobStats, error)
+	// pool and aiQueue are read at scrape time by their collectors, and are optional:
+	// until SetPool / SetAIQueueStats is called the series are simply absent.
+	pool    atomic.Pointer[pgxpool.Pool]
+	aiQueue atomic.Pointer[aiQueueSource]
 }
 
-// RecordSweepSuccess stamps job's last-success time to now -- called by
-// cmd/worker's runLocked immediately after a sweep tick's fn returns
-// without panicking. Only the replica that actually won the tick's
-// Postgres advisory lock calls this (see db.Pool.WithAdvisoryLock), so in
-// a single-worker-replica deployment (the current default -- see
-// deploy/k8s/05-ingest.yaml's sibling comment on why worker stays at 1) the
-// exposed gauge is exactly "when did this job last actually run". Scaling
-// worker to more than one replica would need an alert rule that takes the
-// max across replicas' series, not a per-pod threshold, since only whichever
-// replica wins a given tick updates its own local value.
-func (m *MetricsCollector) RecordSweepSuccess(job string) {
-	m.lastSweepSuccessUnix.Store(job, time.Now().Unix())
+type aiQueueSource struct {
+	stats func(ctx context.Context) (domain.AIAnalysisJobStats, error)
 }
 
-var globalMetrics = &MetricsCollector{}
+// NewMetricsCollector builds a collector with a fresh registry holding the HTTP,
+// SSE, sweep, build-info, DB-pool and AI-queue metrics plus the standard Go
+// runtime and process collectors.
+func NewMetricsCollector() *MetricsCollector {
+	m := &MetricsCollector{registry: prometheus.NewRegistry()}
+
+	m.requests = prometheus.NewCounter(prometheus.CounterOpts{Name: "kuruops_http_requests_total", Help: "Total number of HTTP requests processed."})
+	m.requests2xx = prometheus.NewCounter(prometheus.CounterOpts{Name: "kuruops_http_requests_2xx_total", Help: "Total number of 2xx HTTP responses."})
+	m.requests4xx = prometheus.NewCounter(prometheus.CounterOpts{Name: "kuruops_http_requests_4xx_total", Help: "Total number of 4xx HTTP responses."})
+	m.requests5xx = prometheus.NewCounter(prometheus.CounterOpts{Name: "kuruops_http_requests_5xx_total", Help: "Total number of 5xx HTTP responses."})
+	m.duration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "kuruops_http_request_duration_seconds",
+		Help:    "HTTP request duration in seconds.",
+		Buckets: durationBucketBoundsSeconds,
+	})
+	m.activeSSE = prometheus.NewGauge(prometheus.GaugeOpts{Name: "kuruops_sse_active_connections", Help: "Current active SSE stream connections."})
+	m.lastSweepSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "kuruops_worker_last_sweep_success_timestamp",
+		Help: "Unix time each named cmd/worker sweep job last completed a tick without panicking.",
+	}, []string{"sweep_job"})
+
+	m.registry.MustRegister(
+		m.requests, m.requests2xx, m.requests4xx, m.requests5xx, m.duration,
+		m.activeSSE, m.lastSweepSuccess, buildInfoCollector{},
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		&poolCollector{m: m},
+		&aiQueueCollector{m: m},
+	)
+	return m
+}
+
+// globalMetrics is created in init, not as a package-level initializer: the
+// collectors above describe themselves with package-level Descs, and Go does not
+// see that dependency through the interface call, so an initializer could run
+// before they exist.
+var globalMetrics *MetricsCollector
+
+func init() { globalMetrics = NewMetricsCollector() }
 
 // GetMetrics returns the global metrics collector instance.
 func GetMetrics() *MetricsCollector {
@@ -81,66 +104,66 @@ func GetMetrics() *MetricsCollector {
 }
 
 // SetMetricsForTest overrides the global metrics collector and returns the
-// previous one -- lets a test in another package (e.g. cmd/worker, which
-// can't reach the unexported globalMetrics var this package's own tests
-// swap directly) isolate its assertions from whatever the shared global
-// collector has already accumulated. Callers should restore the returned
-// value when done, same pattern as this package's own tests.
+// previous one -- lets a test in another package (e.g. cmd/worker, which can't
+// reach the unexported globalMetrics var this package's own tests swap directly)
+// isolate its assertions from whatever the shared global collector has already
+// accumulated. Callers should restore the returned value when done.
 func SetMetricsForTest(m *MetricsCollector) *MetricsCollector {
 	old := globalMetrics
 	globalMetrics = m
 	return old
 }
 
+// RecordSweepSuccess stamps job's last-success time to now -- called by
+// cmd/worker's runLocked immediately after a sweep tick's fn returns without
+// panicking. Only the replica that actually won the tick's Postgres advisory lock
+// calls this (see db.Pool.WithAdvisoryLock), so with several worker replicas only
+// the one that ran the tick updates its own local value: the alert rule has to
+// take the max across replicas' series, not a per-pod threshold.
+func (m *MetricsCollector) RecordSweepSuccess(job string) {
+	// Whole seconds, as the hand-written gauge was, not SetToCurrentTime's fractions.
+	m.lastSweepSuccess.WithLabelValues(job).Set(float64(time.Now().Unix()))
+}
+
+// RecordRequest counts one finished request and observes its duration.
 func (m *MetricsCollector) RecordRequest(status int, duration time.Duration) {
-	m.httpRequestsTotal.Add(1)
+	m.requests.Inc()
 	switch {
 	case status >= 200 && status < 300:
-		m.http2xxTotal.Add(1)
+		m.requests2xx.Inc()
 	case status >= 400 && status < 500:
-		m.http4xxTotal.Add(1)
+		m.requests4xx.Inc()
 	case status >= 500:
-		m.http5xxTotal.Add(1)
+		m.requests5xx.Inc()
 	}
-
-	m.durationCount.Add(1)
-	m.durationSumMicros.Add(uint64(duration.Microseconds())) //nolint:gosec // duration is never negative
-	seconds := duration.Seconds()
-	// Prometheus histogram buckets are cumulative (le="X" counts every
-	// observation <= X, not just the ones that specific bin covers) -- bump
-	// every bucket boundary this observation falls at or under.
-	for i, bound := range durationBucketBoundsSeconds {
-		if seconds <= bound {
-			m.durationBucketCounts[i].Add(1)
-		}
-	}
+	m.duration.Observe(duration.Seconds())
 }
 
-func (m *MetricsCollector) IncSSE() {
-	m.activeSSE.Add(1)
-}
+func (m *MetricsCollector) IncSSE() { m.activeSSE.Inc() }
 
-func (m *MetricsCollector) DecSSE() {
-	m.activeSSE.Add(-1)
-}
+func (m *MetricsCollector) DecSSE() { m.activeSSE.Dec() }
 
-// SetPool registers the pool MetricsHandler reports kuruops_db_pool_*
-// gauges for -- called once at startup (see cmd/api/main.go,
-// cmd/worker/main.go). Sizing these correctly matters once running more
-// than one replica (see config.Config's DBPoolMaxConns doc comment); seeing
-// idle vs. acquired vs. the configured max here is what tells you whether
-// the current sizing is actually adequate instead of guessing.
+// SetPool registers the pool kuruops_db_pool_* gauges are reported for -- called
+// once at startup. Sizing these correctly matters once running more than one
+// replica (see config.Config's DBPoolMaxConns doc comment); seeing idle vs.
+// acquired vs. the configured max here is what tells you whether the current
+// sizing is actually adequate instead of guessing.
 func (m *MetricsCollector) SetPool(pool *pgxpool.Pool) {
-	m.pool = pool
+	m.pool.Store(pool)
 }
 
-// SetAIQueueStats registers where MetricsHandler reads the auto-analysis queue's
-// health from, reported as kuruops_ai_analysis_jobs{status} and
+// SetAIQueueStats registers where the auto-analysis queue's health is read from,
+// reported as kuruops_ai_analysis_jobs{status} and
 // kuruops_ai_analysis_oldest_pending_seconds. Called once at startup by the
-// process that consumes the queue (cmd/ingest). It is read at scrape time, so the
-// numbers are exact rather than counters a restart would reset.
+// process that consumes the queue. It is read at scrape time, so the numbers are
+// exact rather than counters a restart would reset.
 func (m *MetricsCollector) SetAIQueueStats(fn func(ctx context.Context) (domain.AIAnalysisJobStats, error)) {
-	m.aiQueueStats = fn
+	m.aiQueue.Store(&aiQueueSource{stats: fn})
+}
+
+// Handler serves this collector's metrics in the Prometheus exposition format.
+func (m *MetricsCollector) Handler() http.Handler {
+	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
 }
 
 // MetricsMiddleware wraps handlers to collect status code and duration metrics.
@@ -157,105 +180,83 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 
 // MetricsHandler serves Prometheus exposition format metrics at GET /metrics.
 func MetricsHandler(w http.ResponseWriter, r *http.Request) {
-	m := GetMetrics()
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.WriteHeader(http.StatusOK)
-
-	fmt.Fprintf(w, "# HELP kuruops_http_requests_total Total number of HTTP requests processed.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_http_requests_total counter\n")
-	fmt.Fprintf(w, "kuruops_http_requests_total %d\n\n", m.httpRequestsTotal.Load())
-
-	fmt.Fprintf(w, "# HELP kuruops_http_requests_2xx_total Total number of 2xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_http_requests_2xx_total counter\n")
-	fmt.Fprintf(w, "kuruops_http_requests_2xx_total %d\n\n", m.http2xxTotal.Load())
-
-	fmt.Fprintf(w, "# HELP kuruops_http_requests_4xx_total Total number of 4xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_http_requests_4xx_total counter\n")
-	fmt.Fprintf(w, "kuruops_http_requests_4xx_total %d\n\n", m.http4xxTotal.Load())
-
-	fmt.Fprintf(w, "# HELP kuruops_http_requests_5xx_total Total number of 5xx HTTP responses.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_http_requests_5xx_total counter\n")
-	fmt.Fprintf(w, "kuruops_http_requests_5xx_total %d\n\n", m.http5xxTotal.Load())
-
-	fmt.Fprintf(w, "# HELP kuruops_http_request_duration_seconds HTTP request duration in seconds.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_http_request_duration_seconds histogram\n")
-	for i, bound := range durationBucketBoundsSeconds {
-		fmt.Fprintf(w, "kuruops_http_request_duration_seconds_bucket{le=\"%g\"} %d\n", bound, m.durationBucketCounts[i].Load())
-	}
-	count := m.durationCount.Load()
-	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_bucket{le=\"+Inf\"} %d\n", count)
-	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_sum %g\n", float64(m.durationSumMicros.Load())/1e6)
-	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_count %d\n\n", count)
-
-	fmt.Fprintf(w, "# HELP kuruops_build_info Always 1; the build label identifies the sources this binary was compiled from. More than one distinct value across api/ingest/worker means a partial deploy.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_build_info gauge\n")
-	fmt.Fprintf(w, "kuruops_build_info{build=%q} 1\n\n", buildinfo.Build)
-
-	fmt.Fprintf(w, "# HELP kuruops_sse_active_connections Current active SSE stream connections.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_sse_active_connections gauge\n")
-	fmt.Fprintf(w, "kuruops_sse_active_connections %d\n", m.activeSSE.Load())
-
-	// Absent entirely on a fresh process until each job's first tick
-	// completes -- Prometheus tolerates a gauge series simply not existing
-	// yet, no need to pre-seed zeros for jobs that haven't run.
-	var sweepLines []string
-	m.lastSweepSuccessUnix.Range(func(k, v any) bool {
-		sweepLines = append(sweepLines, fmt.Sprintf("kuruops_worker_last_sweep_success_timestamp{sweep_job=%q} %d\n", k, v))
-		return true
-	})
-	if len(sweepLines) > 0 {
-		fmt.Fprintf(w, "\n# HELP kuruops_worker_last_sweep_success_timestamp Unix time each named cmd/worker sweep job last completed a tick without panicking.\n")
-		fmt.Fprintf(w, "# TYPE kuruops_worker_last_sweep_success_timestamp gauge\n")
-		for _, line := range sweepLines {
-			fmt.Fprint(w, line)
-		}
-	}
-
-	if m.pool != nil {
-		stat := m.pool.Stat()
-		fmt.Fprintf(w, "\n# HELP kuruops_db_pool_total_conns Current total connections (idle + in use) in the pool.\n")
-		fmt.Fprintf(w, "# TYPE kuruops_db_pool_total_conns gauge\n")
-		fmt.Fprintf(w, "kuruops_db_pool_total_conns %d\n\n", stat.TotalConns())
-
-		fmt.Fprintf(w, "# HELP kuruops_db_pool_idle_conns Current idle connections in the pool.\n")
-		fmt.Fprintf(w, "# TYPE kuruops_db_pool_idle_conns gauge\n")
-		fmt.Fprintf(w, "kuruops_db_pool_idle_conns %d\n\n", stat.IdleConns())
-
-		fmt.Fprintf(w, "# HELP kuruops_db_pool_acquired_conns Current in-use (acquired) connections in the pool.\n")
-		fmt.Fprintf(w, "# TYPE kuruops_db_pool_acquired_conns gauge\n")
-		fmt.Fprintf(w, "kuruops_db_pool_acquired_conns %d\n\n", stat.AcquiredConns())
-
-		fmt.Fprintf(w, "# HELP kuruops_db_pool_max_conns The pool's configured maximum size.\n")
-		fmt.Fprintf(w, "# TYPE kuruops_db_pool_max_conns gauge\n")
-		fmt.Fprintf(w, "kuruops_db_pool_max_conns %d\n", stat.MaxConns())
-	}
-
-	m.writeAIQueueMetrics(w, r)
+	GetMetrics().Handler().ServeHTTP(w, r)
 }
 
-// writeAIQueueMetrics emits the auto-analysis queue gauges. A failing read is
+// poolCollector reports the database pool's gauges, read when scraped.
+type poolCollector struct{ m *MetricsCollector }
+
+var (
+	poolTotalDesc    = prometheus.NewDesc("kuruops_db_pool_total_conns", "Current total connections (idle + in use) in the pool.", nil, nil)
+	poolIdleDesc     = prometheus.NewDesc("kuruops_db_pool_idle_conns", "Current idle connections in the pool.", nil, nil)
+	poolAcquiredDesc = prometheus.NewDesc("kuruops_db_pool_acquired_conns", "Current in-use (acquired) connections in the pool.", nil, nil)
+	poolMaxDesc      = prometheus.NewDesc("kuruops_db_pool_max_conns", "The pool's configured maximum size.", nil, nil)
+)
+
+func (c *poolCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- poolTotalDesc
+	ch <- poolIdleDesc
+	ch <- poolAcquiredDesc
+	ch <- poolMaxDesc
+}
+
+func (c *poolCollector) Collect(ch chan<- prometheus.Metric) {
+	pool := c.m.pool.Load()
+	if pool == nil {
+		return
+	}
+	stat := pool.Stat()
+	ch <- prometheus.MustNewConstMetric(poolTotalDesc, prometheus.GaugeValue, float64(stat.TotalConns()))
+	ch <- prometheus.MustNewConstMetric(poolIdleDesc, prometheus.GaugeValue, float64(stat.IdleConns()))
+	ch <- prometheus.MustNewConstMetric(poolAcquiredDesc, prometheus.GaugeValue, float64(stat.AcquiredConns()))
+	ch <- prometheus.MustNewConstMetric(poolMaxDesc, prometheus.GaugeValue, float64(stat.MaxConns()))
+}
+
+// aiQueueCollector reports the auto-analysis queue gauges. A failing read is
 // skipped, not fatal: a metrics scrape must not fail (or hang) because the
 // database had a moment, and an absent series is how Prometheus already
 // represents "no data".
-func (m *MetricsCollector) writeAIQueueMetrics(w http.ResponseWriter, r *http.Request) {
-	if m.aiQueueStats == nil {
+type aiQueueCollector struct{ m *MetricsCollector }
+
+var (
+	aiJobsDesc          = prometheus.NewDesc("kuruops_ai_analysis_jobs", "Automatic-analysis jobs by status.", []string{"status"}, nil)
+	aiOldestPendingDesc = prometheus.NewDesc("kuruops_ai_analysis_oldest_pending_seconds", "How long the oldest due automatic-analysis job has been waiting; 0 when none is due. A queue that is not draining shows up here first.", nil, nil)
+)
+
+func (c *aiQueueCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- aiJobsDesc
+	ch <- aiOldestPendingDesc
+}
+
+func (c *aiQueueCollector) Collect(ch chan<- prometheus.Metric) {
+	src := c.m.aiQueue.Load()
+	if src == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	st, err := m.aiQueueStats(ctx)
+	st, err := src.stats(ctx)
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "\n# HELP kuruops_ai_analysis_jobs Automatic-analysis jobs by status.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_ai_analysis_jobs gauge\n")
 	for _, s := range []struct {
 		status string
 		n      int
 	}{{"pending", st.Pending}, {"running", st.Running}, {"succeeded", st.Succeeded}, {"failed", st.Failed}, {"skipped", st.Skipped}} {
-		fmt.Fprintf(w, "kuruops_ai_analysis_jobs{status=%q} %d\n", s.status, s.n)
+		ch <- prometheus.MustNewConstMetric(aiJobsDesc, prometheus.GaugeValue, float64(s.n), s.status)
 	}
-	fmt.Fprintf(w, "\n# HELP kuruops_ai_analysis_oldest_pending_seconds How long the oldest due automatic-analysis job has been waiting; 0 when none is due. A queue that is not draining shows up here first.\n")
-	fmt.Fprintf(w, "# TYPE kuruops_ai_analysis_oldest_pending_seconds gauge\n")
-	fmt.Fprintf(w, "kuruops_ai_analysis_oldest_pending_seconds %g\n", st.OldestPendingAge.Seconds())
+	ch <- prometheus.MustNewConstMetric(aiOldestPendingDesc, prometheus.GaugeValue, st.OldestPendingAge.Seconds())
+}
+
+// buildInfoCollector exports kuruops_build_info{build} = 1, reading the build id when
+// scraped. The partial-deploy alert (KuruOpsBuildSkew) counts distinct values of the
+// label across api, ingest and worker.
+type buildInfoCollector struct{}
+
+var buildInfoDesc = prometheus.NewDesc("kuruops_build_info", "Always 1; the build label identifies the sources this binary was compiled from. More than one distinct value across api/ingest/worker means a partial deploy.", []string{"build"}, nil)
+
+func (buildInfoCollector) Describe(ch chan<- *prometheus.Desc) { ch <- buildInfoDesc }
+
+func (buildInfoCollector) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(buildInfoDesc, prometheus.GaugeValue, 1, buildinfo.Build)
 }

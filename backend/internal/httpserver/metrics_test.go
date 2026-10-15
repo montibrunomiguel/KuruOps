@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,9 @@ import (
 )
 
 func TestMetricsHandler(t *testing.T) {
-	m := GetMetrics()
+	m := NewMetricsCollector()
+	orig := SetMetricsForTest(m)
+	defer SetMetricsForTest(orig)
 	m.RecordRequest(200, 15*time.Millisecond)
 	m.RecordRequest(404, 5*time.Millisecond)
 	m.RecordRequest(500, 3*time.Second)
@@ -55,7 +58,7 @@ func TestMetricsHandler(t *testing.T) {
 // with a misleading zero value (which would read as "last successful run
 // was at the Unix epoch", immediately tripping a staleness alert).
 func TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	orig := globalMetrics
 	globalMetrics = m
 	defer func() { globalMetrics = orig }()
@@ -70,7 +73,7 @@ func TestMetricsHandler_OmitsSweepGaugeWhenNoJobHasRunYet(t *testing.T) {
 }
 
 func TestMetricsCollector_RecordSweepSuccess(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	orig := globalMetrics
 	globalMetrics = m
 	defer func() { globalMetrics = orig }()
@@ -88,18 +91,20 @@ func TestMetricsCollector_RecordSweepSuccess(t *testing.T) {
 		t.Fatalf("expected the sweep-success gauge labeled by job, got body: %s", body)
 	}
 
-	var got int64
+	// client_golang prints large values in scientific notation (1.76e+09), which is
+	// valid exposition format, so read the value as a float.
+	var got float64
 	line := body[strings.Index(body, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"}`):]
-	if _, err := fmt.Sscanf(line, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"} %d`, &got); err != nil {
+	if _, err := fmt.Sscanf(line, `kuruops_worker_last_sweep_success_timestamp{sweep_job="sweep_escalations"} %g`, &got); err != nil {
 		t.Fatalf("parse gauge value: %v", err)
 	}
-	if got < before || got > after {
-		t.Fatalf("expected the recorded timestamp to fall within [%d, %d], got %d", before, after, got)
+	if got < float64(before) || got > float64(after) {
+		t.Fatalf("expected the recorded timestamp to fall within [%d, %d], got %v", before, after, got)
 	}
 }
 
 func TestMetricsHandler_OmitsPoolGaugesWhenPoolNotSet(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	orig := globalMetrics
 	globalMetrics = m
 	defer func() { globalMetrics = orig }()
@@ -114,32 +119,36 @@ func TestMetricsHandler_OmitsPoolGaugesWhenPoolNotSet(t *testing.T) {
 }
 
 func TestMetricsCollector_IncDecSSE(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	m.IncSSE()
 	m.IncSSE()
 	m.DecSSE()
-	if got := m.activeSSE.Load(); got != 1 {
-		t.Fatalf("expected activeSSE=1 after 2 inc + 1 dec, got %d", got)
+	if got := testutil.ToFloat64(m.activeSSE); got != 1 {
+		t.Fatalf("expected activeSSE=1 after 2 inc + 1 dec, got %v", got)
 	}
 }
 
 func TestMetricsCollector_RecordRequest_BucketsAreCumulative(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	m.RecordRequest(200, 30*time.Millisecond) // falls in the 0.05s bucket and every larger one
 
-	if got := m.durationBucketCounts[0].Load(); got != 0 { // le=0.01
-		t.Fatalf("expected le=0.01 bucket to stay 0, got %d", got)
-	}
-	if got := m.durationBucketCounts[1].Load(); got != 1 { // le=0.05
-		t.Fatalf("expected le=0.05 bucket to be 1, got %d", got)
-	}
-	if got := m.durationBucketCounts[numDurationBuckets-1].Load(); got != 1 { // le=10, cumulative
-		t.Fatalf("expected le=10 (largest) bucket to be 1, got %d", got)
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{
+		`kuruops_http_request_duration_seconds_bucket{le="0.01"} 0`, // stays empty
+		`kuruops_http_request_duration_seconds_bucket{le="0.05"} 1`,
+		`kuruops_http_request_duration_seconds_bucket{le="10"} 1`, // cumulative
+		`kuruops_http_request_duration_seconds_bucket{le="+Inf"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics output is missing %q", want)
+		}
 	}
 }
 
 func TestMetricsMiddleware_RecordsStatusCode(t *testing.T) {
-	m := &MetricsCollector{}
+	m := NewMetricsCollector()
 	orig := globalMetrics
 	globalMetrics = m
 	defer func() { globalMetrics = orig }()
@@ -155,14 +164,14 @@ func TestMetricsMiddleware_RecordsStatusCode(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", rec.Code)
 	}
-	if got := m.httpRequestsTotal.Load(); got != 1 {
-		t.Fatalf("expected httpRequestsTotal=1, got %d", got)
+	if got := testutil.ToFloat64(m.requests); got != 1 {
+		t.Fatalf("expected requests=1, got %v", got)
 	}
-	if got := m.http2xxTotal.Load(); got != 1 {
-		t.Fatalf("expected http2xxTotal=1, got %d", got)
+	if got := testutil.ToFloat64(m.requests2xx); got != 1 {
+		t.Fatalf("expected requests2xx=1, got %v", got)
 	}
-	if got := m.durationCount.Load(); got != 1 {
-		t.Fatalf("expected durationCount=1, got %d", got)
+	if got := testutil.CollectAndCount(m.duration); got != 1 {
+		t.Fatalf("expected the duration histogram to have one series, got %d", got)
 	}
 }
 
@@ -176,7 +185,7 @@ func TestMetricsHandler_AIQueueGauges(t *testing.T) {
 	}
 
 	t.Run("reports depth by status and the age of the oldest due job", func(t *testing.T) {
-		m := &MetricsCollector{}
+		m := NewMetricsCollector()
 		m.SetAIQueueStats(func(context.Context) (domain.AIAnalysisJobStats, error) {
 			return domain.AIAnalysisJobStats{Pending: 4, Running: 2, Succeeded: 90, Failed: 3, Skipped: 1, OldestPendingAge: 95 * time.Second}, nil
 		})
@@ -196,13 +205,13 @@ func TestMetricsHandler_AIQueueGauges(t *testing.T) {
 	})
 
 	t.Run("a process that does not work the queue emits nothing about it", func(t *testing.T) {
-		if body := scrape(&MetricsCollector{}); strings.Contains(body, "kuruops_ai_analysis") {
+		if body := scrape(NewMetricsCollector()); strings.Contains(body, "kuruops_ai_analysis") {
 			t.Errorf("api/worker must not report queue gauges they never registered:\n%s", body)
 		}
 	})
 
 	t.Run("a failing read is skipped, not fatal to the scrape", func(t *testing.T) {
-		m := &MetricsCollector{}
+		m := NewMetricsCollector()
 		m.SetAIQueueStats(func(context.Context) (domain.AIAnalysisJobStats, error) {
 			return domain.AIAnalysisJobStats{}, errors.New("database down")
 		})
