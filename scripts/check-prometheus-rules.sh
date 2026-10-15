@@ -32,6 +32,11 @@ fs.writeFileSync(process.env.WORK + "/rules.yml", body);
 '
 cp "$ROOT/deploy/k8s/tests/prometheus-rules.test.yml" "$WORK/rules.test.yml"
 
+# mktemp creates the directory 0700, and promtool runs as `nobody` inside the container: on a Linux
+# host (CI) it could not read what it is mounted, and fails with a permission error. Docker Desktop
+# does not enforce this, which is how it passed locally.
+chmod -R a+rX "$WORK"
+
 IMAGE="prom/prometheus:v2.53.0"
 # MSYS_NO_PATHCONV: stop Git Bash on Windows from rewriting the container path.
 MSYS_NO_PATHCONV=1 docker run --rm -v "$WORK_N:/w" -w /w --entrypoint promtool "$IMAGE" check rules rules.yml
