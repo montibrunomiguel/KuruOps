@@ -1,0 +1,100 @@
+# Availability under voluntary disruption (node drains, cluster upgrades) and
+# under load: PodDisruptionBudgets + HorizontalPodAutoscalers.
+#
+# HorizontalPodAutoscaler needs metrics-server (or any resource-metrics
+# provider) in the cluster; without one the HPAs below sit at "unknown" and do
+# nothing, and the Deployments simply stay at the replica count written in their
+# own manifest. The PodDisruptionBudgets need nothing extra.
+#
+# What is scaled, and what deliberately is not:
+#   ingest    scaled. Stateless, rate limiter and the AI analysis queue are
+#             Postgres-backed and safe across replicas (the queue claims jobs
+#             with FOR UPDATE SKIP LOCKED, and a replica that disappears
+#             mid-analysis has its job reclaimed once the lease expires).
+#             Scale-down is deliberately slow so a replica is not removed in the
+#             middle of a burst and then needed again a minute later.
+#   frontend  scaled. nginx serving static files; trivially stateless.
+#   api       NOT scaled: its uploads volume is ReadWriteOnce (see 04-api.yaml
+#             for what to change before running more than one replica). It still
+#             gets a budget so a drain is not blocked forever on its single pod.
+#   worker    NOT scaled and no budget: it is a singleton by design (its sweeps
+#             take advisory locks, a second replica would only wait on the first).
+#
+# maxUnavailable: 1 (rather than minAvailable) so a drain can always proceed
+# one pod at a time, including for the single-replica api -- a brief api outage
+# during maintenance is preferable to a node that can never be drained.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ingest
+  namespace: kuruops
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: ingest }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: kuruops
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: frontend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: kuruops
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: api }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingest
+  namespace: kuruops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ingest
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 120 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend
+  namespace: kuruops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300

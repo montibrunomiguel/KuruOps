@@ -21,8 +21,12 @@ project picking one for you.
 - **Ingress/TLS.** `frontend`'s Service is `ClusterIP` — reaching it from
   outside the cluster (an ingress controller, a cloud LoadBalancer Service,
   `kubectl port-forward` for a quick look) is up to you.
-- **Autoscaling.** No HorizontalPodAutoscaler — every replica count below is
-  a fixed number you set by hand. `ingest` ships at `replicas: 2` by default
+- **Autoscaling.** `11-availability.yaml` adds HorizontalPodAutoscalers for
+  `ingest` (2–6) and `frontend` (2–4) plus PodDisruptionBudgets for
+  `ingest`/`frontend`/`api`; the HPAs need metrics-server in the cluster, and
+  without one they do nothing and the replica counts below stand. `api` and
+  `worker` are deliberately not autoscaled (reasons below and in that file).
+  `ingest` ships at `replicas: 2` by default
   (see its own comment): it has no local-disk dependency, and its rate
   limiter/SSE-adjacent infra are already Postgres-backed for exactly this.
   `api` ships at `replicas: 1` — its `uploads` PVC is `ReadWriteOnce`, so
@@ -72,7 +76,19 @@ kubectl apply -f deploy/k8s/09-monitoring.yaml
 # NetworkPolicy (Calico, Cilium, ...) -- on one that does not it is silently
 # inert, so verify with the throwaway-pod check in 10-networkpolicy.yaml's header.
 kubectl apply -f deploy/k8s/10-networkpolicy.yaml
+
+# PodDisruptionBudgets (node drains never take the last ingest/frontend pod) and
+# HorizontalPodAutoscalers for ingest and frontend. HPAs need metrics-server.
+kubectl apply -f deploy/k8s/11-availability.yaml
 ```
+
+The frontend's nginx finds the api through `API_UPSTREAM` (set in
+`07-frontend.yaml` to the Service's FQDN) and resolves it on every request, so a
+recreated api pod never leaves the frontend dialling a dead address. Change
+`cluster.local` in that value if your cluster uses another domain. All three
+backend images print and export the build they were compiled from
+(`kuruops_build_info`); `KuruOpsBuildSkew` in `09-monitoring.yaml` fires when more
+than one build is live for 20 minutes, i.e. a partial deploy.
 
 Re-running the whole set after a new release is safe: the migration Job is
 idempotent (golang-migrate only applies versions it hasn't recorded yet, see

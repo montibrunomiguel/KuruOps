@@ -22,8 +22,12 @@ para isso, em vez deste projeto escolher uma opção por você.
 - **Ingress/TLS.** O Service do `frontend` é `ClusterIP` — alcançá-lo de fora
   do cluster (um ingress controller, um Service LoadBalancer de nuvem,
   `kubectl port-forward` para uma olhada rápida) fica por sua conta.
-- **Autoscaling.** Sem HorizontalPodAutoscaler — cada contagem de réplicas
-  abaixo é um número fixo definido manualmente. `ingest` sai com
+- **Autoscaling.** O `11-availability.yaml` adiciona HorizontalPodAutoscalers
+  para `ingest` (2–6) e `frontend` (2–4) e PodDisruptionBudgets para
+  `ingest`/`frontend`/`api`; os HPAs precisam do metrics-server no cluster e,
+  sem ele, não fazem nada e valem as contagens de réplicas abaixo. `api` e
+  `worker` deliberadamente não escalam (motivos abaixo e no próprio arquivo).
+  `ingest` sai com
   `replicas: 2` por padrão (veja o comentário no próprio manifest): ele não
   tem dependência de disco local, e seu rate limiter/infraestrutura
   relacionada a SSE já são apoiados em Postgres exatamente para isso. `api`
@@ -77,7 +81,19 @@ kubectl apply -f deploy/k8s/09-monitoring.yaml
 # fica inerte sem avisar, então confirme com o teste do pod descartável no
 # cabeçalho de 10-networkpolicy.yaml.
 kubectl apply -f deploy/k8s/10-networkpolicy.yaml
+
+# PodDisruptionBudgets (um drain de nó nunca derruba o último pod de ingest/frontend)
+# e HorizontalPodAutoscalers de ingest e frontend. Os HPAs precisam do metrics-server.
+kubectl apply -f deploy/k8s/11-availability.yaml
 ```
+
+O nginx do frontend encontra a api por `API_UPSTREAM` (definido no
+`07-frontend.yaml` com o FQDN do Service) e resolve a cada requisição, então um
+pod da api recriado nunca deixa o frontend discando para um endereço morto. Troque
+`cluster.local` nesse valor se o seu cluster usa outro domínio. As três imagens do
+backend imprimem e exportam o build de que foram compiladas (`kuruops_build_info`);
+o `KuruOpsBuildSkew` em `09-monitoring.yaml` dispara quando mais de um build fica
+ativo por 20 minutos, ou seja, um deploy parcial.
 
 Reaplicar todo o conjunto após um novo release é seguro: o Job de migração é
 idempotente (o golang-migrate só aplica versões que ainda não registrou,

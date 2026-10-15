@@ -31,6 +31,12 @@ FROM nginxinc/nginx-unprivileged:1.31-alpine
 USER root
 RUN apk update && apk upgrade --no-cache
 USER nginx
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# nginx.conf is a template: the base image's entrypoint renders it into
+# /etc/nginx/conf.d/default.conf at start, filling in the two variables below
+# (the resolver comes from the container's own /etc/resolv.conf). Override
+# API_UPSTREAM per environment; see the comments in nginx.conf.
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
+    API_UPSTREAM=http://api:8080
+COPY frontend/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /src/dist /usr/share/nginx/html
 EXPOSE 8080

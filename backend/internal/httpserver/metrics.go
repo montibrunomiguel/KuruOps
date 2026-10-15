@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/domain"
 )
 
@@ -185,6 +186,10 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_bucket{le=\"+Inf\"} %d\n", count)
 	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_sum %g\n", float64(m.durationSumMicros.Load())/1e6)
 	fmt.Fprintf(w, "kuruops_http_request_duration_seconds_count %d\n\n", count)
+
+	fmt.Fprintf(w, "# HELP kuruops_build_info Always 1; the build label identifies the sources this binary was compiled from. More than one distinct value across api/ingest/worker means a partial deploy.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_build_info gauge\n")
+	fmt.Fprintf(w, "kuruops_build_info{build=%q} 1\n\n", buildinfo.Build)
 
 	fmt.Fprintf(w, "# HELP kuruops_sse_active_connections Current active SSE stream connections.\n")
 	fmt.Fprintf(w, "# TYPE kuruops_sse_active_connections gauge\n")

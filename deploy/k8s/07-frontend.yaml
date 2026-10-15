@@ -1,15 +1,19 @@
-# No env vars: nginx.conf's proxy_pass targets are hardcoded to
-# http://api:8080 (see frontend/nginx.conf) -- which is exactly why 04-api.yaml's
-# Service is named plain "api", not "kuruops-api": it must resolve via
-# in-cluster DNS under that literal name for this container's reverse proxy
-# to work unchanged.
+# API_UPSTREAM tells nginx (frontend/nginx.conf, rendered at container start)
+# where the api lives. It must be the Service's FQDN, not the short name "api":
+# nginx resolves the upstream per request through its own resolver (so a
+# recreated api is picked up instead of 502ing), and that resolver does not
+# apply the pod's DNS search domains. Change "cluster.local" if your cluster
+# uses a different domain. The resolver itself is read from the pod's
+# /etc/resolv.conf (kube-dns), nothing to configure for it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
   namespace: kuruops
 spec:
-  replicas: 1
+  # 2 so a node drain or a rolling update never leaves the UI unserved
+  # (11-availability.yaml keeps it between 2 and 4).
+  replicas: 2
   selector:
     matchLabels:
       app: frontend
@@ -26,6 +30,9 @@ spec:
       containers:
         - name: frontend
           image: kuruops-frontend:latest
+          env:
+            - name: API_UPSTREAM
+              value: http://api.kuruops.svc.cluster.local:8080
           ports:
             - containerPort: 8080
           readinessProbe:

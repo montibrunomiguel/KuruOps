@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
@@ -128,7 +129,7 @@ func main() {
 	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallService, userService, secretStore, repository.NewAdminAuditEventRepository())
 	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{}, repository.NewAdminAuditEventRepository())
 
-	logger.Info("worker started")
+	logger.Info("worker started", "build", buildinfo.Build)
 
 	refreshTicker := time.NewTicker(1 * time.Minute)
 	defer refreshTicker.Stop()

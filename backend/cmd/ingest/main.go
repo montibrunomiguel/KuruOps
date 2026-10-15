@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
@@ -170,7 +171,7 @@ func main() {
 	srv := httpserver.NewServer(cfg.HTTPAddr, httpserver.WrapWithObservability(mux, logger, tracer), httpserver.IngestTimeouts)
 
 	safego.Go("ingest.ListenAndServe", func() {
-		logger.Info("ingest listening", "addr", cfg.HTTPAddr)
+		logger.Info("ingest listening", "addr", cfg.HTTPAddr, "build", buildinfo.Build)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)

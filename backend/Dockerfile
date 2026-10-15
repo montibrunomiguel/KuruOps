@@ -14,9 +14,15 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ .
 COPY db/ ./db/
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/ingest ./cmd/ingest
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/worker ./cmd/worker
+# One build id for all three binaries: a hash of every source file that goes into
+# them, computed BEFORE compiling so the three images built from the same tree
+# agree on it. Each binary logs it at startup and exports it as
+# kuruops_build_info, so a partial deploy (only api rebuilt, ingest/worker still
+# on older code) is visible instead of silent -- see internal/buildinfo.
+RUN find . -type f ( -name '*.go' -o -name '*.sql' -o -name go.mod -o -name go.sum ) | sort | xargs sha256sum | sha256sum | cut -c1-12 > /build_id
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/ingest ./cmd/ingest
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/worker ./cmd/worker
 
 FROM alpine:3.24 AS base
 # tzdata: alpine ships with no /usr/share/zoneinfo at all, so

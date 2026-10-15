@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/domain"
 )
 
@@ -213,4 +214,19 @@ func TestMetricsHandler_AIQueueGauges(t *testing.T) {
 			t.Error("the rest of the scrape must still be served")
 		}
 	})
+}
+
+// TestMetricsHandler_ExposesBuildInfo pins the series the partial-deploy alert
+// (deploy/k8s/09-monitoring.yaml, KuruOpsBuildSkew) counts distinct values of.
+func TestMetricsHandler_ExposesBuildInfo(t *testing.T) {
+	prev := buildinfo.Build
+	buildinfo.Build = "abc123def456"
+	t.Cleanup(func() { buildinfo.Build = prev })
+
+	rr := httptest.NewRecorder()
+	MetricsHandler(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if want := `kuruops_build_info{build="abc123def456"} 1`; !strings.Contains(rr.Body.String(), want) {
+		t.Fatalf("metrics output missing %q:\n%s", want, rr.Body.String())
+	}
 }

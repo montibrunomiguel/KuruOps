@@ -43,6 +43,21 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **The frontend's API proxy no longer 502s on Kubernetes.** nginx resolves the api per request
+  (so a recreated api is picked up), but the resolver was hardcoded to Docker's `127.0.0.11`, which
+  does not exist in a cluster. `nginx.conf` is now an envsubst template: the resolver is read from
+  the container's own `/etc/resolv.conf` and the upstream comes from `API_UPSTREAM` (the Service's
+  FQDN in `deploy/k8s/07-frontend.yaml`, since nginx's resolver ignores DNS search domains).
+- **A partial deploy is now visible.** api, ingest and worker are three images of one tree; rebuilding
+  only one left the others on older code with nothing failing loudly. Each binary now logs its build
+  id at startup and exports `kuruops_build_info{build}` (a hash of the sources, computed once in the
+  Dockerfile), and the `KuruOpsBuildSkew` rule alerts when more than one build is live for 20 minutes.
+- **The live event stream backs off when the API is unreachable.** The browser retried every 3 seconds
+  forever, in every open tab, in lockstep. It now backs off exponentially (1s up to 30s) with jitter,
+  and a connection only resets the backoff after staying up for 10 seconds.
+- **`docker stop` no longer cuts the ingest's shutdown short.** Compose's 10s grace period was shorter
+  than the 15s the ingest needs to stop and let in-flight analyses finish or be handed back; it is
+  25s now.
 - **An alert's automatic AI analysis could be lost, and a provider blip ended it for good.** The
   analysis was a bare goroutine started the moment the alert landed: nothing recorded that it was
   owed, so a restart, deploy or crash before it finished dropped it silently, and one provider 503
@@ -110,6 +125,14 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   value is now checked against the enum first and an unknown one is a `400` that names it (truncated
   if enormous). Surfaced while validating `main` from a clean install; it predates the multi-select
   filters (the old single-value path failed the same way), which only made a typo easier to send.
+
+### Added
+
+- **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets and HorizontalPodAutoscalers.** ingest
+  (2-6 replicas) and frontend (2-4) autoscale on CPU, with slow scale-down; ingest/frontend/api get a
+  `maxUnavailable: 1` budget so node drains proceed one pod at a time. The frontend now runs two
+  replicas by default. api and worker are deliberately not autoscaled (RWO uploads volume; singleton
+  sweeps).
 
 ### Changed
 

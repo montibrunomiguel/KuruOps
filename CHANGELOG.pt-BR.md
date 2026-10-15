@@ -45,6 +45,21 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **O proxy de API do frontend não devolve mais 502 no Kubernetes.** O nginx resolve a api a cada
+  requisição (então uma api recriada é encontrada), mas o resolver estava fixo no `127.0.0.11` do
+  Docker, que não existe num cluster. O `nginx.conf` agora é um template do envsubst: o resolver vem
+  do `/etc/resolv.conf` do próprio container e o upstream de `API_UPSTREAM` (o FQDN do Service em
+  `deploy/k8s/07-frontend.yaml`, já que o resolver do nginx ignora os search domains do DNS).
+- **Um deploy parcial agora é visível.** api, ingest e worker são três imagens da mesma árvore;
+  reconstruir só uma deixava as outras em código antigo sem nada falhar alto. Cada binário agora loga
+  seu build id na partida e exporta `kuruops_build_info{build}` (um hash das fontes, calculado uma vez
+  no Dockerfile), e a regra `KuruOpsBuildSkew` alerta quando mais de um build fica ativo por 20 minutos.
+- **O stream de eventos ao vivo recua quando a API está inalcançável.** O navegador tentava a cada 3
+  segundos para sempre, em todas as abas abertas, em uníssono. Agora recua exponencialmente (de 1s até
+  30s) com jitter, e a conexão só zera o recuo depois de ficar de pé por 10 segundos.
+- **O `docker stop` não corta mais o desligamento do ingest.** O prazo de 10s do Compose era menor que
+  os 15s de que o ingest precisa para parar e deixar as análises em andamento terminarem ou voltarem
+  para a fila; agora são 25s.
 - **A análise automática de IA de um alerta podia se perder, e uma oscilação do provedor a encerrava
   de vez.** A análise era uma goroutine solta iniciada assim que o alerta chegava: nada registrava
   que ela era devida, então um restart, deploy ou crash antes de terminar a descartava em silêncio, e
@@ -389,6 +404,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets e HorizontalPodAutoscalers.** ingest
+  (2-6 réplicas) e frontend (2-4) escalam por CPU, com scale-down lento; ingest/frontend/api ganham
+  um budget `maxUnavailable: 1` para que drains de nó avancem um pod por vez. O frontend agora sobe
+  com duas réplicas. api e worker deliberadamente não escalam (volume de uploads RWO; sweeps singleton).
 - Chamadas externas de LLM e MCP passam por um circuit breaker
   (`backend/internal/circuitbreaker`), com chave por host para que um provedor morto não derrube
   chamadas a um saudável. Após `EXTERNAL_CALL_BREAKER_THRESHOLD` falhas consecutivas (padrão 5) as

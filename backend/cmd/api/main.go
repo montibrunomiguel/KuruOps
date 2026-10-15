@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
@@ -357,7 +358,7 @@ func main() {
 	})
 
 	safego.Go("api.ListenAndServe", func() {
-		logger.Info("api listening", "addr", cfg.HTTPAddr)
+		logger.Info("api listening", "addr", cfg.HTTPAddr, "build", buildinfo.Build)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)

@@ -206,6 +206,12 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       target: ingest
+    # docker stop sends SIGKILL after 10s by default, but ingest needs up to
+    # SHUTDOWN_TIMEOUT (15s) to stop the HTTP server and let in-flight AI
+    # analyses finish or be handed back to the queue. A shorter grace period
+    # would cut that off on every deploy (the lease would still recover the
+    # job, just minutes later instead of immediately).
+    stop_grace_period: 25s
     mem_limit: 256m
     cpus: 1.0
     environment:
