@@ -134,6 +134,9 @@ jobs:
           - image: kuruops-ingest
             dockerfile: backend/Dockerfile
             target: ingest
+          - image: kuruops-analyzer
+            dockerfile: backend/Dockerfile
+            target: analyzer
           - image: kuruops-worker
             dockerfile: backend/Dockerfile
             target: worker

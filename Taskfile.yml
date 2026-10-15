@@ -120,6 +120,7 @@ tasks:
     cmds:
       - go build -o bin/api ./cmd/api
       - go build -o bin/ingest ./cmd/ingest
+      - go build -o bin/analyzer ./cmd/analyzer
       - go build -o bin/worker ./cmd/worker
 
   backend:vet:
@@ -295,7 +296,7 @@ tasks:
     cmds:
       - npm audit --audit-level=high
 
-  # ---- Deploy (Docker Compose: postgres + api + ingest + worker + frontend) ----
+  # ---- Deploy (Docker Compose: postgres + api + ingest + analyzer + worker + frontend) ----
 
   deploy:up:
     desc: Build images and bring up the full stack locally (backend + frontend, no hot reload)
@@ -305,7 +306,7 @@ tasks:
       - task: db:roles
       # --wait uses the healthchecks in docker-compose.yml; worker has no
       # HTTP endpoint to probe, so --wait just confirms it's running.
-      - docker compose up -d --wait --wait-timeout 90 --build api ingest worker frontend
+      - docker compose up -d --wait --wait-timeout 90 --build api ingest analyzer worker frontend
       - 'echo "web UI:  http://localhost:3000"'
       - 'echo "api:     http://localhost:8080"'
       - 'echo "ingest:  http://localhost:8081"'

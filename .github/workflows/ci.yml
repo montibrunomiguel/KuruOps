@@ -104,6 +104,7 @@ jobs:
           go build -v ./cmd/api
           go build -v ./cmd/ingest
           go build -v ./cmd/worker
+          go build -v ./cmd/analyzer
 
       # Runs the exact same Taskfile target a developer runs locally: brings
       # up Postgres via docker compose, creates+migrates a dedicated

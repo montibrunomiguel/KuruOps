@@ -63,6 +63,8 @@ type Broadcaster struct {
 
 	mu   sync.Mutex
 	subs map[uuid.UUID]map[chan Event]struct{}
+	// taps see every event of every tenant -- see Tap.
+	taps []func(tenantID uuid.UUID, event Event)
 
 	readyOnce sync.Once
 	ready     chan struct{}
@@ -128,6 +130,18 @@ func (b *Broadcaster) Subscribe(tenantID uuid.UUID) (<-chan Event, func()) {
 		})
 	}
 	return ch, unsubscribe
+}
+
+// Tap registers fn to be called for every event of every tenant this process
+// receives, from any process. Subscribe is per tenant and meant for one SSE
+// connection each; Tap is for a process-level reaction that cares about a kind of
+// event regardless of tenant (cmd/analyzer wakes its queue consumer when an alert
+// is received). fn runs on the LISTEN loop's goroutine, so it must return quickly
+// and never block. Call it before Start; taps are not removable.
+func (b *Broadcaster) Tap(fn func(tenantID uuid.UUID, event Event)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.taps = append(b.taps, fn)
 }
 
 // Publish sends tenantID's event as a Postgres NOTIFY on notifyChannel --
@@ -255,12 +269,16 @@ func shrinkPayload(payload any, budget int) (map[string]any, []string) {
 // connection rather than stalling delivery to everyone else.
 func (b *Broadcaster) deliverLocally(tenantID uuid.UUID, event Event) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for ch := range b.subs[tenantID] {
 		select {
 		case ch <- event:
 		default:
 		}
+	}
+	taps := b.taps
+	b.mu.Unlock()
+	for _, fn := range taps {
+		fn(tenantID, event)
 	}
 }
 

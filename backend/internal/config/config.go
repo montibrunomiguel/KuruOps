@@ -210,12 +210,17 @@ type Config struct {
 	LLMCallMaxAttempts    int
 	LLMCallRetryBaseDelay time.Duration
 
-	// AIAnalysisConcurrency is how many automatic alert analyses one cmd/ingest
+	// AIAnalysisConcurrency is how many automatic alert analyses one cmd/analyzer
 	// process runs at once (AI_ANALYSIS_CONCURRENCY, default 5). A burst of alerts
 	// outpaces an LLM call by far; the rest wait in the database queue. It is per
-	// replica, so N ingest replicas run up to N times this -- size it against the
+	// replica, so N analyzer replicas run up to N times this -- size it against the
 	// provider's rate limit, not just this process.
 	AIAnalysisConcurrency int
+	// AIAnalysisPollInterval is how often an idle analyzer looks for due jobs
+	// (AI_ANALYSIS_POLL_INTERVAL, default 5s). A newly ingested alert wakes it at
+	// once through the event channel, so this only bounds how late a job whose backoff
+	// just elapsed -- or whose wake-up event was missed -- is noticed.
+	AIAnalysisPollInterval time.Duration
 
 	SlackClientID      string
 	SlackClientSecret  string
@@ -271,9 +276,10 @@ func Load(logger *slog.Logger) (Config, error) {
 		ExternalCallBreakerThreshold: int(getEnvInt32Default(logger, "EXTERNAL_CALL_BREAKER_THRESHOLD", 5)),
 		ExternalCallBreakerCooldown:  getEnvDurationDefault(logger, "EXTERNAL_CALL_BREAKER_COOLDOWN", 30*time.Second),
 
-		LLMCallMaxAttempts:    int(getEnvInt32Default(logger, "LLM_CALL_MAX_ATTEMPTS", 3)),
-		LLMCallRetryBaseDelay: getEnvDurationDefault(logger, "LLM_CALL_RETRY_BASE_DELAY", time.Second),
-		AIAnalysisConcurrency: int(getEnvInt32Default(logger, "AI_ANALYSIS_CONCURRENCY", 5)),
+		LLMCallMaxAttempts:     int(getEnvInt32Default(logger, "LLM_CALL_MAX_ATTEMPTS", 3)),
+		LLMCallRetryBaseDelay:  getEnvDurationDefault(logger, "LLM_CALL_RETRY_BASE_DELAY", time.Second),
+		AIAnalysisConcurrency:  int(getEnvInt32Default(logger, "AI_ANALYSIS_CONCURRENCY", 5)),
+		AIAnalysisPollInterval: getEnvDurationDefault(logger, "AI_ANALYSIS_POLL_INTERVAL", 5*time.Second),
 
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),

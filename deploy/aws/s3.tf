@@ -6,7 +6,7 @@
 #
 # The access key/secret this produces is meant to be pasted into
 # Settings -> Storage Integration in the running app, NOT wired into the
-# api/ingest/worker Deployments as an env var -- that Settings feature takes
+# api/ingest/analyzer/worker Deployments as an env var -- that Settings feature takes
 # a static credential by design (see internal/blobstore's own doc comment:
 # KuruOps is self-hosted and may not be running inside AWS at all, so it
 # never assumes an ambient IAM role/IRSA).

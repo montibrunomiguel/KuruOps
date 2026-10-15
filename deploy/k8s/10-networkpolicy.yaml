@@ -9,7 +9,7 @@
 #   internet / ingress controller ->  frontend :8080        (the SPA + /api proxy)
 #   webhook sources (SIEM/XDR)    ->  ingest   :8080        (POST /hooks)
 #   frontend                      ->  api      :8080
-#   prometheus                    ->  api, ingest, worker :8080 (/metrics)
+#   prometheus                    ->  api, ingest, analyzer, worker :8080 (/metrics)
 #   prometheus                    ->  alertmanager :9093
 #
 # Postgres is not in this namespace (see README.md "What's NOT included"), so
@@ -106,6 +106,23 @@ metadata:
 spec:
   podSelector:
     matchLabels: { app: worker }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: prometheus }
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+# The analyzer serves no application traffic, only /healthz, /livez and /metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-analyzer-metrics
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: analyzer }
   policyTypes: [Ingress]
   ingress:
     - from:

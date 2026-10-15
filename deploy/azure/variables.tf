@@ -43,7 +43,7 @@ variable "node_vm_size" {
   default = "Standard_D2s_v5"
 }
 
-# api/ingest/worker/frontend at replicas:1 each plus the migration Job and
+# api/ingest/analyzer/worker/frontend at replicas:1 each plus the migration Job and
 # AKS's own system pods -- 2 nodes comfortably fits deploy/k8s/'s fixed
 # replica counts.
 variable "node_count" {

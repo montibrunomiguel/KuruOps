@@ -47,7 +47,7 @@ variable "node_machine_type" {
   default = "e2-standard-2"
 }
 
-# api/ingest/worker/frontend at replicas:1 each plus the migration Job and
+# api/ingest/analyzer/worker/frontend at replicas:1 each plus the migration Job and
 # GKE's own system pods -- 2 nodes at e2-standard-2 comfortably fits
 # deploy/k8s/'s fixed replica counts.
 variable "node_count" {

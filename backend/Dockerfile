@@ -1,4 +1,4 @@
-# Multi-stage build producing one minimal image per binary (api/ingest/worker
+# Multi-stage build producing one minimal image per binary (api/ingest/worker/analyzer
 # — see cmd/*/main.go for why they're separate processes). Build a specific
 # one with `docker build --target api .` (docker-compose.yml does this).
 #
@@ -23,6 +23,7 @@ RUN find . -type f \( -name '*.go' -o -name '*.sql' -o -name go.mod -o -name go.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/ingest ./cmd/ingest
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/kuruops/kuruops/internal/buildinfo.Build=$(cat /build_id)" -o /out/analyzer ./cmd/analyzer
 
 FROM alpine:3.24 AS base
 # tzdata: alpine ships with no /usr/share/zoneinfo at all, so
@@ -68,3 +69,7 @@ ENTRYPOINT ["/usr/local/bin/ingest"]
 FROM base AS worker
 COPY --from=build /out/worker /usr/local/bin/worker
 ENTRYPOINT ["/usr/local/bin/worker"]
+
+FROM base AS analyzer
+COPY --from=build /out/analyzer /usr/local/bin/analyzer
+ENTRYPOINT ["/usr/local/bin/analyzer"]

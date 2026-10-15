@@ -239,3 +239,30 @@ func TestBroadcaster_OversizedNonObjectPayloadStillDeliversTheEventType(t *testi
 		t.Fatal("event was lost")
 	}
 }
+
+// TestBroadcaster_TapSeesEveryTenantsEvents: a tap is process-level, so unlike a
+// Subscribe (one tenant, one SSE connection) it sees events of all tenants.
+func TestBroadcaster_TapSeesEveryTenantsEvents(t *testing.T) {
+	b := newTestBroadcaster(t)
+	type seen struct {
+		tenant uuid.UUID
+		typ    string
+	}
+	got := make(chan seen, 4)
+	b.Tap(func(tenantID uuid.UUID, ev events.Event) { got <- seen{tenantID, ev.Type} })
+
+	t1, t2 := uuid.New(), uuid.New()
+	b.Publish(t1, "alert", map[string]any{"action": "received"})
+	b.Publish(t2, "incident", map[string]any{"action": "created"})
+
+	want := map[seen]bool{{t1, "alert"}: true, {t2, "incident"}: true}
+	for range 2 {
+		select {
+		case s := <-got:
+			assert.True(t, want[s], "unexpected tap event %+v", s)
+			delete(want, s)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("tap did not see every event; still waiting for %v", want)
+		}
+	}
+}

@@ -1,4 +1,4 @@
-# Non-sensitive config shared by api/ingest/worker -- see
+# Non-sensitive config shared by api/ingest/analyzer/worker -- see
 # backend/.env.example for the full set this mirrors. Anything
 # credential-shaped lives in 01-secret.example.yaml instead.
 apiVersion: v1
@@ -37,7 +37,10 @@ data:
   EXTERNAL_CALL_BREAKER_COOLDOWN: "30s"
   LLM_CALL_MAX_ATTEMPTS: "3"
   LLM_CALL_RETRY_BASE_DELAY: "1s"
+  # Per analyzer replica (06a-analyzer.yaml): how many automatic analyses run at once, and
+  # how often an idle one polls the queue (a new alert wakes it at once regardless).
   AI_ANALYSIS_CONCURRENCY: "5"
+  AI_ANALYSIS_POLL_INTERVAL: "5s"
   HTTP_READ_TIMEOUT: "2m"
   HTTP_WRITE_TIMEOUT: "90s"
   HTTP_IDLE_TIMEOUT: "120s"

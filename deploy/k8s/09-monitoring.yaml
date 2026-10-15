@@ -40,6 +40,9 @@ data:
       - job_name: kuruops-ingest
         static_configs:
           - targets: ["ingest:8080"]
+      - job_name: kuruops-analyzer
+        static_configs:
+          - targets: ["analyzer:8080"]
       - job_name: kuruops-worker
         static_configs:
           - targets: ["worker:8080"]
@@ -117,7 +120,7 @@ data:
               severity: warning
             annotations:
               summary: "Automatic AI analysis is not draining"
-              description: "An alert has been waiting for its automatic analysis for over 15 minutes, for the last 10 -- the ingest process may be down, or every job is failing and backing off (check kuruops_ai_analysis_jobs{status=\"failed\"} and ingest's logs for 'ai analysis queue'). With the default backoff (1m, 5m, 15m, 1h) a short provider outage clears itself well before this fires."
+              description: "An alert has been waiting for its automatic analysis for over 15 minutes, for the last 10 -- the analyzer may be down, or every job is failing and backing off (check kuruops_ai_analysis_jobs{status=\"failed\"} and the analyzer's logs for 'ai analysis queue'). With the default backoff (1m, 5m, 15m, 1h) a short provider outage clears itself well before this fires."
 ---
 apiVersion: apps/v1
 kind: Deployment

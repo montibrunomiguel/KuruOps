@@ -7,13 +7,15 @@
 # own manifest. The PodDisruptionBudgets need nothing extra.
 #
 # What is scaled, and what deliberately is not:
-#   ingest    scaled. Stateless, rate limiter and the AI analysis queue are
-#             Postgres-backed and safe across replicas (the queue claims jobs
-#             with FOR UPDATE SKIP LOCKED, and a replica that disappears
-#             mid-analysis has its job reclaimed once the lease expires).
-#             Scale-down is deliberately slow so a replica is not removed in the
-#             middle of a burst and then needed again a minute later.
+#   ingest    scaled. Stateless: it only receives webhooks and records them (with a
+#             job row owing each alert its analysis -- the analyzer works those),
+#             and its rate limiter is Postgres-backed, so it counts correctly across
+#             replicas. Scale-down is deliberately slow so a replica is not removed
+#             in the middle of a burst and then needed again a minute later.
 #   frontend  scaled. nginx serving static files; trivially stateless.
+#   analyzer  not autoscaled: it mostly waits on the LLM provider's network, so CPU does
+#             not track its load; size replicas and AI_ANALYSIS_CONCURRENCY against the
+#             provider's rate limit instead. It gets a budget like the others.
 #   api       NOT scaled: its uploads volume is ReadWriteOnce (see 04-api.yaml
 #             for what to change before running more than one replica). It still
 #             gets a budget so a drain is not blocked forever on its single pod.
@@ -42,6 +44,16 @@ spec:
   maxUnavailable: 1
   selector:
     matchLabels: { app: frontend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: analyzer
+  namespace: kuruops
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: analyzer }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

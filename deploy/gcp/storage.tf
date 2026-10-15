@@ -6,7 +6,7 @@
 #
 # The service-account key this produces is meant to be pasted into
 # Settings -> Storage Integration in the running app, NOT wired into the
-# api/ingest/worker Deployments as an env var -- same static-credential
+# api/ingest/analyzer/worker Deployments as an env var -- same static-credential
 # reasoning as the AWS stack's s3.tf.
 
 resource "google_storage_bucket" "uploads" {
