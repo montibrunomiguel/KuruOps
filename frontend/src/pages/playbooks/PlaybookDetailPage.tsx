@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
@@ -113,9 +113,15 @@ export function PlaybookDetailPage() {
     setSteps(loaded);
   }
 
-  useEffect(() => {
-    if (playbook) loadFromPlaybook(playbook);
-  }, [playbook]);
+  // Fill the form when the playbook arrives (or is refetched). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect. (Cancel in the edit form calls
+  // loadFromPlaybook directly to discard unsaved edits.)
+  const [hydratedFrom, setHydratedFrom] = useState<typeof playbook>(undefined);
+  if (playbook && playbook !== hydratedFrom) {
+    setHydratedFrom(playbook);
+    loadFromPlaybook(playbook);
+  }
 
   function addStep(phase: IncidentPhase) {
     setSteps((s) => ({ ...s, [phase]: [...(s[phase] ?? []), { key: crypto.randomUUID(), text: "", webhookUrl: "", webhookPayloadTemplate: "" }] }));

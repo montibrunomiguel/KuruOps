@@ -56,8 +56,33 @@ export function AdminAuditLogPanel() {
     }
   }
 
+  // First page. A promise chain with a cancellation flag instead of calling
+  // load(null): the loading/error state it would set is already the initial
+  // state here, and the flag stops a response that lands after unmount.
   useEffect(() => {
-    void load(null);
+    let cancelled = false;
+    api
+      .get<AdminAuditLogPage>(auditLogPath(null), token)
+      .then((page) => {
+        if (cancelled) return;
+        setEntries(page.events);
+        setNextCursor(page.nextCursor);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isSessionExpiredError(err)) {
+          logout();
+          return;
+        }
+        setError(err instanceof ApiError ? err.message : String(t("common.loadFailed")));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Runs once on mount, like the call it replaces.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

@@ -21,6 +21,7 @@ import { Pagination } from "../../components/Pagination";
 import { Modal } from "../../components/Modal";
 import { formatDuration, shortId } from "../../lib/format";
 import { severityFilterOptions, phaseFilterOptions } from "../../lib/chartColors";
+import { useNow } from "../../hooks/useNow";
 
 type SlaFilter = "" | "breached" | "ok";
 
@@ -308,13 +309,14 @@ export function IncidentsListPage() {
 
 function SlaCell({ incident }: { incident: Incident }) {
   const { t } = useTranslation();
+  const now = useNow();
   if (incident.closedAt) return <span className="table-sub-cell">{t("incidents.table.slaClosed")}</span>;
   if (incident.slaBreached) {
-    const elapsed = incident.slaDueAt ? formatDuration((Date.now() - new Date(incident.slaDueAt).getTime()) / 1000) : "";
+    const elapsed = incident.slaDueAt ? formatDuration((now - new Date(incident.slaDueAt).getTime()) / 1000) : "";
     return <span className="age-text tone-critical">{t("incidents.table.slaBreachedAgo", { time: elapsed })}</span>;
   }
   if (incident.slaDueAt) {
-    const remaining = formatDuration((new Date(incident.slaDueAt).getTime() - Date.now()) / 1000);
+    const remaining = formatDuration((new Date(incident.slaDueAt).getTime() - now) / 1000);
     return <span className="table-sub-cell">{t("incidents.table.slaRemaining", { time: remaining })}</span>;
   }
   return <span className="badge badge-muted">{t("incidents.table.slaOk")}</span>;

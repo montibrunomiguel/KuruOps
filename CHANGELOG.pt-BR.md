@@ -55,6 +55,14 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   volta para o campo de texto -- nunca por cima do que o analista já começou a digitar -- e um chat
   vazio oferece três perguntas iniciais sugeridas (triagem completa, próximos passos, atividade
   relacionada).
+- **O ESLint está limpo de novo (0 erros, 0 warnings).** As regras do React Compiler apontavam 15
+  pontos: formulários que se preenchiam com dados carregados dentro de um efeito (SMTP, storage,
+  retenção, provedores de identidade, SLA de incidentes, playbook), a seleção de linhas e a flag
+  "já carregou" do dashboard, o carregador de imagens de anexo, a primeira página do log de auditoria
+  e o `Date.now()` lido durante o render. O estado agora é ajustado durante o render ou derivado, as
+  cargas têm flag de cancelamento, e as células de SLA e os contadores do follow-up leem o relógio por
+  um novo hook `useNow`, então também se mantêm atuais sem recarregar. O comportamento não muda (os 742
+  testes do frontend passam).
 - **A carga inicial do chat não pinta mais uma conversa antiga.** Abrir o chat de um alerta e depois de
   outro podia deixar a resposta lenta do primeiro sobrescrever o segundo; a carga agora tem uma flag de
   cancelamento. Também elimina o aviso de lint `set-state-in-effect` ali e no `usePagedList`, que

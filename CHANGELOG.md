@@ -52,6 +52,13 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   raw text for anything unclassified. When a follow-up fails the unanswered question is put back in the
   input -- never over text the analyst has already started typing -- and an empty chat offers three
   suggested first questions (full triage, next steps, related activity).
+- **ESLint is clean again (0 errors, 0 warnings).** The React Compiler rules flagged 15 spots: forms
+  that filled themselves from loaded data in an effect (SMTP, storage, retention, identity providers,
+  incident SLA, playbook), row selection and the dashboard "loaded once" flag, the attachment image
+  loader, the audit-log first page, and `Date.now()` read while rendering. State is now adjusted
+  during render or derived, loads carry a cancellation flag, and the SLA cells and follow-up counters
+  read the clock through a new `useNow` hook, so they also stay current without a reload. Behaviour
+  is otherwise unchanged (all 742 frontend tests pass).
 - **The chat's initial load can no longer paint a stale conversation.** Opening the chat for one alert
   and then another could let a slow response for the first overwrite the second; the load now carries a
   cancellation flag. Also removes the `set-state-in-effect` lint warning there and in

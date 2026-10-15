@@ -49,29 +49,25 @@ function saveBlob(blob: Blob, name: string) {
 // images -- see AttachmentPreview's non-image branch for why other
 // attachment types are fetched lazily on click instead.
 function useAttachmentBlob(url: string | null, token: string | null) {
-  const [state, setState] = useState<{ blobUrl: string | null; blob: Blob | null; failed: boolean }>({
-    blobUrl: null,
-    blob: null,
-    failed: false,
-  });
+  // The result is tagged with the url it was fetched for, and a result for any
+  // other url reads as "nothing yet". That is what resets the state when url
+  // changes -- no synchronous setState in the effect, and no frame showing the
+  // previous attachment under the new url.
+  const [state, setState] = useState<{ forUrl: string | null; blobUrl: string | null; blob: Blob | null; failed: boolean }>(NO_BLOB);
 
   useEffect(() => {
-    if (!url) {
-      setState({ blobUrl: null, blob: null, failed: false });
-      return;
-    }
+    if (!url) return;
     let cancelled = false;
     let created: string | null = null;
-    setState({ blobUrl: null, blob: null, failed: false });
     api
       .downloadFile(url, token)
       .then(({ blob }) => {
         if (cancelled) return;
         created = URL.createObjectURL(blob);
-        setState({ blobUrl: created, blob, failed: false });
+        setState({ forUrl: url, blobUrl: created, blob, failed: false });
       })
       .catch(() => {
-        if (!cancelled) setState({ blobUrl: null, blob: null, failed: true });
+        if (!cancelled) setState({ forUrl: url, blobUrl: null, blob: null, failed: true });
       });
     return () => {
       cancelled = true;
@@ -79,8 +75,10 @@ function useAttachmentBlob(url: string | null, token: string | null) {
     };
   }, [url, token]);
 
-  return state;
+  return url !== null && state.forUrl === url ? state : NO_BLOB;
 }
+
+const NO_BLOB = { forUrl: null, blobUrl: null, blob: null, failed: false };
 
 // Renders a previously-uploaded attachment inline in a comment/close-note.
 // Images get an authenticated inline thumbnail (see useAttachmentBlob);

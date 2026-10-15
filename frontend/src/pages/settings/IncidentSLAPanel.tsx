@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -31,14 +31,18 @@ export function IncidentSLAPanel() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const { saved, markSaved, clearSaved } = useSavedFlag();
 
-  useEffect(() => {
+  // Reset the grid to the saved policies whenever fresh data arrives. Done while
+  // rendering, tracking which payload it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom, setHydratedFrom] = useState<typeof data>(null);
+  if (data && data !== hydratedFrom) {
+    setHydratedFrom(data);
     const next: Record<string, string> = {};
     for (const p of policies) {
       next[cellKey(p.severity, p.priority)] = String(p.dueWithinMinutes);
     }
     setValues(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }
 
   function original(key: string): string {
     const p = policies.find((p) => cellKey(p.severity, p.priority) === key);

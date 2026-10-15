@@ -70,22 +70,25 @@ export function StorageIntegrationPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (existing) {
-      setProvider(existing.provider);
-      if (existing.provider === "s3") {
-        setS3Bucket(existing.s3Bucket ?? "");
-        setS3Region(existing.s3Region ?? "");
-        setS3AccessKeyId(existing.s3AccessKeyId ?? "");
-      } else if (existing.provider === "gcs") {
-        setGcsBucket(existing.gcsBucket ?? "");
-        setGcsProjectId(existing.gcsProjectId ?? "");
-      } else if (existing.provider === "gdrive") {
-        setGdriveFolderId(existing.gdriveFolderId ?? "");
-        setGdriveAuthMethod(existing.gdriveAuthMethod ?? "service_account");
-      }
+  // Fill the form when the saved settings arrive (or change). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom0, setHydratedFrom0] = useState<typeof existing>(null);
+  if (existing && existing !== hydratedFrom0) {
+    setHydratedFrom0(existing);
+    setProvider(existing.provider);
+    if (existing.provider === "s3") {
+      setS3Bucket(existing.s3Bucket ?? "");
+      setS3Region(existing.s3Region ?? "");
+      setS3AccessKeyId(existing.s3AccessKeyId ?? "");
+    } else if (existing.provider === "gcs") {
+      setGcsBucket(existing.gcsBucket ?? "");
+      setGcsProjectId(existing.gcsProjectId ?? "");
+    } else if (existing.provider === "gdrive") {
+      setGdriveFolderId(existing.gdriveFolderId ?? "");
+      setGdriveAuthMethod(existing.gdriveAuthMethod ?? "service_account");
     }
-  }, [existing]);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
