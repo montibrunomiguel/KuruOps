@@ -17,6 +17,10 @@ data:
   # (see 04-api.yaml's secret volume mount) -- never "dev"/"dev-headers"
   # outside a developer's own machine, see config.Config's AuthMode doc.
   AUTH_MODE: "jwt"
+  # Where attachments go for a tenant with no S3/GCS/Drive integration. "database" keeps them
+  # in Postgres so the api needs no shared volume and can scale (see 04-api.yaml and
+  # db/migrations/0016); "local" writes under UPLOAD_DIR and pins the api to one replica.
+  UPLOAD_BACKEND: "database"
   UPLOAD_DIR: "/data/uploads"
   # The frontend Service's externally-reachable URL -- used in escalation
   # notification links and password-reset emails. Adjust to your real

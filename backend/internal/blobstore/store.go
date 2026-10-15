@@ -1,6 +1,7 @@
 // Package blobstore abstracts where alert/incident evidence attachments
 // (images uploaded via handlers.UploadHandlers) actually live: local disk by
-// default, or a tenant-configured S3/GCS bucket once
+// default (or the database, see DatabaseStore, so the api can run as several
+// replicas without a shared volume), or a tenant-configured S3/GCS bucket once
 // service.StorageConfigService.Save* has been called (see Settings ->
 // Storage Integration). Every implementation is addressed purely by an
 // opaque key string -- callers never see a bucket name, credential, or
@@ -38,4 +39,6 @@ var (
 	_ Store = (*S3Store)(nil)
 	_ Store = (*GCSStore)(nil)
 	_ Store = (*GDriveStore)(nil)
+	_ Store = (*DatabaseStore)(nil)
+	_ Store = (*FallbackStore)(nil)
 )

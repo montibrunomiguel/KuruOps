@@ -1,43 +1,27 @@
-# uploads is ReadWriteOnce -- fine at replicas: 1 (the default below), but
-# more than one api replica needs either a ReadWriteMany-capable
-# StorageClass here, or switching Settings -> Storage to the S3 backend
-# (already supported, see internal/blobstore) instead of local disk, so
-# every replica sees the same attachments regardless of which one an
-# analyst's request lands on.
+# The api is stateless, so it runs as several replicas and can autoscale (see
+# 11-availability.yaml). The one thing that used to pin it to a single replica was the
+# local uploads directory -- a ReadWriteOnce volume: a second replica either could not
+# mount it or silently got its own empty directory, so some analysts would not see
+# attachments others uploaded. 02-configmap.yaml now sets UPLOAD_BACKEND=database, which
+# keeps attachments in Postgres (table attachment_blobs): every replica sees every
+# attachment, and no volume is mounted.
 #
-# api's own rate limiter, request timeout, and SSE fan-out are already safe
-# for multiple replicas (Postgres-backed / context-bounded / LISTEN-NOTIFY-
-# based, respectively) -- the uploads PVC above is the ONLY thing actually
-# blocking replicas: 1 -> 2+ here. To scale api once you're ready:
-#   1. Settings -> Storage -> switch to the S3 (or GCS) backend and confirm
-#      existing attachments were migrated/are reachable there.
-#   2. Remove this PersistentVolumeClaim and the "uploads" volumeMount/
-#      volume below (local disk is no longer used once Storage is S3/GCS).
-#   3. Bump spec.replicas below.
-# Skipping step 1-2 and just bumping replicas will schedule fine (a second
-# ReadWriteOnce claim mount on a different node either fails to attach or,
-# depending on your CSI driver, silently gives the second replica its own
-# empty uploads directory) -- either way, some analysts silently can't see
-# attachments other analysts uploaded, depending on which pod their request
-# happened to land on.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kuruops-uploads
-  namespace: kuruops
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 5Gi
----
+# That is a trade, not free: attachments live in the database (25 MB each at most) and
+# its backups. A deployment with many or large attachments should configure S3/GCS under
+# Settings -> Storage Integration, which takes precedence per tenant and keeps the bytes
+# out of Postgres. Attachments uploaded to a local volume before switching stay readable
+# only if that directory is still mounted (reads fall back to UPLOAD_DIR); to keep them,
+# mount the old PVC read-only at /data/uploads while you migrate.
+#
+# api's own rate limiter, request timeout, and SSE fan-out are safe for multiple
+# replicas (Postgres-backed / context-bounded / LISTEN-NOTIFY-based, respectively).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
   namespace: kuruops
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: api
@@ -56,16 +40,11 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-        # The uploads PVC is mounted root-owned and the container runs as the image's
-        # non-root kuruops user (uid/gid 1000), which could not write to it -- every
-        # attachment upload failed. fsGroup makes the volume group-writable for it.
-        fsGroup: 1000
       containers:
         - name: api
           image: kuruops-api:latest
-          # This binary never writes outside the uploads PVC/jwt-keys mount
-          # below (grep the backend for os.TempDir/CreateTemp -- there is
-          # none), so the rest of the image filesystem can be read-only:
+          # This binary never writes to local disk with UPLOAD_BACKEND=database (grep
+          # the backend for os.TempDir/CreateTemp -- there is none), so the rest of the image filesystem can be read-only:
           # a remote-code-execution bug in a dependency can no longer drop
           # a file anywhere on disk. dropping every Linux capability and
           # blocking privilege escalation are both no-ops for this binary's
@@ -122,8 +101,6 @@ spec:
             - name: jwt-keys
               mountPath: /app/keys
               readOnly: true
-            - name: uploads
-              mountPath: /data/uploads
           # readinessProbe: /healthz pings the database with a short timeout
           # and returns 503 if it's unreachable (see
           # internal/httpserver.HealthCheck) -- pulls the pod out of the
@@ -155,9 +132,6 @@ spec:
                 path: jwt_private.pem
               - key: JWT_PUBLIC_KEY
                 path: jwt_public.pem
-        - name: uploads
-          persistentVolumeClaim:
-            claimName: kuruops-uploads
 ---
 apiVersion: v1
 kind: Service

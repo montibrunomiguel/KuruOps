@@ -239,15 +239,21 @@ func main() {
 	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore, adminAuditRepo)
 	llmProviderHandlers := handlers.NewLLMProviderHandlers(llmProviderService)
 
-	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
-		logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
-		os.Exit(1)
+	// With UPLOAD_BACKEND=database nothing is written to local disk (and on Kubernetes the
+	// root filesystem is read-only and no volume is mounted), so the directory is only
+	// created -- and only required to be creatable -- for the local backend.
+	if cfg.UploadBackend != "database" {
+		if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
+			logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
+			os.Exit(1)
+		}
 	}
 	oauthStateService := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 
 	storageConfigRepo := repository.NewStorageConfigRepository()
 	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir,
 		oauthStateService, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.AppBaseURL+"/auth/oauth/gdrive/callback", adminAuditRepo)
+	storageConfigService.SetUploadBackend(cfg.UploadBackend)
 	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
 	uploadKeyRepo := repository.NewUploadKeyRepository()
 	uploadKeyService := service.NewUploadKeyService(pool, uploadKeyRepo)

@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -217,6 +218,22 @@ func TestStorageConfigService_BuildStore(t *testing.T) {
 		require.NoError(t, err)
 		_, ok := store.(*blobstore.LocalStore)
 		assert.True(t, ok, "expected a *blobstore.LocalStore fallback")
+	})
+
+	t.Run("the database backend is the default for a tenant with no integration, reading old local files too", func(t *testing.T) {
+		dbSvc := service.NewStorageConfigService(pool, repository.NewStorageConfigRepository(), secrets.NewEnvStore(), dir, nil, "", "", "", repository.NewAdminAuditEventRepository())
+		dbSvc.SetUploadBackend("database")
+		store, err := dbSvc.BuildStore(t.Context(), tenantID)
+		require.NoError(t, err)
+		fb, ok := store.(*blobstore.FallbackStore)
+		require.True(t, ok, "expected database-with-local-fallback, got %T", store)
+
+		// Writes land in the database (visible through a DatabaseStore for the same
+		// tenant), not on disk.
+		require.NoError(t, fb.Put(t.Context(), "k.png", strings.NewReader("x"), 1, "image/png"))
+		rc, _, err := blobstore.NewDatabaseStore(pool, tenantID).Get(t.Context(), "k.png")
+		require.NoError(t, err)
+		_ = rc.Close()
 	})
 
 	t.Run("s3 configured builds an S3Store", func(t *testing.T) {

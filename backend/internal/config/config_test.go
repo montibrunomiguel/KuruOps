@@ -164,6 +164,8 @@ func TestConfigValidate(t *testing.T) {
 		{"dev-headers starts once acknowledged", config.Config{AuthMode: "dev-headers", DatabaseURL: weak, AllowInsecureDevAuth: true}, ""},
 		{"the acknowledgement alone does not enable anything else", config.Config{AuthMode: "jwt", DatabaseURL: weak, AllowInsecureDevAuth: true}, "well-known database password"},
 		{"a typo'd mode is an error, not a silent jwt", config.Config{AuthMode: "dev_headers", DatabaseURL: good}, "unknown AUTH_MODE"},
+		{"database uploads are accepted", config.Config{AuthMode: "jwt", DatabaseURL: good, UploadBackend: "database"}, ""},
+		{"an unknown upload backend is an error", config.Config{AuthMode: "jwt", DatabaseURL: good, UploadBackend: "s3"}, "unknown UPLOAD_BACKEND"},
 		{"an unparseable url is left for the pool to report", config.Config{AuthMode: "jwt", DatabaseURL: "://not a url"}, ""},
 	}
 	for _, tc := range tests {

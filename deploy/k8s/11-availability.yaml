@@ -16,9 +16,10 @@
 #   analyzer  not autoscaled: it mostly waits on the LLM provider's network, so CPU does
 #             not track its load; size replicas and AI_ANALYSIS_CONCURRENCY against the
 #             provider's rate limit instead. It gets a budget like the others.
-#   api       NOT scaled: its uploads volume is ReadWriteOnce (see 04-api.yaml
-#             for what to change before running more than one replica). It still
-#             gets a budget so a drain is not blocked forever on its single pod.
+#   api       scaled. Stateless since attachments moved into Postgres (UPLOAD_BACKEND=
+#             database, see 04-api.yaml); its rate limiter and SSE fan-out are
+#             Postgres-backed. Scale-down is slow, like ingest's, so open SSE
+#             connections are not all dropped at once.
 #   worker    NOT scaled and no budget: it is a singleton by design (its sweeps
 #             take advisory locks, a second replica would only wait on the first).
 #
@@ -85,6 +86,29 @@ spec:
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 120 }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: kuruops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+  behavior:
     scaleDown:
       stabilizationWindowSeconds: 300
       policies:

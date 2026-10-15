@@ -128,6 +128,10 @@ services:
       HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-90s}
       HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-120s}
       UPLOAD_DIR: /data/uploads
+      # "local" (default) writes attachments under UPLOAD_DIR (the uploads volume below);
+      # "database" keeps them in Postgres so several api replicas can share them with no
+      # shared volume. See db/migrations/0016.
+      UPLOAD_BACKEND: ${UPLOAD_BACKEND:-local}
       # Encrypts secrets.PersistentEnvStore's rows in Postgres (secret_store
       # table) -- the default dev value below is fine for local Docker
       # Compose, never reuse it for anything resembling production (generate

@@ -82,6 +82,14 @@ type Config struct {
 	// written to and served from (see handlers.UploadHandlers). Only cmd/api
 	// needs this -- ingest/worker never handle uploads.
 	UploadDir string
+	// UploadBackend is where attachments go for a tenant that has not configured S3,
+	// GCS or Google Drive (UPLOAD_BACKEND): "local" (default) writes under UploadDir,
+	// "database" keeps them in Postgres (table attachment_blobs). Local disk is
+	// per-pod state, which pins the api to one replica; "database" makes the api
+	// stateless so it can scale, at the cost of putting attachment bytes in the
+	// database -- see migration 0016. Reads fall back to UploadDir, so switching does
+	// not strand what was uploaded before.
+	UploadBackend string
 
 	// AppBaseURL is the externally-reachable origin of the frontend (e.g.
 	// https://kuruops.example.com), used to build links embedded in
@@ -248,6 +256,7 @@ func Load(logger *slog.Logger) (Config, error) {
 		DevKeysDir:      getEnvDefault("DEV_KEYS_DIR", ".dev-keys"),
 		ShutdownTimeout: getEnvDurationDefault(logger, "SHUTDOWN_TIMEOUT", 15*time.Second),
 		UploadDir:       getEnvDefault("UPLOAD_DIR", "/data/uploads"),
+		UploadBackend:   getEnvDefault("UPLOAD_BACKEND", "local"),
 		AppBaseURL:      getEnvDefault("APP_BASE_URL", "http://localhost:3000"),
 
 		SecretsBackend:       getEnvDefault("SECRETS_BACKEND", "env"),
@@ -338,6 +347,12 @@ func (c Config) Validate() error {
 	case "jwt", "dev", "dev-headers":
 	default:
 		return fmt.Errorf("unknown AUTH_MODE %q: must be one of jwt, dev, dev-headers", c.AuthMode)
+	}
+
+	switch c.UploadBackend {
+	case "", "local", "database": // empty is the default, local
+	default:
+		return fmt.Errorf("unknown UPLOAD_BACKEND %q: must be local or database", c.UploadBackend)
 	}
 
 	if c.AuthMode == "dev-headers" && !c.AllowInsecureDevAuth {
