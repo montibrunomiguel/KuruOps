@@ -8,8 +8,9 @@ review de arquitetura. Três binários, um módulo:
 | Comando | Faz o quê | Por quê é separado |
 |---|---|---|
 | `cmd/api` | REST para o frontend: alertas, incidentes, playbooks, settings | escala/falha independente da ingestão |
-| `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) | perfil de carga/rate-limit diferente do `api` |
-| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | não deixa uma chamada de LLM lenta bloquear o CRUD; a análise por IA em si dispara numa goroutine dentro de `cmd/ingest` (na ingestão do alerta), não passa por este worker |
+| `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) e registra cada alerta com um job que o deve uma análise automática | perfil de carga/rate-limit diferente do `api`; único processo exposto à internet, então não tem LLM, MCP nem cofre de segredos |
+| `cmd/analyzer` | Trabalha a fila durável de análises automáticas de alertas: reivindica jobs (`FOR UPDATE SKIP LOCKED` + lease), chama o LLM e as ferramentas MCP, tenta de novo com backoff, retoma após uma queda | uma chamada lenta ao modelo nunca divide processo, pool nem rollout com o recebimento de webhooks; várias réplicas compartilham a fila |
+| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | mantém o trabalho periódico fora do caminho das requisições. Duas réplicas rodam como standby quente (cada tick pega um advisory lock). A análise por IA **não** está aqui: é a fila durável trabalhada pelo `cmd/analyzer`, porque este processo conecta como `kuruops_worker` (`BYPASSRLS`) e jobs por tenant precisam rodar sob row-level security |
 
 ## Rodando local
 

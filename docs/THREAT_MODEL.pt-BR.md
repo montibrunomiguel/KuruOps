@@ -34,11 +34,22 @@ Postgres -- RLS por tenant_id
   (vendors SIEM/XDR), autenticado por um token por-endpoint com hash SHA-256 armazenado
   (`webhook_endpoints.token_hash`), não por JWT de usuário. Isolar esse caminho limita o raio de
   um endpoint de ingestão comprometido/vazado a esse único endpoint (rotação de token disponível em
-  Settings → Webhook Endpoints), sem tocar em nada do resto da API.
-- **`worker` não tem superfície HTTP nenhuma** — só roda cron interno (refresh de materialized
-  view, sweep de SLA/escalonamento), então não é um alvo de rede.
-- **api/ingest/worker → Postgres**: os três conectam como o mesmo role least-privilege
-  (`kuruops_app`, ver `db/init/kuruops_app_role.sql`) — sem `BYPASSRLS`, sem ownership de tabela.
+  Settings → Webhook Endpoints), sem tocar em nada do resto da API. Ele só recebe e registra (o alerta
+  mais um job que o deve uma análise automática); **não tem LLM, MCP nem cofre de segredos** e não
+  precisa de rota de saída para um provedor de modelos, então comprometer o único processo exposto
+  à internet não entrega credenciais de LLM nem permite chamar um modelo.
+- **O `analyzer` é interno**: ele trabalha a fila de análises e é o processo que guarda as credenciais
+  de LLM/MCP (resolvidas do cofre de segredos na hora da chamada) e faz as chamadas de saída para URLs
+  configuradas por admins, atrás do `internal/httpguard`. Serve só `/healthz`, `/livez` e `/metrics`,
+  alcançáveis só pelo Prometheus no `deploy/k8s/10-networkpolicy.yaml`.
+- **O `worker` não serve tráfego de aplicação** — só roda cron interno (refresh de materialized view,
+  sweeps de SLA/escalonamento/retenção) e um endpoint `/healthz`/`/metrics`, então não é um alvo de
+  rede.
+- **api/ingest/analyzer → Postgres**: conectam como o mesmo role least-privilege (`kuruops_app`, ver
+  `db/init/kuruops_app_role.sql`) — sem `BYPASSRLS`, sem ownership de tabela. O `worker` conecta como
+  `kuruops_worker` (`BYPASSRLS`, ver `db/init/kuruops_worker_role.sql`), usado só para as views
+  cross-tenant do dashboard e as varreduras; o trabalho por tenant (a fila de análises) é mantido
+  fora dele de propósito, para que a row-level security valha para ele.
   O role `postgres` (superuser, usado só por migrations/`task db:*`) contorna RLS por completo,
   de propósito — nunca é o role que uma requisição de usuário usa.
 

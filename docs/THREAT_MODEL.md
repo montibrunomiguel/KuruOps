@@ -34,10 +34,21 @@ Postgres -- RLS by tenant_id
   stored (`webhook_endpoints.token_hash`), not by a user JWT. Isolating this path limits the blast
   radius of a compromised/leaked ingestion endpoint to that single endpoint (token rotation
   available under Settings → Webhook Endpoints), without touching anything else in the API.
-- **`worker` has no HTTP surface at all** — it only runs internal cron jobs (materialized view
-  refresh, SLA/escalation sweep), so it isn't a network target.
-- **api/ingest/worker → Postgres**: all three connect as the same least-privilege role
+  It only receives and records (the alert plus a job owing it an automatic analysis); it holds **no
+  LLM, MCP or secret-store wiring** and needs no outbound route to a model provider, so compromising
+  the one internet-facing process yields no LLM credentials and no way to make a model call.
+- **`analyzer` is internal**: it works the analysis queue and is the process that holds the LLM/MCP
+  credentials (resolved from the secret store at call time) and makes outbound calls to
+  admin-configured URLs, behind `internal/httpguard`. It serves only `/healthz`, `/livez` and
+  `/metrics`, reachable only from Prometheus under `deploy/k8s/10-networkpolicy.yaml`.
+- **`worker` serves no application traffic** — it only runs internal cron jobs (materialized view
+  refresh, SLA/escalation/retention sweeps) and a `/healthz`/`/metrics` endpoint, so it isn't a
+  network target.
+- **api/ingest/analyzer → Postgres**: they connect as the same least-privilege role
   (`kuruops_app`, see `db/init/kuruops_app_role.sql`) — no `BYPASSRLS`, no table ownership. The
+  `worker` connects as `kuruops_worker` (`BYPASSRLS`, see `db/init/kuruops_worker_role.sql`), used
+  only for the cross-tenant dashboard views and the sweeps; per-tenant work (the analysis queue) is
+  deliberately kept out of it so row-level security applies to it. The
   `postgres` role (superuser, used only by migrations/`task db:*`) bypasses RLS entirely, on
   purpose — it's never the role a user request uses.
 

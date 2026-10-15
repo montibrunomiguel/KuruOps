@@ -24,7 +24,7 @@ Duas camadas, mantidas separadas de propósito:
 | Cluster | EKS | GKE (nós privados) | AKS |
 | Postgres gerenciado | RDS | Cloud SQL (IP privado) | Postgres Flexible Server (integrado à VNet) |
 | Registro | ECR (um repo por imagem) | Artifact Registry (um repo) | ACR (um registro) |
-| Armazenamento de upload da app | S3 (opcional, `internal/blobstore` já suporta) | GCS (opcional, mesma coisa) | nenhum — `internal/blobstore` ainda não tem backend de Azure Blob; permanece no PVC local com `replicas: 1`, veja `azure/README.pt-BR.md` |
+| Armazenamento de upload da app | S3 (opcional, `internal/blobstore` já suporta) | GCS (opcional, mesma coisa) | nenhum — `internal/blobstore` ainda não tem backend de Azure Blob; os anexos vão para o Postgres (`UPLOAD_BACKEND=database`), então o `api` continua escalando, veja `azure/README.pt-BR.md` |
 
 Cada `<cloud>/README.md` tem o passo a passo completo (provisionar → build/push
 das imagens → criar as roles de banco `kuruops_app`/`kuruops_worker` →

@@ -13,6 +13,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Security
 
+- **A production-like compose deploy with no default credentials.** `docker-compose.yml` is the laptop
+  stack: it prints working passwords and an encryption key and runs `AUTH_MODE=dev`. New
+  `docker-compose.secure.yml` (`task secrets:gen`, `task deploy:secure:up`) makes every credential
+  required -- a missing one stops compose before any container exists -- runs `AUTH_MODE=jwt` with a
+  generated keypair, and publishes only the UI and the webhook port. The startup refusal of a
+  well-known database password now has a test that runs each command's real `main()` as a process and
+  checks it exits 1 with the reason (it had only a unit test of `Validate`).
+- **The internet-facing process no longer holds LLM, MCP or secret-store wiring.** The automatic
+  analysis queue moved out of `cmd/ingest` into the new `cmd/analyzer` (see Added): compromising
+  ingest no longer yields LLM credentials or a way to make a model call, and its NetworkPolicy/egress
+  can stay tight.
+- **Ingress with TLS, and the real client address behind it.** `deploy/k8s/12-ingress.yaml` terminates
+  TLS (hooks → ingest, everything else → frontend). Behind a proxy the frontend's nginx would see the
+  proxy as the client and every user would share one login rate-limit budget; `TRUSTED_PROXY_CIDR`
+  makes it read `X-Forwarded-For` only from the trusted proxy range (a forged header from anyone
+  else is ignored -- verified).
 - **`AUTH_MODE=dev-headers` can no longer be switched on by one forgotten variable.** That mode
   replaces JWT verification with trust in `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` from the caller
   -- no authentication at all -- and a warning log was the only guard. It now also requires
@@ -43,6 +59,14 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Roles created by the external-database migration lacked grants the worker needs.**
+  `dbmigrate.SetupRoles` carried a hand-ported copy of `db/init/*.sql` that had fallen behind: the
+  worker role it created on the customer's database had no `DELETE` (retention sweep), no `UPDATE` on
+  `ai_analysis_runs` (stale-run sweep) and did not own `mv_incident_daily_stats`. It now runs the real
+  scripts (baked into the api image next to the migrations), so the roles have one definition.
+- **The stale-sweep alert would have paged for a healthy standby.** With two worker replicas only the
+  one that wins a tick updates its own `kuruops_worker_last_sweep_success_timestamp`;
+  `KuruOpsWorkerSweepStale` now takes the max across replicas.
 - **The Kubernetes Deployments can start.** Every manifest sets `runAsNonRoot: true`, but the images
   declared their user by name (`USER kuruops`, `USER nginx`), and the kubelet refuses a pod when it
   "cannot verify user is non-root" for a non-numeric user -- so none of api, ingest, worker or frontend
@@ -167,6 +191,27 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- **`cmd/analyzer`: the analysis queue consumer is its own process.** Ingest only receives and records
+  (the alert plus a job row, in one transaction); the analyzer claims the jobs (`FOR UPDATE SKIP LOCKED`
+  + lease), calls the model, retries with backoff and resumes after a crash. A slow LLM call no longer
+  shares a process, pool or rollout with webhook receipt. It wakes on the "alert received" event through
+  a new `events.Broadcaster.Tap` (polling `AI_ANALYSIS_POLL_INTERVAL` as a safety net). Own image,
+  compose service, k8s Deployment (2 replicas), PDB, NetworkPolicy and scrape job. Verified: two
+  replicas, killing the one working a job → the other takes it over after the lease.
+- **`UPLOAD_BACKEND=database`: attachments in Postgres, so `api` can scale.** The local uploads volume
+  was the only thing pinning `api` to one replica (migration 0016, `attachment_blobs`, RLS; reads fall
+  back to the old directory). `deploy/k8s` uses it: no PVC, 2+ api replicas, an HPA. S3/GCS stay the
+  choice for many or large attachments and take precedence per tenant.
+- **High availability.** The worker runs 2 replicas as a hot standby (per-tick advisory locks);
+  `deploy/k8s/optional` adds a 3-instance CloudNativePG cluster with automatic failover (tested:
+  killing the primary promoted a replica with the data intact). Every process reconnects after a
+  Postgres restart without being restarted (verified).
+- **`scripts/k8s-e2e.sh` + a CI job: the Kubernetes manifests are now deployed and exercised.** A kind
+  cluster with Calico, ingress-nginx and metrics-server: migrations, roles, five images,
+  NetworkPolicy allow/deny, PDB/HPA, Ingress + TLS, webhook → ingest → analyzer → model across pods, SSE
+  through the ingress, an attachment uploaded via one api replica read via the other (30 checks).
+  `scripts/check-prometheus-rules.sh` lints and unit-tests the alert rules in CI.
+- **`deploy/k8s/12-ingress.yaml`** and an optional cert-manager issuer.
 - **`docs/openapi.yaml` is now checked against the router.** `TestOpenAPIMatchesRouter` walks the
   routes `NewRouter` really mounts and compares method + path, in both directions, with the spec:
   a new endpoint nobody documented, or a documented operation that no longer exists, fails CI. (It
@@ -179,6 +224,23 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- **No process-wide configuration in the outbound clients.** The LLM retry policy and the LLM/MCP
+  circuit-breaker registries were package-level variables installed once at startup
+  (`ConfigureRetry`, `Configure`); they now belong to an `llmclient.Factory` (given to the analysis
+  service with `WithLLMClientFactory`) and an optional `mcpclient.WithBreakers`. Two services in one
+  process can differ and a test can no longer change another's settings.
+- **Metrics are built on `prometheus/client_golang`.** The hand-written exposition is gone; every
+  metric name and label is unchanged (alert rules depend on them) and each process now also exports the
+  `go_*` runtime and `process_*` collectors.
+- **The four commands are testable.** Each `main()` is now `run(ctx, cfg, logger)` plus a three-line
+  `main`, and tests start the real server against a fresh database built from the real migrations and
+  `db/init` scripts: `cmd/api` 11% → 92%, `cmd/worker` 47% → 80%, `cmd/ingest` 88%,
+  `cmd/analyzer` 90%; total 79.0% → 81.8%. `config.LoadAndValidate` replaces four copies of the
+  load+validate block.
+- **Suggested prompts in the AI chat look like buttons** (outlined chips) instead of plain text.
+- `backend/coverage.out` is no longer tracked (it was gitignored but had been force-added).
+- The frontend's nginx and the k8s manifests changed: `api`, `analyzer` and `worker` run 2 replicas by
+  default; an `api` HPA exists; `UPLOAD_BACKEND=database` is the k8s default.
 - **`ai_analysis_service.go` is split by responsibility.** At 1,183 lines it mixed prompts, the chat
   and follow-up path, the agentic loop and run persistence. It is now four files in the same package
   (`ai_analysis_service.go`, `_prompts.go`, `_chat.go`, `_agent.go`), moved as whole declarations

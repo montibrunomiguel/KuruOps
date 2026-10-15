@@ -18,7 +18,7 @@ expect once it's running.
 ## Requirements
 
 - [Task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`)
-- Docker + Docker Compose (Postgres, API, ingest, worker, and the frontend all run in containers)
+- Docker + Docker Compose (Postgres, API, ingest, analyzer, worker, and the frontend all run in containers)
 - Go 1.25+, Node 20+ (only needed if you run `backend`/`frontend` outside a container)
 
 ## Local deploy (one command)
@@ -30,7 +30,7 @@ task deploy:up
 This does, in order: brings up Postgres and waits for it to be healthy, applies the migrations
 (`db/migrations`), creates the `kuruops_app` role (least-privilege — what makes row-level security
 worth anything at all, see `db/README.md`), builds the images, and brings up `api` + `ingest` +
-`worker` + `frontend`. At the end it prints:
+`analyzer` + `worker` + `frontend`. At the end it prints:
 
 - **Web UI:** http://localhost:3000 (the frontend, served by nginx, already proxying `/api` and
   `/auth` to the backend — this is where you log in)
@@ -42,6 +42,23 @@ worth anything at all, see `db/README.md`), builds the images, and brings up `ap
 task deploy:logs   # follow logs for everything
 task deploy:down   # tear down (keeps the Postgres volume)
 ```
+
+### Anything beyond your own laptop: the secure variant
+
+`task deploy:up` is the laptop stack. It ships working default passwords and an encryption key
+(they are printed in `docker-compose.yml`, so anyone can use them), runs `AUTH_MODE=dev`, and
+publishes Postgres on the host. For a shared box, a demo, or anything reachable by someone else:
+
+```bash
+task secrets:gen          # random passwords + encryption key -> .env.secure; JWT keypair -> .secrets/
+task deploy:secure:up     # docker-compose.secure.yml: no default credentials, AUTH_MODE=jwt
+```
+
+`docker-compose.secure.yml` makes every credential **required** (a missing one stops `docker
+compose` before any container exists), runs real JWT keys, and publishes only the web UI and the
+webhook port -- not Postgres, the api, the analyzer or the worker. Under `AUTH_MODE=jwt` every
+process also refuses to start with a well-known database password (`config.Config.Validate`),
+which is the last line of defence, not the first.
 
 For UI development with hot reload (without rebuilding the Docker image on every change):
 
@@ -199,38 +216,57 @@ graph TD
     Api -->|on-call trigger| OnCall
 ```
 
-`api`/`ingest`/`worker` are three separate Go binaries (same module, `cmd/api`, `cmd/ingest`,
-`cmd/worker`) so they can scale/fail independently — `ingest` is the only surface exposed to
-third-party webhooks (a smaller attack surface, isolated from the rest of the API), `worker` exposes
-no port at all (just internal cron). All three connect to Postgres as the same least-privilege role
-(`kuruops_app`), so row-level security by `tenant_id` applies to any of them, not just requests
-coming from the browser — see `db/README.md`. The external components (IdP, LLM, MCP, blob storage,
+`api`/`ingest`/`analyzer`/`worker` are four separate Go binaries (same module, `cmd/api`,
+`cmd/ingest`, `cmd/analyzer`, `cmd/worker`) so they can scale/fail independently:
+
+- `api` serves the frontend's REST calls and issues session tokens;
+- `ingest` is the only surface exposed to third-party webhooks (a smaller attack surface, isolated
+  from the rest of the API). It only receives and records: each alert is stored together with a
+  job row owing it an automatic analysis, so it needs no LLM, MCP or secret-store wiring and no
+  outbound route to a model provider;
+- `analyzer` works that queue -- claims the jobs, calls the LLM (and MCP tools), retries with
+  backoff, survives restarts -- so a slow model call never shares a process, a pool or a rollout
+  with webhook receipt. Several replicas share the queue safely;
+- `worker` runs the periodic sweeps (SLA breaches, escalations, stale runs, retention, dashboard
+  views). Two replicas run as a hot standby: each tick takes a Postgres advisory lock, so one
+  replica runs it and the other skips.
+
+`api`, `ingest` and `analyzer` connect to Postgres as the least-privilege role `kuruops_app`, so
+row-level security by `tenant_id` applies to them, not just to requests coming from the browser;
+the `worker` connects as `kuruops_worker` (`BYPASSRLS`, used only for the cross-tenant dashboard
+views and the sweeps) — see `db/README.md`. The external components (IdP, LLM, MCP, blob storage,
 secrets backend, SMTP, on-call) are all optional and configured per tenant in Settings; with none
 configured, the system runs with just local auth + local disk storage + secrets encrypted in
 Postgres itself.
 
-### Known limitation: `api` only scales vertically today
+### Scaling and availability
 
-Two pieces of `api` hold in-process, in-memory state — `internal/events.Broadcaster` (SSE event
-fan-out to connected tabs) and `middleware.NewRateLimiter` (login rate limiting, by IP/account).
-That's enough for KuruOps' single-instance model (see "First login" above — there's no
-tenant/company concept at login, so there's never been a reason to run more than one `api`
-replica), but it means **running two or more `api` replicas behind a load balancer breaks both**: a
-client connected to replica A never receives an event published by replica B (it just misses the
-live update until the next manual reload, the data itself stays correct — SSE is only an optional
-"something changed" signal, see `internal/events`'s doc comment), and login rate limiting counts
-attempts per replica, not in total, so the effective limit multiplies by the number of replicas.
+Every process is stateless and scales horizontally. What makes that true, and what to check:
 
-If this ever needs to change: a `Broadcaster` over Redis pub/sub (or NATS) fixes the first one, and
-a rate limiter against Redis (`INCR`+`EXPIRE`, a well-known pattern) fixes the second — neither
-requires changing the data format or the public API, just swapping the implementation behind the
-same interface. It's not a problem today because there's no reason to run more than one replica; it
-becomes one the day there is.
+- **Live updates (SSE)** fan out through Postgres `LISTEN/NOTIFY`, so a browser connected to one
+  `api` replica sees an event published by any other process (`internal/events`).
+- **Rate limits** (login per account/IP, webhooks per source IP) are counted in Postgres, not in
+  process memory, so they hold across replicas.
+- **Attachments** were the one thing pinning `api` to a single replica: with `UPLOAD_BACKEND=local`
+  (the compose default) they live in a directory on one volume. `UPLOAD_BACKEND=database` keeps
+  them in Postgres (`attachment_blobs`, 25 MB each at most), so every replica sees every
+  attachment with no shared volume; `deploy/k8s` uses it. For many or large attachments configure
+  S3/GCS in Settings → Storage Integration instead, which takes precedence per tenant.
+- **The analysis queue** is claimed with `FOR UPDATE SKIP LOCKED` and a lease, so any number of
+  `analyzer` replicas share it and a replica that dies mid-analysis has its job taken over.
+- **The database** is the one component KuruOps does not make highly available itself. Use a
+  managed multi-AZ Postgres, or `deploy/k8s/optional` (a 3-instance CloudNativePG cluster with
+  automatic failover, tested by killing the primary). Every KuruOps process reconnects after a
+  database restart or failover without being restarted.
+
+The Kubernetes manifests (`deploy/k8s`) ship with PodDisruptionBudgets, HorizontalPodAutoscalers
+for `api`, `ingest` and `frontend`, two replicas of everything that can run two, an Ingress with
+TLS, and are exercised end to end on every CI run (`scripts/k8s-e2e.sh`, a kind cluster).
 
 ## Repository layout
 
 ```
-backend/    Go: cmd/api, cmd/ingest, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
+backend/    Go: cmd/api, cmd/ingest, cmd/analyzer, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
 frontend/   React + Vite + TS
 db/         migrations (golang-migrate) + init scripts (least-privilege role)
 docs/       logo, openapi.yaml, API_INTEGRATION.md (webhook guide), TROUBLESHOOTING.md, history/ (already-executed plans)

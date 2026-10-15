@@ -28,10 +28,10 @@ kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager
 #    CloudNativePG expects); it owns the database. The second holds the passwords of the
 #    two application roles.
 kubectl -n kuruops create secret generic kuruops-pg-owner --type=kubernetes.io/basic-auth \
-  --from-literal=username=kuruops_owner --from-literal=password="$(openssl rand -base64 24)"
+  --from-literal=username=kuruops_owner --from-literal=password="$(openssl rand -hex 24)"
 kubectl -n kuruops create secret generic kuruops-pg-roles \
-  --from-literal=app_password="$(openssl rand -base64 24)" \
-  --from-literal=worker_password="$(openssl rand -base64 24)"
+  --from-literal=app_password="$(openssl rand -hex 24)" \
+  --from-literal=worker_password="$(openssl rand -hex 24)"
 
 # 3. The cluster.
 kubectl apply -f deploy/k8s/optional/postgres-cnpg.yaml

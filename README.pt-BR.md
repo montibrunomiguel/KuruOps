@@ -18,7 +18,7 @@ depois que sobe.
 ## Requisitos
 
 - [Task](https://taskfile.dev) (`go install github.com/go-task/task/v3/cmd/task@latest`)
-- Docker + Docker Compose (Postgres, API, ingest, worker e o frontend rodam em container)
+- Docker + Docker Compose (Postgres, API, ingest, analyzer, worker e o frontend rodam em container)
 - Go 1.25+, Node 20+ (só necessários se for rodar `backend`/`frontend` fora de container)
 
 ## Deploy local (um comando)
@@ -42,6 +42,24 @@ valer alguma coisa, ver `db/README.pt-BR.md`), builda as imagens e sobe `api` + 
 task deploy:logs   # acompanhar logs de tudo
 task deploy:down   # derrubar (mantém o volume do Postgres)
 ```
+
+### Qualquer coisa além do seu notebook: a variante segura
+
+O `task deploy:up` é a stack de notebook. Ela traz senhas padrão que funcionam e uma chave de
+criptografia (estão impressas no `docker-compose.yml`, então qualquer um pode usá-las), roda
+`AUTH_MODE=dev` e publica o Postgres no host. Para uma máquina compartilhada, uma demo ou qualquer
+coisa alcançável por outra pessoa:
+
+```bash
+task secrets:gen          # senhas aleatórias + chave de criptografia -> .env.secure; par JWT -> .secrets/
+task deploy:secure:up     # docker-compose.secure.yml: sem credenciais padrão, AUTH_MODE=jwt
+```
+
+O `docker-compose.secure.yml` torna toda credencial **obrigatória** (se faltar uma, o `docker
+compose` para antes de criar qualquer container), usa chaves JWT reais e publica só a UI e a porta de
+webhooks -- não o Postgres, o api, o analyzer nem o worker. Em `AUTH_MODE=jwt` todo processo também
+se recusa a iniciar com uma senha de banco conhecida (`config.Config.Validate`), que é a última
+linha de defesa, não a primeira.
 
 Para desenvolvimento de UI com hot reload (sem rebuildar a imagem Docker a cada mudança):
 
@@ -202,38 +220,58 @@ graph TD
     Api -->|disparo de plantão| OnCall
 ```
 
-`api`/`ingest`/`worker` são três binários Go separados (mesmo módulo, `cmd/api`, `cmd/ingest`,
-`cmd/worker`) para escalar/falhar independentemente — `ingest` é a única superfície exposta a
-webhooks de terceiros (superfície de ataque menor e isolada do resto da API), `worker` não expõe
-porta nenhuma (só cron interno). Todos os três conectam no Postgres como o mesmo role
-least-privilege (`kuruops_app`), então a row-level security por `tenant_id` vale para qualquer um
-deles, não só para requests vindos do navegador — ver `db/README.pt-BR.md`. Os componentes externos
+`api`/`ingest`/`analyzer`/`worker` são quatro binários Go separados (mesmo módulo, `cmd/api`,
+`cmd/ingest`, `cmd/analyzer`, `cmd/worker`) para escalar/falhar independentemente:
+
+- o `api` atende as chamadas REST do frontend e emite os tokens de sessão;
+- o `ingest` é a única superfície exposta a webhooks de terceiros (superfície de ataque menor e
+  isolada do resto da API). Ele só recebe e registra: cada alerta é gravado junto com uma linha de
+  job que o deve uma análise automática, então não precisa de LLM, MCP nem do cofre de segredos, nem
+  de rota de saída para um provedor de modelos;
+- o `analyzer` trabalha essa fila -- reivindica os jobs, chama o LLM (e as ferramentas MCP), tenta de
+  novo com backoff, sobrevive a reinícios -- então uma chamada lenta ao modelo nunca divide processo,
+  pool nem rollout com o recebimento de webhooks. Várias réplicas compartilham a fila com segurança;
+- o `worker` roda as varreduras periódicas (SLA, escalonamentos, runs travadas, retenção, views do
+  dashboard). Duas réplicas rodam como standby quente: cada tick pega um advisory lock do Postgres,
+  então uma réplica executa e a outra pula.
+
+`api`, `ingest` e `analyzer` conectam no Postgres como o role least-privilege `kuruops_app`, então a
+row-level security por `tenant_id` vale para eles, não só para requests vindos do navegador; o
+`worker` conecta como `kuruops_worker` (`BYPASSRLS`, usado só para as views cross-tenant do
+dashboard e as varreduras) — ver `db/README.pt-BR.md`. Os componentes externos
 (IdP, LLM, MCP, blobstore, secrets backend, SMTP, on-call) são todos opcionais e configurados por
 tenant em Settings; sem nenhum configurado, o sistema roda só com auth local + storage em disco
 local + segredos criptografados no próprio Postgres.
 
-### Limitação conhecida: `api` só escala verticalmente hoje
+### Escala e disponibilidade
 
-Duas peças do `api` guardam estado em memória, no processo — `internal/events.Broadcaster` (fan-out
-de eventos SSE para as abas conectadas) e `middleware.NewRateLimiter` (rate limit de login, por
-IP/conta). Isso é suficiente pro modelo single-instance do KuruOps (ver "Primeiro login" acima —
-não existe conceito de tenant/empresa no login, então nunca houve razão pra rodar mais de uma
-réplica do `api`), mas significa que **rodar duas ou mais réplicas do `api` atrás de um load
-balancer quebra os dois**: um cliente conectado à réplica A nunca recebe um evento publicado pela
-réplica B (fica sem update ao vivo até o próximo reload manual, os dados continuam corretos — SSE é
-só um "algo mudou" opcional, ver `internal/events`'s doc comment), e o rate limit de login conta
-tentativas por réplica, não no total, então o limite efetivo multiplica pelo número de réplicas.
+Todo processo é stateless e escala horizontalmente. O que torna isso verdade, e o que verificar:
 
-Se isso precisar mudar: um `Broadcaster` sobre Redis pub/sub (ou NATS) resolve o primeiro, e um
-rate limiter contra Redis (`INCR`+`EXPIRE`, padrão bem conhecido) resolve o segundo — nenhum dos
-dois exige mudar o formato dos dados ou a API pública, só trocar a implementação por trás da mesma
-interface. Não é um problema hoje porque não há motivo pra rodar mais de uma réplica; vira um
-problema no dia em que houver.
+- **Atualizações ao vivo (SSE)** passam pelo `LISTEN/NOTIFY` do Postgres, então um navegador
+  conectado a uma réplica do `api` vê um evento publicado por qualquer outro processo
+  (`internal/events`).
+- **Rate limits** (login por conta/IP, webhooks por IP de origem) são contados no Postgres, não na
+  memória do processo, então valem entre réplicas.
+- **Anexos** eram a única coisa que prendia o `api` a uma réplica: com `UPLOAD_BACKEND=local` (padrão
+  do compose) ficam num diretório de um volume. `UPLOAD_BACKEND=database` os mantém no Postgres
+  (`attachment_blobs`, até 25 MB cada), então toda réplica vê todo anexo sem volume compartilhado; o
+  `deploy/k8s` usa isso. Para muitos anexos ou anexos grandes, configure S3/GCS em Settings →
+  Integração de Armazenamento, que tem precedência por tenant.
+- **A fila de análises** é reivindicada com `FOR UPDATE SKIP LOCKED` e lease, então qualquer número de
+  réplicas do `analyzer` a compartilha, e quem morre no meio de uma análise tem o job reassumido.
+- **O banco** é o único componente que o KuruOps não torna altamente disponível sozinho. Use um
+  Postgres gerenciado multi-AZ ou o `deploy/k8s/optional` (cluster CloudNativePG de 3 instâncias com
+  failover automático, testado matando o primário). Todo processo do KuruOps reconecta após um
+  reinício ou failover do banco sem precisar ser reiniciado.
+
+Os manifestos Kubernetes (`deploy/k8s`) trazem PodDisruptionBudgets, HorizontalPodAutoscalers para
+`api`, `ingest` e `frontend`, duas réplicas de tudo que pode rodar duas, um Ingress com TLS, e são
+exercitados de ponta a ponta a cada execução do CI (`scripts/k8s-e2e.sh`, um cluster kind).
 
 ## Estrutura do repositório
 
 ```
-backend/    Go: cmd/api, cmd/ingest, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
+backend/    Go: cmd/api, cmd/ingest, cmd/analyzer, cmd/worker + internal/ (domain, repository, service, httpserver, auth)
 frontend/   React + Vite + TS
 db/         migrations (golang-migrate) + init scripts (role least-privilege)
 docs/       logo, openapi.yaml, API_INTEGRATION.md (guia de webhook), TROUBLESHOOTING.md, history/ (planos já executados)

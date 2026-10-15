@@ -8,8 +8,9 @@ the architecture review. Three binaries, one module:
 | Command | What it does | Why it's separate |
 |---|---|---|
 | `cmd/api` | REST for the frontend: alerts, incidents, playbooks, settings | scales/fails independently from ingestion |
-| `cmd/ingest` | Receives SIEM/XDR webhooks (`POST /hooks`, token-authenticated) | different load/rate-limit profile than `api` |
-| `cmd/worker` | Background jobs: refreshing KPI materialized views (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), `incidents.sla_breached` sweep, on-call escalation sweep | keeps a slow LLM call from blocking CRUD; the AI analysis itself fires in a goroutine inside `cmd/ingest` (during alert ingestion), it doesn't go through this worker |
+| `cmd/ingest` | Receives SIEM/XDR webhooks (`POST /hooks`, token-authenticated) and records each alert with a job owing it an automatic analysis | different load/rate-limit profile than `api`; the only internet-facing process, so it holds no LLM, MCP or secret-store wiring |
+| `cmd/analyzer` | Works the durable queue of automatic alert analyses: claims jobs (`FOR UPDATE SKIP LOCKED` + lease), calls the LLM and MCP tools, retries with backoff, resumes after a crash | a slow model call never shares a process, pool or rollout with webhook receipt; several replicas share the queue |
+| `cmd/worker` | Background jobs: refreshing KPI materialized views (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), `incidents.sla_breached` sweep, on-call escalation sweep | keeps periodic work off the request path. Two replicas run as a hot standby (each tick takes an advisory lock). The AI analysis is **not** here: it is the durable queue worked by `cmd/analyzer`, because this process connects as `BYPASSRLS` `kuruops_worker` and per-tenant jobs must run under row-level security |
 
 ## Running locally
 
@@ -23,7 +24,7 @@ To run the binaries directly on the machine (no Docker for Go, only for Postgres
 cp .env.example .env   # adjust DATABASE_URL after creating the kuruops_app role (see db/README.md)
 export $(cat .env | xargs)
 make run-api      # :8080
-make run-ingest   # reuses HTTP_ADDR -- run in separate processes/terminals with different ports
+make run-ingest   # reuses HTTP_ADDR (and likewise `go run ./cmd/analyzer`) -- run in separate processes/terminals with different ports
 make run-worker
 ```
 
