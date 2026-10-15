@@ -38,6 +38,7 @@ func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalys
 	svc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan string, 8)
 	svc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) {

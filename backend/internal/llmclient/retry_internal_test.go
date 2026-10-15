@@ -18,21 +18,23 @@ import (
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 )
 
-// Every test in this binary (internal and external package alike) shares these
-// package variables, so shrink the waits once for all of them: tests that hit a
-// failing server would otherwise sleep through real one- and two-second
-// backoffs. The tests below that care about the actual delay calculation call
-// retryDelay directly and set what they need.
-func init() {
-	retryBaseDelay = time.Millisecond
-	retryMaxDelay = 4 * time.Millisecond
-}
+// fastRetry keeps the waits tiny so tests that hit a failing server do not sleep
+// through real one- and two-second backoffs. It belongs to the Factory the test
+// builds, not to the package, so nothing here leaks into any other test.
+var fastRetry = RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond, MaxDelay: 4 * time.Millisecond, RetryAfterCeiling: 15 * time.Second}
+
+func testFactory() *Factory { return NewFactory(Options{Retry: fastRetry}) }
 
 // newTestClient points an OpenAI-compatible client at srv.
 func newTestClient(t *testing.T, srv *httptest.Server) Client {
 	t.Helper()
+	return newTestClientWith(t, srv, testFactory())
+}
+
+func newTestClientWith(t *testing.T, srv *httptest.Server, f *Factory) Client {
+	t.Helper()
 	base := srv.URL
-	c, err := New("openai_compatible", &base, "sk-test", "m")
+	c, err := f.New("openai_compatible", &base, "sk-test", "m")
 	require.NoError(t, err)
 	return c
 }
@@ -80,7 +82,7 @@ func TestDoRequest_GivesUpAfterTheMaximumAttempts(t *testing.T) {
 
 	_, err := newTestClient(t, srv).Complete(t.Context(), "sys", "x")
 	require.Error(t, err)
-	assert.EqualValues(t, retryMaxAttempts, hits.Load(), "exactly the configured number of attempts, no more")
+	assert.EqualValues(t, fastRetry.MaxAttempts, hits.Load(), "exactly the configured number of attempts, no more")
 
 	var pe *ProviderError
 	require.ErrorAs(t, err, &pe, "the failure that survives retrying must still be the typed provider error")
@@ -136,9 +138,7 @@ func TestDoRequest_RetriesADroppedConnection(t *testing.T) {
 }
 
 func TestDoRequest_StopsWaitingWhenTheCallerGoesAway(t *testing.T) {
-	prevBase, prevMax := retryBaseDelay, retryMaxDelay
-	retryBaseDelay, retryMaxDelay = 5*time.Second, 5*time.Second
-	defer func() { retryBaseDelay, retryMaxDelay = prevBase, prevMax }()
+	slow := NewFactory(Options{Retry: RetryPolicy{MaxAttempts: 3, BaseDelay: 5 * time.Second, MaxDelay: 5 * time.Second}})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -148,7 +148,7 @@ func TestDoRequest_StopsWaitingWhenTheCallerGoesAway(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := newTestClient(t, srv).Complete(ctx, "sys", "x")
+	_, err := newTestClientWith(t, srv, slow).Complete(ctx, "sys", "x")
 
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 2*time.Second, "must not sit out a multi-second backoff for a caller that has already left")
@@ -157,46 +157,44 @@ func TestDoRequest_StopsWaitingWhenTheCallerGoesAway(t *testing.T) {
 }
 
 func TestRetryDelay(t *testing.T) {
-	prevBase, prevMax, prevCeil := retryBaseDelay, retryMaxDelay, retryAfterCeiling
-	retryBaseDelay, retryMaxDelay, retryAfterCeiling = 100*time.Millisecond, 800*time.Millisecond, 15*time.Second
-	defer func() { retryBaseDelay, retryMaxDelay, retryAfterCeiling = prevBase, prevMax, prevCeil }()
+	p := RetryPolicy{MaxAttempts: 3, BaseDelay: 100 * time.Millisecond, MaxDelay: 800 * time.Millisecond, RetryAfterCeiling: 15 * time.Second}
 
 	t.Run("backs off exponentially with jitter, capped", func(t *testing.T) {
 		for attempt, hi := range map[int]time.Duration{1: 100 * time.Millisecond, 2: 200 * time.Millisecond} {
 			for i := 0; i < 50; i++ {
-				d, ok := retryDelay(&ProviderError{Status: 503}, attempt)
+				d, ok := p.delay(&ProviderError{Status: 503}, attempt)
 				require.True(t, ok)
 				assert.GreaterOrEqual(t, d, hi/2, "jitter keeps at least half the nominal delay")
 				assert.LessOrEqual(t, d, hi)
 			}
 		}
-		assert.LessOrEqual(t, backoff(30), retryMaxDelay, "an enormous attempt number must not overflow or exceed the cap")
-		assert.Greater(t, backoff(30), time.Duration(0))
+		assert.LessOrEqual(t, p.backoff(30), p.MaxDelay, "an enormous attempt number must not overflow or exceed the cap")
+		assert.Greater(t, p.backoff(30), time.Duration(0))
 	})
 
 	t.Run("honours Retry-After when it is longer than the backoff", func(t *testing.T) {
-		d, ok := retryDelay(&ProviderError{Status: 429, RetryAfter: 3 * time.Second}, 1)
+		d, ok := p.delay(&ProviderError{Status: 429, RetryAfter: 3 * time.Second}, 1)
 		require.True(t, ok)
 		assert.Equal(t, 3*time.Second, d)
 	})
 
 	t.Run("does not wait out a Retry-After longer than the ceiling", func(t *testing.T) {
-		_, ok := retryDelay(&ProviderError{Status: 429, RetryAfter: time.Minute}, 1)
+		_, ok := p.delay(&ProviderError{Status: 429, RetryAfter: time.Minute}, 1)
 		assert.False(t, ok, "a minute is for the analysis queue to wait, not one analysis turn")
 	})
 
 	t.Run("stops at the maximum attempts", func(t *testing.T) {
-		_, ok := retryDelay(&ProviderError{Status: 503}, retryMaxAttempts)
+		_, ok := p.delay(&ProviderError{Status: 503}, p.MaxAttempts)
 		assert.False(t, ok)
 	})
 
 	t.Run("an open circuit breaker is not retried in place", func(t *testing.T) {
-		_, ok := retryDelay(fmt.Errorf("%w for host: next attempt in 30s", circuitbreaker.ErrOpen), 1)
+		_, ok := p.delay(fmt.Errorf("%w for host: next attempt in 30s", circuitbreaker.ErrOpen), 1)
 		assert.False(t, ok, "hammering an open breaker from a retry loop defeats the breaker")
 	})
 
 	t.Run("a non-provider error is not retried", func(t *testing.T) {
-		_, ok := retryDelay(errors.New("encode request"), 1)
+		_, ok := p.delay(errors.New("encode request"), 1)
 		assert.False(t, ok)
 	})
 }
@@ -245,4 +243,42 @@ func TestParseRetryAfter(t *testing.T) {
 	assert.Zero(t, parseRetryAfter("soon", now))
 	assert.Zero(t, parseRetryAfter("-5", now))
 	assert.Zero(t, parseRetryAfter(now.Add(-time.Hour).Format(http.TimeFormat), now), "a date in the past means retry now, not a negative wait")
+}
+
+// TestFactoriesAreIndependent is the point of having a Factory instead of package
+// variables: two of them in one process do not share a retry policy or a breaker.
+func TestFactoriesAreIndependent(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	noRetry := NewFactory(Options{Retry: RetryPolicy{MaxAttempts: 1, BaseDelay: time.Millisecond}})
+	_, err := newTestClientWith(t, srv, noRetry).Complete(t.Context(), "sys", "x")
+	require.Error(t, err)
+	assert.EqualValues(t, 1, hits.Load(), "MaxAttempts 1 means exactly one try")
+
+	hits.Store(0)
+	_, err = newTestClientWith(t, srv, testFactory()).Complete(t.Context(), "sys", "x")
+	require.Error(t, err)
+	assert.EqualValues(t, fastRetry.MaxAttempts, hits.Load(), "the other factory kept its own, longer policy")
+
+	// A breaker tripped through one factory does not open the other's.
+	tripping := NewFactory(Options{
+		Retry:   RetryPolicy{MaxAttempts: 1, BaseDelay: time.Millisecond},
+		Breaker: circuitbreaker.Config{Threshold: 2, Cooldown: time.Minute},
+	})
+	c := newTestClientWith(t, srv, tripping)
+	for i := 0; i < 3; i++ {
+		_, _ = c.Complete(t.Context(), "sys", "x")
+	}
+	_, err = c.Complete(t.Context(), "sys", "x")
+	require.ErrorIs(t, err, circuitbreaker.ErrOpen, "the tripping factory's breaker is open")
+
+	hits.Store(0)
+	_, err = newTestClientWith(t, srv, noRetry).Complete(t.Context(), "sys", "x")
+	assert.NotErrorIs(t, err, circuitbreaker.ErrOpen, "an unrelated factory is unaffected")
+	assert.EqualValues(t, 1, hits.Load())
 }

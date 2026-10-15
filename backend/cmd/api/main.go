@@ -31,7 +31,6 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/mailer"
-	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
@@ -102,9 +101,13 @@ func main() {
 		Threshold: cfg.ExternalCallBreakerThreshold,
 		Cooldown:  cfg.ExternalCallBreakerCooldown,
 	}
-	llmclient.Configure(breakerCfg)
-	llmclient.ConfigureRetry(cfg.LLMCallMaxAttempts, cfg.LLMCallRetryBaseDelay)
-	mcpclient.Configure(breakerCfg)
+	// Owned by this process and handed to the analysis service: the retry policy
+	// and the per-host breakers every provider call shares.
+	llmFactory := llmclient.NewFactory(llmclient.Options{
+		Retry:   llmclient.RetryPolicy{MaxAttempts: cfg.LLMCallMaxAttempts, BaseDelay: cfg.LLMCallRetryBaseDelay},
+		Breaker: breakerCfg,
+	})
+	mcpBreakers := circuitbreaker.NewRegistry(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -186,6 +189,7 @@ func main() {
 	mcpServerService := service.NewMCPServerService(pool, mcpServerRepo, secretStore, adminAuditRepo)
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	mcpToolService.SetCircuitBreakers(mcpBreakers)
 	mcpServerHandlers := handlers.NewMCPServerHandlers(mcpServerService, mcpToolService)
 
 	auditExportService := service.NewAuditExportService(pool, repository.NewAuditRepository())
@@ -198,7 +202,7 @@ func main() {
 	dbMigrationHandlers := handlers.NewDatabaseMigrationHandlers(dbMigrationService, pool)
 
 	aiAnalysisRunRepo := repository.NewAIAnalysisRunRepository()
-	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo)
+	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo, service.WithLLMClientFactory(llmFactory))
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
 	// StartAlertAnalysis/StartIncidentAnalysis run the actual LLM call in
 	// their own goroutine (see AIAnalysisService's doc comment) -- this is

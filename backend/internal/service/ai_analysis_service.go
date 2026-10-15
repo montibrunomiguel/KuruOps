@@ -73,6 +73,7 @@ func (e *subjectNotFoundError) Is(target error) bool { return target == ErrSubje
 // is visible the same way an agentic run's is.
 type AIAnalysisService struct {
 	pool         *db.Pool
+	llm          *llmclient.Factory
 	llmProviders *repository.LLMProviderRepository
 	alerts       *repository.AlertRepository
 	incidents    *repository.IncidentRepository
@@ -94,11 +95,29 @@ func NewAIAnalysisService(
 	mcpTools *MCPToolService,
 	runs *repository.AIAnalysisRunRepository,
 	toolCalls *repository.AIToolCallRepository,
+	opts ...AIAnalysisOption,
 ) *AIAnalysisService {
-	return &AIAnalysisService{
+	s := &AIAnalysisService{
 		pool: pool, llmProviders: llmProviders, alerts: alerts, incidents: incidents, secrets: store,
 		mcpServers: mcpServers, mcpTools: mcpTools, runs: runs, toolCalls: toolCalls,
+		llm: llmclient.NewFactory(llmclient.Options{}),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// AIAnalysisOption customises an AIAnalysisService at construction.
+type AIAnalysisOption func(*AIAnalysisService)
+
+// WithLLMClientFactory sets the llmclient.Factory every provider call is built
+// from, and with it the retry policy and circuit-breaker registry those calls
+// share. cmd/* builds one from its configuration; without this option the service
+// gets a Factory with the production defaults and no circuit breaking. The Factory
+// must be long-lived: the breakers it holds are what remember that a host is down.
+func WithLLMClientFactory(f *llmclient.Factory) AIAnalysisOption {
+	return func(s *AIAnalysisService) { s.llm = f }
 }
 
 // EnableEventPublishing wires a live-update notifier (events.Broadcaster.Publish
@@ -486,7 +505,7 @@ func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx, autoTrig
 		return nil, fmt.Errorf("resolve llm api key: %w", err)
 	}
 
-	client, err := llmclient.New(provider.Kind, provider.BaseURL, apiKey, provider.Model)
+	client, err := s.llm.New(provider.Kind, provider.BaseURL, apiKey, provider.Model)
 	if err != nil {
 		return nil, fmt.Errorf("build llm client: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kuruops/kuruops/internal/llmclient"
+	"github.com/kuruops/kuruops/internal/service"
 )
 
 // TestMain sets ALLOW_PRIVATE_NETWORK_TARGETS for this package's whole test
@@ -22,8 +23,14 @@ import (
 // regardless of which of the two package declarations it lives in.
 func TestMain(m *testing.M) {
 	os.Setenv("ALLOW_PRIVATE_NETWORK_TARGETS", "true")
-	// A fake provider that answers 5xx is retried (see llmclient.doRequest); keep
-	// the waits to a millisecond so those tests do not sleep through real seconds.
-	llmclient.ConfigureRetry(3, time.Millisecond)
 	os.Exit(m.Run())
+}
+
+// fastLLM gives an AIAnalysisService a provider-call retry policy measured in
+// milliseconds: a fake provider that answers 5xx is retried, and these tests should
+// not sleep through real seconds. It is per service, so it leaks into nothing else.
+func fastLLM() service.AIAnalysisOption {
+	return service.WithLLMClientFactory(llmclient.NewFactory(llmclient.Options{
+		Retry: llmclient.RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond},
+	}))
 }

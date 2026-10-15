@@ -202,7 +202,7 @@ type Config struct {
 	ExternalCallBreakerCooldown  time.Duration
 
 	// LLMCallMaxAttempts / LLMCallRetryBaseDelay tune the in-place retry every
-	// LLM call gets (see llmclient.ConfigureRetry): a provider's 503 or 429
+	// LLM call gets (see llmclient.RetryPolicy): a provider's 503 or 429
 	// usually clears within seconds, so one blip should not end an analysis.
 	// Attempts is the total number of tries (1 disables retrying); the first
 	// wait is the base delay, doubling from there. A provider that stays down

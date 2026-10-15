@@ -40,6 +40,7 @@ func newAlertHandlerFixture(t *testing.T) (h *handlers.AlertHandlers, tenantID u
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	userSvc := service.NewUserService(pool, repository.NewUserRepository(), repository.NewAdminAuditEventRepository())
 	onCallScheduleRepo := repository.NewOnCallScheduleRepository()
@@ -138,6 +139,7 @@ func TestAlertHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t *te
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })
@@ -208,6 +210,7 @@ func TestAlertHandlers_Analyze_AlreadyInProgress(t *testing.T) {
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })

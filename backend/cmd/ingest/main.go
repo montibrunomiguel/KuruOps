@@ -24,7 +24,6 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/ingest"
 	"github.com/kuruops/kuruops/internal/llmclient"
-	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
@@ -64,9 +63,13 @@ func main() {
 		Threshold: cfg.ExternalCallBreakerThreshold,
 		Cooldown:  cfg.ExternalCallBreakerCooldown,
 	}
-	llmclient.Configure(breakerCfg)
-	llmclient.ConfigureRetry(cfg.LLMCallMaxAttempts, cfg.LLMCallRetryBaseDelay)
-	mcpclient.Configure(breakerCfg)
+	// Owned by this process and handed to the analysis service: the retry policy
+	// and the per-host breakers every provider call shares.
+	llmFactory := llmclient.NewFactory(llmclient.Options{
+		Retry:   llmclient.RetryPolicy{MaxAttempts: cfg.LLMCallMaxAttempts, BaseDelay: cfg.LLMCallRetryBaseDelay},
+		Breaker: breakerCfg,
+	})
+	mcpBreakers := circuitbreaker.NewRegistry(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -120,9 +123,11 @@ func main() {
 	mcpServerRepo := repository.NewMCPServerRepository()
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	mcpToolService.SetCircuitBreakers(mcpBreakers)
 	aiAnalysisService := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), alertRepo, repository.NewIncidentRepository(), secretStore,
 		mcpServerRepo, mcpToolService, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		service.WithLLMClientFactory(llmFactory),
 	)
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
 

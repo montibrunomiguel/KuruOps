@@ -29,7 +29,7 @@ func TestAnthropicClient_Complete(t *testing.T) {
 	anthropicAPIURL = srv.URL
 	t.Cleanup(func() { anthropicAPIURL = original })
 
-	c, err := New("anthropic", nil, "anthropic-key", "claude-opus-4")
+	c, err := testFactory().New("anthropic", nil, "anthropic-key", "claude-opus-4")
 	require.NoError(t, err)
 
 	result, err := c.Complete(t.Context(), "You are a SOC analyst.", "Analyze this incident.")
@@ -54,7 +54,7 @@ func TestAnthropicClient_CompleteWithTools_RequestsAndReceivesToolCalls(t *testi
 	anthropicAPIURL = srv.URL
 	t.Cleanup(func() { anthropicAPIURL = original })
 
-	c, err := New("anthropic", nil, "anthropic-key", "claude-opus-4")
+	c, err := testFactory().New("anthropic", nil, "anthropic-key", "claude-opus-4")
 	require.NoError(t, err)
 
 	result, err := c.CompleteWithTools(t.Context(), "sys", []Message{{Role: RoleUser, Content: "check this ip"}}, []Tool{
@@ -89,7 +89,7 @@ func TestAnthropicClient_CompleteWithTools_RoundTripsToolResultAsUserMessage(t *
 	anthropicAPIURL = srv.URL
 	t.Cleanup(func() { anthropicAPIURL = original })
 
-	c, err := New("anthropic", nil, "key", "model")
+	c, err := testFactory().New("anthropic", nil, "key", "model")
 	require.NoError(t, err)
 
 	_, err = c.CompleteWithTools(t.Context(), "sys", []Message{
@@ -122,7 +122,7 @@ func TestAnthropicClient_Complete_NoTextContent(t *testing.T) {
 	anthropicAPIURL = srv.URL
 	t.Cleanup(func() { anthropicAPIURL = original })
 
-	c, err := New("anthropic", nil, "key", "model")
+	c, err := testFactory().New("anthropic", nil, "key", "model")
 	require.NoError(t, err)
 
 	_, err = c.Complete(t.Context(), "sys", "user")

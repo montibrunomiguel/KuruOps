@@ -21,7 +21,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"strings"
-	"sync/atomic"
+
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -39,28 +39,35 @@ import (
 // call eventually funnels through.
 var tracer = otel.Tracer("kuruops/llmclient")
 
-// breakers fails calls fast while a provider is unhealthy, instead of
-// letting every AI analysis run wait out the full defaultTimeout against a
-// dead endpoint -- see package circuitbreaker.
+// Factory builds Clients that share one circuit-breaker registry and one retry
+// policy. Both used to be package-level variables installed once at startup
+// (Configure, ConfigureRetry), which made them process-wide state: two services
+// in one process could not be configured differently, and a test that changed
+// them changed them for every other test in the binary. They now belong to a
+// Factory, created once by whoever owns the process (cmd/* in production) and
+// handed to the code that builds clients.
 //
-// Package-level, and keyed by host, for the same reason tracer is: doRequest
-// is the one choke point every provider funnels through, and it has no
-// per-tenant object to hang state off. Keyed by host rather than by
-// provider row so two tenants pointing at the same broken endpoint share
-// its breaker -- the endpoint is what's down, not the configuration.
-//
-// Replaced once at startup by Configure; the default is a disabled
-// registry, so tests and any caller that never calls Configure behave
-// exactly as they did before the breaker existed.
-var breakers atomic.Pointer[circuitbreaker.Registry]
+// The breaker registry is keyed by host, so every Client a Factory builds for the
+// same endpoint shares that endpoint's breaker -- the endpoint is what's down, not
+// the provider row pointing at it. That is why a Factory must be long-lived and
+// shared, not created per call.
+type Factory struct {
+	exec requester
+}
 
-func init() { breakers.Store(circuitbreaker.NewRegistry(circuitbreaker.Config{})) }
+// Options configures a Factory. The zero value is the production default: three
+// attempts with a one-second base delay, and circuit breaking disabled.
+type Options struct {
+	Retry   RetryPolicy
+	Breaker circuitbreaker.Config
+}
 
-// Configure installs the circuit-breaker settings for every LLM call in
-// this process. Called once from cmd/* at startup, before any provider is
-// used.
-func Configure(cfg circuitbreaker.Config) {
-	breakers.Store(circuitbreaker.NewRegistry(cfg))
+// NewFactory returns a Factory with its own breaker registry.
+func NewFactory(opts Options) *Factory {
+	return &Factory{exec: requester{
+		retry:    opts.Retry.withDefaults(),
+		breakers: circuitbreaker.NewRegistry(opts.Breaker),
+	}}
 }
 
 // Client sends one system+user prompt pair to an LLM and returns its text
@@ -130,13 +137,14 @@ const defaultTimeout = 60 * time.Second
 // azure_openai, and self_hosted (there is no sane default endpoint for any
 // of them); anthropic ignores it and always talks to api.anthropic.com,
 // consistent with that kind rejecting a custom base_url at save time.
-func New(kind string, baseURL *string, apiKey, model string) (Client, error) {
+func (f *Factory) New(kind string, baseURL *string, apiKey, model string) (Client, error) {
 	switch kind {
 	case "anthropic":
 		return &anthropicClient{
 			apiKey: apiKey,
 			model:  model,
 			http:   &http.Client{Timeout: defaultTimeout},
+			exec:   f.exec,
 		}, nil
 	case "openai_compatible", "azure_openai", "self_hosted":
 		if baseURL == nil || *baseURL == "" {
@@ -150,6 +158,7 @@ func New(kind string, baseURL *string, apiKey, model string) (Client, error) {
 			// api.anthropic.com above), so this goes through httpguard to
 			// close the SSRF pivot a plain http.Client would leave open.
 			http: httpguard.NewClient(defaultTimeout),
+			exec: f.exec,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown llm provider kind %q", kind)
@@ -165,6 +174,7 @@ type openAIClient struct {
 	apiKey  string
 	model   string
 	http    *http.Client
+	exec    requester
 }
 
 type openAIRequest struct {
@@ -237,7 +247,7 @@ func (c *openAIClient) Complete(ctx context.Context, systemPrompt, userPrompt st
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	respBody, err := doRequest(c.http, httpReq)
+	respBody, err := c.exec.do(c.http, httpReq)
 	if err != nil {
 		return "", err
 	}
@@ -303,7 +313,7 @@ func (c *openAIClient) CompleteWithTools(ctx context.Context, systemPrompt strin
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	respBody, err := doRequest(c.http, httpReq)
+	respBody, err := c.exec.do(c.http, httpReq)
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -381,6 +391,7 @@ type anthropicClient struct {
 	apiKey string
 	model  string
 	http   *http.Client
+	exec   requester
 }
 
 const (
@@ -435,7 +446,7 @@ func (c *anthropicClient) Complete(ctx context.Context, systemPrompt, userPrompt
 	httpReq.Header.Set("x-api-key", c.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 
-	respBody, err := doRequest(c.http, httpReq)
+	respBody, err := c.exec.do(c.http, httpReq)
 	if err != nil {
 		return "", err
 	}
@@ -523,7 +534,7 @@ func (c *anthropicClient) CompleteWithTools(ctx context.Context, systemPrompt st
 	httpReq.Header.Set("x-api-key", c.apiKey)
 	httpReq.Header.Set("anthropic-version", anthropicAPIVersion)
 
-	respBody, err := doRequest(c.http, httpReq)
+	respBody, err := c.exec.do(c.http, httpReq)
 	if err != nil {
 		return CompletionResult{}, err
 	}
@@ -633,78 +644,97 @@ func truncateBody(body []byte, max int) string {
 // 400, so it keeps enough of the body to read a typical JSON error in full.
 const maxLoggedBodyBytes = 2000
 
-// The retry policy for a single provider call. A provider's 503 ("model is
-// currently experiencing high demand") is the most ordinary failure there is
-// and usually clears within seconds, but doRequest used to make exactly one
-// attempt, so one blip ended the analysis -- an auto-analysis ended for good,
-// with nothing ever retrying it. These are vars, not constants, so a test can
-// shrink the waits instead of sleeping through them.
-var (
-	// retryMaxAttempts is the total number of tries, so 3 means two retries.
-	// Kept small on purpose: each try can itself wait out the client timeout,
-	// and the analysis queue provides the slow, long-horizon retries (minutes)
-	// for a provider that is genuinely down.
-	retryMaxAttempts = 3
-	retryBaseDelay   = time.Second
-	retryMaxDelay    = 8 * time.Second
-	// retryAfterCeiling bounds how long a provider's Retry-After is honoured
-	// in place. A provider that asks for a minute is not going to be waited out
-	// inside one analysis turn; the error is returned instead, and the queue
-	// retries at its own, much longer, schedule.
-	retryAfterCeiling = 15 * time.Second
-)
-
-// ConfigureRetry sets how many times one provider call is attempted in total
-// (1 disables retrying) and the first backoff delay; later delays double up to
-// 8x that. Called once from cmd/* at startup, like Configure, and by tests that
-// need a failing server to be retried without sleeping through real seconds. It
-// is not safe to call while calls are in flight.
-func ConfigureRetry(maxAttempts int, baseDelay time.Duration) {
-	retryMaxAttempts = max(maxAttempts, 1)
-	if baseDelay > 0 {
-		retryBaseDelay = baseDelay
-		retryMaxDelay = 8 * baseDelay
-	}
+// RetryPolicy is how a single provider call is retried. A provider's 503 ("model is
+// currently experiencing high demand") is the most ordinary failure there is and
+// usually clears within seconds, but the client used to make exactly one attempt,
+// so one blip ended the analysis -- an auto-analysis ended for good, with nothing
+// ever retrying it.
+type RetryPolicy struct {
+	// MaxAttempts is the total number of tries, so 3 means two retries and 1
+	// disables retrying. Kept small on purpose: each try can itself wait out the
+	// client timeout, and the analysis queue provides the slow, long-horizon
+	// retries (minutes) for a provider that is genuinely down.
+	MaxAttempts int
+	// BaseDelay is the wait before the first retry; later waits double.
+	BaseDelay time.Duration
+	// MaxDelay caps the doubling. Defaults to 8x BaseDelay.
+	MaxDelay time.Duration
+	// RetryAfterCeiling bounds how long a provider's Retry-After is honoured in
+	// place. A provider that asks for a minute is not going to be waited out inside
+	// one analysis turn; the error is returned instead, and the queue retries at
+	// its own, much longer, schedule.
+	RetryAfterCeiling time.Duration
 }
 
-// retryDelay decides whether a failed attempt should be retried and after how
-// long. attempt is the 1-based number of the attempt that just failed.
+// DefaultRetryPolicy is three attempts, one second apart at first.
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{MaxAttempts: 3, BaseDelay: time.Second, MaxDelay: 8 * time.Second, RetryAfterCeiling: 15 * time.Second}
+}
+
+// withDefaults fills what was left zero. A completely zero policy is the
+// default policy; otherwise MaxAttempts below 1 means 1 (no retries).
+func (p RetryPolicy) withDefaults() RetryPolicy {
+	if p == (RetryPolicy{}) {
+		return DefaultRetryPolicy()
+	}
+	p.MaxAttempts = max(p.MaxAttempts, 1)
+	if p.BaseDelay <= 0 {
+		p.BaseDelay = time.Second
+	}
+	if p.MaxDelay <= 0 {
+		p.MaxDelay = 8 * p.BaseDelay
+	}
+	if p.RetryAfterCeiling <= 0 {
+		p.RetryAfterCeiling = 15 * time.Second
+	}
+	return p
+}
+
+// delay decides whether a failed attempt should be retried and after how long.
+// attempt is the 1-based number of the attempt that just failed.
 //
 // Only failures that can clear up are retried (ProviderError.Retryable,
 // TransportError.Retryable). An open circuit breaker is not: it means "this
 // host just failed several times in a row", and hammering it from inside a
 // retry loop is exactly what the breaker exists to stop.
-func retryDelay(err error, attempt int) (time.Duration, bool) {
-	if attempt >= retryMaxAttempts {
+func (p RetryPolicy) delay(err error, attempt int) (time.Duration, bool) {
+	if attempt >= p.MaxAttempts {
 		return 0, false
 	}
 	var pe *ProviderError
 	if errors.As(err, &pe) && pe.Retryable() {
-		if pe.RetryAfter > retryAfterCeiling {
+		if pe.RetryAfter > p.RetryAfterCeiling {
 			return 0, false
 		}
-		return max(backoff(attempt), pe.RetryAfter), true
+		return max(p.backoff(attempt), pe.RetryAfter), true
 	}
 	var te *TransportError
 	if errors.As(err, &te) && te.Retryable() {
-		return backoff(attempt), true
+		return p.backoff(attempt), true
 	}
 	return 0, false
 }
 
-// backoff is exponential (base, 2*base, 4*base ... capped at retryMaxDelay)
-// with jitter in [d/2, d], so a burst of analyses that all hit the same 503
-// does not retry in lockstep and hit the provider again at the same instant.
-func backoff(attempt int) time.Duration {
-	d := retryBaseDelay << (attempt - 1)
-	if d <= 0 || d > retryMaxDelay {
-		d = retryMaxDelay
+// backoff is exponential (base, 2*base, 4*base ... capped at MaxDelay) with
+// jitter in [d/2, d], so a burst of analyses that all hit the same 503 does not
+// retry in lockstep and hit the provider again at the same instant.
+func (p RetryPolicy) backoff(attempt int) time.Duration {
+	d := p.BaseDelay << (attempt - 1)
+	if d <= 0 || d > p.MaxDelay {
+		d = p.MaxDelay
 	}
 	half := d / 2
 	if half <= 0 {
 		return d
 	}
 	return half + rand.N(half+1)
+}
+
+// requester sends HTTP requests the way every provider needs them sent: traced,
+// retried per policy, and through the circuit breaker for the destination host.
+type requester struct {
+	retry    RetryPolicy
+	breakers *circuitbreaker.Registry
 }
 
 // sleepCtx waits d or until ctx ends, reporting which.
@@ -723,20 +753,20 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // failures (see retryDelay) with backoff. The request must be repeatable: every
 // caller builds it with http.NewRequestWithContext over a bytes.Reader, which
 // is what gives it a GetBody to rewind.
-func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
+func (x requester) do(client *http.Client, req *http.Request) ([]byte, error) {
 	ctx, span := tracer.Start(req.Context(), "llm.request")
 	defer span.End()
 	req = req.WithContext(ctx)
 	span.SetAttributes(attribute.String("http.url", req.URL.Host+req.URL.Path))
 
 	for attempt := 1; ; attempt++ {
-		body, err := doRequestOnce(client, req, span, attempt)
+		body, err := x.once(client, req, span, attempt)
 		if err == nil {
 			span.SetAttributes(attribute.Int("llm.attempts", attempt))
 			return body, nil
 		}
 
-		delay, retry := retryDelay(err, attempt)
+		delay, retry := x.retry.delay(err, attempt)
 		// A caller that has gone away (cancelled, deadline) is not waiting for
 		// an answer any more; do not sleep on its behalf.
 		if !retry || ctx.Err() != nil {
@@ -746,7 +776,7 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 			return nil, err
 		}
 		slog.InfoContext(ctx, "retrying llm request after a transient failure",
-			"host", req.URL.Host, "attempt", attempt, "max_attempts", retryMaxAttempts, "wait", delay, "error", err)
+			"host", req.URL.Host, "attempt", attempt, "max_attempts", x.retry.MaxAttempts, "wait", delay, "error", err)
 		if sleepCtx(ctx, delay) != nil {
 			// The original failure is the useful one to report, not "context
 			// canceled".
@@ -756,9 +786,9 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 	}
 }
 
-// doRequestOnce is one attempt: a fresh copy of req (its body rewound), run
-// through the circuit breaker for its host.
-func doRequestOnce(client *http.Client, req *http.Request, span trace.Span, attempt int) ([]byte, error) {
+// once is one attempt: a fresh copy of req (its body rewound), run through the
+// circuit breaker for its host.
+func (x requester) once(client *http.Client, req *http.Request, span trace.Span, attempt int) ([]byte, error) {
 	attemptReq := req.Clone(req.Context())
 	if req.GetBody != nil {
 		b, err := req.GetBody()
@@ -769,7 +799,7 @@ func doRequestOnce(client *http.Client, req *http.Request, span trace.Span, atte
 	}
 
 	var body []byte
-	err := breakers.Load().Do(attemptReq.URL.Host, func() error {
+	err := x.breakers.Do(attemptReq.URL.Host, func() error {
 		resp, err := client.Do(attemptReq)
 		if err != nil {
 			// A transport error (refused, DNS, timeout) is the clearest

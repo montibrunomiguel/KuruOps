@@ -57,6 +57,7 @@ func newAgenticFixture(t *testing.T) agenticFixture {
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
 		mcpServerRepo, mcpToolSvc, runsRepo, aiToolCallRepo,
+		fastLLM(),
 	)
 	mcpToolSvc.SetOnToolCallResolved(aiSvc.ResumeAnalysisRun)
 

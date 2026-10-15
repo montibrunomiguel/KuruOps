@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,13 +15,17 @@ import (
 	"github.com/kuruops/kuruops/internal/llmclient"
 )
 
+// testFactory retries within milliseconds, so a test against a failing server does not
+// sit through real backoff.
+var testFactory = llmclient.NewFactory(llmclient.Options{Retry: llmclient.RetryPolicy{MaxAttempts: 3, BaseDelay: time.Millisecond}})
+
 func TestNew_UnknownKind(t *testing.T) {
-	_, err := llmclient.New("made_up", nil, "key", "model")
+	_, err := testFactory.New("made_up", nil, "key", "model")
 	assert.ErrorContains(t, err, "unknown llm provider kind")
 }
 
 func TestNew_OpenAICompatibleRequiresBaseURL(t *testing.T) {
-	_, err := llmclient.New("openai_compatible", nil, "key", "model")
+	_, err := testFactory.New("openai_compatible", nil, "key", "model")
 	assert.ErrorContains(t, err, "requires a base_url")
 }
 
@@ -37,7 +42,7 @@ func TestOpenAIClient_Complete(t *testing.T) {
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
+	c, err := testFactory.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
 	require.NoError(t, err)
 
 	result, err := c.Complete(t.Context(), "You are a SOC analyst.", "Analyze this alert.")
@@ -56,7 +61,7 @@ func TestOpenAIClient_Complete_ProviderError(t *testing.T) {
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("self_hosted", &baseURL, "bad-key", "llama3")
+	c, err := testFactory.New("self_hosted", &baseURL, "bad-key", "llama3")
 	require.NoError(t, err)
 
 	_, err = c.Complete(t.Context(), "sys", "user")
@@ -80,7 +85,7 @@ func TestOpenAIClient_LogsProviderErrorBody(t *testing.T) {
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("openai_compatible", &baseURL, "sk-secret-key", "gemini-x")
+	c, err := testFactory.New("openai_compatible", &baseURL, "sk-secret-key", "gemini-x")
 	require.NoError(t, err)
 
 	_, err = c.CompleteWithTools(t.Context(), "sys", []llmclient.Message{{Role: llmclient.RoleUser, Content: "hi"}}, nil)
@@ -103,7 +108,7 @@ func TestOpenAIClient_CompleteWithTools_RequestsAndReceivesToolCalls(t *testing.
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
+	c, err := testFactory.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
 	require.NoError(t, err)
 
 	result, err := c.CompleteWithTools(t.Context(), "sys", []llmclient.Message{{Role: llmclient.RoleUser, Content: "check this ip"}}, []llmclient.Tool{
@@ -141,7 +146,7 @@ func TestOpenAIClient_CompleteWithTools_RoundTripsToolResultMessage(t *testing.T
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
+	c, err := testFactory.New("openai_compatible", &baseURL, "sk-test", "gpt-4o")
 	require.NoError(t, err)
 
 	_, err = c.CompleteWithTools(t.Context(), "sys", []llmclient.Message{
@@ -169,7 +174,7 @@ func TestOpenAIClient_Complete_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	baseURL := srv.URL
-	c, err := llmclient.New("azure_openai", &baseURL, "key", "model")
+	c, err := testFactory.New("azure_openai", &baseURL, "key", "model")
 	require.NoError(t, err)
 
 	_, err = c.Complete(t.Context(), "sys", "user")
