@@ -322,7 +322,8 @@
     "requestingTool": "Requesting tool: {{tool}}",
     "placeholder": "Ask a follow-up question...",
     "send": "Send",
-    "sending": "Sending..."
+    "sending": "Sending...",
+    "followUpFailed": "Your last question wasn't answered -- please ask again."
   },
   "alerts": {
     "title": "Alerts",

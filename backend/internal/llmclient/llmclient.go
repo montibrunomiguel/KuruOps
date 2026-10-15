@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -610,12 +611,21 @@ func providerError(status int, body []byte) error {
 // truncateForMessage caps a provider body so an error that reaches the UI
 // stays readable -- some providers answer with kilobytes of HTML.
 func truncateForMessage(body []byte) string {
-	const max = 300
+	return truncateBody(body, 300)
+}
+
+// truncateBody caps body at max bytes, marking the cut.
+func truncateBody(body []byte, max int) string {
 	if len(body) <= max {
 		return string(body)
 	}
 	return string(body[:max]) + "... (truncated)"
 }
+
+// maxLoggedBodyBytes is larger than what truncateForMessage lets reach the UI:
+// the log is where an operator goes to find out why a provider answered 503 or
+// 400, so it keeps enough of the body to read a typical JSON error in full.
+const maxLoggedBodyBytes = 2000
 
 func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 	ctx, span := tracer.Start(req.Context(), "llm.request")
@@ -639,6 +649,14 @@ func doRequest(client *http.Client, req *http.Request) ([]byte, error) {
 		}
 		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 		if resp.StatusCode >= 300 {
+			// providerError replaces most statuses with a fixed hint and drops
+			// the body, which is the right thing to show an analyst but leaves
+			// nothing to diagnose a recurring failure from (a 503 that only
+			// ever hits follow-up turns, say). Log what the provider actually
+			// said; only the response is logged, never the request or key.
+			slog.WarnContext(req.Context(), "llm provider returned an error response",
+				"host", req.URL.Host, "path", req.URL.Path, "status", resp.StatusCode,
+				"body", truncateBody(body, maxLoggedBodyBytes))
 			err := providerError(resp.StatusCode, body)
 			// 5xx and 429 say the provider is unhealthy or overloaded.
 			// Every other 4xx is our request's fault and would fail

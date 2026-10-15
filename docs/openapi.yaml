@@ -5398,6 +5398,13 @@ components:
         error:
           type: string
           nullable: true
+          description: >-
+            Why the last turn failed. With status "failed" the whole run
+            failed. With status "completed" it means the analyst's most recent
+            follow-up got no answer (e.g. a provider 503): the earlier report
+            is kept, the unanswered question is dropped from messages, and this
+            carries the cause so a client can say why. Cleared as soon as a new
+            question is asked, so it never outlives the next turn.
       required: [messages]
 
     LDAPConfig:

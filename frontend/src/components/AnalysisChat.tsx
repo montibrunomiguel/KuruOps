@@ -55,10 +55,22 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
   // per model reply (see AIAnalysisService.publishTurn on the backend), so
   // the transcript refetches as the conversation happens instead of only
   // once the whole run finishes.
+  //
+  // ai_analysis_turn only fires when the model actually replies. A run that
+  // ends in failure (a provider 503, say) never produces one, so the chat
+  // would sit on "Thinking..." forever -- the "analyzed" event the backend
+  // publishes when every run finishes, success or not (see notifyAnalyzed),
+  // is what tells it to refetch and pick up the final status/error.
   useEventStream((event) => {
-    if (event.type !== "ai_analysis_turn") return;
-    const payload = event.data as { contextId?: string } | null;
-    if (payload?.contextId === contextId) void reload();
+    if (event.type === "ai_analysis_turn") {
+      const payload = event.data as { contextId?: string } | null;
+      if (payload?.contextId === contextId) void reload();
+      return;
+    }
+    if (event.type === contextType) {
+      const payload = event.data as { id?: string; action?: string } | null;
+      if (payload?.id === contextId && payload.action === "analyzed") void reload();
+    }
   });
 
   useEffect(() => {
@@ -137,6 +149,15 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
 
         {transcript?.status === "failed" && transcript.error && (
           <div className="error-banner">{transcript.error}</div>
+        )}
+
+        {/* A failed follow-up leaves the run 'completed' (the earlier report is
+            kept, the unanswered question is dropped) with the cause in error --
+            without this the question just vanishes and nothing says why. */}
+        {transcript?.status === "completed" && transcript.error && (
+          <div className="error-banner">
+            {t("analysisChat.followUpFailed")} {transcript.error}
+          </div>
         )}
 
         <div ref={bottomRef} />

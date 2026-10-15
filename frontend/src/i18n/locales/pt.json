@@ -322,7 +322,8 @@
     "requestingTool": "Solicitando ferramenta: {{tool}}",
     "placeholder": "Faça uma pergunta de acompanhamento...",
     "send": "Enviar",
-    "sending": "Enviando..."
+    "sending": "Enviando...",
+    "followUpFailed": "Sua última pergunta não foi respondida -- pergunte novamente."
   },
   "alerts": {
     "title": "Alertas",

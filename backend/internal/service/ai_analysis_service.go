@@ -261,14 +261,23 @@ func (s *AIAnalysisService) resolveAnalysisSubject(ctx context.Context, tx pgx.T
 	}
 }
 
-const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst assistant. Given the details of a security alert or incident, provide a concise triage analysis: likely nature of the activity, whether it appears to be a true or false positive, and recommended next steps. Keep the response focused and actionable, a few short paragraphs at most. You may have tools available to look up additional context (e.g. threat intel, asset info) before answering -- use them when they would materially improve your analysis, but you don't have to use every tool offered.`
+// analysisSystemPrompt is what every conversation gets unless systemPromptFor
+// picks the triage prompt. It has to cope with two shapes that reach it: an
+// analyst typing into the chat, and a run with nothing but the seeded context
+// (an API-started analysis or a re-analysis). The analyst's message is what
+// decides: a question is answered, small talk is answered in kind, and only
+// the absence of any analyst message means "analyze it". An earlier wording
+// said "if no question is asked, provide a triage analysis", and a greeting
+// isn't a question -- so "hi" still came back as a triage write-up.
+const analysisSystemPrompt = `You are a SOC (Security Operations Center) analyst assistant. The first message gives you the details of a security alert or incident as context. Respond to what the analyst writes after it: if it is a question, answer that question directly and concisely, using those details as context; if it is a greeting or small talk, reply briefly and offer to help. Do not produce a triage report or analysis unless the analyst asks for one. Only when there is no message from the analyst at all -- just the details -- provide a concise triage analysis: likely nature of the activity, whether it appears to be a true or false positive, and recommended next steps. Keep every response focused and actionable, a few short paragraphs at most. You may have tools available to look up additional context (e.g. threat intel, asset info) before answering -- use them when they would materially improve your answer, but you don't have to use every tool offered.`
 
-// alertTriageSystemPrompt drives the FIRST analysis an alert or incident
-// ever gets: a full structured triage pass instead of the few-paragraph
-// summary analysisSystemPrompt asks for. Re-analyses and follow-up chat
-// turns fall back to the shorter prompt -- the triage report is already on
-// the timeline by then, and re-emitting it wholesale is noise. See
-// systemPromptFor.
+// alertTriageSystemPrompt drives the unprompted first-pass analysis of an
+// alert or incident: a full structured triage report instead of the
+// few-paragraph answer analysisSystemPrompt asks for. For an alert that is the
+// automatic analysis the ingest process starts when the default LLM provider
+// has "Analyze every incoming alert automatically" on -- never a conversation
+// an analyst opened, whatever they typed. Re-analyses and every turn after the
+// analyst has asked something use the general prompt. See systemPromptFor.
 //
 // The methodology (four phases, the TP/BTP/FP dispositions, the P1-P4
 // matrix, the report skeleton, and the safety constraints) is adapted from
@@ -477,8 +486,9 @@ func (s *AIAnalysisService) continueAnalysis(ctx context.Context, tenantID uuid.
 //
 // Dropping the unanswered turn is deliberate: leaving it in the transcript
 // would show a question the model never replied to, which reads as a
-// silent failure. The error still reaches the analyst through the run's
-// own error field on the next fetch, so they know to ask again.
+// silent failure. The cause is kept on the run's error field (the run is
+// 'completed', so the chat is what shows it -- see AnalysisChat) so the
+// analyst learns why their question disappeared and can ask again.
 func (s *AIAnalysisService) restoreCompletedRun(ctx context.Context, tenantID uuid.UUID, snapshot *completedRunSnapshot, cause error) {
 	if snapshot == nil {
 		// A fresh run that failed is simply a failed run -- there is no
@@ -490,7 +500,7 @@ func (s *AIAnalysisService) restoreCompletedRun(ctx context.Context, tenantID uu
 		result = *snapshot.result
 	}
 	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.runs.SetCompleted(ctx, tx, snapshot.runID, snapshot.messages, result)
+		return s.runs.RestoreCompleted(ctx, tx, snapshot.runID, snapshot.messages, result, cause.Error())
 	}); err != nil {
 		slog.Error("ai analysis: could not restore the completed analysis after a failed follow-up -- the report may be hidden behind a failed run",
 			"run_id", snapshot.runID, "cause", cause, "error", err)
@@ -647,7 +657,10 @@ func blockIfRunning(run *domain.AIAnalysisRun) error {
 // synchronously before this goroutine was spawned) -- this only ever
 // updates it to completed/failed, never creates it.
 func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, userPrompt string) {
-	text, err := client.Complete(ctx, s.systemPromptFor(ctx, run), userPrompt)
+	// Only ever called for a run whose conversation is the single seeded
+	// context message (see startAnalysis), so no question has been asked yet.
+	seeded := []llmclient.Message{{Role: llmclient.RoleUser, Content: userPrompt}}
+	text, err := client.Complete(ctx, s.systemPromptFor(ctx, run, seeded), userPrompt)
 	if err != nil {
 		s.failRun(ctx, run.TenantID, run.ID, err)
 		return
@@ -691,17 +704,41 @@ type agentToolRoute struct {
 	RequiresApproval bool      `json:"requiresApproval"`
 }
 
-// resolveAgentTools finds every MCP server enabled for analysisType
-// ("alert_analysis" | "incident_analysis"), discovers its tools, and keeps
-// only the ones on that server's admin-configured allow-list -- the model
-// is never even offered a tool it isn't allowed to call. A server that
-// fails to respond to discovery is skipped, not fatal to the whole
-// analysis (best-effort, same principle as ingest's unknown-tag handling).
-// On a tool-name collision across servers, the first server (list order)
-// wins.
+// analystHasAsked reports whether a person has put a question to the model in
+// this conversation. A run is seeded with exactly one user message -- the
+// alert/incident context dump (see alertPrompt/incidentPrompt) -- so a second
+// one is the analyst typing into the chat, whether as the very first message of
+// a conversation they opened (continueRun's fresh-run branch seeds
+// [context, question]) or as a follow-up after a finished analysis. Tool
+// results are RoleTool, so a run that paused for approval and resumed still has
+// one.
+func analystHasAsked(messages []llmclient.Message) bool {
+	users := 0
+	for _, m := range messages {
+		if m.Role == llmclient.RoleUser {
+			users++
+		}
+	}
+	return users > 1
+}
+
 // systemPromptFor picks which system prompt a run gets: the full triage
-// pass on an alert/incident's first analysis, the shorter general prompt on
-// every later one.
+// report only for an unprompted first-pass analysis, the general
+// question-answering prompt for everything else.
+//
+// The report is what an alert gets when "Analyze every incoming alert
+// automatically" is on, so for an alert the run must also be the unattended
+// one (ActorID nil -- see startAnalysis); a conversation an analyst opened
+// carries their ID and gets a direct answer to whatever they asked. Before
+// this, the first analysis of any alert got the triage prompt, which is how a
+// plain "hi" in a fresh chat came back as an "Alert Triage Report" -- and,
+// because the check ignored the run's own conversation, so did a follow-up on
+// a report that already existed. messages is what rules the latter out: once
+// analystHasAsked is true, no prompt that demands a report applies.
+//
+// Incidents have no automatic trigger, so only the question check applies to
+// them: an incident analysis started with no question (the API's POST
+// /analyze) still gets the triage pass, one that begins with a question doesn't.
 //
 // "First" deliberately excludes run itself, which is what keeps the answer
 // stable when a run pauses for tool approval and resumes later -- it is
@@ -714,7 +751,14 @@ type agentToolRoute struct {
 // A lookup failure falls back to the general prompt rather than failing the
 // run: a less structured analysis beats no analysis, and nothing here is a
 // security decision.
-func (s *AIAnalysisService) systemPromptFor(ctx context.Context, run *domain.AIAnalysisRun) string {
+func (s *AIAnalysisService) systemPromptFor(ctx context.Context, run *domain.AIAnalysisRun, messages []llmclient.Message) string {
+	if analystHasAsked(messages) {
+		return analysisSystemPrompt
+	}
+	if run.ContextType == "alert" && run.ActorID != nil {
+		return analysisSystemPrompt
+	}
+
 	var prior int
 	err := s.pool.WithTenant(ctx, run.TenantID, func(tx pgx.Tx) error {
 		runs, err := s.runs.ListByContext(ctx, tx, run.ContextType, run.ContextID)
@@ -754,6 +798,14 @@ func (s *AIAnalysisService) systemPromptFor(ctx context.Context, run *domain.AIA
 	return alertTriageSystemPrompt
 }
 
+// resolveAgentTools finds every MCP server enabled for analysisType
+// ("alert_analysis" | "incident_analysis"), discovers its tools, and keeps
+// only the ones on that server's admin-configured allow-list -- the model
+// is never even offered a tool it isn't allowed to call. A server that
+// fails to respond to discovery is skipped, not fatal to the whole
+// analysis (best-effort, same principle as ingest's unknown-tag handling).
+// On a tool-name collision across servers, the first server (list order)
+// wins.
 func (s *AIAnalysisService) resolveAgentTools(ctx context.Context, tenantID uuid.UUID, analysisType string) ([]llmclient.Tool, map[string]agentToolRoute, error) {
 	var servers []domain.MCPServer
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -913,7 +965,7 @@ func toolResultMessage(call *domain.AIToolCall, toolCallID string) llmclient.Mes
 func (s *AIAnalysisService) driveAgentLoop(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, tools []llmclient.Tool, routes map[string]agentToolRoute, messages []llmclient.Message, startTurn int) (string, error) {
 	// Resolved once, not per turn: it costs a query, and the answer must
 	// not change underneath a conversation half-way through it.
-	systemPrompt := s.systemPromptFor(ctx, run)
+	systemPrompt := s.systemPromptFor(ctx, run, messages)
 	for turn := startTurn; turn < maxAgenticTurns; turn++ {
 		// This write is what makes the "resumable run" promise in the doc
 		// comment above true -- if it silently fails, a crash mid-loop

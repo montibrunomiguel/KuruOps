@@ -119,19 +119,36 @@ func (r *AIAnalysisRunRepository) SetRunning(ctx context.Context, tx pgx.Tx, id 
 func (r *AIAnalysisRunRepository) AppendUserMessage(ctx context.Context, tx pgx.Tx, id int64, messages []byte) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'running', messages = $2, pending_tool_call_id = null, updated_at = now()
+		set status = 'running', messages = $2, pending_tool_call_id = null, error = null, updated_at = now()
 		where id = $1`,
 		id, messages,
 	)
 	return err
 }
 
+// SetCompleted also clears error: a run that reaches 'completed' has just
+// produced an answer, so any error left over from an earlier failed follow-up
+// (see RestoreCompleted) no longer describes its current state.
 func (r *AIAnalysisRunRepository) SetCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result string) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, updated_at = now()
+		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = null, updated_at = now()
 		where id = $1`,
 		id, messages, result,
+	)
+	return err
+}
+
+// RestoreCompleted puts a finished analysis back after a follow-up question
+// failed to get an answer, keeping cause on the run so the chat can tell the
+// analyst why their question vanished -- unlike SetCompleted, which means "a
+// turn just succeeded" and therefore clears error.
+func (r *AIAnalysisRunRepository) RestoreCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result, cause string) error {
+	_, err := tx.Exec(ctx, `
+		update ai_analysis_runs
+		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = $4, updated_at = now()
+		where id = $1`,
+		id, messages, result, cause,
 	)
 	return err
 }
