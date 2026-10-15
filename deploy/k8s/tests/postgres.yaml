@@ -1,0 +1,71 @@
+# A throwaway single-instance Postgres for scripts/k8s-e2e.sh -- NOT part of the deployment.
+# The real manifests assume a database you provide (see deploy/k8s/README.md); this stands in
+# for it so the whole stack can be deployed and exercised on a disposable kind cluster.
+#
+# It is named like the optional CloudNativePG cluster's read-write Service (kuruops-pg-rw) and
+# reads the same superuser secret (kuruops-pg-superuser), so deploy/k8s/optional/postgres-roles-job.yaml
+# runs against it unchanged -- which is how that job gets exercised too.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kuruops-pg
+  namespace: kuruops
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: kuruops-pg }
+  template:
+    metadata:
+      labels: { app: kuruops-pg }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: kuruops
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: kuruops-pg-superuser, key: password }
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "kuruops"]
+            periodSeconds: 3
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kuruops-pg-rw
+  namespace: kuruops
+spec:
+  selector: { app: kuruops-pg }
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# 10-networkpolicy.yaml denies all ingress by default and does not mention Postgres because the
+# real one lives outside the namespace. This one lives inside it, so let the namespace's pods
+# (the apps and the migration/roles Jobs) reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-namespace
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: kuruops-pg }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - { protocol: TCP, port: 5432 }

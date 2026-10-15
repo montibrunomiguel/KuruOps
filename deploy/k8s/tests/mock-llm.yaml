@@ -1,0 +1,85 @@
+# A fake OpenAI-compatible LLM for scripts/k8s-e2e.sh: answers every chat completion with a
+# fixed report, so the automatic-analysis pipeline (webhook -> ingest -> job -> analyzer ->
+# model -> result) can be exercised end to end with no external provider. Test-only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mock-llm
+  namespace: kuruops
+data:
+  server.js: |
+    let ok = 0;
+    require("http").createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        if (req.url === "/__stats") { res.end(JSON.stringify({ ok })); return; }
+        if (req.url.endsWith("/chat/completions")) {
+          ok++;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({
+            id: "mock", object: "chat.completion", model: "mock",
+            choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "Alert Triage Report: LIKELY FALSE POSITIVE (mock #" + ok + ")" } }],
+          }));
+          return;
+        }
+        res.writeHead(404); res.end();
+      });
+    }).listen(9000);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: kuruops
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mock-llm }
+  template:
+    metadata:
+      labels: { app: mock-llm }
+    spec:
+      containers:
+        - name: mock
+          image: node:22-alpine
+          command: ["node", "/app/server.js"]
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            tcpSocket: { port: 9000 }
+            periodSeconds: 2
+          volumeMounts:
+            - { name: code, mountPath: /app }
+      volumes:
+        - name: code
+          configMap:
+            name: mock-llm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: kuruops
+spec:
+  selector: { app: mock-llm }
+  ports:
+    - port: 9000
+      targetPort: 9000
+---
+# The analyzer is the only caller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mock-llm-from-analyzer
+  namespace: kuruops
+spec:
+  podSelector:
+    matchLabels: { app: mock-llm }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: analyzer }
+      ports:
+        - { protocol: TCP, port: 9000 }
