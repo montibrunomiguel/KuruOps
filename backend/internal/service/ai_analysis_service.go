@@ -109,12 +109,18 @@ func (s *AIAnalysisService) notifyAnalyzed(tenantID uuid.UUID, contextType strin
 // turn is appended to the conversation -- what lets the AnalysisChat
 // frontend component show a new message incrementally instead of only
 // finding out once the whole run finishes (see notifyAnalyzed, which still
-// fires once at the very end, unchanged). Only the assistant's own turn is
-// published here (not the tool-result message driveAgentLoop appends
-// afterward) -- one event per model reply is enough for the chat to render
-// live; the AlertDetailPage/IncidentDetailPage "alert"/"incident" event
-// notifyAnalyzed already fires still covers final status transitions.
-func (s *AIAnalysisService) publishTurn(run *domain.AIAnalysisRun, msg llmclient.Message) {
+// fires once at the very end, unchanged). One event per model reply is
+// enough for the chat to render live; the AlertDetailPage/IncidentDetailPage
+// "alert"/"incident" event notifyAnalyzed already fires still covers final
+// status transitions.
+//
+// The event is a nudge, not a delivery: it says WHICH conversation changed and
+// the client refetches the transcript over REST. It used to carry the model's
+// whole reply as well, which nothing read (AnalysisChat only looks at
+// contextId) but which cost real harm: events travel through a Postgres NOTIFY,
+// capped at 8000 bytes, and a long triage report blew through that and was
+// dropped, taking the live update with it. Keep this payload to identifiers.
+func (s *AIAnalysisService) publishTurn(run *domain.AIAnalysisRun) {
 	if s.publish == nil {
 		return
 	}
@@ -122,7 +128,6 @@ func (s *AIAnalysisService) publishTurn(run *domain.AIAnalysisRun, msg llmclient
 		"contextType": run.ContextType,
 		"contextId":   run.ContextID,
 		"runId":       run.ID,
-		"message":     toChatMessage(msg),
 	})
 }
 

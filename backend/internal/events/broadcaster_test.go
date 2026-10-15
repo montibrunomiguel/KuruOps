@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,5 +172,70 @@ func TestBroadcaster_CrossProcessDelivery(t *testing.T) {
 		assert.Equal(t, map[string]any{"id": "cross-process"}, ev.Payload)
 	case <-time.After(2 * time.Second):
 		t.Fatal("event published on one Broadcaster must reach a subscriber on another")
+	}
+}
+
+// A model's reply is easily several kilobytes of markdown -- the triage report
+// seen in practice was ~3 KB, and JSON escaping of its newlines and quotes
+// grows it further. Postgres caps a NOTIFY payload at 8000 bytes and rejects a
+// larger one outright, so an event that carried the reply was dropped without
+// reaching anyone, logged only as "publish event failed".
+func TestBroadcaster_OversizedPayloadStillReachesSubscriber(t *testing.T) {
+	b := newTestBroadcaster(t)
+	tenantID := uuid.New()
+	ch, unsubscribe := b.Subscribe(tenantID)
+	defer unsubscribe()
+
+	huge := strings.Repeat("line of a long triage report with \"quotes\"\n", 400) // ~17 KB
+	b.Publish(tenantID, "ai_analysis_turn", map[string]any{
+		"contextId": "ctx-1",
+		"runId":     7,
+		"message":   map[string]any{"role": "assistant", "content": huge},
+	})
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "ai_analysis_turn", ev.Type)
+		payload, ok := ev.Payload.(map[string]any)
+		require.True(t, ok, "payload should still be an object, got %T", ev.Payload)
+		assert.Equal(t, "ctx-1", payload["contextId"], "the small identifying fields are what a client needs and must survive")
+		assert.EqualValues(t, 7, payload["runId"])
+		assert.NotContains(t, payload, "message", "the oversized field is what gets dropped")
+		assert.Equal(t, true, payload["truncated"], "a consumer must be able to tell the payload was cut")
+	case <-time.After(2 * time.Second):
+		t.Fatal("an oversized event was lost: Postgres refused the NOTIFY and nothing was delivered")
+	}
+}
+
+func TestBroadcaster_SmallPayloadIsUntouched(t *testing.T) {
+	b := newTestBroadcaster(t)
+	tenantID := uuid.New()
+	ch, unsubscribe := b.Subscribe(tenantID)
+	defer unsubscribe()
+
+	b.Publish(tenantID, "alert", map[string]any{"id": "a1", "action": "analyzed"})
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, map[string]any{"id": "a1", "action": "analyzed"}, ev.Payload, "no truncation marker on a payload that fit")
+	case <-time.After(2 * time.Second):
+		t.Fatal("event was not received")
+	}
+}
+
+func TestBroadcaster_OversizedNonObjectPayloadStillDeliversTheEventType(t *testing.T) {
+	b := newTestBroadcaster(t)
+	tenantID := uuid.New()
+	ch, unsubscribe := b.Subscribe(tenantID)
+	defer unsubscribe()
+
+	b.Publish(tenantID, "alert", strings.Repeat("x", 20000))
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "alert", ev.Type, "a client can still react to 'something changed' even with no payload")
+		assert.Nil(t, ev.Payload)
+	case <-time.After(2 * time.Second):
+		t.Fatal("event was lost")
 	}
 }

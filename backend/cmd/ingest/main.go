@@ -18,12 +18,15 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/events"
 	"github.com/kuruops/kuruops/internal/httpserver"
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/ingest"
+	"github.com/kuruops/kuruops/internal/llmclient"
+	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
@@ -52,6 +55,20 @@ func main() {
 		logger.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
 	}
+
+	// This process makes LLM and MCP calls too (the automatic analysis of every
+	// ingested alert), but never installed the circuit breaker the api and
+	// worker do -- so during a provider outage every ingested alert dialled the
+	// dead endpoint and waited out the full timeout, even though docker-compose
+	// and the k8s ConfigMap pass EXTERNAL_CALL_BREAKER_* to it. Same settings,
+	// same place as cmd/api, plus the in-place retry.
+	breakerCfg := circuitbreaker.Config{
+		Threshold: cfg.ExternalCallBreakerThreshold,
+		Cooldown:  cfg.ExternalCallBreakerCooldown,
+	}
+	llmclient.Configure(breakerCfg)
+	llmclient.ConfigureRetry(cfg.LLMCallMaxAttempts, cfg.LLMCallRetryBaseDelay)
+	mcpclient.Configure(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

@@ -654,6 +654,19 @@ var (
 	retryAfterCeiling = 15 * time.Second
 )
 
+// ConfigureRetry sets how many times one provider call is attempted in total
+// (1 disables retrying) and the first backoff delay; later delays double up to
+// 8x that. Called once from cmd/* at startup, like Configure, and by tests that
+// need a failing server to be retried without sleeping through real seconds. It
+// is not safe to call while calls are in flight.
+func ConfigureRetry(maxAttempts int, baseDelay time.Duration) {
+	retryMaxAttempts = max(maxAttempts, 1)
+	if baseDelay > 0 {
+		retryBaseDelay = baseDelay
+		retryMaxDelay = 8 * baseDelay
+	}
+}
+
 // retryDelay decides whether a failed attempt should be retried and after how
 // long. attempt is the 1-based number of the attempt that just failed.
 //

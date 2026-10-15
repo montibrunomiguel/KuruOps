@@ -204,3 +204,22 @@ func TestLoad_InsecureOverridesAreExactlyTrue(t *testing.T) {
 	assert.True(t, cfg.AllowInsecureDevAuth)
 	assert.True(t, cfg.AllowDefaultCredentials)
 }
+
+func TestLoad_LLMRetryDefaultsAndOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
+	t.Setenv("LLM_CALL_MAX_ATTEMPTS", "")
+	t.Setenv("LLM_CALL_RETRY_BASE_DELAY", "")
+
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 3, cfg.LLMCallMaxAttempts, "two retries by default")
+	assert.Equal(t, time.Second, cfg.LLMCallRetryBaseDelay)
+
+	t.Setenv("LLM_CALL_MAX_ATTEMPTS", "1")
+	t.Setenv("LLM_CALL_RETRY_BASE_DELAY", "250ms")
+	cfg, err = config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cfg.LLMCallMaxAttempts, "1 disables retrying")
+	assert.Equal(t, 250*time.Millisecond, cfg.LLMCallRetryBaseDelay)
+}

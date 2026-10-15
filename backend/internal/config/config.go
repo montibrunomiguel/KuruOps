@@ -201,6 +201,15 @@ type Config struct {
 	ExternalCallBreakerThreshold int
 	ExternalCallBreakerCooldown  time.Duration
 
+	// LLMCallMaxAttempts / LLMCallRetryBaseDelay tune the in-place retry every
+	// LLM call gets (see llmclient.ConfigureRetry): a provider's 503 or 429
+	// usually clears within seconds, so one blip should not end an analysis.
+	// Attempts is the total number of tries (1 disables retrying); the first
+	// wait is the base delay, doubling from there. A provider that stays down
+	// longer is handled by the analysis queue, on a schedule of minutes.
+	LLMCallMaxAttempts    int
+	LLMCallRetryBaseDelay time.Duration
+
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
@@ -254,6 +263,9 @@ func Load(logger *slog.Logger) (Config, error) {
 
 		ExternalCallBreakerThreshold: int(getEnvInt32Default(logger, "EXTERNAL_CALL_BREAKER_THRESHOLD", 5)),
 		ExternalCallBreakerCooldown:  getEnvDurationDefault(logger, "EXTERNAL_CALL_BREAKER_COOLDOWN", 30*time.Second),
+
+		LLMCallMaxAttempts:    int(getEnvInt32Default(logger, "LLM_CALL_MAX_ATTEMPTS", 3)),
+		LLMCallRetryBaseDelay: getEnvDurationDefault(logger, "LLM_CALL_RETRY_BASE_DELAY", time.Second),
 
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),

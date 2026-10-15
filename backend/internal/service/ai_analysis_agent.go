@@ -237,7 +237,7 @@ func (s *AIAnalysisService) driveAgentLoop(ctx context.Context, run *domain.AIAn
 		}
 
 		messages = append(messages, llmclient.Message{Role: llmclient.RoleAssistant, Content: result.Text, ToolCalls: result.ToolCalls})
-		s.publishTurn(run, messages[len(messages)-1])
+		s.publishTurn(run)
 
 		if len(result.ToolCalls) == 0 {
 			messagesJSON, _ := json.Marshal(messages)

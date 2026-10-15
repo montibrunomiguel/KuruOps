@@ -102,6 +102,7 @@ func main() {
 		Cooldown:  cfg.ExternalCallBreakerCooldown,
 	}
 	llmclient.Configure(breakerCfg)
+	llmclient.ConfigureRetry(cfg.LLMCallMaxAttempts, cfg.LLMCallRetryBaseDelay)
 	mcpclient.Configure(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
