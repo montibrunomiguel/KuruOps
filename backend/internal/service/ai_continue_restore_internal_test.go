@@ -84,6 +84,42 @@ func TestRestoreCompletedRun(t *testing.T) {
 			"the unanswered question is dropped -- leaving it would show a turn the model never replied to")
 		require.NotNil(t, got.Result)
 		assert.Contains(t, *got.Result, "TRUE POSITIVE")
+		require.NotNil(t, got.Error,
+			"the cause is what the chat shows so the analyst knows why their question disappeared")
+		assert.Equal(t, "llm provider returned 503", *got.Error)
+	})
+
+	t.Run("the recorded error does not outlive the next successful turn", func(t *testing.T) {
+		// A stale error on a healthy report would make the chat claim the
+		// latest question failed when it was answered.
+		tenantID := testutil.NewTenant(t)
+		run := seedCompleted(t, tenantID, "Alert Triage Report")
+		snapshot := &completedRunSnapshot{runID: run.ID, messages: reload(t, tenantID, run.ID).Messages, result: ptr("Alert Triage Report")}
+		svc.restoreCompletedRun(t.Context(), tenantID, snapshot, errors.New("llm provider returned 503"))
+		require.NotNil(t, reload(t, tenantID, run.ID).Error)
+
+		answered := json.RawMessage(`[{"role":"assistant","content":"Alert Triage Report"},{"role":"user","content":"why?"},{"role":"assistant","content":"because"}]`)
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			return svc.runs.SetCompleted(t.Context(), tx, run.ID, answered, "because")
+		}))
+
+		assert.Nil(t, reload(t, tenantID, run.ID).Error)
+	})
+
+	t.Run("asking a new question clears the previous failure", func(t *testing.T) {
+		tenantID := testutil.NewTenant(t)
+		run := seedCompleted(t, tenantID, "Alert Triage Report")
+		snapshot := &completedRunSnapshot{runID: run.ID, messages: reload(t, tenantID, run.ID).Messages, result: ptr("Alert Triage Report")}
+		svc.restoreCompletedRun(t.Context(), tenantID, snapshot, errors.New("llm provider returned 503"))
+
+		withQuestion := json.RawMessage(`[{"role":"assistant","content":"Alert Triage Report"},{"role":"user","content":"again?"}]`)
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			return svc.runs.AppendUserMessage(t.Context(), tx, run.ID, withQuestion)
+		}))
+
+		got := reload(t, tenantID, run.ID)
+		assert.Equal(t, domain.AIAnalysisRunRunning, got.Status)
+		assert.Nil(t, got.Error)
 	})
 
 	t.Run("a fresh run that fails is left failed", func(t *testing.T) {

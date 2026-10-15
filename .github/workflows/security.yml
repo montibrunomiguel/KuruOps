@@ -49,6 +49,14 @@ jobs:
           # When go.mod moves to a new MINOR this needs moving too, and the
           # failure says so by name, which is the loud kind.
           go-version: '1.26.x'
+          # Without this, setup-go resolves ".x" against the runner image's
+          # tool cache first and uses whatever patch happens to be baked in
+          # there -- 1.26.8 on 2026-10-15, while the manifest already listed
+          # 1.26.9, which fixes 11 standard-library vulnerabilities
+          # govulncheck then (correctly) reported. check-latest makes it ask
+          # the manifest for the newest patch instead, so "newest patch" is
+          # what this job actually gets and a stale image can't fail the scan.
+          check-latest: true
           cache: true
           cache-dependency-path: backend/go.sum
 

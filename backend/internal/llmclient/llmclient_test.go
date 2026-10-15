@@ -1,7 +1,9 @@
 package llmclient_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -59,6 +61,36 @@ func TestOpenAIClient_Complete_ProviderError(t *testing.T) {
 
 	_, err = c.Complete(t.Context(), "sys", "user")
 	assert.ErrorContains(t, err, "invalid api key")
+}
+
+// A 503's body is dropped from the error shown to the analyst (see
+// providerError), so the log is the only place the provider's own explanation
+// survives -- this is what lets an operator tell "Gemini is overloaded" from
+// "Gemini rejects this request shape" when follow-ups keep failing.
+func TestOpenAIClient_LogsProviderErrorBody(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":503,"message":"The model is overloaded","status":"UNAVAILABLE"}}`))
+	}))
+	defer srv.Close()
+
+	baseURL := srv.URL
+	c, err := llmclient.New("openai_compatible", &baseURL, "sk-secret-key", "gemini-x")
+	require.NoError(t, err)
+
+	_, err = c.CompleteWithTools(t.Context(), "sys", []llmclient.Message{{Role: llmclient.RoleUser, Content: "hi"}}, nil)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "overloaded", "the analyst-facing message stays the short hint")
+
+	logged := logs.String()
+	assert.Contains(t, logged, "The model is overloaded", "the provider's own explanation must reach the log")
+	assert.Contains(t, logged, "status=503")
+	assert.NotContains(t, logged, "sk-secret-key", "the API key must never be logged")
 }
 
 func TestOpenAIClient_CompleteWithTools_RequestsAndReceivesToolCalls(t *testing.T) {

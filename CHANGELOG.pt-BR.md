@@ -14,6 +14,34 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **A primeira mensagem do chat "Analisar com IA" sempre voltava como um "Alert Triage Report",
+  independente do que fosse perguntado.** O prompt completo de triagem era dado à primeira análise
+  de *qualquer* alerta, então um simples "oi" digitado num chat novo recebia um relatório
+  estruturado -- e, como a checagem ignorava a conversa da própria execução, um follow-up sobre um
+  relatório já existente também. O relatório agora fica reservado à análise automática de primeira
+  passada, que só acontece quando o provedor de LLM padrão tem **Analisar automaticamente todos os
+  alertas recebidos** ligado: para um alerta, a execução precisa ser a não assistida que o processo
+  de ingest inicia, e só vale enquanto nenhum analista perguntou nada. Uma conversa aberta pelo
+  chat -- a primeira mensagem ou qualquer follow-up -- recebe uma resposta direta à pergunta. O
+  prompt geral também foi reescrito para dizer isso (antes dizia "forneça uma análise de triagem"
+  independente do que fosse perguntado). Incidentes não têm gatilho automático, então para eles
+  vale só a regra "alguém fez uma pergunta".
+- **Uma pergunta de acompanhamento que falhava no chat "Analisar com IA" parecia nunca ter sido
+  enviada.** Quando o provedor respondia a pergunta com erro (um 503 do Gemini, por exemplo), o
+  backend recolocava corretamente o relatório pronto e descartava a pergunta sem resposta -- mas o
+  chat só exibia o erro de uma execução quando o status era `failed`, e a execução restaurada é
+  `completed`. A pergunta aparecia, ficava em "Pensando..." e sumia no próximo reload sem
+  explicação. Havia dois problemas: um turno que falhava nunca publicava o evento
+  `ai_analysis_turn` em que o chat recarregava, então ele ficava em "Pensando..." até recarregar a
+  página (agora ele também recarrega no evento `analyzed` de fim de execução, que dispara na falha
+  também); e a causa era invisível (o chat agora mostra "Sua última pergunta não foi respondida"
+  com a mensagem do provedor). O erro registrado também é limpo quando um turno seguinte dá certo,
+  para não ficar preso a um relatório saudável.
+- **A resposta de erro do próprio provedor era descartada em toda falha.** Um 503/429/404/401 vira
+  uma dica curta para o analista e o corpo é jogado fora, então uma falha recorrente (follow-ups
+  falhando enquanto a primeira análise funcionava) não tinha nada para ser diagnosticada. O status
+  e o corpo (truncado, só da resposta -- nunca a requisição nem a API key) agora vão para o log
+  como warning, no processo API/ingest que fez a chamada.
 - **Um filtro `severity`/`status`/`phase`/`priority` inválido nas listas de alertas e incidentes
   era um 500.** Os valores iam direto para o Postgres, cujo cast de enum rejeita o que não
   conhece -- então `GET /api/v1/alerts?severity=bogus` (um erro de digitação, um favorito antigo,

@@ -13,6 +13,32 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **The first message in the "Analyze with AI" chat always came back as an "Alert Triage Report",
+  whatever was asked.** The full triage prompt was given to the first analysis of *any* alert, so
+  a plain "hi" typed into a fresh chat got a structured report back -- and, because the check
+  ignored the run's own conversation, so did a follow-up on a report that already existed. The
+  report is now reserved for the automatic first-pass analysis, which only happens when the
+  default LLM provider has **Automatically analyze every incoming alert** on: for an alert the run
+  must be the unattended one the ingest process starts, and it only applies while no analyst has
+  asked anything. A conversation opened from the chat -- its first message, or any follow-up --
+  gets a direct answer to the question. The general prompt itself was reworded to say so (it used
+  to say "provide a triage analysis" regardless of what was asked). Incidents have no automatic
+  trigger, so for them only the "a question was asked" rule applies.
+- **A failed follow-up question in the "Analyze with AI" chat looked like it was never sent.** When
+  the provider answered a follow-up with an error (a Gemini 503, say), the backend correctly put
+  the finished report back and dropped the unanswered question -- but the chat only rendered a
+  run's error when its status was `failed`, and the restored run is `completed`. The question
+  appeared, sat on "Thinking...", and vanished on the next reload with no explanation. Two things
+  were wrong: a failed turn never published the `ai_analysis_turn` event the chat refetched on, so
+  it stayed on "Thinking..." until the page was reloaded (it now also refetches on the
+  end-of-run `analyzed` event, which fires on failure too); and the cause was invisible (the chat
+  now shows "Your last question wasn't answered" with the provider's message). The recorded error
+  is also now cleared once a later turn succeeds, so it can't linger on a healthy report.
+- **The provider's own error response was thrown away on every failure.** A 503/429/404/401 is
+  mapped to a short hint for the analyst and the body dropped, so a failure that kept recurring
+  (follow-ups failing while the first analysis worked) had nothing to diagnose it from. The status
+  and (truncated, response-only -- never the request or API key) body are now logged as a warning
+  by the API/ingest process that made the call.
 - **A bad `severity`/`status`/`phase`/`priority` filter on the alerts and incidents lists was a 500.**
   The values were handed straight to Postgres, whose enum cast rejects anything it doesn't know --
   so `GET /api/v1/alerts?severity=bogus` (a typo, a stale bookmark, a phase passed as a severity)
