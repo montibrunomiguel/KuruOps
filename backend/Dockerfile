@@ -47,6 +47,10 @@ USER 1000:1000
 FROM base AS api
 COPY --from=build /out/api /usr/local/bin/api
 COPY --from=build --chown=kuruops /src/db/migrations /app/db/migrations
+# db/init next to db/migrations: the external-database migration feature (dbmigrate.SetupRoles)
+# runs these very scripts to create the roles on the customer-supplied database, so the roles
+# and grants have one definition.
+COPY --from=build --chown=kuruops /src/db/init /app/db/init
 # DEV_KEYS_DIR's mount point (see docker-compose.yml's dev-jwt-keys volume)
 # -- created here, owned by kuruops (the non-root USER above), so Docker
 # copies that ownership into the named volume the first time it's mounted
