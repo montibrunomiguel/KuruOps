@@ -43,6 +43,12 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **Attachment uploads work on a fresh deploy.** The `uploads` volume (compose) and PVC (Kubernetes)
+  were mounted root-owned while the api runs as the non-root `kuruops` user, so every upload with local
+  storage failed with "could not store uploaded file". The image now creates `/data/uploads` owned by
+  `kuruops` (a new named volume inherits it) and the api pod sets `fsGroup: 1000`. **An existing
+  compose volume keeps its old owner:** run `docker compose run --rm --user root --entrypoint chown api
+  kuruops:kuruops /data/uploads` once.
 - **A failed AI analysis explains itself in the user's language, and a failed follow-up no longer
   eats the question.** The run's error was an English sentence shown verbatim to Portuguese-speaking
   analysts. Runs now persist a stable `error_code` (migration `0015`: `provider_unavailable`,

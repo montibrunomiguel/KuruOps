@@ -45,6 +45,12 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Upload de anexos funciona num deploy novo.** O volume `uploads` (compose) e o PVC (Kubernetes)
+  eram montados com dono root enquanto o api roda como o usuário não-root `kuruops`, então todo upload
+  com armazenamento local falhava com "could not store uploaded file". A imagem agora cria
+  `/data/uploads` com dono `kuruops` (um volume nomeado novo herda isso) e o pod do api define
+  `fsGroup: 1000`. **Um volume existente do compose mantém o dono antigo:** rode uma vez `docker compose
+  run --rm --user root --entrypoint chown api kuruops:kuruops /data/uploads`.
 - **Uma análise de IA que falha se explica no idioma do usuário, e um follow-up que falha não engole
   mais a pergunta.** O erro da execução era uma frase em inglês exibida tal e qual a analistas de
   língua portuguesa. As execuções agora persistem um `error_code` estável (migration `0015`:

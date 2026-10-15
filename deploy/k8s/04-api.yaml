@@ -56,6 +56,10 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        # The uploads PVC is mounted root-owned and the container runs as the image's
+        # non-root kuruops user (uid/gid 1000), which could not write to it -- every
+        # attachment upload failed. fsGroup makes the volume group-writable for it.
+        fsGroup: 1000
       containers:
         - name: api
           image: kuruops-api:latest

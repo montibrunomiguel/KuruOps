@@ -48,6 +48,13 @@ COPY --from=build --chown=kuruops /src/db/migrations /app/db/migrations
 # empty. Without this the volume mounts root-owned and the api process
 # (running as kuruops, never root) can't write its dev JWT keypair to it.
 RUN mkdir -p /app/.dev-keys
+# UPLOAD_DIR's mount point (the "uploads" volume), same reasoning: a named volume
+# mounted empty inherits the ownership of this directory, and without it the volume
+# came up root-owned so the kuruops user could not store a single attachment
+# ("could not store uploaded file"). Needs root only for the chown.
+USER root
+RUN mkdir -p /data/uploads && chown kuruops:kuruops /data/uploads
+USER kuruops
 ENTRYPOINT ["/usr/local/bin/api"]
 
 FROM base AS ingest
