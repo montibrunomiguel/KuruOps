@@ -1,15 +1,21 @@
-# Exactly one replica -- worker's periodic sweeps are already made safe
-# under more than one replica via Postgres advisory locks (see
-# db.Pool.WithAdvisoryLock, cmd/worker/main.go's runLocked), but nothing in
-# this manifest set NEEDS more than one; scale up only if a single
-# replica's sweep latency becomes an actual bottleneck.
+# Two replicas, so a node drain or a crash never stops the sweeps (SLA breaches,
+# escalations, stale-run cleanup, retention, dashboard refresh). Every sweep tick takes
+# a non-blocking Postgres advisory lock (db.Pool.WithAdvisoryLock, cmd/worker/main.go's
+# runLocked): whichever replica gets it runs the tick and the other skips, and if one
+# dies the survivor simply wins the next tick. So the second replica is a hot standby,
+# not extra throughput -- more than two buys nothing.
+#
+# Only the replica that wins a tick refreshes its own
+# kuruops_worker_last_sweep_success_timestamp, so a healthy standby's series is always
+# stale; the KuruOpsWorkerSweepStale rule (09-monitoring.yaml) therefore alerts on the
+# max across replicas, never on a single pod.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: worker
   namespace: kuruops
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: worker

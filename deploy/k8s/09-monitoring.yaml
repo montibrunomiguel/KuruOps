@@ -96,7 +96,10 @@ data:
               description: "{{ $labels.job }}'s acquired connections have been above 90% of DB_POOL_MAX_CONNS for 5 minutes -- requests may start queuing or hitting HTTP_REQUEST_TIMEOUT."
 
           - alert: KuruOpsWorkerSweepStale
-            expr: (time() - kuruops_worker_last_sweep_success_timestamp) > 900
+            # max across worker replicas: only the replica that wins a tick updates its own
+            # series, so a healthy standby's timestamp is always stale. What matters is
+            # whether ANY replica ran the sweep recently.
+            expr: (time() - max by (sweep_job) (kuruops_worker_last_sweep_success_timestamp)) > 900
             for: 5m
             labels:
               severity: critical

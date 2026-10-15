@@ -20,8 +20,10 @@
 #             database, see 04-api.yaml); its rate limiter and SSE fan-out are
 #             Postgres-backed. Scale-down is slow, like ingest's, so open SSE
 #             connections are not all dropped at once.
-#   worker    NOT scaled and no budget: it is a singleton by design (its sweeps
-#             take advisory locks, a second replica would only wait on the first).
+#   worker    two replicas as a hot standby, not for throughput: every sweep tick takes a
+#             non-blocking advisory lock, so one replica runs it and the other skips, and
+#             the survivor takes over if one dies. Not autoscaled (more than two buys
+#             nothing); it gets a budget so a drain never takes both.
 #
 # maxUnavailable: 1 (rather than minAvailable) so a drain can always proceed
 # one pod at a time, including for the single-replica api -- a brief api outage
@@ -45,6 +47,16 @@ spec:
   maxUnavailable: 1
   selector:
     matchLabels: { app: frontend }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker
+  namespace: kuruops
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app: worker }
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

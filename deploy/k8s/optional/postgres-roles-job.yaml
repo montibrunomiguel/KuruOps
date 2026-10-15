@@ -1,0 +1,56 @@
+# Applies db/init/*.sql -- the least-privilege kuruops_app role and the BYPASSRLS
+# kuruops_worker role, with their grants -- to the CloudNativePG cluster. Run it AFTER the
+# migrations (the grants cover the tables that exist), exactly like `task db:roles` does
+# for docker compose. Idempotent.
+#
+# Needs the ConfigMap `kuruops-db-init` (kubectl create configmap kuruops-db-init
+# --from-file=db/init/) and the secrets from README.md.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kuruops-pg-roles
+  namespace: kuruops
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # the postgres user in the alpine image
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: roles
+          image: postgres:16-alpine
+          env:
+            - name: PGHOST
+              value: kuruops-pg-rw
+            - name: PGUSER
+              value: postgres
+            - name: PGDATABASE
+              value: kuruops
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: kuruops-pg-superuser, key: password }
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: kuruops-pg-roles, key: app_password }
+            - name: WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: kuruops-pg-roles, key: worker_password }
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              psql -v ON_ERROR_STOP=1 -v app_password="$APP_PASSWORD" -f /init/kuruops_app_role.sql
+              psql -v ON_ERROR_STOP=1 -v worker_password="$WORKER_PASSWORD" -f /init/kuruops_worker_role.sql
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: init, mountPath: /init, readOnly: true }
+      volumes:
+        - name: init
+          configMap:
+            name: kuruops-db-init

@@ -1,0 +1,47 @@
+# A 3-instance, self-healing Postgres for KuruOps under the CloudNativePG operator. See
+# README.md in this directory for when to use it (and when a managed database is better).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: kuruops-pg
+  namespace: kuruops
+spec:
+  # One primary + two streaming replicas. Failover promotes a replica automatically;
+  # kuruops-pg-rw always follows the primary.
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  # Enough headroom for api, ingest, analyzer and worker replicas, each holding a pool
+  # (DB_POOL_MAX_CONNS in 02-configmap.yaml). See backend/.env.example for the sizing formula.
+  postgresql:
+    parameters:
+      max_connections: "200"
+  storage:
+    size: 20Gi
+    # storageClass: <pick one with volume expansion + snapshots>
+  # Spread the instances over different nodes: three replicas on one node is one failure.
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: preferred
+  bootstrap:
+    initdb:
+      database: kuruops
+      owner: kuruops_owner
+      secret:
+        name: kuruops-pg-owner
+  # The roles and grants (db/init/*.sql) are applied after the migrations, by
+  # postgres-roles-job.yaml, which needs the superuser.
+  enableSuperuserAccess: true
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "2", memory: 1Gi }
+  # Continuous WAL archiving + base backups to an object store -- a replica is not a backup.
+  # Fill in and uncomment; then test a restore.
+  # backup:
+  #   barmanObjectStore:
+  #     destinationPath: s3://<bucket>/kuruops-pg
+  #     s3Credentials:
+  #       accessKeyId:     { name: kuruops-pg-backup, key: ACCESS_KEY_ID }
+  #       secretAccessKey: { name: kuruops-pg-backup, key: SECRET_ACCESS_KEY }
+  #     wal: { compression: gzip }
+  #   retentionPolicy: "14d"
