@@ -77,7 +77,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   Dockerfile), and the `KuruOpsBuildSkew` rule alerts when more than one build is live for 20 minutes.
 - **The live event stream backs off when the API is unreachable.** The browser retried every 3 seconds
   forever, in every open tab, in lockstep. It now backs off exponentially (1s up to 30s) with jitter,
-  and a connection only resets the backoff after staying up for 10 seconds.
+  and the backoff only resets after a connection that actually opened stays up for 10 seconds (a
+  first version counted an attempt that merely took 10s to fail as healthy; caught by stopping the
+  api with a browser open). nginx also gives up on an unresolvable upstream after 3s (`resolver_timeout`)
+  instead of 30s, so those failures come back, and retry, quickly.
 - **`docker stop` no longer cuts the ingest's shutdown short.** Compose's 10s grace period was shorter
   than the 15s the ingest needs to stop and let in-flight analyses finish or be handed back; it is
   25s now.

@@ -81,7 +81,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   no Dockerfile), e a regra `KuruOpsBuildSkew` alerta quando mais de um build fica ativo por 20 minutos.
 - **O stream de eventos ao vivo recua quando a API está inalcançável.** O navegador tentava a cada 3
   segundos para sempre, em todas as abas abertas, em uníssono. Agora recua exponencialmente (de 1s até
-  30s) com jitter, e a conexão só zera o recuo depois de ficar de pé por 10 segundos.
+  30s) com jitter, e o recuo só zera depois de uma conexão que realmente abriu ficar de pé por 10 segundos (uma primeira
+  versão contava como saudável uma tentativa que apenas demorou 10s para falhar; pego ao parar o api
+  com o navegador aberto). O nginx também desiste de um upstream que não resolve após 3s
+  (`resolver_timeout`) em vez de 30s, então essas falhas voltam, e são retentadas, rapidamente.
 - **O `docker stop` não corta mais o desligamento do ingest.** O prazo de 10s do Compose era menor que
   os 15s de que o ingest precisa para parar e deixar as análises em andamento terminarem ou voltarem
   para a fila; agora são 25s.

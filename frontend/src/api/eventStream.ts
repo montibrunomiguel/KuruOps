@@ -8,10 +8,12 @@ export interface StreamEvent {
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
-// A connection must stay up this long before it counts as healthy and resets the
-// backoff. One that opens and is cut right away (a proxy that accepts and then
-// drops, an api that crashes on connect) is still a failure, or the client would
-// hammer it once a second forever.
+// A connection must be OPEN (the server answered 200) and stay up this long before
+// it counts as healthy and resets the backoff. One that opens and is cut right
+// away (a proxy that accepts and then drops, an api that crashes on connect) is
+// still a failure, or the client would hammer it once a second forever. Time spent
+// waiting for an answer that never comes right does not count either: a proxy that
+// takes 10s to return a 502 is not a healthy connection.
 const HEALTHY_CONNECTION_MS = 10000;
 
 // reconnectDelay is how long to wait before the next attempt after `failures`
@@ -63,13 +65,14 @@ export function useEventStream(onEvent: (event: StreamEvent) => void) {
 
     async function connect() {
       abortController = new AbortController();
-      const startedAt = Date.now();
+      let connectedAt: number | null = null;
       try {
         const res = await fetch("/api/v1/events/stream", {
           headers: { Authorization: `Bearer ${token}` },
           signal: abortController.signal,
         });
         if (!res.ok || !res.body) throw new Error("event stream request failed");
+        connectedAt = Date.now();
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -96,7 +99,7 @@ export function useEventStream(onEvent: (event: StreamEvent) => void) {
         // `stopped` first, so a reconnect never fires after cleanup.
       }
       if (!stopped) {
-        failures = Date.now() - startedAt >= HEALTHY_CONNECTION_MS ? 0 : failures + 1;
+        failures = connectedAt !== null && Date.now() - connectedAt >= HEALTHY_CONNECTION_MS ? 0 : failures + 1;
         reconnectTimer = setTimeout(connect, reconnectDelay(failures - 1));
       }
     }

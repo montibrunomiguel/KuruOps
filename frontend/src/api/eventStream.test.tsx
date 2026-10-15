@@ -82,6 +82,31 @@ describe("useEventStream", () => {
       vi.restoreAllMocks();
     });
 
+    it("keeps backing off when each failed attempt is slow to fail", async () => {
+      // A proxy that takes 11s to answer 502 must not look like a healthy connection
+      // (it did, once: the attempt's total duration was used, so the backoff reset).
+      sessionWith();
+      vi.stubGlobal("fetch", withSession(vi.fn().mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(new Response("", { status: 502 })), 0)))));
+      vi.spyOn(Math, "random").mockReturnValue(1);
+      let fakeNow = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => (fakeNow += 11000));
+
+      const realSetTimeout = globalThis.setTimeout;
+      const delays: number[] = [];
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        if ((ms ?? 0) >= 1000 && (ms ?? 0) <= 30000) {
+          delays.push(ms as number);
+          return realSetTimeout(fn, 0);
+        }
+        return realSetTimeout(fn, ms, ...rest);
+      }) as typeof setTimeout);
+
+      renderHook(() => useEventStream(vi.fn()), { wrapper });
+
+      await waitFor(() => expect(delays.length).toBeGreaterThanOrEqual(4), { timeout: 60000 });
+      expect(delays.slice(0, 4)).toEqual([1000, 2000, 4000, 8000]);
+    });
+
     it("retries a failing connection with growing, capped delays instead of a fixed one", async () => {
       sessionWith();
       const fetchMock = vi.fn().mockRejectedValue(new Error("down"));
