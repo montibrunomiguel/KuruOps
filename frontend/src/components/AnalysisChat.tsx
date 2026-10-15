@@ -23,7 +23,7 @@ interface AnalysisChatProps {
 // analysis triggered on ingest is unchanged, this only covers the manual
 // button's behavior.
 export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { token } = useAuth();
   const basePath = contextType === "alert" ? "/api/v1/alerts" : "/api/v1/incidents";
 
@@ -34,11 +34,25 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
   const [sending, setSending] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // The last follow-up question sent, kept until its turn is known to have been
+  // answered. A follow-up that fails leaves the run completed with the question
+  // dropped (see AIAnalysisService.restoreCompletedRun), so without this the
+  // analyst's own text would be gone along with the answer they never got.
+  const unansweredQuestion = useRef<string | null>(null);
+
+  function applyTranscript(next: AnalysisChatTranscript) {
+    setTranscript(next);
+    const pending = unansweredQuestion.current;
+    if (pending === null || next.status === "running" || next.status === "paused") return;
+    unansweredQuestion.current = null;
+    // Put the question back for a one-click retry -- but never over text the
+    // analyst has started typing in the meantime.
+    if (next.status === "completed" && next.error) setText((current) => current || pending);
+  }
 
   async function reload() {
     try {
-      const next = await api.get<AnalysisChatTranscript>(`${basePath}/${contextId}/analyze/messages`, token);
-      setTranscript(next);
+      applyTranscript(await api.get<AnalysisChatTranscript>(`${basePath}/${contextId}/analyze/messages`, token));
     } catch (err) {
       setError(mutationErrorMessage(err));
     } finally {
@@ -46,10 +60,29 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
     }
   }
 
+  // Initial load. Written as a promise chain with a cancellation flag rather than
+  // calling reload() so a slow response for a previous contextId can never
+  // overwrite the transcript of the one now on screen.
   useEffect(() => {
-    void reload();
+    let cancelled = false;
+    api
+      .get<AnalysisChatTranscript>(`${basePath}/${contextId}/analyze/messages`, token)
+      .then((next) => {
+        if (!cancelled) applyTranscript(next);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(mutationErrorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // token is read once here on purpose: a token refresh must not refetch (and
+    // flash) the open conversation, the event stream keeps it current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextId]);
+  }, [contextId, basePath]);
 
   // Turn-by-turn incremental updates: driveAgentLoop publishes one of these
   // per model reply (see AIAnalysisService.publishTurn on the backend), so
@@ -79,13 +112,13 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
 
   const busy = transcript?.status === "running" || transcript?.status === "paused";
 
-  async function send(e: FormEvent) {
-    e.preventDefault();
-    if (!text.trim() || busy) return;
+  async function sendText(question: string) {
+    if (!question.trim() || busy) return;
     setSending(true);
     setError(null);
     try {
-      await api.post(`${basePath}/${contextId}/analyze/messages`, { text }, token);
+      await api.post(`${basePath}/${contextId}/analyze/messages`, { text: question }, token);
+      unansweredQuestion.current = question;
       setText("");
       await reload();
     } catch (err) {
@@ -93,6 +126,19 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
     } finally {
       setSending(false);
     }
+  }
+
+  function send(e: FormEvent) {
+    e.preventDefault();
+    void sendText(text);
+  }
+
+  // The backend's error text is English. For a provider failure it also sends a
+  // stable code, which is shown in the interface language instead; anything
+  // without a translation falls back to the raw text rather than to nothing.
+  function runErrorText(tr: AnalysisChatTranscript): string {
+    const key = `analysisChat.errors.${tr.errorCode ?? ""}`;
+    return tr.errorCode && i18n.exists(key) ? t(key) : (tr.error ?? "");
   }
 
   async function decide(action: "approve" | "reject") {
@@ -124,7 +170,25 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
         {loading && <div className="empty-state">{t("common.loading")}</div>}
 
         {!loading && transcript && transcript.messages.length === 0 && !busy && (
-          <div className="empty-state">{t("analysisChat.empty")}</div>
+          <div className="empty-state">
+            <p>{t("analysisChat.empty")}</p>
+            {/* A blank box asks the analyst to invent a prompt; these are the questions
+                that are nearly always worth asking first. */}
+            <p className="helper-text">{t("analysisChat.suggestionsLabel")}</p>
+            <div className="row-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              {(["triage", "nextSteps", "related"] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={sending}
+                  onClick={() => void sendText(t(`analysisChat.suggestions.${key}`))}
+                >
+                  {t(`analysisChat.suggestions.${key}`)}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         {transcript?.messages.map((m, idx) => <ChatBubble key={idx} message={m} />)}
@@ -148,7 +212,7 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
         )}
 
         {transcript?.status === "failed" && transcript.error && (
-          <div className="error-banner">{transcript.error}</div>
+          <div className="error-banner">{runErrorText(transcript)}</div>
         )}
 
         {/* A failed follow-up leaves the run 'completed' (the earlier report is
@@ -156,7 +220,7 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
             without this the question just vanishes and nothing says why. */}
         {transcript?.status === "completed" && transcript.error && (
           <div className="error-banner">
-            {t("analysisChat.followUpFailed")} {transcript.error}
+            {t("analysisChat.followUpFailed")} {runErrorText(transcript)}
           </div>
         )}
 

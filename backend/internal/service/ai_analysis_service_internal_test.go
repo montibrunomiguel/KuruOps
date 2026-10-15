@@ -145,7 +145,7 @@ func TestSystemPromptFor(t *testing.T) {
 		contextID := uuid.New()
 		first := insertRun(t, tenantID, "alert", contextID)
 		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
-			return svc.runs.SetFailed(t.Context(), tx, first.ID, "llm provider returned 503")
+			return svc.runs.SetFailed(t.Context(), tx, first.ID, "llm provider returned 503", "")
 		}))
 
 		retry := insertRun(t, tenantID, "alert", contextID)

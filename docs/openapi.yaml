@@ -5405,6 +5405,16 @@ components:
             is kept, the unanswered question is dropped from messages, and this
             carries the cause so a client can say why. Cleared as soon as a new
             question is asked, so it never outlives the next turn.
+        errorCode:
+          type: string
+          nullable: true
+          enum: [provider_unavailable, provider_rate_limited, provider_auth, provider_not_found, provider_error, provider_unreachable]
+          description: >-
+            A stable classification of `error` when it came from the LLM
+            provider, so a client can show the failure in the user's own
+            language instead of the English `error` text. Absent when the
+            failure was not a provider failure (a database error, a bug) or
+            when the run carries no error.
       required: [messages]
 
     LDAPConfig:

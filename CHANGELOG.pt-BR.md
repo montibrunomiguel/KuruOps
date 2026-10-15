@@ -45,6 +45,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **Uma análise de IA que falha se explica no idioma do usuário, e um follow-up que falha não engole
+  mais a pergunta.** O erro da execução era uma frase em inglês exibida tal e qual a analistas de
+  língua portuguesa. As execuções agora persistem um `error_code` estável (migration `0015`:
+  `provider_unavailable`, `provider_rate_limited`, `provider_auth`, `provider_not_found`,
+  `provider_error`, `provider_unreachable`), exposto como `errorCode` no transcript do chat, e o chat
+  mostra uma mensagem traduzida que também diz o que verificar (a chave de API, a URL base...), caindo
+  no texto original para o que não foi classificado. Quando um follow-up falha, a pergunta sem resposta
+  volta para o campo de texto -- nunca por cima do que o analista já começou a digitar -- e um chat
+  vazio oferece três perguntas iniciais sugeridas (triagem completa, próximos passos, atividade
+  relacionada).
+- **A carga inicial do chat não pinta mais uma conversa antiga.** Abrir o chat de um alerta e depois de
+  outro podia deixar a resposta lenta do primeiro sobrescrever o segundo; a carga agora tem uma flag de
+  cancelamento. Também elimina o aviso de lint `set-state-in-effect` ali e no `usePagedList`, que
+  renderizava uma vez com o filtro novo e a página antiga (uma requisição por uma página que não existe
+  sob aquele filtro) antes de resetar.
+- **O `App.test.tsx` não falha mais com cache frio.** O teste do Dashboard pagava a transformação do
+  grafo de páginas lazy dentro do próprio timeout; os módulos lazy agora são carregados num `beforeAll`.
 - **O proxy de API do frontend não devolve mais 502 no Kubernetes.** O nginx resolve a api a cada
   requisição (então uma api recriada é encontrada), mas o resolver estava fixo no `127.0.0.11` do
   Docker, que não existe num cluster. O `nginx.conf` agora é um template do envsubst: o resolver vem
@@ -404,6 +421,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- **O `docs/openapi.yaml` agora é conferido contra o router.** O `TestOpenAPIMatchesRouter` percorre as
+  rotas que o `NewRouter` realmente monta e compara método + path, nos dois sentidos, com a spec: um
+  endpoint novo que ninguém documentou, ou uma operação documentada que não existe mais, quebra o CI.
+  (Confere rotas, não schemas.) A spec também documenta o novo campo `errorCode`.
 - **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets e HorizontalPodAutoscalers.** ingest
   (2-6 réplicas) e frontend (2-4) escalam por CPU, com scale-down lento; ingest/frontend/api ganham
   um budget `maxUnavailable: 1` para que drains de nó avancem um pod por vez. O frontend agora sobe

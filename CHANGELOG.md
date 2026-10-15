@@ -43,6 +43,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **A failed AI analysis explains itself in the user's language, and a failed follow-up no longer
+  eats the question.** The run's error was an English sentence shown verbatim to Portuguese-speaking
+  analysts. Runs now persist a stable `error_code` (migration `0015`: `provider_unavailable`,
+  `provider_rate_limited`, `provider_auth`, `provider_not_found`, `provider_error`,
+  `provider_unreachable`), exposed as `errorCode` on the chat transcript, and the chat shows a
+  translated message that also says what to check (the API key, the Base URL...), falling back to the
+  raw text for anything unclassified. When a follow-up fails the unanswered question is put back in the
+  input -- never over text the analyst has already started typing -- and an empty chat offers three
+  suggested first questions (full triage, next steps, related activity).
+- **The chat's initial load can no longer paint a stale conversation.** Opening the chat for one alert
+  and then another could let a slow response for the first overwrite the second; the load now carries a
+  cancellation flag. Also removes the `set-state-in-effect` lint warning there and in
+  `usePagedList`, which rendered once with the new filter and the old page (a request for a page that
+  does not exist under that filter) before resetting.
+- **`App.test.tsx` no longer fails on a cold cache.** Its Dashboard test paid for transforming the
+  lazy-loaded page graph inside its own timeout; the lazy modules are now loaded in a `beforeAll`.
 - **The frontend's API proxy no longer 502s on Kubernetes.** nginx resolves the api per request
   (so a recreated api is picked up), but the resolver was hardcoded to Docker's `127.0.0.11`, which
   does not exist in a cluster. `nginx.conf` is now an envsubst template: the resolver is read from
@@ -128,6 +144,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Added
 
+- **`docs/openapi.yaml` is now checked against the router.** `TestOpenAPIMatchesRouter` walks the
+  routes `NewRouter` really mounts and compares method + path, in both directions, with the spec:
+  a new endpoint nobody documented, or a documented operation that no longer exists, fails CI. (It
+  checks routes, not schemas.) The spec also documents the new `errorCode` field.
 - **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets and HorizontalPodAutoscalers.** ingest
   (2-6 replicas) and frontend (2-4) autoscale on CPU, with slow scale-down; ingest/frontend/api get a
   `maxUnavailable: 1` budget so node drains proceed one pod at a time. The frontend now runs two

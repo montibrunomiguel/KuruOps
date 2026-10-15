@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/kuruops/kuruops/internal/domain"
+	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/testutil"
 )
@@ -89,6 +90,26 @@ func TestRestoreCompletedRun(t *testing.T) {
 		assert.Equal(t, "llm provider returned 503", *got.Error)
 	})
 
+	t.Run("a provider failure is stored with its code and reaches the transcript", func(t *testing.T) {
+		// The text is English; the code is what lets the UI show it in the
+		// analyst's language. A non-provider error carries no code.
+		tenantID := testutil.NewTenant(t)
+		run := seedCompleted(t, tenantID, "Alert Triage Report")
+		snapshot := &completedRunSnapshot{runID: run.ID, messages: reload(t, tenantID, run.ID).Messages, result: ptr("Alert Triage Report")}
+		svc.restoreCompletedRun(t.Context(), tenantID, snapshot, &llmclient.ProviderError{Status: 503, Message: "the provider is busy"})
+
+		got := reload(t, tenantID, run.ID)
+		require.NotNil(t, got.ErrorCode)
+		assert.Equal(t, "provider_unavailable", *got.ErrorCode)
+		transcript, err := buildTranscript(got)
+		require.NoError(t, err)
+		require.NotNil(t, transcript.ErrorCode)
+		assert.Equal(t, "provider_unavailable", *transcript.ErrorCode)
+
+		svc.restoreCompletedRun(t.Context(), tenantID, snapshot, errors.New("database exploded"))
+		assert.Nil(t, reload(t, tenantID, run.ID).ErrorCode, "an unclassified failure must not inherit the previous code")
+	})
+
 	t.Run("the recorded error does not outlive the next successful turn", func(t *testing.T) {
 		// A stale error on a healthy report would make the chat claim the
 		// latest question failed when it was answered.
@@ -135,7 +156,7 @@ func TestRestoreCompletedRun(t *testing.T) {
 			if err := svc.runs.Insert(t.Context(), tx, run); err != nil {
 				return err
 			}
-			return svc.runs.SetFailed(t.Context(), tx, run.ID, "llm provider returned 503")
+			return svc.runs.SetFailed(t.Context(), tx, run.ID, "llm provider returned 503", "")
 		}))
 
 		svc.restoreCompletedRun(t.Context(), tenantID, nil, errors.New("llm provider returned 503"))

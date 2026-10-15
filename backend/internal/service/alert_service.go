@@ -102,7 +102,7 @@ func (s *AlertService) EnableAutoAnalysisQueue(jobs *repository.AIAnalysisJobRep
 
 // EnableAnalysisLookup wires the repository Get uses to populate
 // domain.Alert.LatestAnalysis. Optional, same reasoning as
-// EnableOnCallAutoAssign/EnableAutoAnalysis -- most tests construct
+// EnableOnCallAutoAssign/EnableAutoAnalysisQueue -- most tests construct
 // AlertService without it and just get a nil LatestAnalysis, which is
 // exactly what "no completed analysis yet" should look like.
 func (s *AlertService) EnableAnalysisLookup(runs *repository.AIAnalysisRunRepository) {

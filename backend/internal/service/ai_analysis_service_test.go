@@ -174,7 +174,7 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 
 // TestAIAnalysisService_AutoTriggerGating covers the AutoAnalyzeAllAlerts
 // gate in buildClient: actorID nil (the unattended ingest-time trigger, see
-// AlertService.EnableAutoAnalysis) must respect the tenant's default
+// AlertService.EnableAutoAnalysisQueue) must respect the tenant's default
 // provider's opt-in, while an explicit analyst call (actorID non-nil) must
 // never be affected by it -- "Analyze with AI" always works regardless of
 // this setting.

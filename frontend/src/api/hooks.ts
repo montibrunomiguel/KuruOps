@@ -106,10 +106,17 @@ export function usePagedList<T>(
   // Reset to page 1 whenever the caller's queryKey prefix changes -- mirrors
   // the old hook's "changing deps resets to page 1" behavior. Stringify for
   // a stable dependency since queryKey is a fresh array/objects each render.
+  //
+  // Done by adjusting state during render (React's documented pattern for
+  // "reset state when a prop changes") rather than in an effect: an effect
+  // would let one render run with the new filter and the OLD page, firing a
+  // request for a page that does not exist under that filter before the reset.
   const keyString = JSON.stringify(queryKey);
-  useEffect(() => {
+  const [prevKeyString, setPrevKeyString] = useState(keyString);
+  if (prevKeyString !== keyString) {
+    setPrevKeyString(keyString);
     setPageState(1);
-  }, [keyString]);
+  }
 
   const fullKey = [...queryKey, page, pageSize];
 

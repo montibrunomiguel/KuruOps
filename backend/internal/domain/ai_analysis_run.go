@@ -29,7 +29,7 @@ type AIAnalysisRun struct {
 	ContextType string    `json:"contextType"` // "alert" | "incident"
 	ContextID   uuid.UUID `json:"contextId"`
 	// ActorID is nil for a system-triggered run (see
-	// AlertService.EnableAutoAnalysis) -- events it produces still stamp
+	// AlertService.EnableAutoAnalysisQueue) -- events it produces still stamp
 	// ActorType='ai' regardless, this only reflects whether a human clicked
 	// "Analyze with AI" or an alert's arrival triggered it automatically.
 	ActorID           *uuid.UUID          `json:"actorId,omitempty"`
@@ -40,6 +40,9 @@ type AIAnalysisRun struct {
 	PendingToolCallID *int64              `json:"pendingToolCallId,omitempty"`
 	Result            *string             `json:"result,omitempty"`
 	Error             *string             `json:"error,omitempty"`
-	CreatedAt         time.Time           `json:"createdAt"`
-	UpdatedAt         time.Time           `json:"updatedAt"`
+	// ErrorCode classifies Error for the UI (llmclient.ErrorCode); nil when the
+	// failure was not a provider failure or the run carries no error.
+	ErrorCode *string   `json:"errorCode,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }

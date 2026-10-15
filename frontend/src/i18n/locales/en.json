@@ -323,7 +323,21 @@
     "placeholder": "Ask a follow-up question...",
     "send": "Send",
     "sending": "Sending...",
-    "followUpFailed": "Your last question wasn't answered -- please ask again."
+    "followUpFailed": "Your last question wasn't answered -- please ask again.",
+    "errors": {
+      "provider_unavailable": "The AI provider is temporarily unavailable (it may be overloaded). Try again in a moment.",
+      "provider_rate_limited": "The AI provider is limiting requests right now. Wait a little and try again.",
+      "provider_auth": "The AI provider rejected the API key. Check it under Settings -> AI Integration.",
+      "provider_not_found": "The AI provider could not find that model or endpoint. Check the Base URL and model under Settings -> AI Integration.",
+      "provider_error": "The AI provider rejected the request. Check the provider settings under Settings -> AI Integration.",
+      "provider_unreachable": "Could not reach the AI provider. Check its Base URL and the network path to it."
+    },
+    "suggestionsLabel": "Try asking:",
+    "suggestions": {
+      "triage": "Run a full triage of this item",
+      "nextSteps": "What should I do next?",
+      "related": "Is there related activity I should check?"
+    }
   },
   "alerts": {
     "title": "Alerts",

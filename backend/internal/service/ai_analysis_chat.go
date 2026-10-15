@@ -47,6 +47,9 @@ type ChatTranscript struct {
 	Messages          []ChatMessage `json:"messages"`
 	PendingToolCallID *int64        `json:"pendingToolCallId,omitempty"`
 	Error             *string       `json:"error,omitempty"`
+	// ErrorCode is a stable classification of Error (see llmclient.ErrorCode) so
+	// the UI can show it in the user's language; absent when unclassified.
+	ErrorCode *string `json:"errorCode,omitempty"`
 }
 
 func toChatMessage(m llmclient.Message) ChatMessage {
@@ -84,7 +87,7 @@ func buildTranscript(run *domain.AIAnalysisRun) (*ChatTranscript, error) {
 	}
 	return &ChatTranscript{
 		RunID: run.ID, Status: string(run.Status), Messages: wire,
-		PendingToolCallID: run.PendingToolCallID, Error: run.Error,
+		PendingToolCallID: run.PendingToolCallID, Error: run.Error, ErrorCode: run.ErrorCode,
 	}, nil
 }
 
@@ -214,7 +217,7 @@ func (s *AIAnalysisService) restoreCompletedRun(ctx context.Context, tenantID uu
 		result = *snapshot.result
 	}
 	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.runs.RestoreCompleted(ctx, tx, snapshot.runID, snapshot.messages, result, cause.Error())
+		return s.runs.RestoreCompleted(ctx, tx, snapshot.runID, snapshot.messages, result, cause.Error(), llmclient.ErrorCode(cause))
 	}); err != nil {
 		slog.Error("ai analysis: could not restore the completed analysis after a failed follow-up -- the report may be hidden behind a failed run",
 			"run_id", snapshot.runID, "cause", cause, "error", err)

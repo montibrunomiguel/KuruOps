@@ -263,7 +263,7 @@ func TestAIAnalysisService_AbandonInterruptedRuns(t *testing.T) {
 			case domain.AIAnalysisRunCompleted:
 				return runs.SetCompleted(t.Context(), tx, run.ID, json.RawMessage(`[]`), "done")
 			case domain.AIAnalysisRunFailed:
-				return runs.SetFailed(t.Context(), tx, run.ID, "earlier failure")
+				return runs.SetFailed(t.Context(), tx, run.ID, "earlier failure", "")
 			}
 			return nil
 		}))

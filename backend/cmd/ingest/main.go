@@ -107,7 +107,7 @@ func main() {
 	alertService.EnableOnCallAutoAssign(onCallShiftService)
 
 	// Auto-analysis is enabled only here too, for the same reason -- see
-	// AlertService.EnableAutoAnalysis. This duplicates a chunk of cmd/api's
+	// AlertService.EnableAutoAnalysisQueue. This duplicates a chunk of cmd/api's
 	// own AIAnalysisService wiring (secrets store, MCP tool service, LLM
 	// provider repo); each cmd/* binary constructs whatever services it
 	// needs independently (see cmd/worker's own secrets.Store setup) rather

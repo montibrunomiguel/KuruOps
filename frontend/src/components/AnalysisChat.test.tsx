@@ -193,6 +193,118 @@ describe("AnalysisChat", () => {
     expect(fetchMock.mock.calls.length).toBe(callsAfterLoad);
   });
 
+  it("shows a provider failure in the interface language when the backend sends a code", async () => {
+    const transcript: AnalysisChatTranscript = {
+      runId: 7,
+      status: "completed",
+      error: "the AI provider is temporarily unavailable (503) -- try again in a moment",
+      errorCode: "provider_unavailable",
+      messages: [{ role: "assistant", content: "Alert Triage Report" }],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(transcript)));
+    renderChat();
+
+    expect(await screen.findByText(/it may be overloaded/)).toBeInTheDocument();
+    // The raw English hint is replaced, not shown next to the translation.
+    expect(screen.queryByText(/503/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the raw error text for a code it has no translation for", async () => {
+    const transcript: AnalysisChatTranscript = {
+      runId: 7,
+      status: "failed",
+      error: "something new went wrong",
+      errorCode: "provider_from_the_future",
+      messages: [],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(transcript)));
+    renderChat();
+
+    expect(await screen.findByText("something new went wrong")).toBeInTheDocument();
+  });
+
+  it("offers suggested questions on an empty chat, and clicking one sends it", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      Promise.resolve(init?.method === "POST" ? jsonResponse({ status: "running" }, 202) : jsonResponse({ messages: [] } satisfies AnalysisChatTranscript)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderChat();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Run a full triage of this item" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/alerts/a1/analyze/messages",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "Run a full triage of this item" }) }),
+      ),
+    );
+  });
+
+  describe("a follow-up that fails", () => {
+    // The POST is accepted, the run goes to running, then the turn fails and the
+    // backend restores the earlier report with the question dropped.
+    function stubFailingFollowUp() {
+      let phase: "idle" | "running" | "failed" = "idle";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+          if (init?.method === "POST") {
+            phase = "running";
+            return Promise.resolve(jsonResponse({ status: "running" }, 202));
+          }
+          const report = [{ role: "assistant" as const, content: "Alert Triage Report" }];
+          const body: AnalysisChatTranscript =
+            phase === "running"
+              ? { status: "running", messages: report }
+              : phase === "failed"
+                ? { status: "completed", error: "the AI provider is temporarily unavailable (503)", errorCode: "provider_unavailable", messages: report }
+                : { status: "completed", messages: report };
+          return Promise.resolve(jsonResponse(body));
+        }),
+      );
+      return () => {
+        phase = "failed";
+      };
+    }
+
+    it("puts the dropped question back in the input so it can be sent again", async () => {
+      const failTurn = stubFailingFollowUp();
+      renderChat();
+      const input = await screen.findByPlaceholderText("Ask a follow-up question...");
+
+      await userEvent.type(input, "which host?");
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(input).toHaveValue(""));
+
+      failTurn();
+      act(() => stream.handler?.({ type: "alert", data: { id: "a1", action: "analyzed" } }));
+
+      await waitFor(() => expect(input).toHaveValue("which host?"));
+      expect(screen.getByText(/Your last question wasn't answered/)).toBeInTheDocument();
+    });
+
+    it("does not overwrite what the analyst has started typing in the meantime", async () => {
+      const failTurn = stubFailingFollowUp();
+      renderChat();
+      const input = await screen.findByPlaceholderText("Ask a follow-up question...");
+
+      await userEvent.type(input, "which host?");
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(input).toHaveValue(""));
+      // The run is still 'running', which disables the input; the analyst's
+      // draft can only be typed once it is free again, i.e. after the failure.
+      failTurn();
+      act(() => stream.handler?.({ type: "alert", data: { id: "a1", action: "analyzed" } }));
+      await waitFor(() => expect(input).toHaveValue("which host?"));
+
+      await userEvent.clear(input);
+      await userEvent.type(input, "something else");
+      act(() => stream.handler?.({ type: "alert", data: { id: "a1", action: "analyzed" } }));
+      await screen.findByText(/Your last question wasn't answered/);
+      expect(input).toHaveValue("something else");
+    });
+  });
+
   it("clicking the close button calls onClose", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ messages: [] } satisfies AnalysisChatTranscript)));
     const onClose = vi.fn();

@@ -143,7 +143,7 @@ func TestAIAnalysisRunRepository_AppendUserMessage(t *testing.T) {
 func TestAIAnalysisRunRepository_SetFailed(t *testing.T) {
 	repo, tx, run := newAIAnalysisRunFixture(t)
 
-	require.NoError(t, repo.SetFailed(t.Context(), tx, run.ID, "llm provider timed out"))
+	require.NoError(t, repo.SetFailed(t.Context(), tx, run.ID, "llm provider timed out", "provider_unreachable"))
 
 	got, err := repo.Get(t.Context(), tx, run.ID)
 	require.NoError(t, err)
@@ -151,6 +151,8 @@ func TestAIAnalysisRunRepository_SetFailed(t *testing.T) {
 	require.NotNil(t, got.Error)
 	assert.Equal(t, "llm provider timed out", *got.Error)
 	assert.Nil(t, got.PendingToolCallID)
+	require.NotNil(t, got.ErrorCode)
+	assert.Equal(t, "provider_unreachable", *got.ErrorCode)
 
 	// LatestRun must surface the failed status/error, not pretend nothing
 	// happened.
@@ -183,7 +185,7 @@ func TestAIAnalysisRunRepository_LatestRun(t *testing.T) {
 		assert.Nil(t, latest)
 	})
 
-	// A system-triggered run (nil ActorID -- see AlertService.EnableAutoAnalysis).
+	// A system-triggered run (nil ActorID -- see AlertService.EnableAutoAnalysisQueue).
 	running := &domain.AIAnalysisRun{
 		TenantID: tenantID, ContextType: "alert", ContextID: a.ID, ActorID: nil,
 		Status: domain.AIAnalysisRunRunning, Messages: json.RawMessage(`[]`),
@@ -230,4 +232,34 @@ func TestAIAnalysisRunRepository_LatestRun(t *testing.T) {
 		require.NotNil(t, latest.Result)
 		assert.Equal(t, "second analysis", *latest.Result)
 	})
+}
+
+// TestAIAnalysisRunRepository_ErrorCodeLifecycle pins when error_code is set and when it
+// is cleared: a failed follow-up leaves the run completed WITH its cause and code (the
+// chat shows why the question vanished), and the next turn that succeeds clears both --
+// otherwise a stale "provider unavailable" would stay attached to a healthy conversation.
+func TestAIAnalysisRunRepository_ErrorCodeLifecycle(t *testing.T) {
+	repo, tx, run := newAIAnalysisRunFixture(t)
+	msgs := json.RawMessage(`[{"role":"assistant","content":"report"}]`)
+
+	require.NoError(t, repo.RestoreCompleted(t.Context(), tx, run.ID, msgs, "report", "the provider is busy", "provider_unavailable"))
+	got, err := repo.Get(t.Context(), tx, run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, domain.AIAnalysisRunCompleted, got.Status)
+	require.NotNil(t, got.Error)
+	require.NotNil(t, got.ErrorCode)
+	assert.Equal(t, "provider_unavailable", *got.ErrorCode)
+
+	require.NoError(t, repo.SetCompleted(t.Context(), tx, run.ID, msgs, "report"))
+	got, err = repo.Get(t.Context(), tx, run.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Error)
+	assert.Nil(t, got.ErrorCode, "a successful turn must clear the code together with the error")
+
+	// An unclassified failure (a database error, a bug) stores no code at all.
+	require.NoError(t, repo.SetFailed(t.Context(), tx, run.ID, "database exploded", ""))
+	got, err = repo.Get(t.Context(), tx, run.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Error)
+	assert.Nil(t, got.ErrorCode)
 }

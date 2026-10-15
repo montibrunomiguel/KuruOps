@@ -27,9 +27,10 @@ var ErrAnalysisInProgress = errors.New("an analysis is already in progress for t
 // ErrAutoAnalysisDisabled is what buildClient returns when the tenant's
 // default LLM provider hasn't opted into domain.LLMProvider.
 // AutoAnalyzeAllAlerts and this call is the unattended, fires-on-every-alert
-// trigger (see AlertService.EnableAutoAnalysis) rather than an analyst
-// clicking "Analyze with AI" -- cmd/ingest treats this the same as "no
-// provider configured": skip quietly, not a failure worth a warn-level log.
+// trigger (see AlertService.EnableAutoAnalysisQueue) rather than an analyst
+// clicking "Analyze with AI" -- the analysis queue treats this the same as "no
+// provider configured": the job is marked skipped, not retried and not a
+// failure worth a warn-level log.
 var ErrAutoAnalysisDisabled = errors.New("auto-analysis is disabled for the default llm provider")
 
 // ErrNoLLMProvider is returned when the tenant has no default LLM provider at
@@ -191,7 +192,7 @@ func (s *AIAnalysisService) resolveAnalysisSubject(ctx context.Context, tx pgx.T
 // records its final result as an ai_analysis_run event once available, and
 // fires notifyAnalyzed so a connected client learns to reload.
 // actorID is nil for a system-triggered analysis (see
-// AlertService.EnableAutoAnalysis) -- a human clicking "Analyze with AI"
+// AlertService.EnableAutoAnalysisQueue) -- a human clicking "Analyze with AI"
 // always passes their own id.
 func (s *AIAnalysisService) StartAlertAnalysis(ctx context.Context, tenantID, alertID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
 	return s.startAnalysis(ctx, tenantID, "alert", alertID, actorID, allowedTags)
@@ -430,7 +431,7 @@ func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIA
 
 func (s *AIAnalysisService) failRun(ctx context.Context, tenantID uuid.UUID, runID int64, cause error) {
 	if err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
-		return s.runs.SetFailed(ctx, tx, runID, cause.Error())
+		return s.runs.SetFailed(ctx, tx, runID, cause.Error(), llmclient.ErrorCode(cause))
 	}); err != nil {
 		// cause is already the reason the run failed in the first place --
 		// this is a second, independent failure (persisting that fact), so
