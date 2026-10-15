@@ -175,12 +175,12 @@ export function AnalysisChat({ contextType, contextId, onClose }: AnalysisChatPr
             {/* A blank box asks the analyst to invent a prompt; these are the questions
                 that are nearly always worth asking first. */}
             <p className="helper-text">{t("analysisChat.suggestionsLabel")}</p>
-            <div className="row-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+            <div className="row-actions" style={{ justifyContent: "center", flexWrap: "wrap", gap: 8 }}>
               {(["triage", "nextSteps", "related"] as const).map((key) => (
                 <button
                   key={key}
                   type="button"
-                  className="btn btn-ghost btn-sm"
+                  className="suggestion-chip"
                   disabled={sending}
                   onClick={() => void sendText(t(`analysisChat.suggestions.${key}`))}
                 >
