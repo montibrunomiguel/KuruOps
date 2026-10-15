@@ -12,11 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
@@ -127,35 +124,33 @@ func main() {
 		mcpServerRepo, mcpToolService, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
 	)
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
-	alertService.EnableAutoAnalysis(func(tenantID, alertID uuid.UUID) {
-		// actorID nil: no human triggered this, see StartAlertAnalysis's doc
-		// comment. allowedTags nil: the tag-visibility guard is for a
-		// specific analyst's view: this is the system analyzing an alert
-		// the instant it exists, before any access-scoping question applies.
-		// StartAlertAnalysis itself only blocks for the quick synchronous
-		// validation (alert exists, LLM provider configured, nothing else
-		// already running) -- the actual LLM call already runs in its own
-		// goroutine, so this closure (itself already run via `go
-		// s.autoAnalyze(...)`, see AlertService.Ingest) returns quickly
-		// either way.
-		if err := aiAnalysisService.StartAlertAnalysis(context.Background(), tenantID, alertID, nil, nil); err != nil {
-			// "no LLM provider configured" is the expected, common case for
-			// a tenant that hasn't set up Settings -> AI Integration -- not
-			// worth error-level noise on every single ingested alert.
-			if strings.Contains(err.Error(), "no LLM provider configured") {
-				logger.Debug("auto-analysis skipped, no LLM provider configured", "tenant_id", tenantID)
-				return
-			}
-			// Same reasoning, the other common case: a provider IS
-			// configured but hasn't opted into AutoAnalyzeAllAlerts (the
-			// default) -- an analyst clicking "Analyze with AI" is still
-			// available, this is just the unattended trigger declining.
-			if errors.Is(err, service.ErrAutoAnalysisDisabled) {
-				logger.Debug("auto-analysis skipped, disabled for the default llm provider", "tenant_id", tenantID)
-				return
-			}
-			logger.Warn("auto-analysis failed", "tenant_id", tenantID, "alert_id", alertID, "error", err)
-		}
+
+	// Without this the end of an automatic analysis never reached the browser:
+	// the service's "analyzed" and per-turn events went nowhere in this process,
+	// so an open alert sat on "Analyzing..." until the page was reloaded. cmd/api
+	// wires the same call for the analyses it runs.
+	aiAnalysisService.EnableEventPublishing(eventBroadcaster.Publish)
+
+	// The automatic analysis of each ingested alert is a durable queue, not a
+	// goroutine: Ingest writes a job row in the alert's own transaction (see
+	// AlertService.EnableAutoAnalysisQueue) and this process works the rows with
+	// a lease, retry and backoff -- so a restart, a deploy or a provider outage
+	// no longer loses the analysis. It runs here, in the process that already
+	// holds the LLM/MCP/secrets wiring and an RLS-subject database role; running
+	// it in the worker would mean a second pool as kuruops_app (see the note in
+	// cmd/worker). Several ingest replicas share one queue safely.
+	jobRepo := repository.NewAIAnalysisJobRepository()
+	analysisQueue := service.NewAIAnalysisQueue(pool, jobRepo, aiAnalysisService, service.AIAnalysisQueueConfig{
+		Concurrency: cfg.AIAnalysisConcurrency,
+		// Leave room inside ShutdownTimeout for the HTTP server to stop too.
+		DrainTimeout: max(cfg.ShutdownTimeout-3*time.Second, 5*time.Second),
+	}, logger)
+	alertService.EnableAutoAnalysisQueue(jobRepo, analysisQueue.Wake)
+	httpserver.GetMetrics().SetAIQueueStats(analysisQueue.Stats)
+	queueStopped := make(chan struct{})
+	safego.Go("ingest.aiAnalysisQueue", func() {
+		defer close(queueStopped)
+		analysisQueue.Run(ctx)
 	})
 
 	webhookRepo := repository.NewWebhookRepository()
@@ -189,5 +184,14 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
+	}
+
+	// The queue stopped claiming the moment ctx was cancelled; wait for the
+	// analyses it already started to finish (or be handed back, past its drain
+	// timeout) so a deploy does not drop them.
+	select {
+	case <-queueStopped:
+	case <-shutdownCtx.Done():
+		logger.Warn("shutdown timeout reached while the analysis queue was still draining")
 	}
 }

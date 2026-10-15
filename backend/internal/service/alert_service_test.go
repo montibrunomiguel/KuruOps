@@ -207,47 +207,130 @@ func TestAlertService_Ingest_OnCallAutoAssign(t *testing.T) {
 	})
 }
 
-// TestAlertService_EnableAutoAnalysis guards the fire-and-forget hook
-// Ingest fires once a new alert is committed (see AlertService.EnableAutoAnalysis) --
-// the trigger runs in its own goroutine, so this test synchronizes via a
-// channel instead of asserting anything synchronously right after Ingest returns.
-func TestAlertService_EnableAutoAnalysis(t *testing.T) {
+// TestAlertService_EnableAutoAnalysisQueue guards what Ingest does about the
+// automatic analysis. It used to launch a goroutine, which was the only record the
+// analysis was owed and was lost with the process; now it writes a job row in the
+// SAME transaction as the alert, so the obligation is as durable as the alert.
+func TestAlertService_EnableAutoAnalysisQueue(t *testing.T) {
 	pool, _, _ := newAlertServices(t)
-	tenantID := testutil.NewTenant(t)
-	endpointID := testutil.NewWebhookEndpoint(t, tenantID)
+	testutil.ResetAIJobQueue(t)
+	jobs := repository.NewAIAnalysisJobRepository()
 
-	t.Run("no hook enabled -- Ingest completes fine without one", func(t *testing.T) {
+	// setUp builds a tenant whose default provider's auto-analysis is autoOn, and
+	// an AlertService wired to the queue with a wake counter.
+	setUp := func(t *testing.T, autoOn, withProvider bool) (svc *service.AlertService, tenantID, endpointID uuid.UUID, wakes *atomic.Int32) {
+		t.Helper()
+		tenantID = testutil.NewTenant(t)
+		endpointID = testutil.NewWebhookEndpoint(t, tenantID)
+		if withProvider {
+			require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+				return repository.NewLLMProviderRepository().Insert(t.Context(), tx, &domain.LLMProvider{
+					TenantID: tenantID, Name: "p", Kind: "openai_compatible", Model: "m",
+					APIKeySecretRef: "ref", IsDefault: true, AutoAnalyzeAllAlerts: autoOn,
+				})
+			}))
+		}
+		svc = service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
+		wakes = &atomic.Int32{}
+		svc.EnableAutoAnalysisQueue(jobs, func() { wakes.Add(1) })
+		return svc, tenantID, endpointID, wakes
+	}
+	jobFor := func(t *testing.T, tenantID, alertID uuid.UUID) *domain.AIAnalysisJob {
+		t.Helper()
+		var job *domain.AIAnalysisJob
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			var err error
+			job, err = jobs.GetByAlert(t.Context(), tx, alertID)
+			return err
+		}))
+		return job
+	}
+
+	t.Run("no queue enabled -- Ingest completes fine without one", func(t *testing.T) {
+		tenantID := testutil.NewTenant(t)
+		endpointID := testutil.NewWebhookEndpoint(t, tenantID)
 		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
-		_, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
-			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
-		}, nil, 0)
-		require.NoError(t, err)
-	})
-
-	t.Run("hook enabled -- fired exactly once with the new alert's tenant/id", func(t *testing.T) {
-		svc := service.NewAlertService(pool, repository.NewAlertRepository(), service.NewTagService(pool, repository.NewTagRepository(), repository.NewAdminAuditEventRepository()), repository.NewPlaybookRepository())
-		fired := make(chan [2]uuid.UUID, 2)
-		svc.EnableAutoAnalysis(func(gotTenantID, gotAlertID uuid.UUID) {
-			fired <- [2]uuid.UUID{gotTenantID, gotAlertID}
-		})
-
 		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
 			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
 		}, nil, 0)
 		require.NoError(t, err)
+		assert.Nil(t, jobFor(t, tenantID, alert.ID))
+	})
 
-		select {
-		case got := <-fired:
-			assert.Equal(t, tenantID, got[0])
-			assert.Equal(t, alert.ID, got[1])
-		case <-time.After(2 * time.Second):
-			t.Fatal("EnableAutoAnalysis hook was never fired")
+	t.Run("auto-analysis on -- the alert's job is written with it and the consumer is woken once", func(t *testing.T) {
+		svc, tenantID, endpointID, wakes := setUp(t, true, true)
+
+		alert, deduped, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		require.False(t, deduped)
+
+		job := jobFor(t, tenantID, alert.ID)
+		require.NotNil(t, job, "an alert that exists must have its analysis owed")
+		assert.Equal(t, domain.AIAnalysisJobPending, job.Status)
+		assert.Equal(t, service.DefaultAnalysisJobMaxAttempts, job.MaxAttempts)
+		assert.EqualValues(t, 1, wakes.Load(), "the consumer is nudged once, after the commit")
+	})
+
+	t.Run("auto-analysis off -- nothing is queued and nobody is woken", func(t *testing.T) {
+		svc, tenantID, endpointID, wakes := setUp(t, false, true)
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		assert.Nil(t, jobFor(t, tenantID, alert.ID), "a tenant that never opted in accrues no rows")
+		assert.Zero(t, wakes.Load())
+	})
+
+	t.Run("no provider at all -- nothing is queued", func(t *testing.T) {
+		svc, tenantID, endpointID, wakes := setUp(t, false, false)
+		alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+		}, nil, 0)
+		require.NoError(t, err)
+		assert.Nil(t, jobFor(t, tenantID, alert.ID))
+		assert.Zero(t, wakes.Load())
+	})
+
+	t.Run("a suppressed duplicate queues nothing -- there is no new content to analyse", func(t *testing.T) {
+		svc, tenantID, endpointID, wakes := setUp(t, true, true)
+		payload := hostPayload("queue-dedup")
+
+		first, deduped1, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, []string{"host.name"}, 30)
+		require.NoError(t, err)
+		require.False(t, deduped1)
+		require.EqualValues(t, 1, wakes.Load())
+
+		second, deduped2, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+			Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: payload,
+		}, []string{"host.name"}, 30)
+		require.NoError(t, err)
+		require.True(t, deduped2)
+		assert.Equal(t, first.ID, second.ID)
+		assert.EqualValues(t, 1, wakes.Load(), "the duplicate must not wake the consumer or add a job")
+
+		var n int
+		require.NoError(t, pool.WithTenant(t.Context(), tenantID, func(tx pgx.Tx) error {
+			return tx.QueryRow(t.Context(), `select count(*) from ai_analysis_jobs where tenant_id = $1`, tenantID).Scan(&n)
+		}))
+		assert.Equal(t, 1, n, "exactly one job for the one alert")
+	})
+
+	t.Run("each distinct alert gets its own job", func(t *testing.T) {
+		svc, tenantID, endpointID, _ := setUp(t, true, true)
+		var ids []uuid.UUID
+		for i := 0; i < 3; i++ {
+			alert, _, err := svc.Ingest(t.Context(), tenantID, endpointID, domain.Alert{
+				Title: "t", Source: "s", Severity: domain.SeverityLow, Payload: testPayload,
+			}, nil, 0)
+			require.NoError(t, err)
+			ids = append(ids, alert.ID)
 		}
-
-		select {
-		case <-fired:
-			t.Fatal("hook fired more than once for a single Ingest call")
-		case <-time.After(100 * time.Millisecond):
+		for _, id := range ids {
+			assert.NotNil(t, jobFor(t, tenantID, id))
 		}
 	})
 }

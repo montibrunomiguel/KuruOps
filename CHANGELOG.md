@@ -43,6 +43,37 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Fixed
 
+- **An alert's automatic AI analysis could be lost, and a provider blip ended it for good.** The
+  analysis was a bare goroutine started the moment the alert landed: nothing recorded that it was
+  owed, so a restart, deploy or crash before it finished dropped it silently, and one provider 503
+  ended it with nothing ever retrying. It is now a durable queue (`ai_analysis_jobs`, migration
+  0014): the job is written **in the same transaction as the alert**, so an alert that exists always
+  has its analysis owed, and `cmd/ingest` works the rows with `FOR UPDATE SKIP LOCKED` (several
+  replicas share one queue, no job goes to two of them), a lease renewed by a heartbeat (a dead
+  consumer's jobs are taken over, and the run it left behind is cleared so the retry can start), a
+  fencing token (a stalled consumer cannot overwrite its successor), retry with backoff -- a minute,
+  five, fifteen, an hour, up to five attempts -- and a graceful drain on shutdown. A rejected API key,
+  wrong URL or model is not retried (it fails the same way every time). A job that keeps killing its
+  consumer exhausts its attempts instead of looping through restarts. Tenants that did not opt in
+  accrue no rows. Queue depth and the age of the oldest waiting job are on ingest's `/metrics`, with a
+  Prometheus alert if it stops draining. Proven end to end against a provider that fails for longer
+  than the in-place retry covers, and by tests for concurrent claims, lease takeover and the
+  stale-owner case.
+- **LLM calls are retried in place.** `doRequest` made exactly one attempt. A provider 503/429 or a
+  dropped connection is now retried up to 3 times with exponential backoff and jitter, honouring
+  `Retry-After` up to a ceiling, never sleeping for a caller that has gone away and never retrying an
+  open circuit breaker. Provider failures are typed (`ProviderError`, `TransportError`) so callers can
+  tell "try again" from "fix your key". Tunable with `LLM_CALL_MAX_ATTEMPTS` /
+  `LLM_CALL_RETRY_BASE_DELAY`.
+- **A long event could be lost.** Postgres rejects a `NOTIFY` payload of 8000 bytes or more outright,
+  and the chat's per-turn event carried the model's whole reply, so a long triage report made the live
+  update vanish (reproduced with a test first). Events now carry identifiers only, and `Publish`
+  enforces the limit itself -- an oversized payload loses its largest fields and is marked
+  `truncated`, and the event type always arrives.
+- **`cmd/ingest` had neither a circuit breaker nor live updates for its own analyses.** It makes LLM
+  and MCP calls but never installed the breaker (so a provider outage made every ingested alert wait
+  out the full timeout), and never wired event publishing into the analysis service (so the browser
+  was never told an automatic analysis had finished and sat on "Analyzing..." until reloaded).
 - **The first message in the "Analyze with AI" chat always came back as an "Alert Triage Report",
   whatever was asked.** The full triage prompt was given to the first analysis of *any* alert, so
   a plain "hi" typed into a fresh chat got a structured report back -- and, because the check
@@ -82,6 +113,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Changed
 
+- **`ai_analysis_service.go` is split by responsibility.** At 1,183 lines it mixed prompts, the chat
+  and follow-up path, the agentic loop and run persistence. It is now four files in the same package
+  (`ai_analysis_service.go`, `_prompts.go`, `_chat.go`, `_agent.go`), moved as whole declarations
+  with no behaviour change (the set of top-level declarations is identical before and after).
 - **MCP servers can now offer all of their tools, not just a hand-picked allow-list.** After
   configuring a server you had to list its tools in "Allowed tools" (or open *Discover tools* and
   tick them one by one) before the AI could use any of them, and a tool the server added later was

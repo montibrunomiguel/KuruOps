@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -199,4 +200,63 @@ func BeginTx(t *testing.T, pool *db.Pool, tenantID uuid.UUID) pgx.Tx {
 		t.Fatalf("set tenant context: %v", err)
 	}
 	return tx
+}
+
+// aiJobQueueLockKey is the Postgres advisory-lock key every test that touches the
+// ai_analysis_jobs table serialises on. Arbitrary, but must not collide with the
+// worker's own keys (821001-821005, see cmd/worker).
+const aiJobQueueLockKey int64 = 910001
+
+// ResetAIJobQueue gives the calling test exclusive use of the auto-analysis job
+// queue, empty, until the test ends.
+//
+// The queue is the one table here that is global rather than per-tenant: a
+// consumer claims due jobs for EVERY tenant, so the "each test gets its own
+// tenant" isolation the rest of this package relies on does not apply to it. Left
+// alone, tests running in parallel (go test runs packages in separate processes at
+// once) would claim each other's jobs, and pending jobs left behind by earlier
+// runs would pile up in the shared test database and be claimed by whichever
+// consumer ran next.
+//
+// So: take a database-wide advisory lock (which serialises across packages and
+// processes, not just goroutines), and clear the table. Safe because it is test
+// data in the dedicated test database; never call this against anything else.
+func ResetAIJobQueue(t *testing.T) {
+	t.Helper()
+	// A test may build more than one fixture environment. Each would try to take
+	// the lock on its own connection and the second would wait forever on the
+	// first, so a test that already holds it just clears the queue again.
+	if _, held := heldAIJobQueueLock.LoadOrStore(t, struct{}{}); held {
+		clearAIJobQueue(t)
+		return
+	}
+	t.Cleanup(func() { heldAIJobQueueLock.Delete(t) })
+
+	pool := adminPool(t)
+	ctx := context.Background()
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire connection for the job queue lock: %v", err)
+	}
+	if _, err := conn.Exec(ctx, "select pg_advisory_lock($1)", aiJobQueueLockKey); err != nil {
+		conn.Release()
+		t.Fatalf("take the job queue lock: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), "select pg_advisory_unlock($1)", aiJobQueueLockKey)
+		conn.Release()
+	})
+
+	clearAIJobQueue(t)
+}
+
+// heldAIJobQueueLock records which tests already hold the queue lock.
+var heldAIJobQueueLock sync.Map
+
+func clearAIJobQueue(t *testing.T) {
+	t.Helper()
+	if _, err := adminPool(t).Exec(context.Background(), "delete from ai_analysis_jobs"); err != nil {
+		t.Fatalf("clear the job queue: %v", err)
+	}
 }

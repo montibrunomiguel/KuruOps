@@ -178,3 +178,24 @@ func scanAIAnalysisRun(row pgx.Row) (*domain.AIAnalysisRun, error) {
 	}
 	return &run, nil
 }
+
+// FailRunning fails every 'running' run for one alert/incident with cause, and
+// reports how many it changed. It is for taking over after a consumer died
+// mid-analysis (see AIAnalysisService.AbandonInterruptedRuns): that run will
+// never finish, and while it stays 'running' it blocks every new attempt with
+// ErrAnalysisInProgress until the worker's 15-minute reaper gets to it.
+//
+// 'paused' runs are left alone on purpose: those are waiting for an analyst to
+// approve a tool call, not for a process that is gone.
+func (r *AIAnalysisRunRepository) FailRunning(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID, cause string) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		update ai_analysis_runs
+		set status = 'failed', error = $3, pending_tool_call_id = null, updated_at = now()
+		where context_type = $1 and context_id = $2 and status = 'running'`,
+		contextType, contextID, cause,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("fail running analysis runs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

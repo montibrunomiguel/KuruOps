@@ -149,25 +149,27 @@ func main() {
 	retentionTicker := time.NewTicker(1 * time.Hour)
 	defer retentionTicker.Stop()
 
-	// AI analysis on ingest does NOT go through this worker -- it ended up
-	// solved a simpler way than the `ai_analysis_jobs` queue this comment
-	// originally considered: AlertService.Ingest (cmd/ingest) fires
-	// `go s.autoAnalyze(...)` -- a fire-and-forget goroutine in the ingest
-	// process itself, no persisted queue, no automatic retry if the LLM call
-	// fails (just logged). That's acceptable at current volume; if this ever
-	// becomes a bottleneck (a burst of alerts dragging down ingest
-	// throughput, or needing retry/backoff on an LLM failure), a queue
-	// consumed here by the worker (same design considered below: a table +
-	// `SELECT ... FOR UPDATE SKIP LOCKED`) would solve it without touching
-	// `AlertService.Ingest` again.
+	// The automatic analysis of each ingested alert is NOT worked by this process.
+	// It is a durable queue (the ai_analysis_jobs table, written by
+	// AlertService.Ingest in the alert's own transaction) consumed by cmd/ingest
+	// with FOR UPDATE SKIP LOCKED, a lease, retry and backoff -- see
+	// service.AIAnalysisQueue. It used to be a bare goroutine in the ingest
+	// process, with no record the analysis was owed and no retry.
 	//
-	// IMPORTANT if this ever gets built: cfg.DatabaseURL here connects as
-	// kuruops_worker, which has BYPASSRLS (needed only for the materialized
-	// view refresh and the sweeps below -- see
-	// db/init/kuruops_worker_role.sql). Processing AI jobs per-tenant using
-	// this SAME pool would be a silent RLS bypass; open a separate pool
-	// connected as kuruops_app + Pool.WithTenant for that consumption, the
-	// way api/ingest already do.
+	// It lives in ingest rather than here because ingest already holds the
+	// LLM/MCP/secrets wiring and connects as kuruops_app. This process connects as
+	// kuruops_worker, which has BYPASSRLS (needed only for the materialized view
+	// refresh and the sweeps below -- see db/init/kuruops_worker_role.sql), so
+	// consuming per-tenant jobs on THIS pool would be a silent RLS bypass; moving
+	// the consumer here would mean opening a second pool as kuruops_app +
+	// Pool.WithTenant, plus a third copy of the AIAnalysisService wiring. The
+	// consumer (service.AIAnalysisQueue) is independent of where it runs, so that
+	// move stays cheap if the exposed ingest process should stop holding LLM
+	// credentials.
+	//
+	// What this worker does contribute is sweepStaleAIRuns below, which fails runs
+	// left 'running' by a process that died; the queue's own lease (and
+	// AIAnalysisService.AbandonInterruptedRuns) cover the analysis jobs' side.
 
 	for {
 		select {

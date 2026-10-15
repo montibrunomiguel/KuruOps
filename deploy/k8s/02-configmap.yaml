@@ -35,6 +35,12 @@ data:
   # backend/internal/circuitbreaker.
   EXTERNAL_CALL_BREAKER_THRESHOLD: "5"
   EXTERNAL_CALL_BREAKER_COOLDOWN: "30s"
+  LLM_CALL_MAX_ATTEMPTS: "3"
+  LLM_CALL_RETRY_BASE_DELAY: "1s"
+  AI_ANALYSIS_CONCURRENCY: "5"
+  HTTP_READ_TIMEOUT: "2m"
+  HTTP_WRITE_TIMEOUT: "90s"
+  HTTP_IDLE_TIMEOUT: "120s"
   # "env" (default) needs only SECRETS_ENCRYPTION_KEY (see the Secret) --
   # switch to "vault" or "kms" and add the matching VAULT_*/KMS_* keys here
   # (non-sensitive) plus VAULT_TOKEN/KMS_SECRET_ACCESS_KEY in the Secret if

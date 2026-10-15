@@ -100,6 +100,15 @@ data:
             annotations:
               summary: "Worker sweep {{ $labels.sweep_job }} hasn't succeeded recently"
               description: "{{ $labels.sweep_job }} hasn't completed a successful tick in over 15 minutes -- SLA breaches, escalations, or stale AI-analysis cleanup may be silently stuck. See cmd/worker/main.go's ticker loop."
+
+          - alert: KuruOpsAIAnalysisQueueStalled
+            expr: kuruops_ai_analysis_oldest_pending_seconds > 900
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Automatic AI analysis is not draining"
+              description: "An alert has been waiting for its automatic analysis for over 15 minutes, for the last 10 -- the ingest process may be down, or every job is failing and backing off (check kuruops_ai_analysis_jobs{status=\"failed\"} and ingest's logs for 'ai analysis queue'). With the default backoff (1m, 5m, 15m, 1h) a short provider outage clears itself well before this fires."
 ---
 apiVersion: apps/v1
 kind: Deployment

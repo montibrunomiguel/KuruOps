@@ -32,6 +32,23 @@ var ErrAnalysisInProgress = errors.New("an analysis is already in progress for t
 // provider configured": skip quietly, not a failure worth a warn-level log.
 var ErrAutoAnalysisDisabled = errors.New("auto-analysis is disabled for the default llm provider")
 
+// ErrNoLLMProvider is returned when the tenant has no default LLM provider at
+// all. A sentinel (it used to be an anonymous error that cmd/ingest matched by
+// substring) so the analysis queue can recognise "nothing to do, and nothing
+// will change by retrying" without parsing a message.
+var ErrNoLLMProvider = errors.New("no LLM provider configured -- set one up in Settings -> AI Integration")
+
+// ErrSubjectNotFound is what resolveAnalysisSubject's "alert/incident ... not
+// found" errors match with errors.Is. The text is unchanged -- handlers show it
+// to the caller -- so this is a type with an Is method rather than a wrapped
+// sentinel, which would have appended to the message.
+var ErrSubjectNotFound = errors.New("analysis subject not found")
+
+type subjectNotFoundError struct{ msg string }
+
+func (e *subjectNotFoundError) Error() string        { return e.msg }
+func (e *subjectNotFoundError) Is(target error) bool { return target == ErrSubjectNotFound }
+
 // AIAnalysisService runs an "Analyze with AI" request against the tenant's
 // default LLM provider (see Settings -> AI Integration) and logs the result
 // as an alert_events/incident_events row so it shows up in the timeline
@@ -147,7 +164,7 @@ func (s *AIAnalysisService) resolveAnalysisSubject(ctx context.Context, tx pgx.T
 			return "", fmt.Errorf("load alert: %w", err)
 		}
 		if a == nil || !tagsVisible(allowedTags, a.Tags) {
-			return "", fmt.Errorf("alert %s not found", contextID)
+			return "", &subjectNotFoundError{fmt.Sprintf("alert %s not found", contextID)}
 		}
 		return alertPrompt(a), nil
 	case "incident":
@@ -156,7 +173,7 @@ func (s *AIAnalysisService) resolveAnalysisSubject(ctx context.Context, tx pgx.T
 			return "", fmt.Errorf("load incident: %w", err)
 		}
 		if inc == nil || !tagsVisible(allowedTags, inc.Tags) {
-			return "", fmt.Errorf("incident %s not found", contextID)
+			return "", &subjectNotFoundError{fmt.Sprintf("incident %s not found", contextID)}
 		}
 		return incidentPrompt(inc), nil
 	default:
@@ -187,8 +204,69 @@ func (s *AIAnalysisService) StartIncidentAnalysis(ctx context.Context, tenantID,
 
 // startAnalysis is StartAlertAnalysis/StartIncidentAnalysis's shared core --
 // see resolveAnalysisSubject for the one piece that differs between the two
-// context types.
+// context types. It validates and persists the run synchronously, then hands
+// the LLM work to a background goroutine and returns.
 func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUID, contextType string, contextID uuid.UUID, actorID *uuid.UUID, allowedTags []string) error {
+	a, err := s.prepareAnalysis(ctx, tenantID, contextType, contextID, actorID, allowedTags)
+	if err != nil {
+		return err
+	}
+
+	safego.Go("ai-analysis.startAnalysis", func() {
+		// context.Background(), not ctx: the request that started this has
+		// already returned and had its context cancelled.
+		_ = s.execute(context.Background(), a)
+		s.notifyAnalyzed(tenantID, contextType, contextID)
+	})
+	return nil
+}
+
+// RunAutoAnalysis performs the automatic analysis of one freshly ingested alert
+// and returns once it is finished, with the outcome as the error. It is what the
+// analysis queue (AIAnalysisQueue) calls for each job.
+//
+// It is the synchronous counterpart of StartAlertAnalysis, which returns the
+// moment the run is persisted and reports nothing about how it ends -- fine for
+// a button an analyst clicks, useless for a queue that has to decide between
+// "done", "try again in a few minutes" and "give up". Same validation, same run,
+// same prompts; the only differences are that it is always the unattended
+// trigger (no actor, so the provider's auto-analysis setting is enforced and the
+// triage prompt applies -- see systemPromptFor) and that it blocks.
+//
+// The returned error is classified by the caller with llmclient.IsRetryable and
+// the Err* sentinels: ErrAutoAnalysisDisabled, ErrNoLLMProvider and
+// ErrSubjectNotFound mean there is nothing to do; ErrAnalysisInProgress means
+// try again later.
+func (s *AIAnalysisService) RunAutoAnalysis(ctx context.Context, tenantID, alertID uuid.UUID) error {
+	a, err := s.prepareAnalysis(ctx, tenantID, "alert", alertID, nil, nil)
+	if err != nil {
+		return err
+	}
+	err = s.execute(ctx, a)
+	s.notifyAnalyzed(tenantID, "alert", alertID)
+	return err
+}
+
+// analysis is a validated analysis whose run row exists but whose LLM work has
+// not started: everything execute needs.
+type analysis struct {
+	run      *domain.AIAnalysisRun
+	client   llmclient.Client
+	tools    []llmclient.Tool
+	routes   map[string]agentToolRoute
+	messages []llmclient.Message
+	prompt   string
+}
+
+// prepareAnalysis is the synchronous half of starting an analysis: load and
+// access-check the subject, refuse if one is already running, build the LLM
+// client, resolve the MCP tools, and persist the 'running' run row. The row is
+// created here, before anyone starts executing, which is what makes
+// checkNotAlreadyRunning meaningful against a rapid second call.
+//
+// actorID nil marks the unattended trigger and is what buildClient uses to
+// enforce the provider's auto-analysis setting.
+func (s *AIAnalysisService) prepareAnalysis(ctx context.Context, tenantID uuid.UUID, contextType string, contextID uuid.UUID, actorID *uuid.UUID, allowedTags []string) (*analysis, error) {
 	var prompt string
 	var client llmclient.Client
 	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
@@ -210,29 +288,33 @@ func (s *AIAnalysisService) startAnalysis(ctx context.Context, tenantID uuid.UUI
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	tools, routes, err := s.resolveAgentTools(ctx, tenantID, contextType+"_analysis")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	run, messages, err := s.startRun(ctx, tenantID, actorID, contextType, contextID, tools, routes, prompt)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return &analysis{run: run, client: client, tools: tools, routes: routes, messages: messages, prompt: prompt}, nil
+}
 
-	safego.Go("ai-analysis.startAnalysis", func() {
-		bgCtx := context.Background()
-		if len(tools) == 0 {
-			s.finishSimpleRun(bgCtx, run, client, prompt)
-		} else {
-			_, _ = s.driveAgentLoop(bgCtx, run, client, tools, routes, messages, 0)
-		}
-		s.notifyAnalyzed(tenantID, contextType, contextID)
-	})
-	return nil
+// execute runs the LLM work for a prepared analysis to completion and returns how
+// it ended: nil on success (including a run that paused awaiting an analyst's
+// approval of a tool call, which is waiting, not failed), otherwise the error
+// that already marked the run failed. Either path through it -- the single
+// call, or the agentic loop when MCP tools are enabled -- records the run's
+// outcome itself; callers add only the notification.
+func (s *AIAnalysisService) execute(ctx context.Context, a *analysis) error {
+	if len(a.tools) == 0 {
+		return s.finishSimpleRun(ctx, a.run, a.client, a.prompt)
+	}
+	_, err := s.driveAgentLoop(ctx, a.run, a.client, a.tools, a.routes, a.messages, 0)
+	return err
 }
 
 // startRun inserts the initial 'running' ai_analysis_runs row synchronously
@@ -301,14 +383,21 @@ func blockIfRunning(run *domain.AIAnalysisRun) error {
 // the same shape it always did. run already exists (see startRun, called
 // synchronously before this goroutine was spawned) -- this only ever
 // updates it to completed/failed, never creates it.
-func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, userPrompt string) {
+//
+// It returns how the run ended (nil on success), which the background
+// goroutine ignores and the analysis queue acts on: the error wraps the
+// provider's, so llmclient.IsRetryable can tell a blip from a bad API key.
+func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIAnalysisRun, client llmclient.Client, userPrompt string) error {
 	// Only ever called for a run whose conversation is the single seeded
-	// context message (see startAnalysis), so no question has been asked yet.
+	// context message (see prepareAnalysis), so no question has been asked yet.
 	seeded := []llmclient.Message{{Role: llmclient.RoleUser, Content: userPrompt}}
 	text, err := client.Complete(ctx, s.systemPromptFor(ctx, run, seeded), userPrompt)
 	if err != nil {
+		// Same "llm analysis: " prefix the agentic loop records, so a failed
+		// run reads the same whichever path produced it.
+		err = fmt.Errorf("llm analysis: %w", err)
 		s.failRun(ctx, run.TenantID, run.ID, err)
-		return
+		return err
 	}
 
 	finalMessages, _ := json.Marshal([]llmclient.Message{
@@ -324,7 +413,7 @@ func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIA
 		// short of an analyst eventually asking "why did my analysis never
 		// finish".
 		slog.Error("ai analysis: failed to persist completed run", "run_id", run.ID, "context_type", run.ContextType, "context_id", run.ContextID, "error", err)
-		return
+		return fmt.Errorf("save completed analysis run: %w", err)
 	}
 
 	if err := s.recordEvent(ctx, run.TenantID, run.ActorID, run.ContextType, run.ContextID, text); err != nil {
@@ -336,6 +425,7 @@ func (s *AIAnalysisService) finishSimpleRun(ctx context.Context, run *domain.AIA
 		// points an analyst at it.
 		slog.Error("ai analysis: failed to record timeline event", "run_id", run.ID, "context_type", run.ContextType, "context_id", run.ContextID, "error", err)
 	}
+	return nil
 }
 
 func (s *AIAnalysisService) failRun(ctx context.Context, tenantID uuid.UUID, runID int64, cause error) {
@@ -384,7 +474,7 @@ func (s *AIAnalysisService) buildClient(ctx context.Context, tx pgx.Tx, autoTrig
 		return nil, fmt.Errorf("load default llm provider: %w", err)
 	}
 	if provider == nil {
-		return nil, fmt.Errorf("no LLM provider configured -- set one up in Settings -> AI Integration")
+		return nil, ErrNoLLMProvider
 	}
 	if autoTriggered && !provider.AutoAnalyzeAllAlerts {
 		return nil, ErrAutoAnalysisDisabled
@@ -420,4 +510,26 @@ func (s *AIAnalysisService) BuildClient(ctx context.Context, tenantID uuid.UUID)
 		return err
 	})
 	return client, err
+}
+
+// AbandonInterruptedRuns fails the 'running' runs an alert's previous, dead
+// consumer left behind, and reports how many. The analysis queue calls it when it
+// takes over a job whose lease ran out: the consumer holding that lease stopped
+// renewing it -- it crashed, was killed in a deploy, or lost its database
+// connection -- so the run it was driving will never finish, and while it stays
+// 'running' it makes checkNotAlreadyRunning refuse the retry. Without this the
+// retry waits for the worker's stale-run reaper (15 minutes) for no reason.
+//
+// Safe because a lapsed lease is exactly the evidence that nothing is driving the
+// run any more; a consumer that was only stalled and wakes up finds its fenced
+// writes rejected (see AIAnalysisJobRepository) and stops.
+func (s *AIAnalysisService) AbandonInterruptedRuns(ctx context.Context, tenantID, alertID uuid.UUID) (int64, error) {
+	var n int64
+	err := s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
+		var err error
+		n, err = s.runs.FailRunning(ctx, tx, "alert", alertID,
+			"interrupted: the process running this analysis stopped before it finished; it was retried")
+		return err
+	})
+	return n, err
 }

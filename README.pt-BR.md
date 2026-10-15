@@ -84,8 +84,12 @@ mesmo tempo.
   status/fase em massa (selecionar linhas via checkbox, mudar o status de todo alerta ou a fase
   NIST de todo incidente selecionado em uma ação; uma falha parcial reporta resultados por linha, e
   fechamento em massa não é suportado — fechar ainda passa pelo fluxo normal por item), detalhe com
-  timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (manual via botão,
-  ou automática na ingestão se houver um provedor LLM configurado). Um alerta recebido via webhook
+  timeline de eventos, comentários, vínculo alerta↔incidente, e análise por IA (um chat aberto a
+  partir do alerta, ou automática na ingestão quando o provedor LLM padrão tem "Analisar
+  automaticamente todos os alertas recebidos" ligado). A automática é uma fila durável, não uma
+  chamada solta: o job é gravado na mesma transação do alerta, e um restart, um deploy ou uma
+  queda do provedor não o perde -- ele é repetido com backoff até dar certo ou ser claramente
+  inútil (uma API key rejeitada). Um alerta recebido via webhook
   pode carregar metadados customizados (canal do Slack, link de playbook externo, ambiente, ou
   qualquer chave/valor que a fonte quiser mandar), renderizados num painel dedicado no detalhe. Ver
   [docs/API_INTEGRATION.pt-BR.md](docs/API_INTEGRATION.pt-BR.md) para o guia completo de como uma

@@ -210,6 +210,13 @@ type Config struct {
 	LLMCallMaxAttempts    int
 	LLMCallRetryBaseDelay time.Duration
 
+	// AIAnalysisConcurrency is how many automatic alert analyses one cmd/ingest
+	// process runs at once (AI_ANALYSIS_CONCURRENCY, default 5). A burst of alerts
+	// outpaces an LLM call by far; the rest wait in the database queue. It is per
+	// replica, so N ingest replicas run up to N times this -- size it against the
+	// provider's rate limit, not just this process.
+	AIAnalysisConcurrency int
+
 	SlackClientID      string
 	SlackClientSecret  string
 	SlackSigningSecret string
@@ -266,6 +273,7 @@ func Load(logger *slog.Logger) (Config, error) {
 
 		LLMCallMaxAttempts:    int(getEnvInt32Default(logger, "LLM_CALL_MAX_ATTEMPTS", 3)),
 		LLMCallRetryBaseDelay: getEnvDurationDefault(logger, "LLM_CALL_RETRY_BASE_DELAY", time.Second),
+		AIAnalysisConcurrency: int(getEnvInt32Default(logger, "AI_ANALYSIS_CONCURRENCY", 5)),
 
 		GoogleOAuthClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),

@@ -82,8 +82,11 @@ login. "Company" only exists as a tag on alerts/incidents, used to restrict what
   checkbox, change every selected alert's status or incident's NIST phase in one action; a partial
   failure reports per-row results, and bulk-closing isn't supported — closing still goes through
   the normal per-item flow); a detail view with an event timeline, comments,
-  alert↔incident linking, and AI analysis (manual via a button, or
-  automatic on ingest if an LLM provider is configured for it). An alert received via webhook can
+  alert↔incident linking, and AI analysis (a chat opened from the alert, or automatic on ingest
+  when the default LLM provider has "Analyze every incoming alert automatically" on). The
+  automatic one is a durable queue, not a fire-and-forget call: the job is written in the same
+  transaction as the alert, and a restart, a deploy or a provider outage does not lose it -- it is
+  retried with backoff until it succeeds or is clearly hopeless (a rejected API key). An alert received via webhook can
   carry custom metadata (a Slack channel, an external playbook link, an environment, or any
   key/value the source wants to send), rendered in a dedicated panel on the detail view. See
   [docs/API_INTEGRATION.md](docs/API_INTEGRATION.md) for the full guide on how an external source

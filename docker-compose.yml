@@ -119,6 +119,14 @@ services:
       # resembling production.
       AUTH_MODE: ${AUTH_MODE:-dev}
       DEV_KEYS_DIR: /app/.dev-keys
+      # Required, in addition to AUTH_MODE=dev-headers, for that mode to start: it trusts
+      # X-Tenant-ID/X-User-ID/X-Is-Admin from any caller (no authentication at all).
+      ALLOW_INSECURE_DEV_AUTH: ${ALLOW_INSECURE_DEV_AUTH:-}
+      # http.Server deadlines (see config.Config.HTTPReadTimeout). The SSE stream and
+      # the DB-migration route manage their own write deadline per request.
+      HTTP_READ_TIMEOUT: ${HTTP_READ_TIMEOUT:-2m}
+      HTTP_WRITE_TIMEOUT: ${HTTP_WRITE_TIMEOUT:-90s}
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-120s}
       UPLOAD_DIR: /data/uploads
       # Encrypts secrets.PersistentEnvStore's rows in Postgres (secret_store
       # table) -- the default dev value below is fine for local Docker
@@ -133,6 +141,15 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
       EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
+      # In-place retry of every LLM call (a provider 503/429 usually clears in
+      # seconds): total attempts, and the first backoff delay. See
+      # llmclient.ConfigureRetry.
+      LLM_CALL_MAX_ATTEMPTS: ${LLM_CALL_MAX_ATTEMPTS:-3}
+      LLM_CALL_RETRY_BASE_DELAY: ${LLM_CALL_RETRY_BASE_DELAY:-1s}
+      # Must be declared here to reach the container (compose reads .env only for
+      # ${...} substitution). Refuses to start under AUTH_MODE=jwt with a well-known
+      # database password unless this is "true" -- see config.Config.Validate.
+      ALLOW_DEFAULT_CREDENTIALS: ${ALLOW_DEFAULT_CREDENTIALS:-}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to
@@ -213,9 +230,22 @@ services:
       # figure a real alert volume fits inside while still bounding a
       # flood; lower it if your ingest sits on an untrusted network.
       WEBHOOK_RATE_LIMIT_PER_MINUTE: ${WEBHOOK_RATE_LIMIT_PER_MINUTE:-600}
+      # How many automatic alert analyses this ingest replica runs at once; the rest
+      # wait in the ai_analysis_jobs queue. Per replica -- size it against the LLM
+      # provider's rate limit.
+      AI_ANALYSIS_CONCURRENCY: ${AI_ANALYSIS_CONCURRENCY:-5}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
       EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
+      # In-place retry of every LLM call (a provider 503/429 usually clears in
+      # seconds): total attempts, and the first backoff delay. See
+      # llmclient.ConfigureRetry.
+      LLM_CALL_MAX_ATTEMPTS: ${LLM_CALL_MAX_ATTEMPTS:-3}
+      LLM_CALL_RETRY_BASE_DELAY: ${LLM_CALL_RETRY_BASE_DELAY:-1s}
+      # Must be declared here to reach the container (compose reads .env only for
+      # ${...} substitution). Refuses to start under AUTH_MODE=jwt with a well-known
+      # database password unless this is "true" -- see config.Config.Validate.
+      ALLOW_DEFAULT_CREDENTIALS: ${ALLOW_DEFAULT_CREDENTIALS:-}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to
@@ -261,6 +291,15 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       EXTERNAL_CALL_BREAKER_THRESHOLD: ${EXTERNAL_CALL_BREAKER_THRESHOLD:-5}
       EXTERNAL_CALL_BREAKER_COOLDOWN: ${EXTERNAL_CALL_BREAKER_COOLDOWN:-30s}
+      # In-place retry of every LLM call (a provider 503/429 usually clears in
+      # seconds): total attempts, and the first backoff delay. See
+      # llmclient.ConfigureRetry.
+      LLM_CALL_MAX_ATTEMPTS: ${LLM_CALL_MAX_ATTEMPTS:-3}
+      LLM_CALL_RETRY_BASE_DELAY: ${LLM_CALL_RETRY_BASE_DELAY:-1s}
+      # Must be declared here to reach the container (compose reads .env only for
+      # ${...} substitution). Refuses to start under AUTH_MODE=jwt with a well-known
+      # database password unless this is "true" -- see config.Config.Validate.
+      ALLOW_DEFAULT_CREDENTIALS: ${ALLOW_DEFAULT_CREDENTIALS:-}
       # httpguard refuses to dial any admin-configured outbound URL (an
       # escalation webhook destination, an MCP endpoint, an OpenAI-compatible
       # base_url) that resolves to a loopback/link-local/private address, to

@@ -29,6 +29,7 @@ type jobEnv struct {
 func newJobEnv(t *testing.T, autoOn bool) *jobEnv {
 	t.Helper()
 	pool := testutil.RequireTestDB(t)
+	testutil.ResetAIJobQueue(t)
 	env := &jobEnv{
 		pool: pool, repo: repository.NewAIAnalysisJobRepository(), alerts: repository.NewAlertRepository(),
 		tenantID: testutil.NewTenant(t),
@@ -107,6 +108,7 @@ func TestAIAnalysisJobRepository_Enqueue(t *testing.T) {
 
 	t.Run("queues nothing when there is no provider at all", func(t *testing.T) {
 		pool := testutil.RequireTestDB(t)
+		testutil.ResetAIJobQueue(t)
 		e := &jobEnv{pool: pool, repo: repository.NewAIAnalysisJobRepository(), alerts: repository.NewAlertRepository(), tenantID: testutil.NewTenant(t)}
 		_, enqueued := e.newAlertWithJob(t)
 		assert.False(t, enqueued)

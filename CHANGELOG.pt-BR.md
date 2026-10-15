@@ -45,6 +45,39 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Fixed
 
+- **A análise automática de IA de um alerta podia se perder, e uma oscilação do provedor a encerrava
+  de vez.** A análise era uma goroutine solta iniciada assim que o alerta chegava: nada registrava
+  que ela era devida, então um restart, deploy ou crash antes de terminar a descartava em silêncio, e
+  um único 503 do provedor a encerrava sem que nada tentasse de novo. Agora é uma fila durável
+  (`ai_analysis_jobs`, migration 0014): o job é gravado **na mesma transação do alerta**, então um
+  alerta que existe sempre tem a análise devida, e o `cmd/ingest` trabalha as linhas com
+  `FOR UPDATE SKIP LOCKED` (várias réplicas dividem a fila, nenhum job vai para dois), um lease
+  renovado por heartbeat (os jobs de um consumidor morto são assumidos, e a execução que ele deixou é
+  limpa para a nova tentativa poder começar), um token de fencing (um consumidor travado não
+  sobrescreve o sucessor), retry com backoff -- um minuto, cinco, quinze, uma hora, até cinco
+  tentativas -- e drenagem graciosa no desligamento. Uma API key rejeitada, URL ou modelo errado não
+  é repetido (falha igual toda vez). Um job que derruba o consumidor repetidamente esgota as tentativas
+  em vez de rodar em loop entre restarts. Tenants que não ativaram a opção não acumulam linhas. A
+  profundidade da fila e a idade do job mais antigo esperando estão no `/metrics` do ingest, com um
+  alerta do Prometheus se ela parar de escoar. Provado de ponta a ponta contra um provedor que falha
+  por mais tempo do que o retry interno cobre, e por testes de claims concorrentes, assunção de lease
+  e do caso do dono antigo.
+- **Chamadas ao LLM são repetidas no próprio lugar.** O `doRequest` fazia exatamente uma tentativa. Um
+  503/429 do provedor ou uma conexão derrubada agora é repetido até 3 vezes com backoff exponencial e
+  jitter, respeitando o `Retry-After` até um teto, sem dormir por um chamador que já foi embora e sem
+  repetir um circuit breaker aberto. As falhas do provedor são tipadas (`ProviderError`,
+  `TransportError`) para quem chama distinguir "tente de novo" de "corrija sua chave". Ajustável com
+  `LLM_CALL_MAX_ATTEMPTS` / `LLM_CALL_RETRY_BASE_DELAY`.
+- **Um evento grande podia ser perdido.** O Postgres rejeita de cara um payload de `NOTIFY` de 8000
+  bytes ou mais, e o evento por turno do chat carregava a resposta inteira do modelo, então um
+  relatório de triagem longo fazia a atualização ao vivo sumir (reproduzido antes, com um teste). Os
+  eventos agora carregam só identificadores, e o `Publish` aplica o limite por conta própria -- um
+  payload grande perde os maiores campos e é marcado `truncated`, e o tipo do evento sempre chega.
+- **O `cmd/ingest` não tinha circuit breaker nem atualização ao vivo das próprias análises.** Ele faz
+  chamadas a LLM e MCP mas nunca instalou o breaker (então uma queda do provedor fazia cada alerta
+  ingerido esperar o timeout inteiro), e nunca ligou a publicação de eventos ao serviço de análise
+  (então o navegador nunca era avisado de que uma análise automática terminou e ficava em
+  "Analisando..." até recarregar).
 - **A primeira mensagem do chat "Analisar com IA" sempre voltava como um "Alert Triage Report",
   independente do que fosse perguntado.** O prompt completo de triagem era dado à primeira análise
   de *qualquer* alerta, então um simples "oi" digitado num chat novo recebia um relatório
@@ -370,6 +403,11 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- **O `ai_analysis_service.go` foi dividido por responsabilidade.** Com 1.183 linhas ele misturava
+  prompts, o chat e o caminho de follow-up, o loop agêntico e a persistência das execuções. Agora são
+  quatro arquivos no mesmo pacote (`ai_analysis_service.go`, `_prompts.go`, `_chat.go`, `_agent.go`),
+  movidos como declarações inteiras e sem mudança de comportamento (o conjunto de declarações de
+  nível superior é idêntico antes e depois).
 - O `docs/THREAT_MODEL.md` listava o escopo por tag nos sub-recursos de incidente como lacuna
   aberta. Não é: comentários, vínculos, IOCs, timeline, histórico de status e aprovação de tool
   call carregam o pai via `loadVisible(ctx, tx, id, allowedTags)` antes, e o

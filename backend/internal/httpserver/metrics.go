@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 // numDurationBuckets/durationBucketBoundsSeconds define the request-
@@ -49,6 +52,10 @@ type MetricsCollector struct {
 	// scrape config's job_name (see deploy/k8s/09-monitoring.yaml), so a
 	// custom label also called "job" would silently collide with it.
 	lastSweepSuccessUnix sync.Map // map[string]int64
+
+	// aiQueueStats is optional (see SetAIQueueStats): only the process that works
+	// the auto-analysis queue (cmd/ingest) registers it.
+	aiQueueStats func(ctx context.Context) (domain.AIAnalysisJobStats, error)
 }
 
 // RecordSweepSuccess stamps job's last-success time to now -- called by
@@ -124,6 +131,15 @@ func (m *MetricsCollector) DecSSE() {
 // the current sizing is actually adequate instead of guessing.
 func (m *MetricsCollector) SetPool(pool *pgxpool.Pool) {
 	m.pool = pool
+}
+
+// SetAIQueueStats registers where MetricsHandler reads the auto-analysis queue's
+// health from, reported as kuruops_ai_analysis_jobs{status} and
+// kuruops_ai_analysis_oldest_pending_seconds. Called once at startup by the
+// process that consumes the queue (cmd/ingest). It is read at scrape time, so the
+// numbers are exact rather than counters a restart would reset.
+func (m *MetricsCollector) SetAIQueueStats(fn func(ctx context.Context) (domain.AIAnalysisJobStats, error)) {
+	m.aiQueueStats = fn
 }
 
 // MetricsMiddleware wraps handlers to collect status code and duration metrics.
@@ -208,4 +224,33 @@ func MetricsHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "# TYPE kuruops_db_pool_max_conns gauge\n")
 		fmt.Fprintf(w, "kuruops_db_pool_max_conns %d\n", stat.MaxConns())
 	}
+
+	m.writeAIQueueMetrics(w, r)
+}
+
+// writeAIQueueMetrics emits the auto-analysis queue gauges. A failing read is
+// skipped, not fatal: a metrics scrape must not fail (or hang) because the
+// database had a moment, and an absent series is how Prometheus already
+// represents "no data".
+func (m *MetricsCollector) writeAIQueueMetrics(w http.ResponseWriter, r *http.Request) {
+	if m.aiQueueStats == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	st, err := m.aiQueueStats(ctx)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "\n# HELP kuruops_ai_analysis_jobs Automatic-analysis jobs by status.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_ai_analysis_jobs gauge\n")
+	for _, s := range []struct {
+		status string
+		n      int
+	}{{"pending", st.Pending}, {"running", st.Running}, {"succeeded", st.Succeeded}, {"failed", st.Failed}, {"skipped", st.Skipped}} {
+		fmt.Fprintf(w, "kuruops_ai_analysis_jobs{status=%q} %d\n", s.status, s.n)
+	}
+	fmt.Fprintf(w, "\n# HELP kuruops_ai_analysis_oldest_pending_seconds How long the oldest due automatic-analysis job has been waiting; 0 when none is due. A queue that is not draining shows up here first.\n")
+	fmt.Fprintf(w, "# TYPE kuruops_ai_analysis_oldest_pending_seconds gauge\n")
+	fmt.Fprintf(w, "kuruops_ai_analysis_oldest_pending_seconds %g\n", st.OldestPendingAge.Seconds())
 }

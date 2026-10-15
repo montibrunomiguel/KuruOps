@@ -23,17 +23,6 @@ import (
 	"github.com/kuruops/kuruops/internal/safego"
 )
 
-// maxConcurrentAutoAnalysis bounds how many auto-analysis goroutines
-// (Ingest's "go s.autoAnalyze(...)" launch, see below) can be in flight at
-// once. Ingest's webhook path can receive a burst of alerts far faster than
-// an LLM call completes, and without a cap each one spawns its own
-// unbounded goroutine -- a large enough burst turns into hundreds of
-// concurrent outbound LLM requests, which is a cost/rate-limit/resource
-// problem for this process and the tenant's LLM provider alike, not a
-// correctness one (nothing here changes what gets analyzed, only how many
-// analyses run at the same instant).
-const maxConcurrentAutoAnalysis = 5
-
 // errAlertNotVisible is an internal signal, never returned to a caller: it
 // lets a transaction body abort (rolling back) while letting the wrapper
 // translate it back into this package's (nil, nil) not-found contract.
@@ -49,19 +38,17 @@ type OnCallResolver interface {
 }
 
 type AlertService struct {
-	pool        *db.Pool
-	repo        *repository.AlertRepository
-	tags        *TagService
-	playbooks   *repository.PlaybookRepository
-	onCall      OnCallResolver
-	publish     func(tenantID uuid.UUID, eventType string, payload any)
-	autoAnalyze func(tenantID, alertID uuid.UUID)
-	// autoAnalyzeSem enforces maxConcurrentAutoAnalysis -- see that
-	// constant's doc comment. Buffered channel used as a counting
-	// semaphore: send blocks once maxConcurrentAutoAnalysis goroutines are
-	// already holding a slot, receive releases one.
-	autoAnalyzeSem chan struct{}
-	runs           *repository.AIAnalysisRunRepository
+	pool      *db.Pool
+	repo      *repository.AlertRepository
+	tags      *TagService
+	playbooks *repository.PlaybookRepository
+	onCall    OnCallResolver
+	publish   func(tenantID uuid.UUID, eventType string, payload any)
+	// analysisJobs/onAnalysisQueued are the automatic-analysis queue's two
+	// hooks -- see EnableAutoAnalysisQueue.
+	analysisJobs     *repository.AIAnalysisJobRepository
+	onAnalysisQueued func()
+	runs             *repository.AIAnalysisRunRepository
 	// incidents/escalationPolicies/appBaseURL back Escalate -- see
 	// EnableEscalation's doc comment for why these are wired via a setter
 	// rather than a constructor parameter.
@@ -71,7 +58,7 @@ type AlertService struct {
 }
 
 func NewAlertService(pool *db.Pool, repo *repository.AlertRepository, tags *TagService, playbooks *repository.PlaybookRepository) *AlertService {
-	return &AlertService{pool: pool, repo: repo, tags: tags, playbooks: playbooks, autoAnalyzeSem: make(chan struct{}, maxConcurrentAutoAnalysis)}
+	return &AlertService{pool: pool, repo: repo, tags: tags, playbooks: playbooks}
 }
 
 // EnableOnCallAutoAssign wires the on-call resolver used by Ingest to
@@ -93,17 +80,24 @@ func (s *AlertService) EnableEventPublishing(publish func(tenantID uuid.UUID, ev
 	s.publish = publish
 }
 
-// EnableAutoAnalysis wires an AI-analysis trigger fired (in its own
-// goroutine, never awaited -- see Ingest) the moment a webhook alert lands,
-// so an analyst opening a freshly-received alert already has a triage
-// summary waiting instead of needing to click "Analyze with AI" first.
-// Optional, same post-construction-setter reasoning as
-// EnableOnCallAutoAssign: only cmd/ingest wires a real one (via
-// AIAnalysisService.AnalyzeAlert with a nil actorID, see that method's doc
-// comment) -- cmd/api's own "Analyze with AI" button already goes straight
-// through the handler, it doesn't need Ingest to also trigger one.
-func (s *AlertService) EnableAutoAnalysis(trigger func(tenantID, alertID uuid.UUID)) {
-	s.autoAnalyze = trigger
+// EnableAutoAnalysisQueue makes Ingest record, in the same transaction that
+// stores a new webhook alert, that the alert is owed an automatic analysis (see
+// AIAnalysisJobRepository.Enqueue and AIAnalysisQueue). wake, when non-nil, is
+// called after the commit so an idle consumer in this process starts on it
+// immediately rather than at its next poll.
+//
+// This replaced a hook that launched a bare goroutine the moment the alert
+// landed. That goroutine was the only record the analysis was owed: a restart,
+// deploy or crash before it finished lost the work without a trace, and a
+// provider error ended it for good because nothing would ever try again. As a row
+// written atomically with the alert, the obligation survives both.
+//
+// Optional, same post-construction-setter reasoning as EnableOnCallAutoAssign:
+// only cmd/ingest wires it -- cmd/api's own "Analyze with AI" button goes straight
+// through the handler and does not need Ingest to also trigger one.
+func (s *AlertService) EnableAutoAnalysisQueue(jobs *repository.AIAnalysisJobRepository, wake func()) {
+	s.analysisJobs = jobs
+	s.onAnalysisQueued = wake
 }
 
 // EnableAnalysisLookup wires the repository Get uses to populate
@@ -444,6 +438,9 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 		in.AssignedAnalystID = analystID
 	}
 
+	// Set inside the transaction, read after it commits -- see the analysis queue
+	// wake below.
+	analysisQueued := false
 	err = s.pool.WithTenant(ctx, tenantID, func(tx pgx.Tx) error {
 		if groupKey != "" {
 			// Serializes the whole check-then-(increment-or-insert) section
@@ -499,13 +496,28 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 			return fmt.Errorf("insert alert: %w", err)
 		}
 		alert = &in
-		return s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
+		if err := s.repo.InsertEvent(ctx, tx, &domain.AlertEvent{
 			AlertID:   in.ID,
 			TenantID:  tenantID,
 			EventType: domain.AlertEventReceived,
 			ActorType: domain.ActorSystem,
 			Data:      []byte(`{"channel":"webhook"}`),
-		})
+		}); err != nil {
+			return err
+		}
+
+		// Owe this alert its automatic analysis, atomically with the alert
+		// itself: either both commit or neither does, so an alert that exists
+		// always has its analysis owed and a rolled-back ingest leaves nothing
+		// behind. A no-op unless the tenant's default LLM provider opted in.
+		if s.analysisJobs != nil {
+			queued, err := s.analysisJobs.Enqueue(ctx, tx, tenantID, in.ID, DefaultAnalysisJobMaxAttempts)
+			if err != nil {
+				return err
+			}
+			analysisQueued = queued
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, false, err
@@ -518,24 +530,14 @@ func (s *AlertService) Ingest(ctx context.Context, tenantID uuid.UUID, webhookEn
 
 	s.publishEvent(tenantID, alert.ID, "received")
 
-	// Fire-and-forget: an LLM call (possibly an agentic tool-use loop) can
-	// take several seconds, and this is the webhook ingest path -- the
-	// source SIEM/XDR tool is waiting on this HTTP response, it must never
-	// block on analysis. context.Background() deliberately, not ctx: by
-	// the time the goroutine runs, the request that triggered Ingest may
-	// already have returned and had its context cancelled. Never fires for
-	// a suppressed duplicate -- there's no new content to analyze.
-	//
-	// The semaphore acquire below only ever blocks this background
-	// goroutine, never Ingest's own caller -- Ingest already returned to
-	// its HTTP response path the instant this goroutine was launched.
-	if s.autoAnalyze != nil {
-		alertID := alert.ID
-		safego.Go("alert.autoAnalyze", func() {
-			s.autoAnalyzeSem <- struct{}{}
-			defer func() { <-s.autoAnalyzeSem }()
-			s.autoAnalyze(tenantID, alertID)
-		})
+	// The analysis itself never runs here: an LLM call (possibly an agentic
+	// tool-use loop) takes seconds and the source SIEM/XDR tool is waiting on
+	// this HTTP response. Its job row was already written, inside the
+	// transaction above, so it is owed whatever happens to this process next; this
+	// only nudges a consumer that is idle to look now instead of at its next poll.
+	// Never queued for a suppressed duplicate -- there is no new content to analyse.
+	if analysisQueued && s.onAnalysisQueued != nil {
+		s.onAnalysisQueued()
 	}
 
 	return alert, false, nil
@@ -844,9 +846,8 @@ func (s *AlertService) Escalate(ctx context.Context, tenantID, actorID, alertID 
 	s.incidents.publishEvent(tenantID, incident.ID, "created")
 	s.publishEvent(tenantID, alertID, "status_changed")
 
-	// Best-effort, backgrounded (same "go s.autoAnalyze(...)" pattern
-	// Ingest uses) so a slow/unreachable escalation-chain destination never
-	// delays this response -- see fireManualEscalationStep.
+	// Best-effort and backgrounded, so a slow/unreachable escalation-chain
+	// destination never delays this response -- see fireManualEscalationStep.
 	safego.Go("alert.fireManualEscalationStep", func() {
 		s.fireManualEscalationStep(context.Background(), tenantID, alertID, severity, title)
 	})

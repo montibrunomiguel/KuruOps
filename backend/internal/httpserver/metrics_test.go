@@ -1,12 +1,16 @@
 package httpserver
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kuruops/kuruops/internal/domain"
 )
 
 func TestMetricsHandler(t *testing.T) {
@@ -159,4 +163,54 @@ func TestMetricsMiddleware_RecordsStatusCode(t *testing.T) {
 	if got := m.durationCount.Load(); got != 1 {
 		t.Fatalf("expected durationCount=1, got %d", got)
 	}
+}
+
+func TestMetricsHandler_AIQueueGauges(t *testing.T) {
+	scrape := func(m *MetricsCollector) string {
+		prev := SetMetricsForTest(m)
+		defer SetMetricsForTest(prev)
+		rr := httptest.NewRecorder()
+		MetricsHandler(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		return rr.Body.String()
+	}
+
+	t.Run("reports depth by status and the age of the oldest due job", func(t *testing.T) {
+		m := &MetricsCollector{}
+		m.SetAIQueueStats(func(context.Context) (domain.AIAnalysisJobStats, error) {
+			return domain.AIAnalysisJobStats{Pending: 4, Running: 2, Succeeded: 90, Failed: 3, Skipped: 1, OldestPendingAge: 95 * time.Second}, nil
+		})
+		body := scrape(m)
+		for _, want := range []string{
+			`kuruops_ai_analysis_jobs{status="pending"} 4`,
+			`kuruops_ai_analysis_jobs{status="running"} 2`,
+			`kuruops_ai_analysis_jobs{status="succeeded"} 90`,
+			`kuruops_ai_analysis_jobs{status="failed"} 3`,
+			`kuruops_ai_analysis_jobs{status="skipped"} 1`,
+			`kuruops_ai_analysis_oldest_pending_seconds 95`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("metrics output is missing %q", want)
+			}
+		}
+	})
+
+	t.Run("a process that does not work the queue emits nothing about it", func(t *testing.T) {
+		if body := scrape(&MetricsCollector{}); strings.Contains(body, "kuruops_ai_analysis") {
+			t.Errorf("api/worker must not report queue gauges they never registered:\n%s", body)
+		}
+	})
+
+	t.Run("a failing read is skipped, not fatal to the scrape", func(t *testing.T) {
+		m := &MetricsCollector{}
+		m.SetAIQueueStats(func(context.Context) (domain.AIAnalysisJobStats, error) {
+			return domain.AIAnalysisJobStats{}, errors.New("database down")
+		})
+		body := scrape(m)
+		if strings.Contains(body, "kuruops_ai_analysis") {
+			t.Error("no series should be emitted when the stats cannot be read -- absent is how Prometheus says 'no data'")
+		}
+		if !strings.Contains(body, "kuruops_http_requests_total") {
+			t.Error("the rest of the scrape must still be served")
+		}
+	})
 }
