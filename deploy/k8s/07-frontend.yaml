@@ -33,6 +33,13 @@ spec:
           env:
             - name: API_UPSTREAM
               value: http://api.kuruops.svc.cluster.local:8080
+            # The address range of the ingress controller in front of this pod (see
+            # 12-ingress.yaml). Only requests from it may set the client address through
+            # X-Forwarded-For; without this every user shares one login rate-limit budget (the
+            # controller's address). The default trusts nothing: set it to your controller's pod
+            # range, e.g. what `kubectl -n ingress-nginx get pods -o wide` shows.
+            - name: TRUSTED_PROXY_CIDR
+              value: 127.0.0.1/32
           ports:
             - containerPort: 8080
           readinessProbe:
