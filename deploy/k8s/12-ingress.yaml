@@ -1,0 +1,70 @@
+# Ingress with TLS: the one public entry point to the stack.
+#
+#   https://<host>/hooks   ->  ingest    (SIEM/XDR webhook sources)
+#   https://<host>/        ->  frontend  (the SPA; its nginx proxies /api and /auth to the api)
+#
+# Needs an ingress controller in the cluster (ingress-nginx is assumed below; adjust the
+# class and annotations for another) and a TLS Secret named kuruops-tls in this namespace:
+#   * cert-manager issues and renews it from the annotation below (see
+#     optional/cert-manager-issuer.yaml), or
+#   * you create it yourself:
+#       kubectl -n kuruops create secret tls kuruops-tls --cert=fullchain.pem --key=privkey.pem
+#
+# Replace kuruops.example.com with your host. It must match APP_BASE_URL in
+# 02-configmap.yaml (the scheme there also decides whether the session cookie is marked
+# Secure, so keep it https).
+#
+# Two settings below matter beyond the obvious:
+#
+#   proxy-buffering off + a long read timeout. The live event stream (Server-Sent Events) is a
+#   response that never ends and must reach the browser as it is written. A buffering proxy
+#   holds it until a buffer fills; a short read timeout cuts it. Without these the UI looks
+#   alive but never updates live.
+#
+#   TRUSTED_PROXY_CIDR on the frontend (07-frontend.yaml). The frontend sees the controller's
+#   address as the client; set that variable to the controller's pod range so the real client
+#   address (X-Forwarded-For) is used for the login rate limit instead of one shared address.
+#   ingest sits behind the controller too and trusts the X-Real-IP the controller sets; that
+#   is only the true client address if the controller preserves it (externalTrafficPolicy:
+#   Local on its Service, or the PROXY protocol on a cloud load balancer) -- on a setup that
+#   source-NATs, per-source webhook rate limits see the load balancer instead.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kuruops
+  namespace: kuruops
+  annotations:
+    # cert-manager: uncomment and point at your issuer to have the certificate issued and renewed.
+    # cert-manager.io/cluster-issuer: letsencrypt
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Attachments up to 25 MB plus multipart framing (the frontend's own limit is 30m).
+    nginx.ingress.kubernetes.io/proxy-body-size: 30m
+    # SSE: see above.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - kuruops.example.com
+      secretName: kuruops-tls
+  rules:
+    - host: kuruops.example.com
+      http:
+        paths:
+          # Longest prefix wins: webhooks to ingest, everything else to the UI.
+          - path: /hooks
+            pathType: Prefix
+            backend:
+              service:
+                name: ingest
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 8080

@@ -38,7 +38,7 @@ variable "node_instance_type" {
   default = "t3.medium"
 }
 
-# api/ingest/worker/frontend at replicas:1 each plus room for the
+# api/ingest/analyzer/worker/frontend at replicas:1 each plus room for the
 # migration Job and cluster add-ons (CoreDNS, kube-proxy, VPC CNI) --
 # 2 nodes at t3.medium comfortably fits deploy/k8s/'s fixed replica counts.
 variable "node_desired_size" {
@@ -74,7 +74,7 @@ variable "db_engine_version" {
 
 # The RDS master user -- used ONLY to run db/migrations and to create the
 # kuruops_app/kuruops_worker roles (see db/init/*.sql). Never handed to
-# a running api/ingest/worker container; those get their own least-privilege
+# a running api/ingest/analyzer/worker container; those get their own least-privilege
 # roles' connection strings instead (see the top-level deploy/README.md).
 variable "db_master_username" {
   type    = string

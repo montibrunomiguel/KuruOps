@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,14 +20,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/kuruops/kuruops/internal/circuitbreaker"
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/httpserver"
-	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/mailer"
-	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/notifier"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
@@ -36,33 +35,55 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	cfg, err := config.Load(logger)
-	if err != nil {
-		logger.Error("config load failed", "error", err)
-		os.Exit(1)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	code := runMain(ctx, os.Stdout)
+	stop()
+	os.Exit(code)
+}
 
+// runMain is main without the process: it loads and validates the configuration, runs the
+// command until ctx is cancelled, and returns the exit status instead of exiting -- so a
+// test can drive the whole startup path (including the refusal to start) in-process.
+func runMain(ctx context.Context, stdout io.Writer) int {
+	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+
+	cfg, err := config.LoadAndValidate(logger)
+	if err != nil {
+		logger.Error("startup refused", "error", err)
+		return 1
+	}
+	if err := run(ctx, cfg, logger, defaultTicks); err != nil {
+		logger.Error("worker stopped", "error", err)
+		return 1
+	}
+	return 0
+}
+
+// tickIntervals is how often each periodic job runs. Injected so a test can run the real
+// loop in milliseconds instead of waiting a minute per sweep; main passes defaultTicks.
+type tickIntervals struct {
+	refreshViews, slaBreaches, escalations, staleAIRuns, retention time.Duration
+}
+
+var defaultTicks = tickIntervals{
+	refreshViews: time.Minute,
+	slaBreaches:  time.Minute,
+	escalations:  time.Minute,
+	staleAIRuns:  time.Minute,
+	// Coarser than the others on purpose -- deleting data has no timeliness requirement the
+	// way an SLA breach or an escalation firing does, so ticking every minute would just be
+	// wasted table scans. See sweepDataRetention's own doc comment.
+	retention: time.Hour,
+}
+
+// run wires the process and runs the periodic sweeps until ctx is cancelled, then shuts the
+// health server down. It returns an error only for a failure to start.
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger, ticks tickIntervals) error {
 	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-worker", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
-		logger.Error("telemetry setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("telemetry setup: %w", err)
 	}
 
-	// Fail fast on an LLM/MCP provider that has gone bad, instead of making
-	// every analysis run wait out the full HTTP timeout against a dead
-	// endpoint. Installed before any provider is constructed; a zero
-	// threshold or cooldown disables it -- see config.Config.
-	breakerCfg := circuitbreaker.Config{
-		Threshold: cfg.ExternalCallBreakerThreshold,
-		Cooldown:  cfg.ExternalCallBreakerCooldown,
-	}
-	llmclient.Configure(breakerCfg)
-	mcpclient.Configure(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -73,8 +94,7 @@ func main() {
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("database connection: %w", err)
 	}
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
@@ -89,11 +109,7 @@ func main() {
 	healthMux.Handle("/healthz", httpserver.HealthCheck(pool.Pool))
 	healthMux.HandleFunc("/livez", httpserver.Livez)
 	healthMux.HandleFunc("/metrics", httpserver.MetricsHandler)
-	healthSrv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.WrapWithObservability(healthMux, logger, tracer),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	healthSrv := httpserver.NewServer(cfg.HTTPAddr, httpserver.WrapWithObservability(healthMux, logger, tracer), httpserver.InternalTimeouts)
 	safego.Go("worker.ListenAndServe", func() {
 		logger.Info("worker health/metrics listening", "addr", cfg.HTTPAddr)
 		if err := healthSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -107,8 +123,7 @@ func main() {
 	// secrets.NewFromConfig.
 	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
-		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
-		os.Exit(1)
+		return fmt.Errorf("secrets backend %q setup: %w", cfg.SecretsBackend, err)
 	}
 
 	// Every constructor here is the same one cmd/api uses, just wired to the
@@ -127,46 +142,36 @@ func main() {
 	escalationPolicyService := service.NewEscalationPolicyService(pool, repository.NewEscalationPolicyRepository(), onCallScheduleRepo, onCallService, userService, secretStore, repository.NewAdminAuditEventRepository())
 	smtpService := service.NewSMTPConfigService(pool, repository.NewSMTPConfigRepository(), secretStore, mailer.SMTPSender{}, repository.NewAdminAuditEventRepository())
 
-	logger.Info("worker started")
+	logger.Info("worker started", "build", buildinfo.Build)
 
-	refreshTicker := time.NewTicker(1 * time.Minute)
+	refreshTicker := time.NewTicker(ticks.refreshViews)
 	defer refreshTicker.Stop()
 
-	slaTicker := time.NewTicker(1 * time.Minute)
+	slaTicker := time.NewTicker(ticks.slaBreaches)
 	defer slaTicker.Stop()
 
-	escalationTicker := time.NewTicker(1 * time.Minute)
+	escalationTicker := time.NewTicker(ticks.escalations)
 	defer escalationTicker.Stop()
 
-	staleAIRunTicker := time.NewTicker(1 * time.Minute)
+	staleAIRunTicker := time.NewTicker(ticks.staleAIRuns)
 	defer staleAIRunTicker.Stop()
 
-	// Coarser than the other sweeps on purpose -- deleting data has no
-	// timeliness requirement the way an SLA breach or an escalation firing
-	// does, so ticking every minute would just be wasted table scans. See
-	// sweepDataRetention's own doc comment.
-	retentionTicker := time.NewTicker(1 * time.Hour)
+	retentionTicker := time.NewTicker(ticks.retention)
 	defer retentionTicker.Stop()
 
-	// AI analysis on ingest does NOT go through this worker -- it ended up
-	// solved a simpler way than the `ai_analysis_jobs` queue this comment
-	// originally considered: AlertService.Ingest (cmd/ingest) fires
-	// `go s.autoAnalyze(...)` -- a fire-and-forget goroutine in the ingest
-	// process itself, no persisted queue, no automatic retry if the LLM call
-	// fails (just logged). That's acceptable at current volume; if this ever
-	// becomes a bottleneck (a burst of alerts dragging down ingest
-	// throughput, or needing retry/backoff on an LLM failure), a queue
-	// consumed here by the worker (same design considered below: a table +
-	// `SELECT ... FOR UPDATE SKIP LOCKED`) would solve it without touching
-	// `AlertService.Ingest` again.
+	// The automatic analysis of each ingested alert is NOT worked by this process. It is a
+	// durable queue (the ai_analysis_jobs table, written by AlertService.Ingest in the
+	// alert's own transaction) consumed by cmd/analyzer with FOR UPDATE SKIP LOCKED, a lease,
+	// retry and backoff -- see service.AIAnalysisQueue.
 	//
-	// IMPORTANT if this ever gets built: cfg.DatabaseURL here connects as
-	// kuruops_worker, which has BYPASSRLS (needed only for the materialized
-	// view refresh and the sweeps below -- see
-	// db/init/kuruops_worker_role.sql). Processing AI jobs per-tenant using
-	// this SAME pool would be a silent RLS bypass; open a separate pool
-	// connected as kuruops_app + Pool.WithTenant for that consumption, the
-	// way api/ingest already do.
+	// It is not here because this process connects as kuruops_worker, which has BYPASSRLS
+	// (needed only for the materialized view refresh and the sweeps below -- see
+	// db/init/kuruops_worker_role.sql): consuming per-tenant jobs on THIS pool would be a
+	// silent RLS bypass. cmd/analyzer connects as kuruops_app, so row-level security applies.
+	//
+	// What this worker does contribute is sweepStaleAIRuns below, which fails runs left
+	// 'running' by a process that died; the queue's own lease (and
+	// AIAnalysisService.AbandonInterruptedRuns) cover the analysis jobs' side.
 
 	for {
 		select {
@@ -177,7 +182,7 @@ func main() {
 				logger.Error("health server graceful shutdown failed", "error", err)
 			}
 			cancel()
-			return
+			return nil
 		case <-refreshTicker.C:
 			runLocked(ctx, pool, lockKeyRefreshMaterializedViews, "refresh_materialized_views", logger, func() {
 				refreshMaterializedViews(ctx, pool, logger)

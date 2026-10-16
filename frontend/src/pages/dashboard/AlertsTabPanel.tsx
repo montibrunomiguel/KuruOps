@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
 import { useList } from "../../api/hooks";
@@ -72,9 +72,9 @@ export function AlertsTabPanel() {
   // tab's stat cards/charts already have their own inline "—" placeholders
   // for that case (see statsLoading usage below).
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  useEffect(() => {
-    if (!statsLoading) setHasLoadedOnce(true);
-  }, [statsLoading]);
+  // Set while rendering rather than in an effect, so the first loaded render
+  // already knows it has loaded.
+  if (!statsLoading && !hasLoadedOnce) setHasLoadedOnce(true);
 
   if (statsLoading && !hasLoadedOnce) return <DashboardSkeleton />;
   if (statsError) return <div className="error-banner">{statsError}</div>;

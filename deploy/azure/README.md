@@ -19,13 +19,12 @@ AWS/GCP stacks, see `deploy/k8s/README.md`'s scope note.
 
 Unlike the AWS/GCP stacks, this one doesn't provision a blob storage bucket:
 `internal/blobstore` (the app's Settings -> Storage Integration feature)
-only has S3 and GCS backends today, no Azure Blob Storage backend. Uploads
-stay on the local-disk PVC already in `deploy/k8s/04-api.yaml`, which works
-fine at `replicas: 1` (the default). If you need attachments to survive
-across multiple `api` replicas on Azure, either switch that PVC's
-StorageClass to Azure Files (`ReadWriteMany`), or point the app's Storage
-Integration at an S3-compatible endpoint (e.g. a self-hosted MinIO) if you
-have one.
+only has S3 and GCS backends today, no Azure Blob Storage backend. Attachments
+then go to Postgres (`UPLOAD_BACKEND=database`, set in `deploy/k8s/02-configmap.yaml`),
+which is what lets `api` run as several replicas with no shared volume -- fine for
+moderate attachment volume (25 MB each at most, in the database's backups). For many
+or large attachments, point the app's Storage Integration at an S3-compatible endpoint
+(e.g. a self-hosted MinIO) if you have one.
 
 ## 1. Provision the infrastructure
 

@@ -1,0 +1,69 @@
+# The production-like way to run the compose stack: no default credentials, real JWT
+# keys, nothing but the web UI and webhook port published.
+#
+#   bash scripts/gen-secrets.sh                      # once: writes .env.secure and .secrets/
+#   task deploy:secure:up                            # or, by hand:
+#   docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml up -d --build
+#
+# docker-compose.yml is the laptop stack: it ships working default passwords and an
+# encryption key (they are printed in that file, so anyone can use them), runs
+# AUTH_MODE=dev, and publishes Postgres on the host. That is fine for one developer and
+# wrong for anything else, and "the application refuses to start with a default password"
+# (config.Config.Validate, which AUTH_MODE=jwt below turns on) is the last line of
+# defence, not the first. This file is the first: every credential below is REQUIRED -- a
+# missing one makes `docker compose` stop with the message after ":?", before any
+# container is created -- and none has a default.
+#
+# What it changes relative to docker-compose.yml:
+#   * AUTH_MODE=jwt, with a keypair mounted from .secrets/ (made by gen-secrets.sh);
+#     under jwt the services also refuse a well-known database password.
+#   * POSTGRES_PASSWORD, KURUOPS_APP_PASSWORD, KURUOPS_WORKER_PASSWORD and
+#     SECRETS_ENCRYPTION_KEY have no default.
+#   * Postgres is not published on the host (only the other containers reach it).
+#   * api and the internal-only ports (ingest metrics, analyzer, worker) are not published
+#     either; ingest (webhooks) and the frontend are the only entry points.
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/gen-secrets.sh and pass --env-file .env.secure}
+    ports: !reset []
+
+  migrate:
+    entrypoint:
+      [
+        "migrate",
+        "-path=/migrations",
+        "-database=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?run scripts/gen-secrets.sh}@postgres:5432/kuruops?sslmode=disable",
+      ]
+
+  api:
+    environment:
+      AUTH_MODE: jwt
+      DATABASE_URL: postgres://kuruops_app:${KURUOPS_APP_PASSWORD:?run scripts/gen-secrets.sh}@postgres:5432/kuruops?sslmode=disable
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?run scripts/gen-secrets.sh}
+      JWT_PRIVATE_KEY_PATH: /run/keys/jwt_private.pem
+      JWT_PUBLIC_KEY_PATH: /run/keys/jwt_public.pem
+    volumes:
+      - ./.secrets/jwt_private.pem:/run/keys/jwt_private.pem:ro
+      - ./.secrets/jwt_public.pem:/run/keys/jwt_public.pem:ro
+    # The browser reaches the api through the frontend's /api proxy; nothing else needs it.
+    ports: !reset []
+
+  ingest:
+    environment:
+      AUTH_MODE: jwt
+      DATABASE_URL: postgres://kuruops_app:${KURUOPS_APP_PASSWORD:?run scripts/gen-secrets.sh}@postgres:5432/kuruops?sslmode=disable
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?run scripts/gen-secrets.sh}
+
+  analyzer:
+    environment:
+      AUTH_MODE: jwt
+      DATABASE_URL: postgres://kuruops_app:${KURUOPS_APP_PASSWORD:?run scripts/gen-secrets.sh}@postgres:5432/kuruops?sslmode=disable
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?run scripts/gen-secrets.sh}
+    ports: !reset []
+
+  worker:
+    environment:
+      AUTH_MODE: jwt
+      DATABASE_URL: postgres://kuruops_worker:${KURUOPS_WORKER_PASSWORD:?run scripts/gen-secrets.sh}@postgres:5432/kuruops?sslmode=disable
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?run scripts/gen-secrets.sh}

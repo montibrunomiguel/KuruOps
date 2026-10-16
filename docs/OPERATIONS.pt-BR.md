@@ -89,8 +89,37 @@ durante a janela assistida — cole em `http://<prometheus>:9090/graph`:
 - **Latência p99 por serviço**: `histogram_quantile(0.99, sum by (le, job) (rate(kuruops_http_request_duration_seconds_bucket[5m])))`
 - **Saturação do pool de conexões**: `kuruops_db_pool_acquired_conns / kuruops_db_pool_max_conns`
 - **Conexões SSE ativas** (deve variar com analistas logados, não crescer sem limite): `kuruops_sse_active_connections`
-- **Há quanto tempo cada sweep do worker rodou com sucesso pela última vez** (em minutos): `(time() - kuruops_worker_last_sweep_success_timestamp) / 60`
+- **Há quanto tempo cada sweep do worker rodou com sucesso pela última vez** (em minutos), entre as duas réplicas do worker -- só a réplica que vence um tick atualiza a própria série, então use o máximo: `(time() - max by (sweep_job) (kuruops_worker_last_sweep_success_timestamp)) / 60`
 - **Scrape targets fora do ar**: `up{job=~"kuruops-.*"} == 0`
+- **Fila de análise automática**: `kuruops_ai_analysis_jobs` (profundidade por status) e `kuruops_ai_analysis_oldest_pending_seconds` (há quanto tempo o job vencido mais antigo espera), servidos pelo analyzer
+- **Mais de um build ativo** (deploy parcial): `count(count by (build) (kuruops_build_info)) > 1`
+- **Runtime Go e processo** (goroutines, GC, memória, fds): `go_*` e `process_*`, exportados por todo processo
+
+## Processos, escala e a fila
+
+| Processo | Papel | Réplicas | Escale por |
+|---|---|---|---|
+| `api` | REST da UI, tokens de sessão | 2+ (HPA 2–6 no `deploy/k8s`) | CPU. Stateless: anexos ficam no Postgres (`UPLOAD_BACKEND=database`) ou S3/GCS, atualizações ao vivo passam pelo `LISTEN/NOTIFY` do Postgres. Com `UPLOAD_BACKEND=local` fica preso a uma réplica. |
+| `ingest` | recebimento de webhooks; registra cada alerta e seu job de análise | 2+ (HPA 2–6) | taxa de alertas recebidos. Sem LLM nem cofre de segredos. |
+| `analyzer` | trabalha a fila de análises (chamadas a LLM + MCP) | 2+ | o rate limit do provedor de LLM, não CPU: `AI_ANALYSIS_CONCURRENCY` por réplica × réplicas. |
+| `worker` | varreduras periódicas | 2 (standby quente) | de jeito nenhum: cada tick pega um advisory lock do Postgres, então uma réplica executa e a outra pula; mais de duas não adiciona nada. |
+
+**A fila de análises está travada** (`KuruOpsAIAnalysisQueueStalled`, ou alertas ficam sem análise): em
+ordem -- (1) há algum `analyzer` rodando e saudável (`/healthz`)? Sem um, os jobs esperam para sempre; o
+ingest não os consome. (2) `kuruops_ai_analysis_jobs{status="failed"}` e os logs do analyzer por "ai
+analysis queue": uma API key rejeitada, uma Base URL errada ou um modelo aposentado não é repetido e
+aparece como `failed` com a causa em `ai_analysis_jobs.last_error`; corrija em Settings → Integração de
+IA. (3) Uma queda do provedor é atravessada sozinha com backoff (1m, 5m, 15m, 1h, até cinco tentativas);
+se durou mais, os jobs terminaram `failed` e podem voltar à fila com
+`update ai_analysis_jobs set status='pending', attempts=0, next_attempt_at=now() where status='failed'`.
+
+O **Postgres** é o único componente que o KuruOps não torna altamente disponível sozinho: use uma
+instância gerenciada multi-AZ ou o `deploy/k8s/optional` (três instâncias, failover automático). Todo
+processo do KuruOps reconecta após um reinício ou failover do banco sem ser reiniciado -- mas uma
+réplica não é backup, então mantenha também os backups acima.
+
+As regras de alerta em `deploy/k8s/09-monitoring.yaml` são validadas e testadas no CI
+(`scripts/check-prometheus-rules.sh`); rode isso antes de editar uma.
 
 ## Baseline de capacidade
 

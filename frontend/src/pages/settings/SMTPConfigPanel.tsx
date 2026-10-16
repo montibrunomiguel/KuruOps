@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -37,16 +37,19 @@ export function SMTPConfigPanel() {
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  useEffect(() => {
-    if (existing) {
-      setHost(existing.host);
-      setPort(String(existing.port));
-      setUseTls(existing.useTls);
-      setUsername(existing.username);
-      setFromAddress(existing.fromAddress);
-      setFromName(existing.fromName ?? "");
-    }
-  }, [existing]);
+  // Fill the form when the saved settings arrive (or change). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom0, setHydratedFrom0] = useState<typeof existing>(null);
+  if (existing && existing !== hydratedFrom0) {
+    setHydratedFrom0(existing);
+    setHost(existing.host);
+    setPort(String(existing.port));
+    setUseTls(existing.useTls);
+    setUsername(existing.username);
+    setFromAddress(existing.fromAddress);
+    setFromName(existing.fromName ?? "");
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

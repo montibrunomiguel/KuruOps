@@ -1,0 +1,56 @@
+rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - name: two builds live -> BuildSkew fires after 20m
+    interval: 1m
+    input_series:
+      - series: 'kuruops_build_info{job="kuruops-api",build="aaa"}'
+        values: '1x40'
+      - series: 'kuruops_build_info{job="kuruops-ingest",build="bbb"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: KuruOpsBuildSkew
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: KuruOpsBuildSkew
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "More than one KuruOps build is running"
+              description: "api, ingest and worker report different kuruops_build_info builds for over 20 minutes -- a rolling update that never finished, or one component was rebuilt and redeployed without the others. They share a database and an event channel, so mixed versions can misbehave in ways that do not fail loudly. Compare the build label per job and redeploy the stragglers."
+  - name: one build everywhere -> quiet
+    interval: 1m
+    input_series:
+      - series: 'kuruops_build_info{job="kuruops-api",build="aaa"}'
+        values: '1x40'
+      - series: 'kuruops_build_info{job="kuruops-ingest",build="aaa"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: KuruOpsBuildSkew
+        exp_alerts: []
+  - name: queue not draining -> stalled alert fires
+    interval: 1m
+    input_series:
+      - series: 'kuruops_ai_analysis_oldest_pending_seconds{job="kuruops-ingest"}'
+        values: '1000x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: KuruOpsAIAnalysisQueueStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, job: kuruops-ingest}
+            exp_annotations:
+              summary: "Automatic AI analysis is not draining"
+              description: "An alert has been waiting for its automatic analysis for over 15 minutes, for the last 10 -- the analyzer may be down, or every job is failing and backing off (check kuruops_ai_analysis_jobs{status=\"failed\"} and the analyzer's logs for 'ai analysis queue'). With the default backoff (1m, 5m, 15m, 1h) a short provider outage clears itself well before this fires."
+  - name: a healthy standby worker replica does not trip the stale-sweep alert
+    interval: 1m
+    input_series:
+      - series: 'kuruops_worker_last_sweep_success_timestamp{job="kuruops-worker",instance="w1",sweep_job="sweep_sla_breaches"}'
+        values: '0+60x60'
+      - series: 'kuruops_worker_last_sweep_success_timestamp{job="kuruops-worker",instance="w2",sweep_job="sweep_sla_breaches"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: KuruOpsWorkerSweepStale
+        exp_alerts: []

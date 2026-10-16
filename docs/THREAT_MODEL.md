@@ -34,10 +34,21 @@ Postgres -- RLS by tenant_id
   stored (`webhook_endpoints.token_hash`), not by a user JWT. Isolating this path limits the blast
   radius of a compromised/leaked ingestion endpoint to that single endpoint (token rotation
   available under Settings → Webhook Endpoints), without touching anything else in the API.
-- **`worker` has no HTTP surface at all** — it only runs internal cron jobs (materialized view
-  refresh, SLA/escalation sweep), so it isn't a network target.
-- **api/ingest/worker → Postgres**: all three connect as the same least-privilege role
+  It only receives and records (the alert plus a job owing it an automatic analysis); it holds **no
+  LLM, MCP or secret-store wiring** and needs no outbound route to a model provider, so compromising
+  the one internet-facing process yields no LLM credentials and no way to make a model call.
+- **`analyzer` is internal**: it works the analysis queue and is the process that holds the LLM/MCP
+  credentials (resolved from the secret store at call time) and makes outbound calls to
+  admin-configured URLs, behind `internal/httpguard`. It serves only `/healthz`, `/livez` and
+  `/metrics`, reachable only from Prometheus under `deploy/k8s/10-networkpolicy.yaml`.
+- **`worker` serves no application traffic** — it only runs internal cron jobs (materialized view
+  refresh, SLA/escalation/retention sweeps) and a `/healthz`/`/metrics` endpoint, so it isn't a
+  network target.
+- **api/ingest/analyzer → Postgres**: they connect as the same least-privilege role
   (`kuruops_app`, see `db/init/kuruops_app_role.sql`) — no `BYPASSRLS`, no table ownership. The
+  `worker` connects as `kuruops_worker` (`BYPASSRLS`, see `db/init/kuruops_worker_role.sql`), used
+  only for the cross-tenant dashboard views and the sweeps; per-tenant work (the analysis queue) is
+  deliberately kept out of it so row-level security applies to it. The
   `postgres` role (superuser, used only by migrations/`task db:*`) bypasses RLS entirely, on
   purpose — it's never the role a user request uses.
 
@@ -161,6 +172,35 @@ working `SECRETS_ENCRYPTION_KEY` so `docker compose up` works out of the box for
 same convenience makes it a known, publicly-visible key if it's ever copy-pasted straight into a
 real deployment instead of generated fresh. `secrets.NewFromConfig` hard-fails at startup if the
 configured key still equals that exact value and `AUTH_MODE` isn't `dev`/`dev-headers`.
+
+**Insecure-by-construction configurations are refused at startup.** Every binary calls
+`config.Config.Validate` right after loading its configuration, and it refuses three things that used
+to be one forgotten variable away from a breach:
+
+- `AUTH_MODE=dev-headers` without `ALLOW_INSECURE_DEV_AUTH=true`. That mode replaces JWT verification
+  with trust in `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` supplied by the caller -- no
+  authentication at all. A warning log was the only guard; it now takes two deliberate settings.
+- An unknown `AUTH_MODE`. A typo such as `dev_headers` used to fall through to the JWT path without a
+  word, hiding the mistake.
+- `AUTH_MODE=jwt` (the production-like mode) with a well-known database password -- the ones this
+  repository ships (`kuruops_app`, `kuruops_worker`, `postgres`) or a placeholder (`changeme`,
+  `password`, an empty one) -- unless `ALLOW_DEFAULT_CREDENTIALS=true`. The app role's password is the
+  only thing between a network-adjacent attacker and every tenant's rows, and the defaults are public.
+  The dev modes are exempt, since docker-compose's defaults exist for them.
+
+**HTTP server deadlines.** Before, only `ReadHeaderTimeout` was set, so a client that trickled a
+request body, never read its response, or parked an idle keep-alive connection held a goroutine and a
+socket indefinitely. `cmd/api` now runs with read/write/idle timeouts (`HTTP_READ_TIMEOUT` 2m,
+`HTTP_WRITE_TIMEOUT` 90s, `HTTP_IDLE_TIMEOUT` 120s), `cmd/ingest` -- the only internet-facing process --
+with 30s/30s/90s, and `cmd/worker`'s health endpoint with 10s/10s/60s. The two routes that legitimately
+outlive the write timeout manage it themselves per request: the SSE stream renews a 30s deadline
+before every write (so a peer that stopped reading is released, while a healthy stream is never cut),
+and the external-database migration extends its own deadline to its configured timeout.
+
+**Kubernetes network isolation.** `deploy/k8s/10-networkpolicy.yaml` denies all ingress to the
+namespace by default and re-opens only the paths the stack needs: the frontend and the webhook ingest
+from outside, the API only from the frontend, and metrics only from Prometheus. It needs a CNI that
+enforces NetworkPolicy (Calico, Cilium, ...); on one that does not, it is silently inert.
 
 ## Outbound requests to admin-configured URLs: SSRF protection
 

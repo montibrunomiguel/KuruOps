@@ -38,6 +38,7 @@ func newAIAnalysisService(pool *db.Pool, store secrets.Store) (*service.AIAnalys
 	svc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), repository.NewIncidentRepository(), store,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan string, 8)
 	svc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) {
@@ -174,7 +175,7 @@ func TestAIAnalysisService_StartAlertAnalysis(t *testing.T) {
 
 // TestAIAnalysisService_AutoTriggerGating covers the AutoAnalyzeAllAlerts
 // gate in buildClient: actorID nil (the unattended ingest-time trigger, see
-// AlertService.EnableAutoAnalysis) must respect the tenant's default
+// AlertService.EnableAutoAnalysisQueue) must respect the tenant's default
 // provider's opt-in, while an explicit analyst call (actorID non-nil) must
 // never be affected by it -- "Analyze with AI" always works regardless of
 // this setting.

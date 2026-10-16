@@ -1,0 +1,15 @@
+-- ai_analysis_runs.error_code: a short, stable identifier for WHY a run failed
+-- (provider_unavailable, provider_rate_limited, provider_auth, ...), alongside
+-- the free-text error.
+--
+-- The error text is a backend-authored English sentence. The UI is bilingual
+-- (en / pt-BR) and shows the analyst an error exactly when they most need to
+-- understand it, so a Portuguese-speaking user was reading "the LLM provider is
+-- temporarily unavailable ..." in English. With a code the frontend can pick a
+-- message in the user's own language and fall back to the raw text for anything
+-- it has no translation for.
+--
+-- NULL for a run that failed for a reason that is not a provider failure (a
+-- database error, a bug), for every run that failed before this column existed,
+-- and for any run that is not currently carrying an error.
+alter table ai_analysis_runs add column if not exists error_code text;

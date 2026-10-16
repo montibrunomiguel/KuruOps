@@ -11,8 +11,147 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ## [Unreleased]
 
+### Security
+
+- **A production-like compose deploy with no default credentials.** `docker-compose.yml` is the laptop
+  stack: it prints working passwords and an encryption key and runs `AUTH_MODE=dev`. New
+  `docker-compose.secure.yml` (`task secrets:gen`, `task deploy:secure:up`) makes every credential
+  required -- a missing one stops compose before any container exists -- runs `AUTH_MODE=jwt` with a
+  generated keypair, and publishes only the UI and the webhook port. The startup refusal of a
+  well-known database password now has a test that runs each command's real `main()` as a process and
+  checks it exits 1 with the reason (it had only a unit test of `Validate`).
+- **The internet-facing process no longer holds LLM, MCP or secret-store wiring.** The automatic
+  analysis queue moved out of `cmd/ingest` into the new `cmd/analyzer` (see Added): compromising
+  ingest no longer yields LLM credentials or a way to make a model call, and its NetworkPolicy/egress
+  can stay tight.
+- **Ingress with TLS, and the real client address behind it.** `deploy/k8s/12-ingress.yaml` terminates
+  TLS (hooks → ingest, everything else → frontend). Behind a proxy the frontend's nginx would see the
+  proxy as the client and every user would share one login rate-limit budget; `TRUSTED_PROXY_CIDR`
+  makes it read `X-Forwarded-For` only from the trusted proxy range (a forged header from anyone
+  else is ignored -- verified).
+- **`AUTH_MODE=dev-headers` can no longer be switched on by one forgotten variable.** That mode
+  replaces JWT verification with trust in `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` from the caller
+  -- no authentication at all -- and a warning log was the only guard. It now also requires
+  `ALLOW_INSECURE_DEV_AUTH=true`, and an unknown `AUTH_MODE` (a typo such as `dev_headers` used to
+  fall through to the JWT path silently) is a startup error. The README command for the mode
+  carries the new variable.
+- **Production-like processes refuse a well-known database password.** Under `AUTH_MODE=jwt`, the
+  api, ingest and worker refuse to start with the passwords this repository ships as dev defaults
+  (`kuruops_app`, `kuruops_worker`, `postgres`) or a placeholder (`changeme`, empty, ...) unless
+  `ALLOW_DEFAULT_CREDENTIALS=true`. `AUTH_MODE=dev` (docker-compose's default) is exempt. See
+  `config.Config.Validate`.
+- **HTTP servers now have read, write and idle timeouts.** Only `ReadHeaderTimeout` was set, so a
+  client that trickled a body, never read its response or parked an idle connection held a socket
+  and a goroutine forever. The api runs with `HTTP_READ_TIMEOUT` 2m / `HTTP_WRITE_TIMEOUT` 90s /
+  `HTTP_IDLE_TIMEOUT` 120s, ingest (the internet-facing one) 30s/30s/90s, the worker's health
+  endpoint 10s/10s/60s. The SSE stream renews a 30s write deadline before each write instead of
+  inheriting the server's (a healthy stream is never cut, a peer that stopped reading is released),
+  and the external-database migration extends its own deadline; both are proven against a real
+  server in tests, with a control showing the plain stream is cut.
+- **Kubernetes: `deploy/k8s/10-networkpolicy.yaml`.** Default-deny ingress for the namespace, with
+  only the needed paths re-opened (frontend and webhook ingest from outside, the API only from the
+  frontend, metrics only from Prometheus) and an egress allow-list for the frontend. Needs a CNI
+  that enforces NetworkPolicy.
+- **CI: a failing weekly Security Scan now opens an issue.** It sat red on `main` for three days
+  because a red scheduled run notifies nobody who is not already watching the Actions tab. A new
+  job opens (or comments on) a tracking issue when the scheduled run fails and closes it when a
+  later run is clean; pull-request runs are unaffected.
+
 ### Fixed
 
+- **Roles created by the external-database migration lacked grants the worker needs.**
+  `dbmigrate.SetupRoles` carried a hand-ported copy of `db/init/*.sql` that had fallen behind: the
+  worker role it created on the customer's database had no `DELETE` (retention sweep), no `UPDATE` on
+  `ai_analysis_runs` (stale-run sweep) and did not own `mv_incident_daily_stats`. It now runs the real
+  scripts (baked into the api image next to the migrations), so the roles have one definition.
+- **The stale-sweep alert would have paged for a healthy standby.** With two worker replicas only the
+  one that wins a tick updates its own `kuruops_worker_last_sweep_success_timestamp`;
+  `KuruOpsWorkerSweepStale` now takes the max across replicas.
+- **The Kubernetes Deployments can start.** Every manifest sets `runAsNonRoot: true`, but the images
+  declared their user by name (`USER kuruops`, `USER nginx`), and the kubelet refuses a pod when it
+  "cannot verify user is non-root" for a non-numeric user -- so none of api, ingest, worker or frontend
+  could ever leave `CreateContainerConfigError` on a real cluster. The images now use numeric users
+  (1000 and 101). Found by deploying the manifests to a kind cluster; there, NetworkPolicy (Calico),
+  the frontend-to-api proxy through kube-dns, PDBs and the frontend HPA (2 to 4 replicas under load)
+  were also exercised.
+- **Attachment uploads work on a fresh deploy.** The `uploads` volume (compose) and PVC (Kubernetes)
+  were mounted root-owned while the api runs as the non-root `kuruops` user, so every upload with local
+  storage failed with "could not store uploaded file". The image now creates `/data/uploads` owned by
+  `kuruops` (a new named volume inherits it) and the api pod sets `fsGroup: 1000`. **An existing
+  compose volume keeps its old owner:** run `docker compose run --rm --user root --entrypoint chown api
+  kuruops:kuruops /data/uploads` once.
+- **A failed AI analysis explains itself in the user's language, and a failed follow-up no longer
+  eats the question.** The run's error was an English sentence shown verbatim to Portuguese-speaking
+  analysts. Runs now persist a stable `error_code` (migration `0015`: `provider_unavailable`,
+  `provider_rate_limited`, `provider_auth`, `provider_not_found`, `provider_error`,
+  `provider_unreachable`), exposed as `errorCode` on the chat transcript, and the chat shows a
+  translated message that also says what to check (the API key, the Base URL...), falling back to the
+  raw text for anything unclassified. When a follow-up fails the unanswered question is put back in the
+  input -- never over text the analyst has already started typing -- and an empty chat offers three
+  suggested first questions (full triage, next steps, related activity).
+- **ESLint is clean again (0 errors, 0 warnings).** The React Compiler rules flagged 15 spots: forms
+  that filled themselves from loaded data in an effect (SMTP, storage, retention, identity providers,
+  incident SLA, playbook), row selection and the dashboard "loaded once" flag, the attachment image
+  loader, the audit-log first page, and `Date.now()` read while rendering. State is now adjusted
+  during render or derived, loads carry a cancellation flag, and the SLA cells and follow-up counters
+  read the clock through a new `useNow` hook, so they also stay current without a reload. Behaviour
+  is otherwise unchanged (all 742 frontend tests pass).
+- **The chat's initial load can no longer paint a stale conversation.** Opening the chat for one alert
+  and then another could let a slow response for the first overwrite the second; the load now carries a
+  cancellation flag. Also removes the `set-state-in-effect` lint warning there and in
+  `usePagedList`, which rendered once with the new filter and the old page (a request for a page that
+  does not exist under that filter) before resetting.
+- **`App.test.tsx` no longer fails on a cold cache.** Its Dashboard test paid for transforming the
+  lazy-loaded page graph inside its own timeout; the lazy modules are now loaded in a `beforeAll`.
+- **The frontend's API proxy no longer 502s on Kubernetes.** nginx resolves the api per request
+  (so a recreated api is picked up), but the resolver was hardcoded to Docker's `127.0.0.11`, which
+  does not exist in a cluster. `nginx.conf` is now an envsubst template: the resolver is read from
+  the container's own `/etc/resolv.conf` and the upstream comes from `API_UPSTREAM` (the Service's
+  FQDN in `deploy/k8s/07-frontend.yaml`, since nginx's resolver ignores DNS search domains).
+- **A partial deploy is now visible.** api, ingest and worker are three images of one tree; rebuilding
+  only one left the others on older code with nothing failing loudly. Each binary now logs its build
+  id at startup and exports `kuruops_build_info{build}` (a hash of the sources, computed once in the
+  Dockerfile), and the `KuruOpsBuildSkew` rule alerts when more than one build is live for 20 minutes.
+- **The live event stream backs off when the API is unreachable.** The browser retried every 3 seconds
+  forever, in every open tab, in lockstep. It now backs off exponentially (1s up to 30s) with jitter,
+  and the backoff only resets after a connection that actually opened stays up for 10 seconds (a
+  first version counted an attempt that merely took 10s to fail as healthy; caught by stopping the
+  api with a browser open). nginx also gives up on an unresolvable upstream after 3s (`resolver_timeout`)
+  instead of 30s, so those failures come back, and retry, quickly.
+- **`docker stop` no longer cuts the ingest's shutdown short.** Compose's 10s grace period was shorter
+  than the 15s the ingest needs to stop and let in-flight analyses finish or be handed back; it is
+  25s now.
+- **An alert's automatic AI analysis could be lost, and a provider blip ended it for good.** The
+  analysis was a bare goroutine started the moment the alert landed: nothing recorded that it was
+  owed, so a restart, deploy or crash before it finished dropped it silently, and one provider 503
+  ended it with nothing ever retrying. It is now a durable queue (`ai_analysis_jobs`, migration
+  0014): the job is written **in the same transaction as the alert**, so an alert that exists always
+  has its analysis owed, and `cmd/ingest` works the rows with `FOR UPDATE SKIP LOCKED` (several
+  replicas share one queue, no job goes to two of them), a lease renewed by a heartbeat (a dead
+  consumer's jobs are taken over, and the run it left behind is cleared so the retry can start), a
+  fencing token (a stalled consumer cannot overwrite its successor), retry with backoff -- a minute,
+  five, fifteen, an hour, up to five attempts -- and a graceful drain on shutdown. A rejected API key,
+  wrong URL or model is not retried (it fails the same way every time). A job that keeps killing its
+  consumer exhausts its attempts instead of looping through restarts. Tenants that did not opt in
+  accrue no rows. Queue depth and the age of the oldest waiting job are on ingest's `/metrics`, with a
+  Prometheus alert if it stops draining. Proven end to end against a provider that fails for longer
+  than the in-place retry covers, and by tests for concurrent claims, lease takeover and the
+  stale-owner case.
+- **LLM calls are retried in place.** `doRequest` made exactly one attempt. A provider 503/429 or a
+  dropped connection is now retried up to 3 times with exponential backoff and jitter, honouring
+  `Retry-After` up to a ceiling, never sleeping for a caller that has gone away and never retrying an
+  open circuit breaker. Provider failures are typed (`ProviderError`, `TransportError`) so callers can
+  tell "try again" from "fix your key". Tunable with `LLM_CALL_MAX_ATTEMPTS` /
+  `LLM_CALL_RETRY_BASE_DELAY`.
+- **A long event could be lost.** Postgres rejects a `NOTIFY` payload of 8000 bytes or more outright,
+  and the chat's per-turn event carried the model's whole reply, so a long triage report made the live
+  update vanish (reproduced with a test first). Events now carry identifiers only, and `Publish`
+  enforces the limit itself -- an oversized payload loses its largest fields and is marked
+  `truncated`, and the event type always arrives.
+- **`cmd/ingest` had neither a circuit breaker nor live updates for its own analyses.** It makes LLM
+  and MCP calls but never installed the breaker (so a provider outage made every ingested alert wait
+  out the full timeout), and never wired event publishing into the analysis service (so the browser
+  was never told an automatic analysis had finished and sat on "Analyzing..." until reloaded).
 - **The first message in the "Analyze with AI" chat always came back as an "Alert Triage Report",
   whatever was asked.** The full triage prompt was given to the first analysis of *any* alert, so
   a plain "hi" typed into a fresh chat got a structured report back -- and, because the check
@@ -23,7 +162,10 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   asked anything. A conversation opened from the chat -- its first message, or any follow-up --
   gets a direct answer to the question. The general prompt itself was reworded to say so (it used
   to say "provide a triage analysis" regardless of what was asked). Incidents have no automatic
-  trigger, so for them only the "a question was asked" rule applies.
+  trigger, so for them only the "a question was asked" rule applies. Because chat turns now use
+  the general prompt, it also carries the payload-injection and secret-redaction rules that used
+  to live only in the triage prompt (shared constant `payloadSafetyRules`, pinned by a test): alert
+  content is attacker-controlled and the chat can call MCP tools.
 - **A failed follow-up question in the "Analyze with AI" chat looked like it was never sent.** When
   the provider answered a follow-up with an error (a Gemini 503, say), the backend correctly put
   the finished report back and dropped the unanswered question -- but the chat only rendered a
@@ -47,8 +189,62 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
   if enormous). Surfaced while validating `main` from a clean install; it predates the multi-select
   filters (the old single-value path failed the same way), which only made a typo easier to send.
 
+### Added
+
+- **`cmd/analyzer`: the analysis queue consumer is its own process.** Ingest only receives and records
+  (the alert plus a job row, in one transaction); the analyzer claims the jobs (`FOR UPDATE SKIP LOCKED`
+  + lease), calls the model, retries with backoff and resumes after a crash. A slow LLM call no longer
+  shares a process, pool or rollout with webhook receipt. It wakes on the "alert received" event through
+  a new `events.Broadcaster.Tap` (polling `AI_ANALYSIS_POLL_INTERVAL` as a safety net). Own image,
+  compose service, k8s Deployment (2 replicas), PDB, NetworkPolicy and scrape job. Verified: two
+  replicas, killing the one working a job → the other takes it over after the lease.
+- **`UPLOAD_BACKEND=database`: attachments in Postgres, so `api` can scale.** The local uploads volume
+  was the only thing pinning `api` to one replica (migration 0016, `attachment_blobs`, RLS; reads fall
+  back to the old directory). `deploy/k8s` uses it: no PVC, 2+ api replicas, an HPA. S3/GCS stay the
+  choice for many or large attachments and take precedence per tenant.
+- **High availability.** The worker runs 2 replicas as a hot standby (per-tick advisory locks);
+  `deploy/k8s/optional` adds a 3-instance CloudNativePG cluster with automatic failover (tested:
+  killing the primary promoted a replica with the data intact). Every process reconnects after a
+  Postgres restart without being restarted (verified).
+- **`scripts/k8s-e2e.sh` + a CI job: the Kubernetes manifests are now deployed and exercised.** A kind
+  cluster with Calico, ingress-nginx and metrics-server: migrations, roles, five images,
+  NetworkPolicy allow/deny, PDB/HPA, Ingress + TLS, webhook → ingest → analyzer → model across pods, SSE
+  through the ingress, an attachment uploaded via one api replica read via the other (30 checks).
+  `scripts/check-prometheus-rules.sh` lints and unit-tests the alert rules in CI.
+- **`deploy/k8s/12-ingress.yaml`** and an optional cert-manager issuer.
+- **`docs/openapi.yaml` is now checked against the router.** `TestOpenAPIMatchesRouter` walks the
+  routes `NewRouter` really mounts and compares method + path, in both directions, with the spec:
+  a new endpoint nobody documented, or a documented operation that no longer exists, fails CI. (It
+  checks routes, not schemas.) The spec also documents the new `errorCode` field.
+- **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets and HorizontalPodAutoscalers.** ingest
+  (2-6 replicas) and frontend (2-4) autoscale on CPU, with slow scale-down; ingest/frontend/api get a
+  `maxUnavailable: 1` budget so node drains proceed one pod at a time. The frontend now runs two
+  replicas by default. api and worker are deliberately not autoscaled (RWO uploads volume; singleton
+  sweeps).
+
 ### Changed
 
+- **No process-wide configuration in the outbound clients.** The LLM retry policy and the LLM/MCP
+  circuit-breaker registries were package-level variables installed once at startup
+  (`ConfigureRetry`, `Configure`); they now belong to an `llmclient.Factory` (given to the analysis
+  service with `WithLLMClientFactory`) and an optional `mcpclient.WithBreakers`. Two services in one
+  process can differ and a test can no longer change another's settings.
+- **Metrics are built on `prometheus/client_golang`.** The hand-written exposition is gone; every
+  metric name and label is unchanged (alert rules depend on them) and each process now also exports the
+  `go_*` runtime and `process_*` collectors.
+- **The four commands are testable.** Each `main()` is now `run(ctx, cfg, logger)` plus a three-line
+  `main`, and tests start the real server against a fresh database built from the real migrations and
+  `db/init` scripts: `cmd/api` 11% → 92%, `cmd/worker` 47% → 80%, `cmd/ingest` 88%,
+  `cmd/analyzer` 90%; total 79.0% → 81.8%. `config.LoadAndValidate` replaces four copies of the
+  load+validate block.
+- **Suggested prompts in the AI chat look like buttons** (outlined chips) instead of plain text.
+- `backend/coverage.out` is no longer tracked (it was gitignored but had been force-added).
+- The frontend's nginx and the k8s manifests changed: `api`, `analyzer` and `worker` run 2 replicas by
+  default; an `api` HPA exists; `UPLOAD_BACKEND=database` is the k8s default.
+- **`ai_analysis_service.go` is split by responsibility.** At 1,183 lines it mixed prompts, the chat
+  and follow-up path, the agentic loop and run persistence. It is now four files in the same package
+  (`ai_analysis_service.go`, `_prompts.go`, `_chat.go`, `_agent.go`), moved as whole declarations
+  with no behaviour change (the set of top-level declarations is identical before and after).
 - **MCP servers can now offer all of their tools, not just a hand-picked allow-list.** After
   configuring a server you had to list its tools in "Allowed tools" (or open *Discover tools* and
   tick them one by one) before the AI could use any of them, and a tool the server added later was

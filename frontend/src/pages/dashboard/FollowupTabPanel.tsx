@@ -8,6 +8,7 @@ import { useEventStream } from "../../api/eventStream";
 import type { FollowupView } from "../../types/dashboard";
 import { SeverityBadge, AlertStatusBadge } from "../../components/badges";
 import { shortId } from "../../lib/format";
+import { useNow } from "../../hooks/useNow";
 import { TimeRangeFilter, timeRangeParams, EMPTY_TIME_RANGE, type TimeRangeValue } from "../../components/TimeRangeFilter";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -49,7 +50,7 @@ export function FollowupTabPanel() {
     return [...alerts].sort((a, b) => new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime());
   }, [view]);
 
-  const now = Date.now();
+  const now = useNow();
   const waiting1h = queue.filter((a) => now - new Date(a.receivedAt).getTime() > HOUR_MS).length;
   const waiting4h = queue.filter((a) => now - new Date(a.receivedAt).getTime() > 4 * HOUR_MS).length;
 

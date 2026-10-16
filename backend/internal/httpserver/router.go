@@ -263,6 +263,11 @@ func NewRouter(opts Options) http.Handler {
 		api.Group(func(migration chi.Router) {
 			migration.Use(middleware.RequireAdmin())
 			migration.Use(chimw.Timeout(opts.DatabaseMigrationTimeout))
+			// http.Server.WriteTimeout (a minute and a half by default) would
+			// otherwise cut the socket long before a multi-minute copy
+			// finishes, and the client would never see the result. The margin
+			// leaves room for chimw.Timeout to write its own 504 first.
+			migration.Use(middleware.ExtendWriteDeadline(opts.DatabaseMigrationTimeout + 30*time.Second))
 			migration.Route("/settings/database-migration", opts.DatabaseMigrationHandlers.Routes)
 		})
 	})

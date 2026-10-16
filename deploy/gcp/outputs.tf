@@ -27,7 +27,7 @@ output "db_master_password" {
 }
 
 output "artifact_registry_repo" {
-  description = "docker push target -- append /api, /ingest, /worker, /frontend."
+  description = "docker push target -- append /api, /ingest, /analyzer, /worker, /frontend."
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.images.repository_id}"
 }
 

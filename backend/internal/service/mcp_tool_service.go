@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/domain"
 	"github.com/kuruops/kuruops/internal/mcpclient"
@@ -30,6 +31,9 @@ type MCPToolService struct {
 	// oauthTokens caches client_credentials access tokens per server, since a
 	// new mcpclient.Client (and so a fresh dial) is built for every call.
 	oauthTokens *mcpclient.OAuthTokenCache
+	// breakers is shared by every client dial builds, so a server that keeps
+	// failing is remembered across calls. Nil means no circuit breaking.
+	breakers *circuitbreaker.Registry
 
 	// onToolCallResolved fires after ApproveToolCall/RejectToolCall settles
 	// a call, in case an AIAnalysisService agentic run is paused waiting on
@@ -42,6 +46,13 @@ type MCPToolService struct {
 
 func NewMCPToolService(pool *db.Pool, servers *repository.MCPServerRepository, toolCalls *repository.AIToolCallRepository, store secrets.Store) *MCPToolService {
 	return &MCPToolService{pool: pool, servers: servers, toolCalls: toolCalls, secrets: store, oauthTokens: mcpclient.NewOAuthTokenCache()}
+}
+
+// SetCircuitBreakers makes every MCP call fail fast while its server is
+// unhealthy. The registry must be long-lived and shared; cmd/* creates it from
+// its configuration.
+func (s *MCPToolService) SetCircuitBreakers(r *circuitbreaker.Registry) {
+	s.breakers = r
 }
 
 // SetOnToolCallResolved registers the resume-a-paused-analysis-run hook --
@@ -63,7 +74,7 @@ func (s *MCPToolService) dial(ctx context.Context, server *domain.MCPServer) (*m
 		return nil, fmt.Errorf("connect to mcp server %q: %w", server.Name, err)
 	}
 
-	client := mcpclient.New(server.EndpointOrCommand, auth)
+	client := mcpclient.New(server.EndpointOrCommand, auth, mcpclient.WithBreakers(s.breakers))
 	if err := client.Initialize(ctx); err != nil {
 		if server.AuthType == domain.MCPAuthOAuth {
 			// The likeliest reason a cached token suddenly stops working is

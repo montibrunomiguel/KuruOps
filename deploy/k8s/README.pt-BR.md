@@ -2,38 +2,36 @@
 
 # KuruOps no Kubernetes
 
-Manifests básicos para rodar a stack real (api, ingest, worker, frontend) em
-um cluster. Deliberadamente minimalista: sem Helm chart, sem
-HorizontalPodAutoscaler, sem ingress controller ou integração com
-cert-manager. Isso coloca uma implantação funcional em um cluster; adicionar
-ingress/TLS/autoscaling por cima fica a cargo do que sua organização já usa
-para isso, em vez deste projeto escolher uma opção por você.
+Manifests para rodar a stack real (api, ingest, analyzer, worker, frontend) em um cluster. Sem Helm
+chart: YAML simples que você pode ler, comparar e aplicar. Ele é exercitado de ponta a ponta --
+migrations, roles, as cinco imagens, NetworkPolicy, PodDisruptionBudgets, HorizontalPodAutoscalers,
+um Ingress com TLS e o pipeline webhook → ingest → analyzer → modelo entre pods -- num cluster kind
+descartável pelo `scripts/k8s-e2e.sh`, que o CI roda a cada mudança.
 
 ## O que NÃO está incluído
 
-- **Postgres.** Todo manifest aqui assume uma instância Postgres 16 já
-  existente e acessível (uma instância RDS/Cloud SQL gerenciada, um
-  StatefulSet que você gerencia separadamente etc.) — a mesma premissa de
-  "banco de dados fornecido pelo cliente" que a própria funcionalidade de
-  migração para banco de dados externo em Settings do app já assume. As
-  roles `kuruops_app`/`kuruops_worker` e as políticas de RLS já precisam
-  existir lá (veja `db/init/*.sql` e `db/README.md`) antes de apontar o
-  `01-secret.example.yaml` para ela.
-- **Ingress/TLS.** O Service do `frontend` é `ClusterIP` — alcançá-lo de fora
-  do cluster (um ingress controller, um Service LoadBalancer de nuvem,
-  `kubectl port-forward` para uma olhada rápida) fica por sua conta.
-- **Autoscaling.** Sem HorizontalPodAutoscaler — cada contagem de réplicas
-  abaixo é um número fixo definido manualmente. `ingest` sai com
-  `replicas: 2` por padrão (veja o comentário no próprio manifest): ele não
-  tem dependência de disco local, e seu rate limiter/infraestrutura
-  relacionada a SSE já são apoiados em Postgres exatamente para isso. `api`
-  sai com `replicas: 1` — seu PVC `uploads` é `ReadWriteOnce`, então ir além
-  de 1 réplica exige uma StorageClass ReadWriteMany ou trocar Settings ->
-  Storage para o backend S3/GCS primeiro (veja o comentário no
-  `04-api.yaml` para os passos exatos). `worker` permanece em 1 por design
-  (seus jobs de sweep usam um advisory lock do Postgres justamente para que
-  rodar mais de uma réplica seja seguro, mas não útil no momento — apenas
-  uma estaria de fato trabalhando por vez).
+- **Postgres.** Todo manifest aqui assume uma instância Postgres 16 já existente e acessível (um
+  RDS/Cloud SQL multi-AZ gerenciado é a melhor escolha, ou o cluster opcional de 3 instâncias
+  CloudNativePG em [`optional/`](optional/README.md), que tem failover automático). As roles
+  `kuruops_app`/`kuruops_worker` e as políticas de RLS já precisam existir lá (veja `db/init/*.sql` e
+  `db/README.md`) antes de apontar o `01-secret.example.yaml` para ela. O Postgres é o único componente
+  que estes manifests não tornam altamente disponível por conta própria.
+- **Certificado ou DNS.** O `12-ingress.yaml` é o ponto de entrada público (hooks → ingest, o resto →
+  frontend, TLS terminado ali), mas precisa de um ingress controller no cluster (ingress-nginx
+  assumido), do seu hostname no lugar de `kuruops.example.com` e de um Secret TLS chamado
+  `kuruops-tls` -- emitido pelo cert-manager (há um emissor de exemplo em
+  [`optional/cert-manager-issuer.yaml`](optional/cert-manager-issuer.yaml)) ou criado por você.
+  Defina `TRUSTED_PROXY_CIDR` no frontend (`07-frontend.yaml`) com a faixa de pods do controller para
+  que o rate limit de login enxergue os endereços reais dos clientes.
+- **O autoscaling depende de métricas.** O `11-availability.yaml` adiciona HorizontalPodAutoscalers
+  para `api` (2–6), `ingest` (2–6) e `frontend` (2–4) e PodDisruptionBudgets para todo Deployment; os
+  HPAs precisam do metrics-server no cluster e, sem ele, não fazem nada e valem as contagens de
+  réplicas de cada manifest. O `api` pode escalar porque os anexos ficam no Postgres
+  (`UPLOAD_BACKEND=database` no `02-configmap.yaml`), não em um volume; se você mantiver um volume
+  ReadWriteOnce com `UPLOAD_BACKEND=local`, o api volta a uma réplica. O `analyzer` roda duas réplicas que
+  compartilham a fila de análises (dimensione contra o rate limit do provedor de LLM, não contra CPU);
+  o `worker` roda duas como standby quente (um advisory lock do Postgres por tick deixa uma executar e a
+  outra pular), não por vazão.
 - **Gerenciamento de secrets.** `01-secret.example.yaml` é um template com
   valores de placeholder, não algo para dar `kubectl apply` e esquecer —
   veja os comentários no próprio arquivo.
@@ -55,6 +53,7 @@ kubectl wait --for=condition=complete --timeout=120s -n kuruops job/kuruops-migr
 kubectl apply -f deploy/k8s/04-api.yaml
 kubectl apply -f deploy/k8s/05-ingest.yaml
 kubectl apply -f deploy/k8s/06-worker.yaml
+kubectl apply -f deploy/k8s/06a-analyzer.yaml
 kubectl apply -f deploy/k8s/07-frontend.yaml
 
 # Opcional, mas fortemente recomendado antes que dados reais comecem a
@@ -69,20 +68,54 @@ kubectl apply -f deploy/k8s/08-backup-cronjob.yaml
 # até você editar o alertmanager-config em 09-monitoring.yaml para apontar
 # para um destino real.
 kubectl apply -f deploy/k8s/09-monitoring.yaml
+
+# Recomendado: nega todo ingresso dentro do namespace por padrão e reabre só os
+# caminhos que a stack usa (frontend e ingest de webhooks vindos de fora, a API
+# só a partir do frontend, métricas só a partir do Prometheus). Precisa de um
+# CNI que aplique NetworkPolicy (Calico, Cilium, ...) -- em um que não aplique
+# fica inerte sem avisar, então confirme com o teste do pod descartável no
+# cabeçalho de 10-networkpolicy.yaml.
+kubectl apply -f deploy/k8s/10-networkpolicy.yaml
+
+# PodDisruptionBudgets (um drain de nó nunca derruba o último pod de ingest/frontend)
+# e HorizontalPodAutoscalers de ingest e frontend. Os HPAs precisam do metrics-server.
+kubectl apply -f deploy/k8s/11-availability.yaml
+
+# O ponto de entrada público. Precisa de um ingress controller, do seu hostname e do Secret
+# kuruops-tls (veja "O que NÃO está incluído" acima e o cabeçalho do 12-ingress.yaml).
+kubectl apply -f deploy/k8s/12-ingress.yaml
 ```
+
+O nginx do frontend encontra a api por `API_UPSTREAM` (definido no
+`07-frontend.yaml` com o FQDN do Service) e resolve a cada requisição, então um
+pod da api recriado nunca deixa o frontend discando para um endereço morto. Troque
+`cluster.local` nesse valor se o seu cluster usa outro domínio. As três imagens do
+backend imprimem e exportam o build de que foram compiladas (`kuruops_build_info`);
+o `KuruOpsBuildSkew` em `09-monitoring.yaml` dispara quando mais de um build fica
+ativo por 20 minutos, ou seja, um deploy parcial.
 
 Reaplicar todo o conjunto após um novo release é seguro: o Job de migração é
 idempotente (o golang-migrate só aplica versões que ainda não registrou,
 veja o comentário no `03-migration-job.yaml`), e cada apply de
 Deployment/Service/ConfigMap é uma simples atualização declarativa. Ajuste a
-tag `image:` em `04-api.yaml`/`05-ingest.yaml`/`06-worker.yaml`/`07-frontend.yaml`
+tag `image:` em `04-api.yaml`/`05-ingest.yaml`/`06-worker.yaml`/`06a-analyzer.yaml`/`07-frontend.yaml`
 para o que o seu build publicou (`:latest` aqui é um placeholder para testar
 os manifests, não uma estratégia real de fixação de versão de release).
+
+## Testando estes manifests
+
+`bash scripts/k8s-e2e.sh` implanta tudo isto num cluster kind descartável (com Calico, para que a
+NetworkPolicy seja de fato aplicada) e confere: todo Deployment fica pronto, o smoke test do repositório
+passa pelo frontend, um webhook chega ao analyzer em outro pod e é analisado, um anexo enviado por uma
+réplica do api é servido pela outra, o stream de eventos chega a um cliente pelo Ingress sem buffer, um
+pod estranho não alcança o api e o HPA lê métricas reais. Precisa de docker, kind, kubectl e openssl e
+leva uns dez minutos. As regras de alerta em `09-monitoring.yaml` são validadas e testadas por
+`bash scripts/check-prometheus-rules.sh`.
 
 ## Imagens
 
 Construídas da mesma forma que o `docker-compose.yml` as constrói localmente
-(os targets `api`/`ingest`/`worker` do `backend/Dockerfile`,
+(os targets `api`/`ingest`/`analyzer`/`worker` do `backend/Dockerfile`,
 `frontend/Dockerfile`) — envie-as para o registry que o seu cluster consiga
 puxar e atualize os campos `image:` de acordo; esses manifests referenciam
 os mesmos nomes locais sem tag que o `docker compose build` produz

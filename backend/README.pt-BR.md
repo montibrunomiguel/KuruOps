@@ -8,8 +8,9 @@ review de arquitetura. Três binários, um módulo:
 | Comando | Faz o quê | Por quê é separado |
 |---|---|---|
 | `cmd/api` | REST para o frontend: alertas, incidentes, playbooks, settings | escala/falha independente da ingestão |
-| `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) | perfil de carga/rate-limit diferente do `api` |
-| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | não deixa uma chamada de LLM lenta bloquear o CRUD; a análise por IA em si dispara numa goroutine dentro de `cmd/ingest` (na ingestão do alerta), não passa por este worker |
+| `cmd/ingest` | Recebe webhooks de SIEM/XDR (`POST /hooks`, autenticado por token) e registra cada alerta com um job que o deve uma análise automática | perfil de carga/rate-limit diferente do `api`; único processo exposto à internet, então não tem LLM, MCP nem cofre de segredos |
+| `cmd/analyzer` | Trabalha a fila durável de análises automáticas de alertas: reivindica jobs (`FOR UPDATE SKIP LOCKED` + lease), chama o LLM e as ferramentas MCP, tenta de novo com backoff, retoma após uma queda | uma chamada lenta ao modelo nunca divide processo, pool nem rollout com o recebimento de webhooks; várias réplicas compartilham a fila |
+| `cmd/worker` | Jobs de fundo: refresh das materialized views de KPI (`mv_alert_daily_stats`, `mv_incident_kpis`, `mv_incident_daily_stats`), sweep de `incidents.sla_breached`, sweep de escalonamento on-call | mantém o trabalho periódico fora do caminho das requisições. Duas réplicas rodam como standby quente (cada tick pega um advisory lock). A análise por IA **não** está aqui: é a fila durável trabalhada pelo `cmd/analyzer`, porque este processo conecta como `kuruops_worker` (`BYPASSRLS`) e jobs por tenant precisam rodar sob row-level security |
 
 ## Rodando local
 
@@ -62,9 +63,16 @@ geral — troca a verificação de JWT por confiar em headers crus, então um to
 funciona nesse modo):
 
 ```bash
-AUTH_MODE=dev-headers make run-api
+AUTH_MODE=dev-headers ALLOW_INSECURE_DEV_AUTH=true make run-api
 curl -H "X-Tenant-ID: <uuid>" -H "X-User-ID: <uuid>" http://localhost:8080/api/v1/alerts
 ```
+
+`ALLOW_INSECURE_DEV_AUTH=true` é obrigatório de propósito: esse modo confia em `X-Tenant-ID`,
+`X-User-ID` e até `X-Is-Admin` de qualquer chamador, ou seja, não é autenticação nenhuma, então a
+API se recusa a subir nele sem essa segunda variável. A API (e ingest/worker) também se recusam a
+subir com `AUTH_MODE=jwt` e uma senha de banco conhecida (`kuruops_app`, `postgres`, ...) sem
+`ALLOW_DEFAULT_CREDENTIALS=true` -- ver `config.Config.Validate` e
+[docs/THREAT_MODEL.pt-BR.md](../docs/THREAT_MODEL.pt-BR.md).
 
 Teste do endpoint de ingestão (crie um `webhook_endpoints` de teste primeiro, hash do token com
 sha256):

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -33,12 +33,15 @@ export function RetentionConfigPanel() {
   // harmless and needs no confirmation.
   const { confirming: confirmingLower, confirm: confirmLower, cancel: cancelLower } = useConfirm();
 
-  useEffect(() => {
-    if (existing) {
-      setAlertMonths(String(existing.alertRetentionMonths));
-      setIncidentMonths(String(existing.incidentRetentionMonths));
-    }
-  }, [existing]);
+  // Fill the form when the saved settings arrive (or change). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom, setHydratedFrom] = useState<typeof existing>(null);
+  if (existing && existing !== hydratedFrom) {
+    setHydratedFrom(existing);
+    setAlertMonths(String(existing.alertRetentionMonths));
+    setIncidentMonths(String(existing.incidentRetentionMonths));
+  }
 
   function isLoweringRetention(): boolean {
     if (!existing) return false;

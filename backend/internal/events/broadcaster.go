@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -45,9 +46,10 @@ type Event struct {
 	Payload any    `json:"payload,omitempty"`
 }
 
-// notifyMessage is the JSON body sent over pg_notify -- Postgres caps a
-// NOTIFY payload at 8000 bytes, comfortably enough since Event's own
-// payload is always small (see its doc comment).
+// notifyMessage is the JSON body sent over pg_notify -- Postgres rejects a
+// NOTIFY payload of 8000 bytes or more. Event's payload is meant to be small,
+// but nothing about a caller's payload guarantees it, so Publish enforces the
+// limit itself (see marshalNotify) rather than trusting it.
 type notifyMessage struct {
 	TenantID uuid.UUID `json:"tenantId"`
 	Event    Event     `json:"event"`
@@ -61,6 +63,8 @@ type Broadcaster struct {
 
 	mu   sync.Mutex
 	subs map[uuid.UUID]map[chan Event]struct{}
+	// taps see every event of every tenant -- see Tap.
+	taps []func(tenantID uuid.UUID, event Event)
 
 	readyOnce sync.Once
 	ready     chan struct{}
@@ -128,6 +132,18 @@ func (b *Broadcaster) Subscribe(tenantID uuid.UUID) (<-chan Event, func()) {
 	return ch, unsubscribe
 }
 
+// Tap registers fn to be called for every event of every tenant this process
+// receives, from any process. Subscribe is per tenant and meant for one SSE
+// connection each; Tap is for a process-level reaction that cares about a kind of
+// event regardless of tenant (cmd/analyzer wakes its queue consumer when an alert
+// is received). fn runs on the LISTEN loop's goroutine, so it must return quickly
+// and never block. Call it before Start; taps are not removable.
+func (b *Broadcaster) Tap(fn func(tenantID uuid.UUID, event Event)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.taps = append(b.taps, fn)
+}
+
 // Publish sends tenantID's event as a Postgres NOTIFY on notifyChannel --
 // every process with a running Start loop (including this one) picks it up
 // via deliverLocally and fans it out to its own connected SSE clients. Best
@@ -139,7 +155,7 @@ func (b *Broadcaster) Subscribe(tenantID uuid.UUID) (<-chan Event, func()) {
 // request/service call where the caller's own context may already be
 // gone by the time this NOTIFY actually needs to go out.
 func (b *Broadcaster) Publish(tenantID uuid.UUID, eventType string, payload any) {
-	data, err := json.Marshal(notifyMessage{TenantID: tenantID, Event: Event{Type: eventType, Payload: payload}})
+	data, err := b.marshalNotify(tenantID, eventType, payload)
 	if err != nil {
 		b.logger.Error("marshal event failed", "error", err)
 		return
@@ -152,6 +168,100 @@ func (b *Broadcaster) Publish(tenantID uuid.UUID, eventType string, payload any)
 	}
 }
 
+// maxNotifyPayloadBytes is the budget for one NOTIFY payload. Postgres rejects
+// anything at or above 8000 bytes outright -- the whole event is lost, not
+// truncated -- so this leaves headroom below that for multi-byte characters
+// and anything the envelope grows by.
+//
+// notifyMessage's doc comment used to claim "Event's own payload is always
+// small", and nothing enforced it: the chat's per-turn event carried the
+// model's entire reply, so a long triage report (a few KB, more once JSON
+// escapes its newlines and quotes) made Postgres refuse the NOTIFY and the
+// event vanished, logged only as "publish event failed". The events are a
+// "something changed, go and reload" nudge -- clients refetch the real data
+// over REST -- so an oversized one degrades to its small identifying fields
+// instead of being lost.
+const maxNotifyPayloadBytes = 7000
+
+// marshalNotify builds the NOTIFY payload for an event, shrinking the event's
+// own payload if the whole message would not fit. In order of preference:
+//
+//  1. fits as given: unchanged;
+//  2. an object whose largest fields are dropped until it fits, with
+//     "truncated": true added so a consumer can tell it was cut -- the small
+//     identifying fields (ids, action) survive, which is all a nudge needs;
+//  3. anything else (a huge string, or an object whose every field is huge):
+//     no payload at all. The event type still arrives.
+func (b *Broadcaster) marshalNotify(tenantID uuid.UUID, eventType string, payload any) ([]byte, error) {
+	data, err := json.Marshal(notifyMessage{TenantID: tenantID, Event: Event{Type: eventType, Payload: payload}})
+	if err != nil {
+		return nil, err
+	}
+	if len(data) <= maxNotifyPayloadBytes {
+		return data, nil
+	}
+
+	shrunk, dropped := shrinkPayload(payload, maxNotifyPayloadBytes-envelopeOverhead(tenantID, eventType))
+	b.logger.Warn("event payload exceeds the NOTIFY limit; delivering a reduced payload instead of losing the event",
+		"type", eventType, "original_bytes", len(data), "dropped_fields", dropped, "kept_payload", shrunk != nil)
+	return json.Marshal(notifyMessage{TenantID: tenantID, Event: Event{Type: eventType, Payload: shrunk}})
+}
+
+// envelopeOverhead is how many bytes the message takes with no payload at all,
+// plus room for the "truncated" marker shrinkPayload may add.
+func envelopeOverhead(tenantID uuid.UUID, eventType string) int {
+	empty, _ := json.Marshal(notifyMessage{TenantID: tenantID, Event: Event{Type: eventType}})
+	return len(empty) + len(`,"payload":{"truncated":true}`)
+}
+
+// shrinkPayload returns payload reduced to at most budget bytes of JSON, and
+// the names of the fields it had to drop. A nil result means nothing usable
+// was left.
+func shrinkPayload(payload any, budget int) (map[string]any, []string) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, nil // not an object: a string, number, array...
+	}
+
+	// Drop the largest field first, repeatedly, so the most small identifying
+	// fields survive.
+	names := make([]string, 0, len(fields))
+	size := 2 // braces
+	for k, v := range fields {
+		names = append(names, k)
+		size += len(k) + len(v) + 4 // quotes, colon, comma
+	}
+	sort.Slice(names, func(i, j int) bool { return len(fields[names[i]]) > len(fields[names[j]]) })
+
+	var dropped []string
+	for _, k := range names {
+		if size <= budget {
+			break
+		}
+		size -= len(k) + len(fields[k]) + 4
+		dropped = append(dropped, k)
+		delete(fields, k)
+	}
+	if size > budget || len(fields) == 0 {
+		return nil, dropped
+	}
+
+	out := make(map[string]any, len(fields)+1)
+	for k, v := range fields {
+		var decoded any
+		if err := json.Unmarshal(v, &decoded); err != nil {
+			continue
+		}
+		out[k] = decoded
+	}
+	out["truncated"] = true
+	return out, dropped
+}
+
 // deliverLocally is what Publish used to do directly before it went through
 // Postgres NOTIFY: fan out to every subscriber currently connected on THIS
 // process for tenantID. Non-blocking, same reasoning as before -- a
@@ -159,12 +269,16 @@ func (b *Broadcaster) Publish(tenantID uuid.UUID, eventType string, payload any)
 // connection rather than stalling delivery to everyone else.
 func (b *Broadcaster) deliverLocally(tenantID uuid.UUID, event Event) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	for ch := range b.subs[tenantID] {
 		select {
 		case ch <- event:
 		default:
 		}
+	}
+	taps := b.taps
+	b.mu.Unlock()
+	for _, fn := range taps {
+		fn(tenantID, event)
 	}
 }
 

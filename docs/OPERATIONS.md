@@ -48,7 +48,8 @@ There's no blue-green or canary here — it's a real `kubectl rollout undo`:
 ```bash
 kubectl rollout history deployment/kuruops-api -n kuruops
 kubectl rollout undo deployment/kuruops-api -n kuruops
-# repeat for kuruops-ingest / kuruops-worker / kuruops-frontend if the bad deploy touched those too
+# repeat for kuruops-ingest / kuruops-analyzer / kuruops-worker / kuruops-frontend if the bad deploy touched those too
+# (a partial deploy shows up as more than one kuruops_build_info{build} value -- KuruOpsBuildSkew)
 ```
 
 A new migration (`deploy/k8s/03-migration-job.yaml`) is **not** automatically rolled back by
@@ -90,8 +91,37 @@ queries below are for manual investigation during the assisted window — paste 
 - **p99 latency per service**: `histogram_quantile(0.99, sum by (le, job) (rate(kuruops_http_request_duration_seconds_bucket[5m])))`
 - **Connection pool saturation**: `kuruops_db_pool_acquired_conns / kuruops_db_pool_max_conns`
 - **Active SSE connections** (should vary with logged-in analysts, not grow unbounded): `kuruops_sse_active_connections`
-- **How long since each worker sweep last succeeded** (in minutes): `(time() - kuruops_worker_last_sweep_success_timestamp) / 60`
+- **How long since each worker sweep last succeeded** (in minutes), across both worker replicas -- only the replica that wins a tick updates its own series, so take the max: `(time() - max by (sweep_job) (kuruops_worker_last_sweep_success_timestamp)) / 60`
 - **Scrape targets that are down**: `up{job=~"kuruops-.*"} == 0`
+- **Automatic-analysis queue**: `kuruops_ai_analysis_jobs` (depth by status) and `kuruops_ai_analysis_oldest_pending_seconds` (how long the oldest due job has waited), served by the analyzer
+- **More than one build live** (a partial deploy): `count(count by (build) (kuruops_build_info)) > 1`
+- **Go runtime and process** (goroutines, GC, memory, fds): `go_*` and `process_*`, exported by every process
+
+## Processes, scaling and the queue
+
+| Process | Role | Replicas | Scale it by |
+|---|---|---|---|
+| `api` | REST for the UI, session tokens | 2+ (HPA 2–6 in `deploy/k8s`) | CPU. Stateless: attachments live in Postgres (`UPLOAD_BACKEND=database`) or S3/GCS, live updates go through Postgres `LISTEN/NOTIFY`. With `UPLOAD_BACKEND=local` it is pinned to one replica. |
+| `ingest` | webhook intake; records each alert and its analysis job | 2+ (HPA 2–6) | inbound alert rate. No LLM or secret-store wiring. |
+| `analyzer` | works the analysis queue (LLM + MCP calls) | 2+ | the LLM provider's rate limit, not CPU: `AI_ANALYSIS_CONCURRENCY` per replica × replicas. |
+| `worker` | periodic sweeps | 2 (hot standby) | not at all: each tick takes a Postgres advisory lock, so one replica runs it and the other skips; more than two buys nothing. |
+
+**The analysis queue is stuck** (`KuruOpsAIAnalysisQueueStalled`, or alerts sit un-analysed): in
+order -- (1) is any `analyzer` running and healthy (`/healthz`)? Without one, jobs wait forever;
+ingest does not consume them. (2) `kuruops_ai_analysis_jobs{status="failed"}` and the analyzer's logs
+for "ai analysis queue": a rejected API key, a wrong Base URL or a retired model is not retried and
+shows as `failed` with the cause in `ai_analysis_jobs.last_error`; fix it in Settings → AI Integration.
+(3) A provider outage is ridden out by itself with backoff (1m, 5m, 15m, 1h, up to five attempts); if it
+lasted longer, the jobs ended `failed` and can be re-queued with
+`update ai_analysis_jobs set status='pending', attempts=0, next_attempt_at=now() where status='failed'`.
+
+**Postgres** is the one component KuruOps does not make highly available itself: use a managed
+multi-AZ instance, or `deploy/k8s/optional` (three instances, automatic failover). Every KuruOps
+process reconnects after a database restart or failover without being restarted -- but a replica is
+not a backup, so keep the backups above too.
+
+The alert rules in `deploy/k8s/09-monitoring.yaml` are linted and unit-tested in CI
+(`scripts/check-prometheus-rules.sh`); run that before editing one.
 
 ## Capacity baseline
 

@@ -22,7 +22,7 @@ output "db_master_password" {
 }
 
 output "ecr_repository_urls" {
-  description = "docker push targets -- one per image (api/ingest/worker/frontend)."
+  description = "docker push targets -- one per image (api/ingest/analyzer/worker/frontend)."
   value       = { for k, v in aws_ecr_repository.images : k => v.repository_url }
 }
 

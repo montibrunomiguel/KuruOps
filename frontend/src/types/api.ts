@@ -427,6 +427,9 @@ export interface AnalysisChatTranscript {
   messages: AnalysisChatMessage[];
   pendingToolCallId?: number;
   error?: string;
+  // Stable classification of `error` for a provider failure (provider_unavailable,
+  // provider_rate_limited, ...); absent for anything else. See analysisChat.errors.*.
+  errorCode?: string;
 }
 
 // The response shape from POST /api/v1/alerts/bulk/status and

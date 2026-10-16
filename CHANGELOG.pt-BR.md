@@ -12,8 +12,152 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ## [Não lançado]
 
+### Security
+
+- **Um deploy compose parecido com produção, sem credenciais padrão.** O `docker-compose.yml` é a stack
+  de notebook: imprime senhas e uma chave de criptografia que funcionam e roda `AUTH_MODE=dev`. O novo
+  `docker-compose.secure.yml` (`task secrets:gen`, `task deploy:secure:up`) torna toda credencial
+  obrigatória -- se faltar uma, o compose para antes de criar qualquer container --, roda `AUTH_MODE=jwt`
+  com um par de chaves gerado e publica só a UI e a porta de webhooks. A recusa de iniciar com uma senha
+  de banco conhecida agora tem um teste que roda o `main()` real de cada comando como processo e
+  confere que sai com 1 e o motivo (antes só havia um teste unitário do `Validate`).
+- **O processo exposto à internet não guarda mais LLM, MCP nem cofre de segredos.** A fila de análise
+  automática saiu do `cmd/ingest` para o novo `cmd/analyzer` (veja Added): comprometer o ingest não
+  entrega mais credenciais de LLM nem permite chamar um modelo, e a NetworkPolicy/egress podem ficar
+  apertadas.
+- **Ingress com TLS e o endereço real do cliente atrás dele.** O `deploy/k8s/12-ingress.yaml` termina o TLS
+  (hooks → ingest, o resto → frontend). Atrás de um proxy o nginx do frontend veria o proxy como cliente e
+  todo usuário dividiria um único orçamento de rate limit de login; o `TRUSTED_PROXY_CIDR` faz ele ler o
+  `X-Forwarded-For` só da faixa do proxy confiável (um cabeçalho forjado por qualquer outro é ignorado --
+  verificado).
+- **`AUTH_MODE=dev-headers` não pode mais ser ligado por uma variável esquecida.** Esse modo troca
+  a verificação de JWT por confiança em `X-Tenant-ID` / `X-User-ID` / `X-Is-Admin` do chamador --
+  nenhuma autenticação -- e um log de aviso era a única proteção. Agora exige também
+  `ALLOW_INSECURE_DEV_AUTH=true`, e um `AUTH_MODE` desconhecido (um erro como `dev_headers` caía no
+  caminho de JWT sem avisar) é erro na inicialização. O comando do README para o modo já traz a
+  variável nova.
+- **Processos de produção recusam uma senha de banco conhecida.** Com `AUTH_MODE=jwt`, api, ingest e
+  worker se recusam a subir com as senhas que este repositório distribui como padrão de dev
+  (`kuruops_app`, `kuruops_worker`, `postgres`) ou um placeholder (`changeme`, vazia, ...) sem
+  `ALLOW_DEFAULT_CREDENTIALS=true`. `AUTH_MODE=dev` (o padrão do docker-compose) fica isento. Ver
+  `config.Config.Validate`.
+- **Os servidores HTTP agora têm timeouts de leitura, escrita e ociosidade.** Só `ReadHeaderTimeout`
+  estava definido, então um cliente que gotejava um corpo, nunca lia a resposta ou deixava uma
+  conexão parada segurava um socket e uma goroutine para sempre. A api roda com `HTTP_READ_TIMEOUT`
+  2m / `HTTP_WRITE_TIMEOUT` 90s / `HTTP_IDLE_TIMEOUT` 120s, o ingest (o exposto à internet) com
+  30s/30s/90s, o endpoint de saúde do worker com 10s/10s/60s. O stream SSE renova um deadline de
+  escrita de 30s antes de cada escrita em vez de herdar o do servidor (um stream saudável nunca é
+  cortado, um par que parou de ler é liberado), e a migração de banco externo estende o próprio
+  deadline; os dois são provados contra um servidor real nos testes, com um controle mostrando que o
+  stream comum é cortado.
+- **Kubernetes: `deploy/k8s/10-networkpolicy.yaml`.** Nega ingresso por padrão no namespace, com
+  só os caminhos necessários reabertos (frontend e ingest de webhooks vindos de fora, a API só a
+  partir do frontend, métricas só a partir do Prometheus) e uma lista de egress para o frontend.
+  Precisa de um CNI que aplique NetworkPolicy.
+- **CI: o Security Scan semanal falhando agora abre uma issue.** Ele ficou vermelho na `main` por
+  três dias porque uma execução agendada vermelha não avisa quem não está olhando a aba Actions. Um
+  job novo abre (ou comenta em) uma issue de acompanhamento quando a execução agendada falha e a
+  fecha quando uma execução posterior volta limpa; as execuções de pull request não mudam.
+
 ### Fixed
 
+- **Os roles criados pela migração para banco externo não tinham grants de que o worker precisa.** O
+  `dbmigrate.SetupRoles` carregava uma cópia feita à mão do `db/init/*.sql` que ficou para trás: o role
+  worker criado no banco do cliente não tinha `DELETE` (sweep de retenção), nem `UPDATE` em
+  `ai_analysis_runs` (sweep de runs travadas) e não era dono da `mv_incident_daily_stats`. Agora ele roda
+  os scripts reais (embutidos na imagem do api ao lado das migrations), então os roles têm uma só definição.
+- **O alerta de sweep parado dispararia por causa de um standby saudável.** Com duas réplicas do worker só
+  a que vence um tick atualiza o próprio `kuruops_worker_last_sweep_success_timestamp`; o
+  `KuruOpsWorkerSweepStale` agora usa o máximo entre as réplicas.
+- **Os Deployments do Kubernetes conseguem iniciar.** Todo manifesto define `runAsNonRoot: true`, mas as
+  imagens declaravam o usuário por nome (`USER kuruops`, `USER nginx`), e o kubelet recusa o pod quando
+  "cannot verify user is non-root" para um usuário não numérico -- então nenhum de api, ingest, worker ou
+  frontend saía de `CreateContainerConfigError` num cluster de verdade. As imagens agora usam usuários
+  numéricos (1000 e 101). Achado ao implantar os manifestos num cluster kind; ali também foram exercitados
+  NetworkPolicy (Calico), o proxy frontend-api via kube-dns, os PDBs e o HPA do frontend (de 2 para 4
+  réplicas sob carga).
+- **Upload de anexos funciona num deploy novo.** O volume `uploads` (compose) e o PVC (Kubernetes)
+  eram montados com dono root enquanto o api roda como o usuário não-root `kuruops`, então todo upload
+  com armazenamento local falhava com "could not store uploaded file". A imagem agora cria
+  `/data/uploads` com dono `kuruops` (um volume nomeado novo herda isso) e o pod do api define
+  `fsGroup: 1000`. **Um volume existente do compose mantém o dono antigo:** rode uma vez `docker compose
+  run --rm --user root --entrypoint chown api kuruops:kuruops /data/uploads`.
+- **Uma análise de IA que falha se explica no idioma do usuário, e um follow-up que falha não engole
+  mais a pergunta.** O erro da execução era uma frase em inglês exibida tal e qual a analistas de
+  língua portuguesa. As execuções agora persistem um `error_code` estável (migration `0015`:
+  `provider_unavailable`, `provider_rate_limited`, `provider_auth`, `provider_not_found`,
+  `provider_error`, `provider_unreachable`), exposto como `errorCode` no transcript do chat, e o chat
+  mostra uma mensagem traduzida que também diz o que verificar (a chave de API, a URL base...), caindo
+  no texto original para o que não foi classificado. Quando um follow-up falha, a pergunta sem resposta
+  volta para o campo de texto -- nunca por cima do que o analista já começou a digitar -- e um chat
+  vazio oferece três perguntas iniciais sugeridas (triagem completa, próximos passos, atividade
+  relacionada).
+- **O ESLint está limpo de novo (0 erros, 0 warnings).** As regras do React Compiler apontavam 15
+  pontos: formulários que se preenchiam com dados carregados dentro de um efeito (SMTP, storage,
+  retenção, provedores de identidade, SLA de incidentes, playbook), a seleção de linhas e a flag
+  "já carregou" do dashboard, o carregador de imagens de anexo, a primeira página do log de auditoria
+  e o `Date.now()` lido durante o render. O estado agora é ajustado durante o render ou derivado, as
+  cargas têm flag de cancelamento, e as células de SLA e os contadores do follow-up leem o relógio por
+  um novo hook `useNow`, então também se mantêm atuais sem recarregar. O comportamento não muda (os 742
+  testes do frontend passam).
+- **A carga inicial do chat não pinta mais uma conversa antiga.** Abrir o chat de um alerta e depois de
+  outro podia deixar a resposta lenta do primeiro sobrescrever o segundo; a carga agora tem uma flag de
+  cancelamento. Também elimina o aviso de lint `set-state-in-effect` ali e no `usePagedList`, que
+  renderizava uma vez com o filtro novo e a página antiga (uma requisição por uma página que não existe
+  sob aquele filtro) antes de resetar.
+- **O `App.test.tsx` não falha mais com cache frio.** O teste do Dashboard pagava a transformação do
+  grafo de páginas lazy dentro do próprio timeout; os módulos lazy agora são carregados num `beforeAll`.
+- **O proxy de API do frontend não devolve mais 502 no Kubernetes.** O nginx resolve a api a cada
+  requisição (então uma api recriada é encontrada), mas o resolver estava fixo no `127.0.0.11` do
+  Docker, que não existe num cluster. O `nginx.conf` agora é um template do envsubst: o resolver vem
+  do `/etc/resolv.conf` do próprio container e o upstream de `API_UPSTREAM` (o FQDN do Service em
+  `deploy/k8s/07-frontend.yaml`, já que o resolver do nginx ignora os search domains do DNS).
+- **Um deploy parcial agora é visível.** api, ingest e worker são três imagens da mesma árvore;
+  reconstruir só uma deixava as outras em código antigo sem nada falhar alto. Cada binário agora loga
+  seu build id na partida e exporta `kuruops_build_info{build}` (um hash das fontes, calculado uma vez
+  no Dockerfile), e a regra `KuruOpsBuildSkew` alerta quando mais de um build fica ativo por 20 minutos.
+- **O stream de eventos ao vivo recua quando a API está inalcançável.** O navegador tentava a cada 3
+  segundos para sempre, em todas as abas abertas, em uníssono. Agora recua exponencialmente (de 1s até
+  30s) com jitter, e o recuo só zera depois de uma conexão que realmente abriu ficar de pé por 10 segundos (uma primeira
+  versão contava como saudável uma tentativa que apenas demorou 10s para falhar; pego ao parar o api
+  com o navegador aberto). O nginx também desiste de um upstream que não resolve após 3s
+  (`resolver_timeout`) em vez de 30s, então essas falhas voltam, e são retentadas, rapidamente.
+- **O `docker stop` não corta mais o desligamento do ingest.** O prazo de 10s do Compose era menor que
+  os 15s de que o ingest precisa para parar e deixar as análises em andamento terminarem ou voltarem
+  para a fila; agora são 25s.
+- **A análise automática de IA de um alerta podia se perder, e uma oscilação do provedor a encerrava
+  de vez.** A análise era uma goroutine solta iniciada assim que o alerta chegava: nada registrava
+  que ela era devida, então um restart, deploy ou crash antes de terminar a descartava em silêncio, e
+  um único 503 do provedor a encerrava sem que nada tentasse de novo. Agora é uma fila durável
+  (`ai_analysis_jobs`, migration 0014): o job é gravado **na mesma transação do alerta**, então um
+  alerta que existe sempre tem a análise devida, e o `cmd/ingest` trabalha as linhas com
+  `FOR UPDATE SKIP LOCKED` (várias réplicas dividem a fila, nenhum job vai para dois), um lease
+  renovado por heartbeat (os jobs de um consumidor morto são assumidos, e a execução que ele deixou é
+  limpa para a nova tentativa poder começar), um token de fencing (um consumidor travado não
+  sobrescreve o sucessor), retry com backoff -- um minuto, cinco, quinze, uma hora, até cinco
+  tentativas -- e drenagem graciosa no desligamento. Uma API key rejeitada, URL ou modelo errado não
+  é repetido (falha igual toda vez). Um job que derruba o consumidor repetidamente esgota as tentativas
+  em vez de rodar em loop entre restarts. Tenants que não ativaram a opção não acumulam linhas. A
+  profundidade da fila e a idade do job mais antigo esperando estão no `/metrics` do ingest, com um
+  alerta do Prometheus se ela parar de escoar. Provado de ponta a ponta contra um provedor que falha
+  por mais tempo do que o retry interno cobre, e por testes de claims concorrentes, assunção de lease
+  e do caso do dono antigo.
+- **Chamadas ao LLM são repetidas no próprio lugar.** O `doRequest` fazia exatamente uma tentativa. Um
+  503/429 do provedor ou uma conexão derrubada agora é repetido até 3 vezes com backoff exponencial e
+  jitter, respeitando o `Retry-After` até um teto, sem dormir por um chamador que já foi embora e sem
+  repetir um circuit breaker aberto. As falhas do provedor são tipadas (`ProviderError`,
+  `TransportError`) para quem chama distinguir "tente de novo" de "corrija sua chave". Ajustável com
+  `LLM_CALL_MAX_ATTEMPTS` / `LLM_CALL_RETRY_BASE_DELAY`.
+- **Um evento grande podia ser perdido.** O Postgres rejeita de cara um payload de `NOTIFY` de 8000
+  bytes ou mais, e o evento por turno do chat carregava a resposta inteira do modelo, então um
+  relatório de triagem longo fazia a atualização ao vivo sumir (reproduzido antes, com um teste). Os
+  eventos agora carregam só identificadores, e o `Publish` aplica o limite por conta própria -- um
+  payload grande perde os maiores campos e é marcado `truncated`, e o tipo do evento sempre chega.
+- **O `cmd/ingest` não tinha circuit breaker nem atualização ao vivo das próprias análises.** Ele faz
+  chamadas a LLM e MCP mas nunca instalou o breaker (então uma queda do provedor fazia cada alerta
+  ingerido esperar o timeout inteiro), e nunca ligou a publicação de eventos ao serviço de análise
+  (então o navegador nunca era avisado de que uma análise automática terminou e ficava em
+  "Analisando..." até recarregar).
 - **A primeira mensagem do chat "Analisar com IA" sempre voltava como um "Alert Triage Report",
   independente do que fosse perguntado.** O prompt completo de triagem era dado à primeira análise
   de *qualquer* alerta, então um simples "oi" digitado num chat novo recebia um relatório
@@ -25,7 +169,10 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
   chat -- a primeira mensagem ou qualquer follow-up -- recebe uma resposta direta à pergunta. O
   prompt geral também foi reescrito para dizer isso (antes dizia "forneça uma análise de triagem"
   independente do que fosse perguntado). Incidentes não têm gatilho automático, então para eles
-  vale só a regra "alguém fez uma pergunta".
+  vale só a regra "alguém fez uma pergunta". Como os turnos do chat agora usam o prompt geral, ele
+  também carrega as regras de prompt injection e de redação de segredos que antes viviam só no
+  prompt de triagem (constante compartilhada `payloadSafetyRules`, fixada por teste): o conteúdo
+  do alerta é controlado por quem envia e o chat pode chamar ferramentas MCP.
 - **Uma pergunta de acompanhamento que falhava no chat "Analisar com IA" parecia nunca ter sido
   enviada.** Quando o provedor respondia a pergunta com erro (um 503 do Gemini, por exemplo), o
   backend recolocava corretamente o relatório pronto e descartava a pergunta sem resposta -- mas o
@@ -53,6 +200,22 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Alterado
 
+- **Sem configuração de processo inteiro nos clientes de saída.** A política de retry do LLM e os registros
+  de circuit breaker de LLM/MCP eram variáveis de pacote instaladas uma vez na partida
+  (`ConfigureRetry`, `Configure`); agora pertencem a um `llmclient.Factory` (entregue ao serviço de
+  análise com `WithLLMClientFactory`) e a um `mcpclient.WithBreakers` opcional. Dois serviços no mesmo
+  processo podem diferir e um teste não muda mais as configurações de outro.
+- **As métricas usam o `prometheus/client_golang`.** A exposição escrita à mão acabou; todo nome e label de
+  métrica continua igual (as regras de alerta dependem deles) e cada processo agora também exporta os
+  coletores `go_*` de runtime e `process_*`.
+- **Os quatro comandos são testáveis.** Cada `main()` virou `run(ctx, cfg, logger)` mais um `main` de três
+  linhas, e os testes sobem o servidor real contra um banco novo construído com as migrations e os scripts
+  `db/init` reais: `cmd/api` 11% → 92%, `cmd/worker` 47% → 80%, `cmd/ingest` 88%, `cmd/analyzer` 90%; total
+  79,0% → 81,8%. O `config.LoadAndValidate` substitui quatro cópias do bloco carregar+validar.
+- **Os prompts sugeridos no chat de IA parecem botões** (chips com borda) em vez de texto comum.
+- O `backend/coverage.out` deixou de ser rastreado (estava no gitignore mas tinha sido adicionado à força).
+- O nginx do frontend e os manifestos k8s mudaram: `api`, `analyzer` e `worker` sobem com 2 réplicas por
+  padrão; existe um HPA do `api`; `UPLOAD_BACKEND=database` é o padrão no k8s.
 - **Servidores MCP agora podem oferecer todas as suas tools, não só uma allow-list escolhida à
   mão.** Depois de configurar um servidor era preciso listar as tools em "Tools permitidas" (ou
   abrir *Discover tools* e marcá-las uma a uma) antes de a IA poder usar qualquer uma, e uma tool
@@ -322,6 +485,36 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Added
 
+- **`cmd/analyzer`: o consumidor da fila de análises é um processo próprio.** O ingest só recebe e
+  registra (o alerta mais uma linha de job, numa transação); o analyzer reivindica os jobs (`FOR UPDATE
+  SKIP LOCKED` + lease), chama o modelo, tenta de novo com backoff e retoma após uma queda. Uma chamada
+  lenta ao LLM não divide mais processo, pool nem rollout com o recebimento de webhooks. Ele acorda pelo
+  evento "alerta recebido" via um novo `events.Broadcaster.Tap` (e faz polling a cada
+  `AI_ANALYSIS_POLL_INTERVAL` como rede de segurança). Imagem própria, serviço no compose, Deployment no
+  k8s (2 réplicas), PDB, NetworkPolicy e job de scrape. Verificado: duas réplicas, matar a que trabalha um
+  job → a outra assume após o lease.
+- **`UPLOAD_BACKEND=database`: anexos no Postgres, para o `api` escalar.** O volume local de uploads era a
+  única coisa que prendia o `api` a uma réplica (migration 0016, `attachment_blobs`, RLS; leituras caem
+  para o diretório antigo). O `deploy/k8s` usa isso: sem PVC, 2+ réplicas do api e um HPA. S3/GCS
+  continuam sendo a escolha para muitos anexos ou anexos grandes e têm precedência por tenant.
+- **Alta disponibilidade.** O worker roda 2 réplicas como standby quente (advisory locks por tick); o
+  `deploy/k8s/optional` traz um cluster CloudNativePG de 3 instâncias com failover automático (testado:
+  matar o primário promoveu uma réplica com os dados intactos). Todo processo reconecta após um reinício
+  do Postgres sem ser reiniciado (verificado).
+- **`scripts/k8s-e2e.sh` + um job de CI: os manifestos Kubernetes agora são implantados e exercitados.** Um
+  cluster kind com Calico, ingress-nginx e metrics-server: migrations, roles, cinco imagens, NetworkPolicy
+  permite/nega, PDB/HPA, Ingress + TLS, webhook → ingest → analyzer → modelo entre pods, SSE pelo ingress,
+  um anexo enviado por uma réplica do api lido pela outra (30 checagens).
+  O `scripts/check-prometheus-rules.sh` valida e testa unitariamente as regras de alerta no CI.
+- **`deploy/k8s/12-ingress.yaml`** e um emissor cert-manager opcional.
+- **O `docs/openapi.yaml` agora é conferido contra o router.** O `TestOpenAPIMatchesRouter` percorre as
+  rotas que o `NewRouter` realmente monta e compara método + path, nos dois sentidos, com a spec: um
+  endpoint novo que ninguém documentou, ou uma operação documentada que não existe mais, quebra o CI.
+  (Confere rotas, não schemas.) A spec também documenta o novo campo `errorCode`.
+- **`deploy/k8s/11-availability.yaml`: PodDisruptionBudgets e HorizontalPodAutoscalers.** ingest
+  (2-6 réplicas) e frontend (2-4) escalam por CPU, com scale-down lento; ingest/frontend/api ganham
+  um budget `maxUnavailable: 1` para que drains de nó avancem um pod por vez. O frontend agora sobe
+  com duas réplicas. api e worker deliberadamente não escalam (volume de uploads RWO; sweeps singleton).
 - Chamadas externas de LLM e MCP passam por um circuit breaker
   (`backend/internal/circuitbreaker`), com chave por host para que um provedor morto não derrube
   chamadas a um saudável. Após `EXTERNAL_CALL_BREAKER_THRESHOLD` falhas consecutivas (padrão 5) as
@@ -336,6 +529,11 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Changed
 
+- **O `ai_analysis_service.go` foi dividido por responsabilidade.** Com 1.183 linhas ele misturava
+  prompts, o chat e o caminho de follow-up, o loop agêntico e a persistência das execuções. Agora são
+  quatro arquivos no mesmo pacote (`ai_analysis_service.go`, `_prompts.go`, `_chat.go`, `_agent.go`),
+  movidos como declarações inteiras e sem mudança de comportamento (o conjunto de declarações de
+  nível superior é idêntico antes e depois).
 - O `docs/THREAT_MODEL.md` listava o escopo por tag nos sub-recursos de incidente como lacuna
   aberta. Não é: comentários, vínculos, IOCs, timeline, histórico de status e aprovação de tool
   call carregam o pai via `loadVisible(ctx, tx, id, allowedTags)` antes, e o

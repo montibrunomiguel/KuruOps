@@ -323,7 +323,21 @@
     "placeholder": "Faça uma pergunta de acompanhamento...",
     "send": "Enviar",
     "sending": "Enviando...",
-    "followUpFailed": "Sua última pergunta não foi respondida -- pergunte novamente."
+    "followUpFailed": "Sua última pergunta não foi respondida -- pergunte novamente.",
+    "errors": {
+      "provider_unavailable": "O provedor de IA está temporariamente indisponível (pode estar sobrecarregado). Tente novamente em instantes.",
+      "provider_rate_limited": "O provedor de IA está limitando requisições no momento. Aguarde um pouco e tente novamente.",
+      "provider_auth": "O provedor de IA rejeitou a chave de API. Verifique em Configurações -> Integração de IA.",
+      "provider_not_found": "O provedor de IA não encontrou esse modelo ou endpoint. Verifique a URL base e o modelo em Configurações -> Integração de IA.",
+      "provider_error": "O provedor de IA rejeitou a requisição. Verifique as configurações do provedor em Configurações -> Integração de IA.",
+      "provider_unreachable": "Não foi possível alcançar o provedor de IA. Verifique a URL base e o caminho de rede até ele."
+    },
+    "suggestionsLabel": "Experimente perguntar:",
+    "suggestions": {
+      "triage": "Faça uma triagem completa deste item",
+      "nextSteps": "O que devo fazer em seguida?",
+      "related": "Há atividade relacionada que eu deva verificar?"
+    }
   },
   "alerts": {
     "title": "Alertas",

@@ -549,7 +549,7 @@ func TestRunLocked_RecordsSweepSuccessMetric(t *testing.T) {
 	pool := sweepWorkerPool(t)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
-	m := &httpserver.MetricsCollector{}
+	m := httpserver.NewMetricsCollector()
 	orig := httpserver.SetMetricsForTest(m)
 	defer httpserver.SetMetricsForTest(orig)
 

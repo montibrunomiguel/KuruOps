@@ -55,6 +55,7 @@ func newChatFixture(t *testing.T, reply string) chatFixture {
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), alertRepo, incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan string, 8)
 	aiSvc.EnableEventPublishing(func(_ uuid.UUID, eventType string, _ any) { analyzed <- eventType })

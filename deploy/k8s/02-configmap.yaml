@@ -1,4 +1,4 @@
-# Non-sensitive config shared by api/ingest/worker -- see
+# Non-sensitive config shared by api/ingest/analyzer/worker -- see
 # backend/.env.example for the full set this mirrors. Anything
 # credential-shaped lives in 01-secret.example.yaml instead.
 apiVersion: v1
@@ -17,6 +17,10 @@ data:
   # (see 04-api.yaml's secret volume mount) -- never "dev"/"dev-headers"
   # outside a developer's own machine, see config.Config's AuthMode doc.
   AUTH_MODE: "jwt"
+  # Where attachments go for a tenant with no S3/GCS/Drive integration. "database" keeps them
+  # in Postgres so the api needs no shared volume and can scale (see 04-api.yaml and
+  # db/migrations/0016); "local" writes under UPLOAD_DIR and pins the api to one replica.
+  UPLOAD_BACKEND: "database"
   UPLOAD_DIR: "/data/uploads"
   # The frontend Service's externally-reachable URL -- used in escalation
   # notification links and password-reset emails. Adjust to your real
@@ -35,6 +39,15 @@ data:
   # backend/internal/circuitbreaker.
   EXTERNAL_CALL_BREAKER_THRESHOLD: "5"
   EXTERNAL_CALL_BREAKER_COOLDOWN: "30s"
+  LLM_CALL_MAX_ATTEMPTS: "3"
+  LLM_CALL_RETRY_BASE_DELAY: "1s"
+  # Per analyzer replica (06a-analyzer.yaml): how many automatic analyses run at once, and
+  # how often an idle one polls the queue (a new alert wakes it at once regardless).
+  AI_ANALYSIS_CONCURRENCY: "5"
+  AI_ANALYSIS_POLL_INTERVAL: "5s"
+  HTTP_READ_TIMEOUT: "2m"
+  HTTP_WRITE_TIMEOUT: "90s"
+  HTTP_IDLE_TIMEOUT: "120s"
   # "env" (default) needs only SECRETS_ENCRYPTION_KEY (see the Secret) --
   # switch to "vault" or "kms" and add the matching VAULT_*/KMS_* keys here
   # (non-sensitive) plus VAULT_TOKEN/KMS_SECRET_ACCESS_KEY in the Secret if

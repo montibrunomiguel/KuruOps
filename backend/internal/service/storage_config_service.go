@@ -44,7 +44,10 @@ type StorageConfigService struct {
 	repo      storageConfigRepo
 	secrets   secrets.Store
 	uploadDir string
-	audit     *repository.AdminAuditEventRepository
+	// uploadBackend picks the default store for a tenant with no integration: "local"
+	// or "database". See SetUploadBackend.
+	uploadBackend string
+	audit         *repository.AdminAuditEventRepository
 
 	// oauthStates, googleOAuthClientID/Secret, and googleOAuthRedirectURL
 	// back the Google Drive "Connect your Google account" path only --
@@ -408,9 +411,29 @@ func (s *StorageConfigService) resolveSecretRef(ctx context.Context, tx pgx.Tx, 
 	return ref, nil
 }
 
+// SetUploadBackend chooses what a tenant with no S3/GCS/Drive integration uses:
+// "local" (the default; files under the upload directory) or "database" (rows in
+// attachment_blobs, so the api needs no shared volume and can run as several
+// replicas). With "database", reads that miss fall back to the upload directory, so
+// attachments uploaded before the switch stay readable. A setter, like the other
+// optional wiring on this service, so the many callers and tests that do not care
+// keep their constructor call unchanged.
+func (s *StorageConfigService) SetUploadBackend(backend string) {
+	s.uploadBackend = backend
+}
+
+// defaultStore is the store for a tenant with no integration configured.
+func (s *StorageConfigService) defaultStore(tenantID uuid.UUID) blobstore.Store {
+	local := blobstore.NewLocalStore(s.uploadDir)
+	if s.uploadBackend == "database" {
+		return blobstore.NewFallbackStore(blobstore.NewDatabaseStore(s.pool, tenantID), local)
+	}
+	return local
+}
+
 // BuildStore resolves the blobstore.Store a caller should upload evidence
-// to right now: the tenant's configured S3/GCS bucket if one exists, local
-// disk otherwise. Called per-upload rather than cached, since an admin
+// to right now: the tenant's configured S3/GCS/Drive integration if one exists,
+// the default backend (local disk or the database, see SetUploadBackend) otherwise. Called per-upload rather than cached, since an admin
 // changing the integration should take effect on the very next upload
 // without an API restart.
 func (s *StorageConfigService) BuildStore(ctx context.Context, tenantID uuid.UUID) (blobstore.Store, error) {
@@ -419,7 +442,7 @@ func (s *StorageConfigService) BuildStore(ctx context.Context, tenantID uuid.UUI
 		return nil, fmt.Errorf("load storage config: %w", err)
 	}
 	if cfg == nil {
-		return blobstore.NewLocalStore(s.uploadDir), nil
+		return s.defaultStore(tenantID), nil
 	}
 
 	switch cfg.Provider {
@@ -442,7 +465,7 @@ func (s *StorageConfigService) BuildStore(ctx context.Context, tenantID uuid.UUI
 	case domain.StorageProviderGDrive:
 		return s.buildGDriveStore(ctx, cfg)
 	default:
-		return blobstore.NewLocalStore(s.uploadDir), nil
+		return s.defaultStore(tenantID), nil
 	}
 }
 

@@ -475,6 +475,34 @@
   font-size: 11.5px;
 }
 
+/* A suggested prompt: reads as something to click (outlined, rounded, accent on
+   hover/focus) rather than as a line of text, which is what .btn-ghost alone did. */
+.suggestion-chip {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--text);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, filter 0.15s ease;
+}
+
+.suggestion-chip:hover:not(:disabled) {
+  background: var(--accent);
+  color: white;
+}
+
+.suggestion-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.suggestion-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .field {
   display: flex;
   flex-direction: column;

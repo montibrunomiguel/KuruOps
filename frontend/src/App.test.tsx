@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import App from "./App";
@@ -28,6 +28,20 @@ function renderApp(initialPath: string) {
 }
 
 describe("App routing guards", () => {
+  // App code-splits every page with React.lazy, so the first test to reach a page
+  // pays for transforming that page's whole module graph (charts included) inside
+  // its findBy* budget. On a cold cache, or a busy machine, that alone could use
+  // up the 8s and fail "a fully-authorized user reaches the Dashboard" even though
+  // nothing was wrong. Loading the modules here, under a hook timeout of their
+  // own, keeps the tests below measuring routing instead of the build.
+  beforeAll(async () => {
+    await Promise.all([
+      import("./pages/dashboard/DashboardLayout"),
+      import("./pages/settings/SettingsLayout"),
+      import("./pages/alerts/AlertsListPage"),
+    ]);
+  }, 60000);
+
   beforeEach(() => {
     localStorage.clear();
     vi.stubGlobal("fetch", withSession(vi.fn().mockResolvedValue(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }))));

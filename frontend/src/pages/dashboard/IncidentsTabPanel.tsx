@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/client";
@@ -72,9 +72,9 @@ export function IncidentsTabPanel() {
   // hasLoadedOnce gates DashboardSkeleton to the very first paint only --
   // see AlertsTabPanel's identical wiring for the reasoning.
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  useEffect(() => {
-    if (!statsLoading) setHasLoadedOnce(true);
-  }, [statsLoading]);
+  // Set while rendering rather than in an effect, so the first loaded render
+  // already knows it has loaded.
+  if (!statsLoading && !hasLoadedOnce) setHasLoadedOnce(true);
 
   if (statsLoading && !hasLoadedOnce) return <DashboardSkeleton />;
   if (statsError) return <div className="error-banner">{statsError}</div>;

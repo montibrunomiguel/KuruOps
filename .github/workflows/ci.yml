@@ -104,6 +104,7 @@ jobs:
           go build -v ./cmd/api
           go build -v ./cmd/ingest
           go build -v ./cmd/worker
+          go build -v ./cmd/analyzer
 
       # Runs the exact same Taskfile target a developer runs locally: brings
       # up Postgres via docker compose, creates+migrates a dedicated
@@ -241,3 +242,35 @@ jobs:
 
       - name: Validate manifests
         run: kubeconform -strict -summary deploy/k8s/*.yaml
+
+      # The alert rules live inside a ConfigMap, where nothing else looks at them: a typo in a
+      # PromQL expression is accepted by `kubectl apply` and shows up only as an alert that
+      # never fires. This lints them with promtool and runs the unit cases in
+      # deploy/k8s/tests/prometheus-rules.test.yml (series in, "this alert must / must not be
+      # firing" out).
+      - name: Lint and unit-test the Prometheus alert rules
+        run: bash scripts/check-prometheus-rules.sh
+
+  # Deploys the real manifests to a disposable kind cluster and exercises them. kubeconform
+  # (above) proves the YAML is well formed; it cannot prove the pods start. Two real defects
+  # -- images declaring a named USER under runAsNonRoot, and an unwritable uploads volume --
+  # sat in deploy/k8s undetected for exactly that reason. See scripts/k8s-e2e.sh for what it
+  # checks (migrations, roles, five images, NetworkPolicy under Calico, PDB/HPA, Ingress + TLS,
+  # webhook -> ingest -> analyzer -> model, SSE through the ingress, attachments across api
+  # replicas).
+  k8s-e2e:
+    name: Kubernetes End-to-End (kind)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Install kind
+        run: |
+          curl -sSLo kind https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+
+      - name: Deploy to kind and exercise the stack
+        run: bash scripts/k8s-e2e.sh

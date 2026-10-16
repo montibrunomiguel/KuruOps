@@ -1,0 +1,96 @@
+# Works the durable queue of automatic alert analyses (cmd/analyzer). ingest writes a
+# job row with each alert; this claims the rows, runs the LLM analysis and retries or
+# gives up per the queue's rules (lease, backoff, fencing).
+#
+# It is its own Deployment, not part of ingest, on purpose: an LLM call can take a
+# minute, and that must not share a process, a connection pool or a rollout with
+# webhook receipt -- the internet-facing half of the system. It also lets the two
+# scale and be network-policied separately (ingest has no outbound dependency on a
+# model provider any more).
+#
+# Two replicas: they share the queue safely (jobs are claimed with FOR UPDATE SKIP
+# LOCKED and a lease, so no job is analysed twice and a replica that dies mid-job has
+# its work taken over when the lease expires), so the second is real availability, not
+# an idle standby. Scale further against the LLM provider's rate limit, not CPU: the
+# process mostly waits on the network, so a CPU-based HPA would not track load.
+# AI_ANALYSIS_CONCURRENCY (02-configmap.yaml) is per replica.
+#
+# Connects as kuruops_app like api and ingest (row-level security applies); the queue
+# reads its jobs through a narrow, named carve-out (app.ai_queue_runner), not a
+# BYPASSRLS role.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analyzer
+  namespace: kuruops
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analyzer
+  template:
+    metadata:
+      labels:
+        app: analyzer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # SHUTDOWN_TIMEOUT is 15s (02-configmap.yaml); the kubelet's default 30s grace
+      # period leaves room for in-flight analyses to finish or be handed back to the
+      # queue before the container is killed.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: analyzer
+          image: kuruops-analyzer:latest
+          # See 04-api.yaml's securityContext comment -- same reasoning. The analyzer
+          # touches the local filesystem not at all.
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: kuruops-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kuruops-secrets
+                  key: DATABASE_URL_APP
+            # The LLM API key and MCP credentials it resolves were written by the api's
+            # Settings pages, so this must be the same key.
+            - name: SECRETS_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kuruops-secrets
+                  key: SECRETS_ENCRYPTION_KEY
+          # /healthz is DB-dependent (readiness), /livez is not (liveness) -- see
+          # 04-api.yaml's comment for why.
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /livez, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analyzer
+  namespace: kuruops
+spec:
+  selector:
+    app: analyzer
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -26,7 +26,7 @@ output "db_master_password" {
 }
 
 output "acr_login_server" {
-  description = "docker push target -- append /api, /ingest, /worker, /frontend."
+  description = "docker push target -- append /api, /ingest, /analyzer, /worker, /frontend."
   value       = azurerm_container_registry.main.login_server
 }
 

@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -37,23 +36,27 @@ import (
 // package's one choke point every call/notify eventually funnels through.
 var tracer = otel.Tracer("kuruops/mcpclient")
 
-// breakers fails calls fast while an MCP server is unhealthy rather than
-// waiting out the full 30s client timeout on every tool call -- see package
-// circuitbreaker, and llmclient's identical var for why this is
-// package-level and keyed by host.
-//
-// Replaced once at startup by Configure; the default is a disabled
-// registry, so tests and any caller that never calls Configure behave
-// exactly as they did before the breaker existed.
-var breakers atomic.Pointer[circuitbreaker.Registry]
+// noBreakers is the registry a Client uses unless WithBreakers gives it one:
+// circuit breaking disabled, so calls behave exactly as they did before the
+// breaker existed. It holds no state, so sharing it is not shared configuration.
+var noBreakers = circuitbreaker.NewRegistry(circuitbreaker.Config{})
 
-func init() { breakers.Store(circuitbreaker.NewRegistry(circuitbreaker.Config{})) }
+// Option customises a Client at construction.
+type Option func(*Client)
 
-// Configure installs the circuit-breaker settings for every MCP call in
-// this process. Called once from cmd/* at startup, before any server is
-// used.
-func Configure(cfg circuitbreaker.Config) {
-	breakers.Store(circuitbreaker.NewRegistry(cfg))
+// WithBreakers makes the Client fail fast while an MCP server is unhealthy,
+// rather than wait out the full 30s client timeout on every tool call -- see
+// package circuitbreaker. The registry is keyed by host, so it must outlive any
+// one Client (a Client is built per operation) and be shared by whoever builds
+// them; the process owner creates it from its configuration. This used to be a
+// package-level variable installed once at startup, which made it process-wide
+// state.
+func WithBreakers(r *circuitbreaker.Registry) Option {
+	return func(c *Client) {
+		if r != nil {
+			c.breakers = r
+		}
+	}
 }
 
 // breakerKey is the host of endpoint, so every client pointed at the same
@@ -105,6 +108,7 @@ type Client struct {
 	endpoint   string
 	auth       Auth
 	httpClient *http.Client
+	breakers   *circuitbreaker.Registry
 	sessionID  string
 	nextID     int64
 }
@@ -116,7 +120,7 @@ type Client struct {
 //
 // auth is the single credential header to send (see Auth); the zero value
 // sends none.
-func New(endpoint string, auth Auth) *Client {
+func New(endpoint string, auth Auth, opts ...Option) *Client {
 	httpClient := httpguard.NewClient(30 * time.Second)
 	// Go strips Authorization when a redirect crosses hosts, but replays every
 	// other header -- including a custom API-key header -- to the new target.
@@ -131,7 +135,11 @@ func New(endpoint string, auth Auth) *Client {
 		}
 		return nil
 	}
-	return &Client{endpoint: endpoint, auth: auth, httpClient: httpClient}
+	c := &Client{endpoint: endpoint, auth: auth, httpClient: httpClient, breakers: noBreakers}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type initializeResult struct {
@@ -297,7 +305,7 @@ func (c *Client) post(ctx context.Context, req rpcRequest) ([]byte, error) {
 	}
 
 	var out []byte
-	err = breakers.Load().Do(breakerKey(c.endpoint), func() error {
+	err = c.breakers.Do(breakerKey(c.endpoint), func() error {
 		httpResp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			// A transport error (refused, DNS, timeout) is the clearest

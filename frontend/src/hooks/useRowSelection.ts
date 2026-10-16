@@ -15,12 +15,16 @@ import { useEffect, useRef, useState, type DependencyList } from "react";
 export function useRowSelection<T>(items: T[], getId: (item: T) => string, resetDeps: DependencyList) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // resetDeps is caller-supplied and inherently dynamic per page (different
-  // filters), so exhaustive-deps can't verify it statically -- same
-  // established pattern as AnalysisChat.tsx/AdminAuditLogPanel.tsx.
-  useEffect(() => {
+  // filters), so it is compared by hand instead of as an effect dependency list.
+  // The reset happens while rendering (React's "reset state when an input
+  // changes" pattern), not in an effect: an effect would render once with the
+  // new filter and the old selection, briefly showing a bulk toolbar count for
+  // rows the caller can no longer see.
+  const [prevDeps, setPrevDeps] = useState(resetDeps);
+  if (prevDeps.length !== resetDeps.length || resetDeps.some((d, i) => !Object.is(d, prevDeps[i]))) {
+    setPrevDeps(resetDeps);
     setSelected(new Set());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, resetDeps);
+  }
 
   function toggleRow(id: string) {
     setSelected((prev) => {

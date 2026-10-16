@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -35,11 +36,18 @@ type Service struct {
 	// baked into the api image at build time (see backend/Dockerfile) --
 	// config.MigrationsPath.
 	migrationsPath string
-	tenantRepo     *repository.TenantRepository
+	// initPath is db/init -- the role scripts -- which sits next to db/migrations in the
+	// repository and in the api image (backend/Dockerfile bakes in both).
+	initPath   string
+	tenantRepo *repository.TenantRepository
 }
 
 func NewService(migrationsPath string) *Service {
-	return &Service{migrationsPath: migrationsPath, tenantRepo: repository.NewTenantRepository()}
+	return &Service{
+		migrationsPath: migrationsPath,
+		initPath:       filepath.Join(filepath.Dir(migrationsPath), "init"),
+		tenantRepo:     repository.NewTenantRepository(),
+	}
 }
 
 // TestConnection is the Settings panel's "Test Connection" button: just
@@ -116,16 +124,16 @@ func (s *Service) clearSeedData(ctx context.Context, target TargetConfig) error 
 	return nil
 }
 
-// SetupRoles hand-ports db/init/kuruops_app_role.sql and
-// kuruops_worker_role.sql into Go: same statements, same idempotent
-// "CREATE ROLE may already exist, ignore that specific error" pattern
-// those files document, since ALTER ROLE ... PASSWORD (unlike ordinary
-// DML) doesn't accept a bind parameter in Postgres' grammar -- the
-// password has to be spliced into the statement text, same as those .sql
-// files rely on psql's client-side :'var' substitution to do. This is only
-// safe because appPassword/workerPassword are always our own
-// crypto/rand-generated, base64url-alphabet tokens (see generatePassword)
-// -- never user input -- so there's nothing to escape.
+// SetupRoles creates the kuruops_app and kuruops_worker roles on target and grants them
+// what db/init/kuruops_app_role.sql and kuruops_worker_role.sql grant -- by running those
+// very scripts (see ParseRoleScript), not a copy of them. A "create role" for a role that
+// already exists is not an error (the scripts are idempotent by design); any other failure
+// is.
+//
+// The passwords are spliced into ALTER ROLE ... PASSWORD as literals, because Postgres'
+// grammar takes no bind parameter there. That is safe because appPassword/workerPassword
+// are always our own crypto/rand-generated tokens (see generatePassword), never user
+// input; ParseRoleScript still quotes them as literals.
 func (s *Service) SetupRoles(ctx context.Context, target TargetConfig, appPassword, workerPassword string) error {
 	conn, err := pgx.Connect(ctx, target.DSN())
 	if err != nil {
@@ -133,54 +141,38 @@ func (s *Service) SetupRoles(ctx context.Context, target TargetConfig, appPasswo
 	}
 	defer conn.Close(ctx)
 
-	if err := createRoleIfNotExists(ctx, conn, "kuruops_app",
-		"with login nosuperuser nocreatedb nocreaterole nobypassrls"); err != nil {
-		return err
-	}
-	appStatements := []string{
-		fmt.Sprintf(`alter role kuruops_app with password '%s'`, appPassword),
-		`grant usage on schema public to kuruops_app`,
-		`grant select, insert, update, delete on all tables in schema public to kuruops_app`,
-		`grant usage, select on all sequences in schema public to kuruops_app`,
-		`alter default privileges in schema public grant select, insert, update, delete on tables to kuruops_app`,
-		`alter default privileges in schema public grant usage, select on sequences to kuruops_app`,
-	}
-	for _, stmt := range appStatements {
-		if _, err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("configure kuruops_app: %w", err)
+	// The app role first: the worker script grants it SELECT on the materialized views.
+	for _, script := range []struct {
+		file string
+		vars map[string]string
+	}{
+		{"kuruops_app_role.sql", map[string]string{"app_password": appPassword}},
+		{"kuruops_worker_role.sql", map[string]string{"worker_password": workerPassword}},
+	} {
+		raw, err := os.ReadFile(filepath.Join(s.initPath, script.file))
+		if err != nil {
+			return fmt.Errorf("read role script: %w", err)
+		}
+		stmts, err := ParseRoleScript(string(raw), script.vars)
+		if err != nil {
+			return fmt.Errorf("%s: %w", script.file, err)
+		}
+		for _, stmt := range stmts {
+			_, err := conn.Exec(ctx, stmt)
+			if err == nil {
+				continue
+			}
+			if isCreateRole(stmt) && isDuplicateObject(err) {
+				continue
+			}
+			return fmt.Errorf("%s: %w", script.file, err)
 		}
 	}
-
-	if err := createRoleIfNotExists(ctx, conn, "kuruops_worker",
-		"with login nosuperuser nocreatedb nocreaterole bypassrls"); err != nil {
-		return err
-	}
-	workerStatements := []string{
-		fmt.Sprintf(`alter role kuruops_worker with password '%s'`, workerPassword),
-		`grant usage on schema public to kuruops_worker`,
-		`grant select on all tables in schema public to kuruops_worker`,
-		`alter default privileges in schema public grant select on tables to kuruops_worker`,
-		`grant update (sla_breached, updated_at) on incidents to kuruops_worker`,
-		`grant update (escalated_at) on alerts to kuruops_worker`,
-		`alter materialized view mv_alert_daily_stats owner to kuruops_worker`,
-		`alter materialized view mv_incident_kpis owner to kuruops_worker`,
-		`grant select on mv_alert_daily_stats, mv_incident_kpis to kuruops_app`,
-	}
-	for _, stmt := range workerStatements {
-		if _, err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("configure kuruops_worker: %w", err)
-		}
-	}
-
 	return nil
 }
 
-func createRoleIfNotExists(ctx context.Context, conn *pgx.Conn, role, opts string) error {
-	_, err := conn.Exec(ctx, fmt.Sprintf(`create role %s %s`, role, opts))
-	if err != nil && !isDuplicateObject(err) {
-		return fmt.Errorf("create role %s: %w", role, err)
-	}
-	return nil
+func isCreateRole(stmt string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(stmt)), "create role")
 }
 
 func isDuplicateObject(err error) bool {

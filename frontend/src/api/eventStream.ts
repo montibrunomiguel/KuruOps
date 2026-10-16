@@ -6,7 +6,26 @@ export interface StreamEvent {
   data: unknown;
 }
 
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+// A connection must be OPEN (the server answered 200) and stay up this long before
+// it counts as healthy and resets the backoff. One that opens and is cut right
+// away (a proxy that accepts and then drops, an api that crashes on connect) is
+// still a failure, or the client would hammer it once a second forever. Time spent
+// waiting for an answer that never comes right does not count either: a proxy that
+// takes 10s to return a 502 is not a healthy connection.
+const HEALTHY_CONNECTION_MS = 10000;
+
+// reconnectDelay is how long to wait before the next attempt after `failures`
+// consecutive failed connections: exponential from 1s, capped at 30s, with the
+// upper half jittered. Without the jitter every open tab retries on the same
+// tick after an api restart and the whole fleet reconnects as one herd; without
+// the exponent a down backend is retried every few seconds for as long as the
+// tab stays open.
+export function reconnectDelay(failures: number, random: () => number = Math.random): number {
+  const exp = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** Math.max(0, failures));
+  return Math.round(exp / 2 + (exp / 2) * random());
+}
 
 // useEventStream opens a live connection to GET /api/v1/events/stream and
 // calls onEvent for every event the backend pushes (see
@@ -22,13 +41,19 @@ const RECONNECT_DELAY_MS = 3000;
 // codebase already avoids elsewhere (see SAMLAuthService.ServeACS's doc
 // comment on the backend), so it's not used here either.
 //
-// Reconnects with a fixed delay on any error or clean close -- a dropped
-// connection (tab backgrounded, brief network blip, api container restart)
-// shouldn't permanently stop live updates for the rest of the session.
+// Reconnects on any error or clean close -- a dropped connection (tab
+// backgrounded, brief network blip, api container restart) shouldn't
+// permanently stop live updates for the rest of the session -- with
+// exponential backoff and jitter (see reconnectDelay) so a backend that is
+// down is not hammered and a restart does not bring every tab back at once.
 export function useEventStream(onEvent: (event: StreamEvent) => void) {
   const { token, isAuthenticated } = useAuth();
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  // Kept current from an effect, not during render: the stream below is opened
+  // once per token and must call the latest handler without reconnecting.
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  });
 
   useEffect(() => {
     if (!isAuthenticated || !token) return;
@@ -36,15 +61,18 @@ export function useEventStream(onEvent: (event: StreamEvent) => void) {
     let stopped = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let abortController: AbortController | undefined;
+    let failures = 0;
 
     async function connect() {
       abortController = new AbortController();
+      let connectedAt: number | null = null;
       try {
         const res = await fetch("/api/v1/events/stream", {
           headers: { Authorization: `Bearer ${token}` },
           signal: abortController.signal,
         });
         if (!res.ok || !res.body) throw new Error("event stream request failed");
+        connectedAt = Date.now();
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -71,7 +99,8 @@ export function useEventStream(onEvent: (event: StreamEvent) => void) {
         // `stopped` first, so a reconnect never fires after cleanup.
       }
       if (!stopped) {
-        reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+        failures = connectedAt !== null && Date.now() - connectedAt >= HEALTHY_CONNECTION_MS ? 0 : failures + 1;
+        reconnectTimer = setTimeout(connect, reconnectDelay(failures - 1));
       }
     }
 

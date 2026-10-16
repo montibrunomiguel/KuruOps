@@ -11,6 +11,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/kuruops/kuruops/internal/authn"
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/circuitbreaker"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
@@ -30,7 +32,6 @@ import (
 	"github.com/kuruops/kuruops/internal/httpserver/middleware"
 	"github.com/kuruops/kuruops/internal/llmclient"
 	"github.com/kuruops/kuruops/internal/mailer"
-	"github.com/kuruops/kuruops/internal/mcpclient"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
 	"github.com/kuruops/kuruops/internal/secrets"
@@ -39,14 +40,34 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := runMain(ctx, os.Stdout)
+	stop()
+	os.Exit(code)
+}
 
-	cfg, err := config.Load(logger)
+// runMain is main without the process: it loads and validates the configuration, runs the
+// command until ctx is cancelled, and returns the exit status instead of exiting -- so a
+// test can drive the whole startup path (including the refusal to start) in-process.
+func runMain(ctx context.Context, stdout io.Writer) int {
+	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+
+	cfg, err := config.LoadAndValidate(logger)
 	if err != nil {
-		logger.Error("config load failed", "error", err)
-		os.Exit(1)
+		logger.Error("startup refused", "error", err)
+		return 1
 	}
+	if err := run(ctx, cfg, logger); err != nil {
+		logger.Error("api stopped", "error", err)
+		return 1
+	}
+	return 0
+}
 
+// run wires the process and blocks until ctx is cancelled, then shuts the server down.
+// It returns an error only for a failure to start or serve. It exists apart from main so
+// a test can start the real server against a test database and stop it again.
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	// AUTH_MODE has three values, two independent concerns:
 	//   - "jwt" (default): real JWT_PRIVATE_KEY_PATH/JWT_PUBLIC_KEY_PATH required, JWTAuth enforced.
 	//   - "dev": no key files needed (a keypair is generated once and persisted
@@ -65,22 +86,20 @@ func main() {
 	allowEphemeralKeys := cfg.AuthMode == "dev" || cfg.AuthMode == "dev-headers"
 	useDevHeaderAuth := cfg.AuthMode == "dev-headers"
 	if useDevHeaderAuth {
-		logger.Warn("AUTH_MODE=dev-headers: /api/v1 trusts X-Tenant-ID/X-User-ID headers verbatim and ignores bearer tokens, do not run this outside local development")
+		// cfg.Validate already refused to get here without
+		// ALLOW_INSECURE_DEV_AUTH=true; the warning stays so the mode is
+		// impossible to miss in the logs of an instance that chose it.
+		logger.Warn("AUTH_MODE=dev-headers: /api/v1 trusts X-Tenant-ID/X-User-ID/X-Is-Admin headers verbatim and ignores bearer tokens, do not run this outside local development")
 	}
 
 	privateKey, publicKey, err := loadOrGenerateJWTKeys(cfg, allowEphemeralKeys, logger)
 	if err != nil {
-		logger.Error("jwt key setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("jwt key setup: %w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-api", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
-		logger.Error("telemetry setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("telemetry setup: %w", err)
 	}
 
 	// Fail fast on an LLM/MCP provider that has gone bad, instead of making
@@ -91,8 +110,13 @@ func main() {
 		Threshold: cfg.ExternalCallBreakerThreshold,
 		Cooldown:  cfg.ExternalCallBreakerCooldown,
 	}
-	llmclient.Configure(breakerCfg)
-	mcpclient.Configure(breakerCfg)
+	// Owned by this process and handed to the analysis service: the retry policy
+	// and the per-host breakers every provider call shares.
+	llmFactory := llmclient.NewFactory(llmclient.Options{
+		Retry:   llmclient.RetryPolicy{MaxAttempts: cfg.LLMCallMaxAttempts, BaseDelay: cfg.LLMCallRetryBaseDelay},
+		Breaker: breakerCfg,
+	})
+	mcpBreakers := circuitbreaker.NewRegistry(breakerCfg)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -103,8 +127,7 @@ func main() {
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("database connection: %w", err)
 	}
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
@@ -162,8 +185,7 @@ func main() {
 	// tenant's LLM provider API key.
 	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
 	if err != nil {
-		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
-		os.Exit(1)
+		return fmt.Errorf("secrets backend %q setup: %w", cfg.SecretsBackend, err)
 	}
 	llmProviderRepo := repository.NewLLMProviderRepository()
 
@@ -174,6 +196,7 @@ func main() {
 	mcpServerService := service.NewMCPServerService(pool, mcpServerRepo, secretStore, adminAuditRepo)
 	aiToolCallRepo := repository.NewAIToolCallRepository()
 	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
+	mcpToolService.SetCircuitBreakers(mcpBreakers)
 	mcpServerHandlers := handlers.NewMCPServerHandlers(mcpServerService, mcpToolService)
 
 	auditExportService := service.NewAuditExportService(pool, repository.NewAuditRepository())
@@ -186,7 +209,7 @@ func main() {
 	dbMigrationHandlers := handlers.NewDatabaseMigrationHandlers(dbMigrationService, pool)
 
 	aiAnalysisRunRepo := repository.NewAIAnalysisRunRepository()
-	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo)
+	aiAnalysisService := service.NewAIAnalysisService(pool, llmProviderRepo, alertRepo, incidentRepo, secretStore, mcpServerRepo, mcpToolService, aiAnalysisRunRepo, aiToolCallRepo, service.WithLLMClientFactory(llmFactory))
 	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
 	// StartAlertAnalysis/StartIncidentAnalysis run the actual LLM call in
 	// their own goroutine (see AIAnalysisService's doc comment) -- this is
@@ -223,15 +246,20 @@ func main() {
 	llmProviderService := service.NewLLMProviderService(pool, llmProviderRepo, secretStore, adminAuditRepo)
 	llmProviderHandlers := handlers.NewLLMProviderHandlers(llmProviderService)
 
-	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
-		logger.Error("upload dir setup failed", "dir", cfg.UploadDir, "error", err)
-		os.Exit(1)
+	// With UPLOAD_BACKEND=database nothing is written to local disk (and on Kubernetes the
+	// root filesystem is read-only and no volume is mounted), so the directory is only
+	// created -- and only required to be creatable -- for the local backend.
+	if cfg.UploadBackend != "database" {
+		if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
+			return fmt.Errorf("upload dir %q setup: %w", cfg.UploadDir, err)
+		}
 	}
 	oauthStateService := service.NewOAuthStateService(pool, repository.NewOAuthStateRepository())
 
 	storageConfigRepo := repository.NewStorageConfigRepository()
 	storageConfigService := service.NewStorageConfigService(pool, storageConfigRepo, secretStore, cfg.UploadDir,
 		oauthStateService, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.AppBaseURL+"/auth/oauth/gdrive/callback", adminAuditRepo)
+	storageConfigService.SetUploadBackend(cfg.UploadBackend)
 	storageConfigHandlers := handlers.NewStorageConfigHandlers(storageConfigService)
 	uploadKeyRepo := repository.NewUploadKeyRepository()
 	uploadKeyService := service.NewUploadKeyService(pool, uploadKeyRepo)
@@ -338,21 +366,26 @@ func main() {
 		Tracer:                       tracer,
 	})
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	srv := httpserver.NewServer(cfg.HTTPAddr, router, httpserver.Timeouts{
+		ReadHeader: 5 * time.Second,
+		Read:       cfg.HTTPReadTimeout,
+		Write:      cfg.HTTPWriteTimeout,
+		Idle:       cfg.HTTPIdleTimeout,
+	})
 
+	serveErr := make(chan error, 1)
 	safego.Go("api.ListenAndServe", func() {
-		logger.Info("api listening", "addr", cfg.HTTPAddr)
+		logger.Info("api listening", "addr", cfg.HTTPAddr, "build", buildinfo.Build)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
+			serveErr <- err
 		}
 	})
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		return fmt.Errorf("server failed: %w", err)
+	}
 	logger.Info("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
@@ -360,6 +393,7 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+	return nil
 }
 
 // loadOrGenerateJWTKeys loads the configured RSA keypair, or — only when

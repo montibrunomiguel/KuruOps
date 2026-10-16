@@ -120,6 +120,7 @@ tasks:
     cmds:
       - go build -o bin/api ./cmd/api
       - go build -o bin/ingest ./cmd/ingest
+      - go build -o bin/analyzer ./cmd/analyzer
       - go build -o bin/worker ./cmd/worker
 
   backend:vet:
@@ -295,7 +296,7 @@ tasks:
     cmds:
       - npm audit --audit-level=high
 
-  # ---- Deploy (Docker Compose: postgres + api + ingest + worker + frontend) ----
+  # ---- Deploy (Docker Compose: postgres + api + ingest + analyzer + worker + frontend) ----
 
   deploy:up:
     desc: Build images and bring up the full stack locally (backend + frontend, no hot reload)
@@ -305,10 +306,37 @@ tasks:
       - task: db:roles
       # --wait uses the healthchecks in docker-compose.yml; worker has no
       # HTTP endpoint to probe, so --wait just confirms it's running.
-      - docker compose up -d --wait --wait-timeout 90 --build api ingest worker frontend
+      - docker compose up -d --wait --wait-timeout 90 --build api ingest analyzer worker frontend
       - 'echo "web UI:  http://localhost:3000"'
       - 'echo "api:     http://localhost:8080"'
       - 'echo "ingest:  http://localhost:8081"'
+
+  # ---- Production-like compose deploy (docker-compose.secure.yml) ----------------------
+  # No default credentials, AUTH_MODE=jwt with a real keypair, Postgres not published.
+  # See the header of docker-compose.secure.yml.
+
+  secrets:gen:
+    desc: Generate .env.secure (random passwords + encryption key) and .secrets/ (JWT keypair) for the secure deploy
+    cmds:
+      - bash scripts/gen-secrets.sh
+
+  deploy:secure:up:
+    desc: Build and bring up the stack with docker-compose.secure.yml (run `task secrets:gen` first)
+    dotenv: [".env.secure"]
+    cmds:
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml up -d --wait --wait-timeout 90 postgres
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml run --rm migrate up
+      # The role passwords come from .env.secure, loaded into this task's environment.
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml exec -T postgres psql -U postgres -d kuruops -v app_password="$KURUOPS_APP_PASSWORD" -f - < db/init/kuruops_app_role.sql
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml exec -T postgres psql -U postgres -d kuruops -v worker_password="$KURUOPS_WORKER_PASSWORD" -f - < db/init/kuruops_worker_role.sql
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml up -d --wait --wait-timeout 120 --build api ingest analyzer worker frontend
+      - 'echo "web UI:   http://localhost:3000"'
+      - 'echo "webhooks: http://localhost:8081/hooks"'
+
+  deploy:secure:down:
+    desc: Stop the secure stack (keeps the Postgres data volume)
+    cmds:
+      - docker compose --env-file .env.secure -f docker-compose.yml -f docker-compose.secure.yml down
 
   deploy:down:
     desc: Stop the full stack (keeps the Postgres data volume)

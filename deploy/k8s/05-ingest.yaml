@@ -7,6 +7,10 @@
 # pod restart no longer means a brief window of dropped/refused inbound
 # webhooks); bump further once you have real throughput numbers to size
 # against (see docs/OPERATIONS.md).
+#
+# It receives and records only: each alert is stored with a job row owing it an
+# automatic analysis, and 06a-analyzer.yaml does the LLM work. So this pod needs no
+# SECRETS_ENCRYPTION_KEY and no outbound route to a model provider.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -51,11 +55,6 @@ spec:
                 secretKeyRef:
                   name: kuruops-secrets
                   key: DATABASE_URL_APP
-            - name: SECRETS_ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: kuruops-secrets
-                  key: SECRETS_ENCRYPTION_KEY
           # readinessProbe is DB-dependent (/healthz), livenessProbe
           # deliberately isn't (/livez) -- see 04-api.yaml's comment for why.
           readinessProbe:

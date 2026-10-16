@@ -2,36 +2,36 @@
 
 # KuruOps on Kubernetes
 
-Basic manifests to run the real stack (api, ingest, worker, frontend) on a
-cluster. Deliberately minimal: no Helm chart, no HorizontalPodAutoscaler, no
-ingress controller or cert-manager integration. This gets a working
-deployment onto a cluster; layering ingress/TLS/autoscaling on top is left
-to whatever your organization already uses for that, rather than this
-project picking one for you.
+Manifests to run the real stack (api, ingest, analyzer, worker, frontend) on a cluster. No Helm
+chart: plain YAML you can read, diff and apply. It is exercised end to end -- migrations, roles,
+all five images, NetworkPolicy, PodDisruptionBudgets, HorizontalPodAutoscalers, an Ingress with TLS,
+and the webhook → ingest → analyzer → model pipeline across pods -- on a disposable kind cluster by
+`scripts/k8s-e2e.sh`, which CI runs on every change.
 
 ## What's NOT included
 
-- **Postgres.** Every manifest here assumes an existing, reachable Postgres
-  16 instance (a managed RDS/Cloud SQL instance, a StatefulSet you manage
-  separately, etc.) — the same "customer-supplied database" assumption the
-  app's own external-DB-migration Settings feature already makes. The
-  `kuruops_app`/`kuruops_worker` roles and RLS policies must already exist
-  there (see `db/init/*.sql` and `db/README.md`) before pointing
-  `01-secret.example.yaml` at it.
-- **Ingress/TLS.** `frontend`'s Service is `ClusterIP` — reaching it from
-  outside the cluster (an ingress controller, a cloud LoadBalancer Service,
-  `kubectl port-forward` for a quick look) is up to you.
-- **Autoscaling.** No HorizontalPodAutoscaler — every replica count below is
-  a fixed number you set by hand. `ingest` ships at `replicas: 2` by default
-  (see its own comment): it has no local-disk dependency, and its rate
-  limiter/SSE-adjacent infra are already Postgres-backed for exactly this.
-  `api` ships at `replicas: 1` — its `uploads` PVC is `ReadWriteOnce`, so
-  going beyond 1 replica needs either a ReadWriteMany StorageClass or
-  switching Settings -> Storage to the S3/GCS backend first (see
-  `04-api.yaml`'s comment for the exact steps). `worker` stays at 1 by
-  design (its sweep jobs use a Postgres advisory lock specifically so
-  running more than one replica is safe but not currently useful — only one
-  would ever be doing work at a time).
+- **Postgres.** Every manifest here assumes an existing, reachable Postgres 16 instance (a managed
+  multi-AZ RDS/Cloud SQL instance is the best choice, or the optional 3-instance CloudNativePG
+  cluster in [`optional/`](optional/README.md), which has automatic failover). The
+  `kuruops_app`/`kuruops_worker` roles and RLS policies must already exist there (see
+  `db/init/*.sql` and `db/README.md`) before pointing `01-secret.example.yaml` at it. Postgres is the
+  one component these manifests do not make highly available themselves.
+- **A certificate or DNS.** `12-ingress.yaml` is the public entry point (hooks → ingest, everything
+  else → frontend, TLS terminated there), but it needs an ingress controller in the cluster
+  (ingress-nginx assumed), your hostname in place of `kuruops.example.com`, and a TLS Secret named
+  `kuruops-tls` -- issued by cert-manager (an example issuer is in
+  [`optional/cert-manager-issuer.yaml`](optional/cert-manager-issuer.yaml)) or created by you. Set
+  `TRUSTED_PROXY_CIDR` on the frontend (`07-frontend.yaml`) to the controller's pod range so the login
+  rate limit sees real client addresses.
+- **Autoscaling is metrics-dependent.** `11-availability.yaml` adds HorizontalPodAutoscalers for
+  `api` (2–6), `ingest` (2–6) and `frontend` (2–4) and PodDisruptionBudgets for every Deployment; the
+  HPAs need metrics-server in the cluster, and without one they do nothing and the replica counts
+  in each manifest stand. `api` can scale because attachments live in Postgres
+  (`UPLOAD_BACKEND=database` in `02-configmap.yaml`), not on a volume; if you instead keep a
+  ReadWriteOnce volume with `UPLOAD_BACKEND=local`, the api is back to one replica. `analyzer` runs two
+  replicas that share the analysis queue (size them against the LLM provider's rate limit, not CPU);
+  `worker` runs two as a hot standby (a Postgres advisory lock per sweep tick lets one run it and the
+  other skip), not for throughput.
 - **Secrets management.** `01-secret.example.yaml` is a template with
   placeholder values, not something to `kubectl apply` and forget — see its
   own comments.
@@ -53,6 +53,7 @@ kubectl wait --for=condition=complete --timeout=120s -n kuruops job/kuruops-migr
 kubectl apply -f deploy/k8s/04-api.yaml
 kubectl apply -f deploy/k8s/05-ingest.yaml
 kubectl apply -f deploy/k8s/06-worker.yaml
+kubectl apply -f deploy/k8s/06a-analyzer.yaml
 kubectl apply -f deploy/k8s/07-frontend.yaml
 
 # Optional but strongly recommended before real data flows in -- see
@@ -65,20 +66,54 @@ kubectl apply -f deploy/k8s/08-backup-cronjob.yaml
 # Alertmanager receiver ships as a placeholder null route until you edit
 # 09-monitoring.yaml's alertmanager-config to point at a real destination.
 kubectl apply -f deploy/k8s/09-monitoring.yaml
+
+# Recommended: deny all in-namespace ingress by default and re-open only the
+# paths the stack uses (frontend and webhook ingest from outside, the API only
+# from the frontend, metrics only from Prometheus). Needs a CNI that enforces
+# NetworkPolicy (Calico, Cilium, ...) -- on one that does not it is silently
+# inert, so verify with the throwaway-pod check in 10-networkpolicy.yaml's header.
+kubectl apply -f deploy/k8s/10-networkpolicy.yaml
+
+# PodDisruptionBudgets (node drains never take the last ingest/frontend pod) and
+# HorizontalPodAutoscalers for ingest and frontend. HPAs need metrics-server.
+kubectl apply -f deploy/k8s/11-availability.yaml
+
+# The public entry point. Needs an ingress controller, your hostname, and the kuruops-tls
+# Secret (see "What's NOT included" above and the header of 12-ingress.yaml).
+kubectl apply -f deploy/k8s/12-ingress.yaml
 ```
+
+The frontend's nginx finds the api through `API_UPSTREAM` (set in
+`07-frontend.yaml` to the Service's FQDN) and resolves it on every request, so a
+recreated api pod never leaves the frontend dialling a dead address. Change
+`cluster.local` in that value if your cluster uses another domain. All four
+backend images print and export the build they were compiled from
+(`kuruops_build_info`); `KuruOpsBuildSkew` in `09-monitoring.yaml` fires when more
+than one build is live for 20 minutes, i.e. a partial deploy.
 
 Re-running the whole set after a new release is safe: the migration Job is
 idempotent (golang-migrate only applies versions it hasn't recorded yet, see
 `03-migration-job.yaml`'s comment), and every Deployment/Service/ConfigMap
 apply is a plain declarative update. Bump the `image:` tag in
-`04-api.yaml`/`05-ingest.yaml`/`06-worker.yaml`/`07-frontend.yaml` to
+`04-api.yaml`/`05-ingest.yaml`/`06-worker.yaml`/`06a-analyzer.yaml`/`07-frontend.yaml` to
 whatever your build pushed (`:latest` here is a placeholder for trying the
 manifests out, not a real release-pinning strategy).
+
+## Testing these manifests
+
+`bash scripts/k8s-e2e.sh` deploys everything here to a throwaway kind cluster (Calico, so
+NetworkPolicy is really enforced) and checks it: every Deployment becomes ready, the repository's
+smoke test passes through the frontend, a webhook reaches the analyzer on another pod and gets
+analysed, an attachment uploaded through one api replica is served by the other, the event stream
+reaches a client through the Ingress unbuffered, a stray pod cannot reach the api, and the HPA
+reads real metrics. It needs docker, kind, kubectl and openssl, and takes about ten minutes. The
+alert rules in `09-monitoring.yaml` are linted and unit-tested by
+`bash scripts/check-prometheus-rules.sh`.
 
 ## Images
 
 Built the same way `docker-compose.yml` builds them locally
-(`backend/Dockerfile`'s `api`/`ingest`/`worker` targets,
+(`backend/Dockerfile`'s `api`/`ingest`/`analyzer`/`worker` targets,
 `frontend/Dockerfile`) — push them to whatever registry your cluster can
 pull from and update the `image:` fields accordingly; these manifests
 reference the same untagged local names `docker compose build` produces

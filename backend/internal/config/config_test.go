@@ -121,3 +121,107 @@ func TestLoad_RateLimitOverridesFromEnv(t *testing.T) {
 	assert.Equal(t, 5, cfg.LoginRateLimitPerMinute)
 	assert.Equal(t, 120, cfg.WebhookRateLimitPerMinute)
 }
+
+func TestLoad_HTTPServerTimeoutDefaultsAndOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
+	for _, k := range []string{"HTTP_READ_TIMEOUT", "HTTP_WRITE_TIMEOUT", "HTTP_IDLE_TIMEOUT"} {
+		t.Setenv(k, "")
+	}
+
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2*time.Minute, cfg.HTTPReadTimeout)
+	assert.Equal(t, 90*time.Second, cfg.HTTPWriteTimeout)
+	assert.Equal(t, 120*time.Second, cfg.HTTPIdleTimeout)
+	assert.Greater(t, cfg.HTTPWriteTimeout, 30*time.Second,
+		"the write timeout must outlive the default 30s request timeout, or the 504 it writes is cut off")
+
+	t.Setenv("HTTP_WRITE_TIMEOUT", "45s")
+	cfg, err = config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 45*time.Second, cfg.HTTPWriteTimeout)
+}
+
+func TestConfigValidate(t *testing.T) {
+	good := "postgres://kuruops_app:s3cure-Rand0m-pw@db:5432/kuruops"
+	weak := "postgres://kuruops_app:kuruops_app@db:5432/kuruops"
+
+	tests := []struct {
+		name    string
+		cfg     config.Config
+		wantErr string
+	}{
+		{"jwt with a strong password", config.Config{AuthMode: "jwt", DatabaseURL: good}, ""},
+		{"jwt refuses the shipped app password", config.Config{AuthMode: "jwt", DatabaseURL: weak}, "well-known database password"},
+		{"jwt refuses the shipped worker password", config.Config{AuthMode: "jwt", DatabaseURL: "postgres://kuruops_worker:kuruops_worker@db/kuruops"}, "well-known database password"},
+		{"jwt refuses postgres/postgres", config.Config{AuthMode: "jwt", DatabaseURL: "postgres://postgres:postgres@db/kuruops"}, "well-known database password"},
+		{"the comparison ignores case", config.Config{AuthMode: "jwt", DatabaseURL: "postgres://u:ChangeMe@db/kuruops"}, "well-known database password"},
+		{"jwt refuses an empty password", config.Config{AuthMode: "jwt", DatabaseURL: "postgres://kuruops_app@db/kuruops"}, "(empty)"},
+		{"jwt accepts a weak password when explicitly allowed", config.Config{AuthMode: "jwt", DatabaseURL: weak, AllowDefaultCredentials: true}, ""},
+		{"dev mode is exempt -- docker-compose defaults are for it", config.Config{AuthMode: "dev", DatabaseURL: weak}, ""},
+		{"dev-headers needs the explicit acknowledgement", config.Config{AuthMode: "dev-headers", DatabaseURL: weak}, "ALLOW_INSECURE_DEV_AUTH=true"},
+		{"dev-headers starts once acknowledged", config.Config{AuthMode: "dev-headers", DatabaseURL: weak, AllowInsecureDevAuth: true}, ""},
+		{"the acknowledgement alone does not enable anything else", config.Config{AuthMode: "jwt", DatabaseURL: weak, AllowInsecureDevAuth: true}, "well-known database password"},
+		{"a typo'd mode is an error, not a silent jwt", config.Config{AuthMode: "dev_headers", DatabaseURL: good}, "unknown AUTH_MODE"},
+		{"database uploads are accepted", config.Config{AuthMode: "jwt", DatabaseURL: good, UploadBackend: "database"}, ""},
+		{"an unknown upload backend is an error", config.Config{AuthMode: "jwt", DatabaseURL: good, UploadBackend: "s3"}, "unknown UPLOAD_BACKEND"},
+		{"an unparseable url is left for the pool to report", config.Config{AuthMode: "jwt", DatabaseURL: "://not a url"}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+
+	t.Run("the error never echoes a non-default password", func(t *testing.T) {
+		// Only well-known passwords are quoted back; a strong one that happens
+		// to share a URL with a weak username must not end up in a log line.
+		err := config.Config{AuthMode: "dev-headers", DatabaseURL: good}.Validate()
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "s3cure-Rand0m-pw")
+	})
+}
+
+func TestLoad_InsecureOverridesAreExactlyTrue(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
+	for _, v := range []string{"1", "yes", "TRUE", "True"} {
+		t.Setenv("ALLOW_INSECURE_DEV_AUTH", v)
+		t.Setenv("ALLOW_DEFAULT_CREDENTIALS", v)
+		cfg, err := config.Load(nil)
+		require.NoError(t, err)
+		assert.False(t, cfg.AllowInsecureDevAuth, "%q must not count as opting in to an insecure mode", v)
+		assert.False(t, cfg.AllowDefaultCredentials, "%q must not count as opting in", v)
+	}
+	t.Setenv("ALLOW_INSECURE_DEV_AUTH", "true")
+	t.Setenv("ALLOW_DEFAULT_CREDENTIALS", "true")
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.True(t, cfg.AllowInsecureDevAuth)
+	assert.True(t, cfg.AllowDefaultCredentials)
+}
+
+func TestLoad_LLMRetryDefaultsAndOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("DATABASE_URL", "postgres://localhost/kuruops")
+	t.Setenv("LLM_CALL_MAX_ATTEMPTS", "")
+	t.Setenv("LLM_CALL_RETRY_BASE_DELAY", "")
+
+	cfg, err := config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 3, cfg.LLMCallMaxAttempts, "two retries by default")
+	assert.Equal(t, time.Second, cfg.LLMCallRetryBaseDelay)
+
+	t.Setenv("LLM_CALL_MAX_ATTEMPTS", "1")
+	t.Setenv("LLM_CALL_RETRY_BASE_DELAY", "250ms")
+	cfg, err = config.Load(nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, cfg.LLMCallMaxAttempts, "1 disables retrying")
+	assert.Equal(t, 250*time.Millisecond, cfg.LLMCallRetryBaseDelay)
+}

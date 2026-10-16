@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -37,18 +37,21 @@ function LDAPPanel() {
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
   const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
-  useEffect(() => {
-    if (existing) {
-      setHost(existing.host);
-      setPort(existing.port);
-      setUseTls(existing.useTls);
-      setBindDn(existing.bindDn);
-      setUserBaseDn(existing.userBaseDn);
-      setUserFilter(existing.userFilter);
-      setGroupBaseDn(existing.groupBaseDn);
-      setGroupAttribute(existing.groupAttribute);
-    }
-  }, [existing]);
+  // Fill the form when the saved settings arrive (or change). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom0, setHydratedFrom0] = useState<typeof existing>(null);
+  if (existing && existing !== hydratedFrom0) {
+    setHydratedFrom0(existing);
+    setHost(existing.host);
+    setPort(existing.port);
+    setUseTls(existing.useTls);
+    setBindDn(existing.bindDn);
+    setUserBaseDn(existing.userBaseDn);
+    setUserFilter(existing.userFilter);
+    setGroupBaseDn(existing.groupBaseDn);
+    setGroupAttribute(existing.groupAttribute);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -196,20 +199,23 @@ function SAMLPanel() {
   // made delete look like it does nothing (see OnCallScheduleDetailPage/TagsPanel).
   const { confirming: confirmingRemove, confirm: confirmRemove, cancel: cancelRemove } = useConfirm();
 
-  useEffect(() => {
-    if (existing) {
-      if (existing.idpMetadataUrl) {
-        setMetadataMode("url");
-        setIdpMetadataUrl(existing.idpMetadataUrl);
-      } else if (existing.idpMetadataXml) {
-        setMetadataMode("xml");
-        setIdpMetadataXml(existing.idpMetadataXml);
-      }
-      setSpEntityId(existing.spEntityId);
-      setAcsUrl(existing.acsUrl);
-      if (existing.groupAttribute) setGroupAttribute(existing.groupAttribute);
+  // Fill the form when the saved settings arrive (or change). Done while
+  // rendering, tracking which object it last filled from -- see useRowSelection
+  // for why this beats an effect.
+  const [hydratedFrom0, setHydratedFrom0] = useState<typeof existing>(null);
+  if (existing && existing !== hydratedFrom0) {
+    setHydratedFrom0(existing);
+    if (existing.idpMetadataUrl) {
+      setMetadataMode("url");
+      setIdpMetadataUrl(existing.idpMetadataUrl);
+    } else if (existing.idpMetadataXml) {
+      setMetadataMode("xml");
+      setIdpMetadataXml(existing.idpMetadataXml);
     }
-  }, [existing]);
+    setSpEntityId(existing.spEntityId);
+    setAcsUrl(existing.acsUrl);
+    if (existing.groupAttribute) setGroupAttribute(existing.groupAttribute);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

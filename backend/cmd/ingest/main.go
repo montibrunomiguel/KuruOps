@@ -3,21 +3,27 @@
 // scaled, rate-limited, and network-policied independently of analyst-facing
 // traffic — a burst of alerts from a source should never be able to starve
 // the dashboard.
+//
+// It only receives and records: each alert is stored together with a job row
+// owing it an automatic analysis (see AlertService.EnableAutoAnalysisQueue), and
+// cmd/analyzer does the slow, outbound LLM work. That keeps this internet-facing
+// process free of LLM, MCP and secret-store wiring and of any outbound dependency
+// on a model provider.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/kuruops/kuruops/internal/buildinfo"
 	"github.com/kuruops/kuruops/internal/config"
 	"github.com/kuruops/kuruops/internal/db"
 	"github.com/kuruops/kuruops/internal/events"
@@ -26,27 +32,41 @@ import (
 	"github.com/kuruops/kuruops/internal/ingest"
 	"github.com/kuruops/kuruops/internal/repository"
 	"github.com/kuruops/kuruops/internal/safego"
-	"github.com/kuruops/kuruops/internal/secrets"
 	"github.com/kuruops/kuruops/internal/service"
 	"github.com/kuruops/kuruops/internal/telemetry"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-
-	cfg, err := config.Load(logger)
-	if err != nil {
-		logger.Error("config load failed", "error", err)
-		os.Exit(1)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	code := runMain(ctx, os.Stdout)
+	stop()
+	os.Exit(code)
+}
 
+// runMain is main without the process: it loads and validates the configuration, runs the
+// command until ctx is cancelled, and returns the exit status instead of exiting -- so a
+// test can drive the whole startup path (including the refusal to start) in-process.
+func runMain(ctx context.Context, stdout io.Writer) int {
+	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+
+	cfg, err := config.LoadAndValidate(logger)
+	if err != nil {
+		logger.Error("startup refused", "error", err)
+		return 1
+	}
+	if err := run(ctx, cfg, logger); err != nil {
+		logger.Error("ingest stopped", "error", err)
+		return 1
+	}
+	return 0
+}
+
+// run wires the process and blocks until ctx is cancelled, then shuts the server
+// down. It returns an error only for a failure to start or serve.
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	otelShutdown, tracer, err := telemetry.Setup(ctx, "kuruops-ingest", cfg.OTelExporterOTLPEndpoint)
 	if err != nil {
-		logger.Error("telemetry setup failed", "error", err)
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -58,8 +78,7 @@ func main() {
 
 	pool, err := db.NewPool(ctx, cfg.DatabaseURL, db.PoolConfig{MaxConns: cfg.DBPoolMaxConns, MinConns: cfg.DBPoolMinConns, Tracer: tracer})
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("database connection: %w", err)
 	}
 	defer pool.Close()
 	httpserver.GetMetrics().SetPool(pool.Pool)
@@ -75,8 +94,9 @@ func main() {
 	// eventBroadcaster publishes to the same Postgres NOTIFY channel
 	// cmd/api's own Broadcaster listens on -- an alert ingested here reaches
 	// any connected browser tab (which is only ever talking to cmd/api),
-	// even though this is a different process. See internal/events'
-	// package doc comment.
+	// even though this is a different process. cmd/analyzer hears the same event
+	// and starts the new alert's analysis at once. See internal/events' package
+	// doc comment.
 	eventBroadcaster := events.NewBroadcaster(pool.Pool, logger)
 	safego.Go("ingest.eventBroadcaster", func() { eventBroadcaster.Start(ctx) })
 	alertService.EnableEventPublishing(eventBroadcaster.Publish)
@@ -87,55 +107,11 @@ func main() {
 	onCallShiftService := service.NewOnCallScheduleService(pool, repository.NewOnCallScheduleRepository(), repository.NewUserRepository(), repository.NewTenantRepository(), repository.NewAdminAuditEventRepository())
 	alertService.EnableOnCallAutoAssign(onCallShiftService)
 
-	// Auto-analysis is enabled only here too, for the same reason -- see
-	// AlertService.EnableAutoAnalysis. This duplicates a chunk of cmd/api's
-	// own AIAnalysisService wiring (secrets store, MCP tool service, LLM
-	// provider repo); each cmd/* binary constructs whatever services it
-	// needs independently (see cmd/worker's own secrets.Store setup) rather
-	// than sharing a wiring package across processes.
-	secretStore, err := secrets.NewFromConfig(ctx, cfg, pool)
-	if err != nil {
-		logger.Error("secrets backend setup failed", "backend", cfg.SecretsBackend, "error", err)
-		os.Exit(1)
-	}
-	mcpServerRepo := repository.NewMCPServerRepository()
-	aiToolCallRepo := repository.NewAIToolCallRepository()
-	mcpToolService := service.NewMCPToolService(pool, mcpServerRepo, aiToolCallRepo, secretStore)
-	aiAnalysisService := service.NewAIAnalysisService(
-		pool, repository.NewLLMProviderRepository(), alertRepo, repository.NewIncidentRepository(), secretStore,
-		mcpServerRepo, mcpToolService, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
-	)
-	mcpToolService.SetOnToolCallResolved(aiAnalysisService.ResumeAnalysisRun)
-	alertService.EnableAutoAnalysis(func(tenantID, alertID uuid.UUID) {
-		// actorID nil: no human triggered this, see StartAlertAnalysis's doc
-		// comment. allowedTags nil: the tag-visibility guard is for a
-		// specific analyst's view: this is the system analyzing an alert
-		// the instant it exists, before any access-scoping question applies.
-		// StartAlertAnalysis itself only blocks for the quick synchronous
-		// validation (alert exists, LLM provider configured, nothing else
-		// already running) -- the actual LLM call already runs in its own
-		// goroutine, so this closure (itself already run via `go
-		// s.autoAnalyze(...)`, see AlertService.Ingest) returns quickly
-		// either way.
-		if err := aiAnalysisService.StartAlertAnalysis(context.Background(), tenantID, alertID, nil, nil); err != nil {
-			// "no LLM provider configured" is the expected, common case for
-			// a tenant that hasn't set up Settings -> AI Integration -- not
-			// worth error-level noise on every single ingested alert.
-			if strings.Contains(err.Error(), "no LLM provider configured") {
-				logger.Debug("auto-analysis skipped, no LLM provider configured", "tenant_id", tenantID)
-				return
-			}
-			// Same reasoning, the other common case: a provider IS
-			// configured but hasn't opted into AutoAnalyzeAllAlerts (the
-			// default) -- an analyst clicking "Analyze with AI" is still
-			// available, this is just the unattended trigger declining.
-			if errors.Is(err, service.ErrAutoAnalysisDisabled) {
-				logger.Debug("auto-analysis skipped, disabled for the default llm provider", "tenant_id", tenantID)
-				return
-			}
-			logger.Warn("auto-analysis failed", "tenant_id", tenantID, "alert_id", alertID, "error", err)
-		}
-	})
+	// The automatic analysis of each ingested alert is a durable queue: Ingest writes
+	// a job row in the alert's own transaction, and cmd/analyzer works the rows with a
+	// lease, retry and backoff -- so a restart, a deploy or a provider outage no longer
+	// loses the analysis. There is nothing to wake in this process.
+	alertService.EnableAutoAnalysisQueue(repository.NewAIAnalysisJobRepository(), nil)
 
 	webhookRepo := repository.NewWebhookRepository()
 	fieldMappingTemplateService := service.NewFieldMappingTemplateService(pool, repository.NewFieldMappingTemplateRepository(), repository.NewAdminAuditEventRepository())
@@ -149,21 +125,23 @@ func main() {
 	mux.HandleFunc("/metrics", httpserver.MetricsHandler)
 	mux.Handle("/hooks", hookLimiter(handler))
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           httpserver.WrapWithObservability(mux, logger, tracer),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	// The only internet-facing process, so it gets the tightest deadlines --
+	// see httpserver.IngestTimeouts.
+	srv := httpserver.NewServer(cfg.HTTPAddr, httpserver.WrapWithObservability(mux, logger, tracer), httpserver.IngestTimeouts)
 
+	serveErr := make(chan error, 1)
 	safego.Go("ingest.ListenAndServe", func() {
-		logger.Info("ingest listening", "addr", cfg.HTTPAddr)
+		logger.Info("ingest listening", "addr", cfg.HTTPAddr, "build", buildinfo.Build)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server failed", "error", err)
-			os.Exit(1)
+			serveErr <- err
 		}
 	})
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case err := <-serveErr:
+		return err
+	}
 	logger.Info("shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
@@ -171,4 +149,5 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 	}
+	return nil
 }

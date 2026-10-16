@@ -18,7 +18,7 @@ migrate -database "postgres://localhost:5432/kuruops?sslmode=disable" -path migr
 
 Sem `golang-migrate` instalado: `go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest`
 
-## Role da aplicação (obrigatório antes de rodar `cmd/api` / `cmd/ingest` / `cmd/worker`)
+## Role da aplicação (obrigatório antes de rodar `cmd/api` / `cmd/ingest` / `cmd/analyzer` / `cmd/worker`)
 
 As políticas de RLS em `0001_initial_schema.up.sql` só
 protegem os dados se a aplicação conectar com um role que **não** seja dono das tabelas e **não**

@@ -13,7 +13,17 @@ import (
 // a ping comment is sent -- keeps intermediate proxies/load balancers (and
 // some browsers) from treating a quiet-but-healthy stream as dead and
 // closing it.
-const sseKeepAliveInterval = 25 * time.Second
+var sseKeepAliveInterval = 25 * time.Second
+
+// sseWriteTimeout is how long a single write to a stream may block before the
+// connection is dropped. The server-wide http.Server.WriteTimeout would kill
+// every stream a minute and a half after it opened, however healthy, so Stream
+// replaces it with a deadline it renews before each write: a live stream never
+// hits it (a ping goes out every sseKeepAliveInterval), while a peer that
+// stopped reading -- a laptop that went to sleep without closing the socket --
+// is released within this window instead of holding a goroutine and its
+// subscriber channel until the OS gives up on the TCP connection.
+var sseWriteTimeout = 30 * time.Second
 
 type EventsHandlers struct {
 	broadcaster *events.Broadcaster
@@ -44,6 +54,12 @@ func (h *EventsHandlers) Stream(w http.ResponseWriter, r *http.Request) {
 	ch, unsubscribe := h.broadcaster.Subscribe(tenantID)
 	defer unsubscribe()
 
+	// Best-effort: a ResponseWriter that cannot take a deadline (a test
+	// recorder) just keeps the server default.
+	rc := http.NewResponseController(w)
+	renewWriteDeadline := func() { _ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout)) }
+	renewWriteDeadline()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -70,9 +86,11 @@ func (h *EventsHandlers) Stream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			renewWriteDeadline()
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, data)
 			flusher.Flush()
 		case <-ticker.C:
+			renewWriteDeadline()
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		}

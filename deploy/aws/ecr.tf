@@ -1,9 +1,9 @@
 # One repo per image, matching backend/Dockerfile's three build targets plus
 # the frontend image -- same four images docker-compose.yml builds locally
-# (kuruops-api, kuruops-ingest, kuruops-worker, kuruops-frontend).
+# (kuruops-api, kuruops-ingest, kuruops-analyzer, kuruops-worker, kuruops-frontend).
 
 resource "aws_ecr_repository" "images" {
-  for_each             = toset(["api", "ingest", "worker", "frontend"])
+  for_each             = toset(["api", "ingest", "analyzer", "worker", "frontend"])
   name                 = "${var.project}/${each.key}"
   image_tag_mutability = "IMMUTABLE"
 

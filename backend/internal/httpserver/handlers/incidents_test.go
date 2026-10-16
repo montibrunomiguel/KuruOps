@@ -37,6 +37,7 @@ func newIncidentHandlerFixture(t *testing.T) (h *handlers.IncidentHandlers, tena
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	postmortemSvc := service.NewPostmortemService(incSvc, aiSvc)
 	h = handlers.NewIncidentHandlers(incSvc, userSvc, aiSvc, postmortemSvc, service.NewIncidentReportService(incSvc), mcpToolSvc)
@@ -79,6 +80,7 @@ func TestIncidentHandlers_Analyze_ReturnsImmediatelyThenCompletesInBackground(t 
 	aiSvc := service.NewAIAnalysisService(
 		pool, repository.NewLLMProviderRepository(), repository.NewAlertRepository(), incidentRepo, secretStore,
 		mcpServerRepo, mcpToolSvc, repository.NewAIAnalysisRunRepository(), aiToolCallRepo,
+		fastLLM(),
 	)
 	analyzed := make(chan struct{}, 1)
 	aiSvc.EnableEventPublishing(func(uuid.UUID, string, any) { analyzed <- struct{}{} })

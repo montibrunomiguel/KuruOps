@@ -175,9 +175,16 @@ func TestNewRouter_TimeoutAppliesExceptToEventsStream(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected /api/v1/settings/database-migration/migrate to be registered, got routes: %v", middlewareCounts)
 	}
-	if migrateCount != webhooksCount {
+	// One MORE than the other admin routes, not the same: besides RequireAdmin
+	// and its own (longer) request timeout it carries ExtendWriteDeadline,
+	// because the server-wide http.Server.WriteTimeout would otherwise cut the
+	// socket long before a multi-minute migration answers. Asserting the exact
+	// +1 keeps both halves honest -- dropping the extension (the migration
+	// result silently never arrives) and a stray extra middleware both fail.
+	if migrateCount != webhooksCount+1 {
 		t.Fatalf(
-			"expected /api/v1/settings/database-migration/migrate to carry the same middleware count (RequireAdmin + its own timeout) as /api/v1/settings/webhooks/, got %d vs %d",
+			"expected /api/v1/settings/database-migration/migrate to carry exactly one more middleware than /api/v1/settings/webhooks/ "+
+				"(RequireAdmin + its own timeout + ExtendWriteDeadline vs RequireAdmin + the shared timeout), got %d vs %d",
 			migrateCount, webhooksCount,
 		)
 	}

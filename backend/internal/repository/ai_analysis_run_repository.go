@@ -19,7 +19,7 @@ func NewAIAnalysisRunRepository() *AIAnalysisRunRepository {
 
 const aiAnalysisRunColumns = `
 	id, tenant_id, context_type, context_id, actor_id, status,
-	messages, tools, tool_routes, pending_tool_call_id, result, error, created_at, updated_at`
+	messages, tools, tool_routes, pending_tool_call_id, result, error, error_code, created_at, updated_at`
 
 func (r *AIAnalysisRunRepository) Insert(ctx context.Context, tx pgx.Tx, run *domain.AIAnalysisRun) error {
 	row := tx.QueryRow(ctx, `
@@ -119,7 +119,7 @@ func (r *AIAnalysisRunRepository) SetRunning(ctx context.Context, tx pgx.Tx, id 
 func (r *AIAnalysisRunRepository) AppendUserMessage(ctx context.Context, tx pgx.Tx, id int64, messages []byte) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'running', messages = $2, pending_tool_call_id = null, error = null, updated_at = now()
+		set status = 'running', messages = $2, pending_tool_call_id = null, error = null, error_code = null, updated_at = now()
 		where id = $1`,
 		id, messages,
 	)
@@ -132,7 +132,7 @@ func (r *AIAnalysisRunRepository) AppendUserMessage(ctx context.Context, tx pgx.
 func (r *AIAnalysisRunRepository) SetCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result string) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = null, updated_at = now()
+		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = null, error_code = null, updated_at = now()
 		where id = $1`,
 		id, messages, result,
 	)
@@ -142,23 +142,27 @@ func (r *AIAnalysisRunRepository) SetCompleted(ctx context.Context, tx pgx.Tx, i
 // RestoreCompleted puts a finished analysis back after a follow-up question
 // failed to get an answer, keeping cause on the run so the chat can tell the
 // analyst why their question vanished -- unlike SetCompleted, which means "a
-// turn just succeeded" and therefore clears error.
-func (r *AIAnalysisRunRepository) RestoreCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result, cause string) error {
+// turn just succeeded" and therefore clears error. code is llmclient.ErrorCode
+// of the cause ("" when it was not a provider failure).
+func (r *AIAnalysisRunRepository) RestoreCompleted(ctx context.Context, tx pgx.Tx, id int64, messages []byte, result, cause, code string) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = $4, updated_at = now()
+		set status = 'completed', messages = $2, result = $3, pending_tool_call_id = null, error = $4, error_code = $5, updated_at = now()
 		where id = $1`,
-		id, messages, result, cause,
+		id, messages, result, cause, nullIfEmpty(code),
 	)
 	return err
 }
 
-func (r *AIAnalysisRunRepository) SetFailed(ctx context.Context, tx pgx.Tx, id int64, cause string) error {
+// SetFailed ends a run as failed. code is llmclient.ErrorCode of the cause (""
+// when it was not a provider failure) -- a stable identifier the UI turns into a
+// message in the user's language.
+func (r *AIAnalysisRunRepository) SetFailed(ctx context.Context, tx pgx.Tx, id int64, cause, code string) error {
 	_, err := tx.Exec(ctx, `
 		update ai_analysis_runs
-		set status = 'failed', error = $2, pending_tool_call_id = null, updated_at = now()
+		set status = 'failed', error = $2, error_code = $3, pending_tool_call_id = null, updated_at = now()
 		where id = $1`,
-		id, cause,
+		id, cause, nullIfEmpty(code),
 	)
 	return err
 }
@@ -167,7 +171,7 @@ func scanAIAnalysisRun(row pgx.Row) (*domain.AIAnalysisRun, error) {
 	var run domain.AIAnalysisRun
 	err := row.Scan(
 		&run.ID, &run.TenantID, &run.ContextType, &run.ContextID, &run.ActorID, &run.Status,
-		&run.Messages, &run.Tools, &run.ToolRoutes, &run.PendingToolCallID, &run.Result, &run.Error,
+		&run.Messages, &run.Tools, &run.ToolRoutes, &run.PendingToolCallID, &run.Result, &run.Error, &run.ErrorCode,
 		&run.CreatedAt, &run.UpdatedAt,
 	)
 	if err != nil {
@@ -177,4 +181,34 @@ func scanAIAnalysisRun(row pgx.Row) (*domain.AIAnalysisRun, error) {
 		return nil, fmt.Errorf("scan ai analysis run: %w", err)
 	}
 	return &run, nil
+}
+
+// FailRunning fails every 'running' run for one alert/incident with cause, and
+// reports how many it changed. It is for taking over after a consumer died
+// mid-analysis (see AIAnalysisService.AbandonInterruptedRuns): that run will
+// never finish, and while it stays 'running' it blocks every new attempt with
+// ErrAnalysisInProgress until the worker's 15-minute reaper gets to it.
+//
+// 'paused' runs are left alone on purpose: those are waiting for an analyst to
+// approve a tool call, not for a process that is gone.
+func (r *AIAnalysisRunRepository) FailRunning(ctx context.Context, tx pgx.Tx, contextType string, contextID uuid.UUID, cause string) (int64, error) {
+	tag, err := tx.Exec(ctx, `
+		update ai_analysis_runs
+		set status = 'failed', error = $3, pending_tool_call_id = null, updated_at = now()
+		where context_type = $1 and context_id = $2 and status = 'running'`,
+		contextType, contextID, cause,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("fail running analysis runs: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// nullIfEmpty maps "" to SQL NULL, so a column that is "absent" and not "an empty
+// string" reads back as nil.
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
