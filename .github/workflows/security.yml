@@ -63,10 +63,14 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
+      # govulncheck itself, wrapped so one advisory can be accepted on the record:
+      # backend/govulncheck-exceptions.json lists each ID with a reason and an expiry
+      # date (past it, the scan fails again). Everything else still fails the build.
+      - name: Test the govulncheck gate
+        run: node --test "scripts/*.test.mjs"
+
       - name: Run govulncheck
-        run: |
-          cd backend
-          govulncheck ./...
+        run: node scripts/govulncheck-gate.mjs
 
   npm-audit:
     name: Node.js Package Vulnerability Audit

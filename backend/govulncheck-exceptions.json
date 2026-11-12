@@ -1,0 +1,7 @@
+[
+  {
+    "id": "GO-2026-6909",
+    "expires": "2027-02-12",
+    "reason": "crewjam/saml is on 0.6.3, which fixes both flaws in the advisory (nil checks for Assertion.Subject/Conditions in validateAssertion, and a namespaced Subject.NameID tag), but the Go vulnerability database entry records no fixed version, so govulncheck reports every release as affected. backend/internal/authn/saml_roundtrip_test.go signs real responses that omit Subject/Conditions/NameID and asserts an error, not a panic; on 0.5.1 the same test panics. Remove this entry when the database records a fix, or re-check and renew it before the expiry."
+  }
+]

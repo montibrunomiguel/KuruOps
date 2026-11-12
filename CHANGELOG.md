@@ -13,6 +13,22 @@ after-the-fact archaeology. See the matching item in `.github/PULL_REQUEST_TEMPL
 
 ### Security
 
+- **SAML login no longer panics on a signed assertion that omits `Subject` or `Conditions`
+  (GO-2026-6909).** `crewjam/saml` 0.5.1 dereferenced both without a nil check, so an assertion with a
+  valid IdP signature but no `Subject`/`Conditions` crashed the ACS handler, and its `Subject.NameID`
+  matched in any XML namespace. Bumped to 0.6.3, which checks both and namespaces the tag. The new
+  `saml_roundtrip_test.go` has the library's own IdP sign real responses that go through
+  `ParseAssertion` (login, groups, missing elements, a response for a request this SP never issued);
+  on 0.5.1 the missing-element cases panic. Also takes `go-jose` 4.1.6 and `x/net` 0.62.0 (HIGH, found in
+  the built binaries) and `undici`/`zod` (dev tooling) with the Dependabot group bumps.
+- **`govulncheck` is a gate with an exception list instead of all-or-nothing.** The Go vulnerability
+  database lists GO-2026-6909 with no fixed version, so `govulncheck` reports every `crewjam/saml`
+  release as affected even though the code is fixed -- the only built-in answer is to turn the scan
+  off. `scripts/govulncheck-gate.mjs` (used by CI and `task backend:vulncheck`) still fails on any
+  vulnerability in called code, except the IDs in `backend/govulncheck-exceptions.json`, each with a
+  reason and an expiry date: past it the scan fails again, and an entry for an ID no longer reported
+  is flagged for removal.
+
 - **A production-like compose deploy with no default credentials.** `docker-compose.yml` is the laptop
   stack: it prints working passwords and an encryption key and runs `AUTH_MODE=dev`. New
   `docker-compose.secure.yml` (`task secrets:gen`, `task deploy:secure:up`) makes every credential
