@@ -14,6 +14,23 @@ introduz, não como arqueologia posterior. Ver o item correspondente no checklis
 
 ### Security
 
+- **O login SAML não entra mais em panic com uma assertion assinada sem `Subject` ou `Conditions`
+  (GO-2026-6909).** O `crewjam/saml` 0.5.1 desreferenciava os dois sem checar nil, então uma assertion
+  com assinatura válida do IdP mas sem `Subject`/`Conditions` derrubava o handler do ACS, e o
+  `Subject.NameID` casava em qualquer namespace XML. Atualizado para a 0.6.3, que checa os dois e
+  coloca namespace na tag. O novo `saml_roundtrip_test.go` faz o IdP da própria biblioteca assinar
+  respostas reais que passam pelo `ParseAssertion` (login, grupos, elementos ausentes, resposta para uma
+  requisição que este SP nunca emitiu); na 0.5.1 os casos de elemento ausente entram em panic. Também
+  traz `go-jose` 4.1.6 e `x/net` 0.62.0 (HIGH, achados nos binários) e `undici`/`zod` (ferramentas de
+  dev) junto com as atualizações em grupo do Dependabot.
+- **O `govulncheck` agora é um gate com lista de exceções, e não tudo-ou-nada.** O banco de
+  vulnerabilidades do Go lista o GO-2026-6909 sem versão corrigida, então o `govulncheck` reporta toda
+  versão do `crewjam/saml` como afetada mesmo com o código corrigido -- a única resposta nativa é
+  desligar o scan. O `scripts/govulncheck-gate.mjs` (usado pelo CI e por `task backend:vulncheck`)
+  continua falhando em qualquer vulnerabilidade em código chamado, exceto os IDs de
+  `backend/govulncheck-exceptions.json`, cada um com motivo e data de validade: passada a data o scan
+  volta a falhar, e uma entrada para um ID que não é mais reportado é sinalizada para remoção.
+
 - **Um deploy compose parecido com produção, sem credenciais padrão.** O `docker-compose.yml` é a stack
   de notebook: imprime senhas e uma chave de criptografia que funcionam e roda `AUTH_MODE=dev`. O novo
   `docker-compose.secure.yml` (`task secrets:gen`, `task deploy:secure:up`) torna toda credencial

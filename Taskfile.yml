@@ -144,10 +144,9 @@ tasks:
       - golangci-lint run ./...
 
   backend:vulncheck:
-    desc: Scan backend Go dependencies for known vulnerabilities (govulncheck)
-    dir: backend
+    desc: Scan backend Go dependencies for known vulnerabilities (govulncheck); IDs in backend/govulncheck-exceptions.json are accepted until their expiry date
     cmds:
-      - govulncheck ./...
+      - node scripts/govulncheck-gate.mjs
 
   backend:test:
     desc: Run backend Go tests (pure unit tests only -- DB-dependent tests skip themselves without TEST_DATABASE_URL)
